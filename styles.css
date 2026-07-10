@@ -1,0 +1,15 @@
+.retro-box-cursor-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 48; /* above the workspace, below modals/menus */
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+/* Obsidian draws the caret as the native contenteditable caret. 
+   By targeting .cm-editor along with our plugin toggle class, 
+   we increase specificity enough to safely remove !important.
+*/
+.retro-box-cursor-hide-native .cm-editor .cm-content {
+  caret-color: transparent;
+}

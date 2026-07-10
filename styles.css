@@ -1,15 +1,53 @@
+/* --- Canvas Engine Styles (Box, Line, Underline) --- */
 .retro-box-cursor-canvas {
   position: fixed;
-  inset: 0;
-  z-index: 48; /* above the workspace, below modals/menus */
+  top: 0;
+  left: 0;
   pointer-events: none;
-  image-rendering: pixelated;
+  z-index: 9999;
 }
 
-/* Obsidian draws the caret as the native contenteditable caret. 
-   By targeting .cm-editor along with our plugin toggle class, 
-   we increase specificity enough to safely remove !important.
-*/
-.retro-box-cursor-hide-native .cm-editor .cm-content {
-  caret-color: transparent;
+body.retro-box-cursor-hide-native {
+  caret-color: transparent !important;
+}
+
+/* --- Torch Engine Styles --- */
+.torch-cursor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(
+    circle var(--torch-radius) at var(--torch-x) var(--torch-y),
+    rgba(var(--torch-warm), var(--torch-intensity)) 0%,
+    rgba(0, 0, 0, var(--torch-darkness)) 100%
+  );
+  overflow: hidden;
+}
+
+.torch-cursor-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--torch-caret-width);
+  background-color: rgb(var(--torch-warm));
+  box-shadow: 0 0 10px rgb(var(--torch-warm));
+  z-index: 9999;
+}
+
+.torch-ember-caret {
+  background: linear-gradient(to bottom, #ff4500, #ff963c);
+}
+
+/* --- Animation for Flicker --- */
+@keyframes torch-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.95; }
+}
+
+body:not(.torch-no-flicker) .torch-cursor-overlay {
+  animation: torch-flicker 0.1s infinite;
 }

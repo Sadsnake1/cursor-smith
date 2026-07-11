@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS = {
   trailLength: 10, 
   trailFadeMs: 450, 
   blinkSpeed: 1.2,       
+  blinkOnOffBalance: 0.5,
   hideNativeCaret: true, 
   showChar: true, 
   moveDelayMs: 0,        
@@ -73,15 +74,18 @@ function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
 
-function blinkAlphaAt(nowMs, speed) {
+function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5) {
   if (speed <= 0) return 1;
   const period = 2500 / speed; 
   const phase = (nowMs % period) / period; 
-  const hold = 0.35;
   const fade = 0.15; 
-  const p1 = hold;
+  const balance = Math.max(0.1, Math.min(0.9, onOffBalance));
+  const hold = 1 - fade * 2; // total time split between lit and dark
+  const onHold = hold * balance;
+  const offHold = hold * (1 - balance);
+  const p1 = onHold;
   const p2 = p1 + fade;
-  const p3 = p2 + hold;
+  const p3 = p2 + offHold;
   let a;
   if (phase < p1) a = 1;
   else if (phase < p2) a = 1 - easeInOutSine((phase - p1) / fade);
@@ -541,7 +545,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         return 1; 
       }
     }
-    return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed));
+    return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5);
   }
 
   draw() {
@@ -909,6 +913,11 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .setName("Blink Speed")
         .setDesc("How fast the cursor blinks. Set to 0 to keep it always on.")
         .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(this.plugin.settings.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
+
+      new Setting(containerEl)
+        .setName("Blink Balance")
+        .setDesc("How the blink cycle is split between lit and dark. Lower keeps it dark longer, higher keeps it lit longer.")
+        .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(this.plugin.settings.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
 
       new Setting(containerEl)
         .setName("Hide Real Cursor")

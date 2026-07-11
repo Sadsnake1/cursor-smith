@@ -17,8 +17,24 @@ body.retro-box-cursor-hide-native {
    otherwise flash through whenever our custom cursor fades out. */
 body.retro-box-cursor-hide-native .cm-cursor,
 body.retro-box-cursor-hide-native .cm-cursor-primary,
-body.retro-box-cursor-hide-native .cm-cursor-secondary {
+body.retro-box-cursor-hide-native .cm-cursor-secondary,
+body.retro-box-cursor-hide-native .cm-fat-cursor,
+body.retro-box-cursor-hide-native .cm-dropCursor {
   display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  border-color: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Belt-and-braces: some CM themes set caret-color directly on .cm-content
+   or .cm-line. That's the same specificity as our body.<class> rule
+   (0,1,1 vs 0,1,0 - ours should already win), but if a theme's rule loads
+   after ours without !important, load order alone can flip the result.
+   Pinning it here removes that ordering risk entirely. */
+body.retro-box-cursor-hide-native .cm-content,
+body.retro-box-cursor-hide-native .cm-line {
+  caret-color: transparent !important;
 }
 
 /* --- Torch Engine Styles --- */

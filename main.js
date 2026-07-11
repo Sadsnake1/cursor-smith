@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS = {
   // the full character envelope automatically.
   caretWidthPx: 2,         
   popLetters: true,        // Enabled globally across all styles
+  flameTrail: true,        // Pixelated ghosting trail effect toggle
 
   // --- shared canvas engine settings ---
   trailColor: "", 
@@ -80,8 +81,6 @@ function blinkAlphaAt(nowMs, speed) {
   else if (phase < p2) a = 1 - easeInOutSine((phase - p1) / fade);
   else if (phase < p3) a = 0;
   else a = easeInOutSine((phase - p3) / fade);
-  // Fades all the way to 0 (not a residual minimum) so the cursor fully
-  // disappears during the "blinked out" phase.
   return a;
 }
 
@@ -95,6 +94,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.ctx = null;
     this.trail = []; 
     this.particles = []; 
+    this.flamePixels = [];
     this.lastActive = null; 
     this.pending = null; 
     this.smear = null; 
@@ -147,16 +147,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
   toggle() {
     const wasActive = !!(this.canvas || this.overlay);
     wasActive ? this.disable() : this.enable();
-    // After enable()/disable() run, this.canvas/this.overlay already reflect
-    // the new state, so `enabled` must match it directly (no extra negation).
     this.settings.enabled = !!(this.canvas || this.overlay);
     this.saveSettings();
   }
 
   applyBodyClasses() {
-    // "Hide Native Caret" is a global setting (per the README: "hides the
-    // default system cursor"), so it should apply whenever ANY engine
-    // (canvas styles or the Torch overlay) is active - not just canvas styles.
     const engineActive = !!(this.canvas || this.overlay);
     document.body.classList.toggle(
       "retro-box-cursor-hide-native",
@@ -193,7 +188,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.raf = 0;
     }
     
-    // Disable canvas profiles
     document.body.classList.remove("retro-box-cursor-active", "retro-box-cursor-hide-native");
     this.canvas?.remove();
     this.canvas = null;
@@ -201,8 +195,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.pending = null;
     this.smear = null;
     this.particles = [];
+    this.flamePixels = [];
 
-    // Disable DOM spotlight overlays
     document.body.classList.remove("torch-cursor-active", "torch-no-flicker", "torch-ember-caret");
     this.overlay?.remove();
     this.overlay = null;
@@ -223,6 +217,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     this.trail = [];
     this.particles = [];
+    this.flamePixels = [];
     this.lastActive = null;
     this.pending = null;
     this.smear = null;
@@ -264,8 +259,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const lineEl = view.contentDOM.querySelector(".cm-line");
       const textColor = (lineEl ? getComputedStyle(lineEl).color : null) || contentStyle.color || "#ffffff";
 
-      // Line and Torch use a fixed pixel width; Box and Underline always
-      // match the full character envelope, regardless of caretWidthPx.
       let finalWidth = charWidth;
       if (this.settings.cursorStyle === "Line" || this.settings.cursorStyle === "Torch") {
         finalWidth = this.settings.caretWidthPx;
@@ -358,6 +351,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
   commitMove(caret) {
     this.pushTrail(this.lastActive);
     if (this.settings.smear) this.startSmear(this.lastActive, caret);
+    
+    if (this.lastActive) {
+      this.spawnFlamePixels(this.lastActive);
+    }
+
     this.lastActive = caret;
     this.pending = null;
   }
@@ -435,6 +433,43 @@ module.exports = class CursorSmithPlugin extends Plugin {
     });
   }
 
+  spawnFlamePixels(anchor) {
+    if (!this.settings.flameTrail) return;
+    
+    const count = Math.floor(2 + Math.random() * 3); // Density of ghost echo chunks
+    
+    // Parse the current cursor color hex dynamically to add channel variance
+    let baseHex = this.settings.color || "#39ff14";
+    let h = baseHex.replace("#", "");
+    if (h.length === 3) h = h.split("").map(c => c + c).join("");
+    let r = (parseInt(h, 16) >> 16) & 255;
+    let g = (parseInt(h, 16) >> 8) & 255;
+    let b = parseInt(h, 16) & 255;
+    
+    for (let i = 0; i < count; i++) {
+      // Scatter particles evenly inside the vertical envelope of the previous cursor block
+      const pX = anchor.x + Math.random() * (anchor.w || anchor.actualCharWidth);
+      const pY = anchor.top + Math.random() * anchor.h;
+      
+      // Inject random variance into RGB channels (+/- 35) to shift brightness/hue subtly
+      const varR = Math.max(0, Math.min(255, r + Math.floor((Math.random() - 0.5) * 70)));
+      const varG = Math.max(0, Math.min(255, g + Math.floor((Math.random() - 0.5) * 70)));
+      const varB = Math.max(0, Math.min(255, b + Math.floor((Math.random() - 0.5) * 70)));
+      const pColor = `rgb(${varR}, ${varG}, ${varB})`;
+      
+      this.flamePixels.push({
+        x: pX,
+        y: pY,
+        vx: (Math.random() - 0.5) * 20, // Slight horizontal drift dispersion
+        vy: 0,                          // 0 vertical speed locks the trail strictly horizontally
+        size: 2.5 + Math.random() * 3,  // Blocky retro sizing
+        color: pColor,
+        alpha: 1,
+        start: performance.now()
+      });
+    }
+  }
+
   blinkAlpha(now) {
     return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed));
   }
@@ -445,6 +480,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
     this.drawLettersParticles();
+    this.drawFlamePixels();
 
     switch (this.settings.cursorStyle) {
       case "Line":
@@ -459,17 +495,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // Caret width is resolved once by caretCoords() into `active.w` (fixed
-  // pixel width for Line/Torch, character envelope for Box/Underline), so
-  // callers can just read it directly instead of re-checking the style.
   renderWidth(active) {
     return active.w;
   }
 
-  // --- Shared trail / smear helpers, reused by every canvas-engine style ---
-
-  // Runs `cb(point, alpha)` for each still-visible trail point, oldest first,
-  // and prunes points that have fully faded out.
   forEachTrailPoint(cb) {
     const now = performance.now();
     const fade = Math.max(50, this.settings.trailFadeMs);
@@ -481,8 +510,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // Runs `cb(smear)` with the current in-flight motion-blur smear, if the
-  // "Enable Smear Stretching" setting is on and a smear is currently active.
   withSmear(cb) {
     if (!this.settings.smear) return;
     const smear = this.computeSmear(performance.now());
@@ -496,7 +523,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const now = performance.now();
     const trailColor = settings.trailColor || settings.color;
 
-    // Fading trail of recent positions
     this.forEachTrailPoint((p, alpha) => {
       ctx.fillStyle = hexToRgba(trailColor, alpha);
       if (isUnderline) {
@@ -507,7 +533,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       }
     });
 
-    // Directional motion-blur smear between the last two positions
     this.withSmear((smear) => {
       const thick = isUnderline ? Math.max(2, smear.thick * 0.25) : smear.thick;
       ctx.save();
@@ -568,6 +593,30 @@ module.exports = class CursorSmithPlugin extends Plugin {
     });
   }
 
+  drawFlamePixels() {
+    const ctx = this.ctx;
+    const now = performance.now();
+
+    this.flamePixels = this.flamePixels.filter(p => {
+      const elapsed = (now - p.start) / 1000;
+      if (elapsed > 0.4) return false;
+
+      const t = elapsed / 0.4;
+      p.alpha = 1 - Math.pow(t, 2);
+
+      const curX = p.x + p.vx * elapsed;
+      const curY = p.y + p.vy * elapsed;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.alpha * 0.15); 
+      ctx.fillStyle = p.color;
+      ctx.fillRect(curX, curY, p.size, p.size);
+      ctx.restore();
+
+      return true;
+    });
+  }
+
   drawRetroBox() {
     const ctx = this.ctx;
     const settings = this.settings;
@@ -616,7 +665,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // --- Torch Overlay Variant (Ponytail System Engine) ---
   enableTorchOverlay() {
     this.applyOverlayStyle();
     this.applyBodyClasses();
@@ -625,12 +673,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.overlay.createDiv({ cls: "torch-cursor-glow" });
     this.caretEl = this.overlay.createDiv({ cls: "torch-cursor-caret" });
 
-    // Obsidian modals (Settings, Command Palette, Quick Switcher, etc.) are
-    // appended directly to <body> as `.modal-container` elements. The torch
-    // overlay's z-index sits above them, so without this it would darken
-    // right over the top of any open modal. We watch for modals opening or
-    // closing and, when "Keep Peripheral Sidebars Illuminated" is on, hide
-    // the overlay entirely for as long as one is open.
     this.modalOpen = !!document.body.querySelector(".modal-container");
     this.modalObserver = new MutationObserver(() => {
       this.modalOpen = !!document.body.querySelector(".modal-container");
@@ -714,7 +756,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
 
-    // --- CORE CONFIGURATION ---
     containerEl.createEl("h3", { text: "Core Configuration" });
     
     new Setting(containerEl)
@@ -746,7 +787,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
           })
       );
 
-    // --- GLOBAL PROPERTIES ---
     containerEl.createEl("h3", { text: "Global Caret Properties" });
 
     new Setting(containerEl)
@@ -754,9 +794,11 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .setDesc("Spawns exploding letter particles on type modification input across all cursor models.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.popLetters).onChange(set("popLetters")));
 
-    // Caret width is only ever a manual choice for Line and Torch - Box and
-    // Underline always match the character envelope automatically, so this
-    // slider would have no effect for them and is hidden instead.
+    new Setting(containerEl)
+      .setName("Pixelated Ghosting Trail")
+      .setDesc("Spawns horizontal pixelated ghost particles matching the cursor color with slight variance when moving.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(set("flameTrail")));
+
     if (["Line", "Torch"].includes(this.plugin.settings.cursorStyle)) {
       new Setting(containerEl)
         .setName("Caret Pixel Width")
@@ -770,7 +812,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
         );
     }
 
-    // --- CANVAS ENGINES OPTION SECTION (Box, Line, Underline) ---
     if (this.plugin.settings.cursorStyle !== "Torch") {
       containerEl.createEl("h3", { text: "Canvas Engine Customizations" });
 
@@ -829,7 +870,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .addText((txt) => txt.setPlaceholder("#hexcolor").setValue(this.plugin.settings.trailColor).onChange(set("trailColor")));
     }
 
-    // --- TORCH ENGINE CONFIGURATION SECTION ---
     if (this.plugin.settings.cursorStyle === "Torch") {
       containerEl.createEl("h3", { text: "Torch Spotlight Engine Settings" });
 

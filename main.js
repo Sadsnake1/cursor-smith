@@ -5,30 +5,27 @@ const DEFAULT_SETTINGS = {
   cursorStyle: "Box", // "Line" | "Box" | "Underline" | "Torch"
 
   // --- appearance color controls ---
-  color: "#39ff14", // shared by line, box, and underline mode
+  colorDark: "#39ff14", 
+  colorLight: "#333333",
   glow: true, 
 
   // --- torch overlay style (ponytail DOM/CSS variant) ---
-  overlaySpareSidebars: false,
+  overlaySpareSidebars: true,
   overlayFollowMode: "caret", // caret | mouse | auto
-  overlayRadius: 280,
-  overlayDarkness: 0.97,
-  overlayIntensity: 1,
+  overlayRadius: 250,
+  overlayDarkness: 0.7,
+  overlayIntensity: 0.1,
   overlayColor: "#ff963c",
-  overlayFlicker: true,
+  overlayFlicker: false,
   overlaySpeed: 0.22, // lerp factor: how fast the torch chases its target
   overlayEmberCaret: true, // gradient flame caret
 
   // --- global caret properties ---
-  // Caret width is no longer a manual mode: Line and Torch always use a
-  // fixed pixel width (caretWidthPx below), Box and Underline always match
-  // the full character envelope automatically.
   caretWidthPx: 2,         
-  popLetters: true,        // Enabled globally across all styles
-  flameTrail: true,        // Pixelated ghosting trail effect toggle
+  popLetters: true,        
+  flameTrail: true,        
 
   // --- shared canvas engine settings ---
-  trailColor: "", 
   trailLength: 10, 
   trailFadeMs: 450, 
   blinkSpeed: 1.2,       
@@ -37,6 +34,14 @@ const DEFAULT_SETTINGS = {
   moveDelayMs: 0,        
   smear: true,           
   smearDurationMs: 80,   
+
+  // --- smooth cursor global category ---
+  smoothEnabled: false,
+  smoothStopBlinking: true, 
+  smoothness: 0.15,          // 5-30% range (0.05 - 0.30)
+  catchUpSpeed: 0.55,        // 30-80% range (0.30 - 0.80)
+  maxCatchUpSpeed: 0.85,     // 50-100% range (0.50 - 1.00)
+  smoothAdaptive: true,      // Adaptive speed toggle
 };
 
 function hexToRgba(hex, alpha) {
@@ -99,6 +104,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.pending = null; 
     this.smear = null; 
 
+    // Smooth Cursor State
+    this.animActive = null;
+    this.lastMoveTime = 0;
+    this.typingSpeedMod = 1;
+
     // Torch Overlay Engine State
     this.overlay = null;
     this.caretEl = null;
@@ -151,6 +161,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.saveSettings();
   }
 
+  getActiveColor() {
+    const isDark = document.body.classList.contains("theme-dark");
+    return isDark ? this.settings.colorDark : this.settings.colorLight;
+  }
+
   applyBodyClasses() {
     const engineActive = !!(this.canvas || this.overlay);
     document.body.classList.toggle(
@@ -196,6 +211,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.smear = null;
     this.particles = [];
     this.flamePixels = [];
+    this.animActive = null;
 
     document.body.classList.remove("torch-cursor-active", "torch-no-flicker", "torch-ember-caret");
     this.overlay?.remove();
@@ -221,10 +237,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.lastActive = null;
     this.pending = null;
     this.smear = null;
+    this.animActive = null;
+    this.lastMoveTime = 0;
+    this.typingSpeedMod = 1;
 
     const tick = () => {
       if (!this.canvas) return;
       this.updateActivePoint();
+      this.updateSmoothCursor();
       this.draw();
       this.raf = requestAnimationFrame(tick);
     };
@@ -348,6 +368,52 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
+  updateSmoothCursor() {
+    if (!this.lastActive) {
+      this.animActive = null;
+      return;
+    }
+
+    if (!this.settings.smoothEnabled) {
+      this.animActive = { ...this.lastActive };
+      return;
+    }
+
+    if (!this.animActive) {
+      this.animActive = { ...this.lastActive };
+    }
+
+    const now = performance.now();
+    let targetSpeed = this.settings.catchUpSpeed;
+
+    if (this.settings.smoothAdaptive) {
+      const timeSinceMove = now - this.lastMoveTime;
+      // If moving rapidly (under 150ms between strokes), ramp up multiplier
+      if (timeSinceMove < 150) {
+        const maxMod = this.settings.maxCatchUpSpeed / Math.max(0.01, this.settings.catchUpSpeed);
+        this.typingSpeedMod = Math.min(this.typingSpeedMod + 0.15, maxMod);
+      } else {
+        this.typingSpeedMod = Math.max(this.typingSpeedMod - 0.05, 1);
+      }
+      targetSpeed = Math.min(this.settings.maxCatchUpSpeed, targetSpeed * this.typingSpeedMod);
+    }
+
+    // Blend Catch-Up Speed with Animation Smoothness (damping)
+    const lerpFactor = Math.min(1, targetSpeed * (1 - this.settings.smoothness));
+
+    this.animActive.x += (this.lastActive.x - this.animActive.x) * lerpFactor;
+    this.animActive.top += (this.lastActive.top - this.animActive.top) * lerpFactor;
+    this.animActive.w += (this.lastActive.w - this.animActive.w) * lerpFactor;
+    this.animActive.h += (this.lastActive.h - this.animActive.h) * lerpFactor;
+    
+    // Transfer hard references so styling applies correctly
+    this.animActive.textColor = this.lastActive.textColor;
+    this.animActive.char = this.lastActive.char;
+    this.animActive.actualCharWidth = this.lastActive.actualCharWidth;
+    this.animActive.fontFamily = this.lastActive.fontFamily;
+    this.animActive.fontSize = this.lastActive.fontSize;
+  }
+
   commitMove(caret) {
     this.pushTrail(this.lastActive);
     if (this.settings.smear) this.startSmear(this.lastActive, caret);
@@ -358,6 +424,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     this.lastActive = caret;
     this.pending = null;
+    this.lastMoveTime = performance.now(); 
   }
 
   startSmear(from, to) {
@@ -428,7 +495,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       alpha: 1,
       fontSize: anchor.fontSize,
       fontFamily: anchor.fontFamily,
-      color: this.settings.color || anchor.textColor, 
+      color: this.getActiveColor() || anchor.textColor, 
       start: performance.now()
     });
   }
@@ -436,10 +503,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
   spawnFlamePixels(anchor) {
     if (!this.settings.flameTrail) return;
     
-    const count = Math.floor(2 + Math.random() * 3); // Density of ghost echo chunks
+    const count = Math.floor(6 + Math.random() * 6);
     
-    // Parse the current cursor color hex dynamically to add channel variance
-    let baseHex = this.settings.color || "#39ff14";
+    let baseHex = this.getActiveColor() || "#39ff14";
     let h = baseHex.replace("#", "");
     if (h.length === 3) h = h.split("").map(c => c + c).join("");
     let r = (parseInt(h, 16) >> 16) & 255;
@@ -447,11 +513,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     let b = parseInt(h, 16) & 255;
     
     for (let i = 0; i < count; i++) {
-      // Scatter particles evenly inside the vertical envelope of the previous cursor block
       const pX = anchor.x + Math.random() * (anchor.w || anchor.actualCharWidth);
       const pY = anchor.top + Math.random() * anchor.h;
       
-      // Inject random variance into RGB channels (+/- 35) to shift brightness/hue subtly
       const varR = Math.max(0, Math.min(255, r + Math.floor((Math.random() - 0.5) * 70)));
       const varG = Math.max(0, Math.min(255, g + Math.floor((Math.random() - 0.5) * 70)));
       const varB = Math.max(0, Math.min(255, b + Math.floor((Math.random() - 0.5) * 70)));
@@ -460,9 +524,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.flamePixels.push({
         x: pX,
         y: pY,
-        vx: (Math.random() - 0.5) * 20, // Slight horizontal drift dispersion
-        vy: 0,                          // 0 vertical speed locks the trail strictly horizontally
-        size: 2.5 + Math.random() * 3,  // Blocky retro sizing
+        vx: (Math.random() - 0.5) * 20, 
+        vy: 0,                          
+        size: 2.5 + Math.random() * 3,  
         color: pColor,
         alpha: 1,
         start: performance.now()
@@ -471,6 +535,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   blinkAlpha(now) {
+    if (this.settings.smoothEnabled && this.settings.smoothStopBlinking) {
+      if (now - this.lastMoveTime < 450) { 
+        return 1; 
+      }
+    }
     return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed));
   }
 
@@ -519,9 +588,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
   drawGenericCaret(isUnderline = false) {
     const ctx = this.ctx;
     const settings = this.settings;
-    const active = this.lastActive;
+    const active = this.animActive;
     const now = performance.now();
-    const trailColor = settings.trailColor || settings.color;
+    const trailColor = this.getActiveColor();
 
     this.forEachTrailPoint((p, alpha) => {
       ctx.fillStyle = hexToRgba(trailColor, alpha);
@@ -545,7 +614,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     if (!active) return;
     const blinkAlpha = this.blinkAlpha(now);
-    const color = settings.color || active.textColor || "#ffffff";
+    const color = this.getActiveColor() || active.textColor || "#ffffff";
 
     ctx.save();
     if (settings.glow) {
@@ -608,7 +677,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const curY = p.y + p.vy * elapsed;
 
       ctx.save();
-      ctx.globalAlpha = Math.max(0, p.alpha * 0.15); 
+      ctx.globalAlpha = Math.max(0, p.alpha);
       ctx.fillStyle = p.color;
       ctx.fillRect(curX, curY, p.size, p.size);
       ctx.restore();
@@ -621,7 +690,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const ctx = this.ctx;
     const settings = this.settings;
     const now = performance.now();
-    const color = settings.trailColor || settings.color;
+    const color = this.getActiveColor();
 
     this.forEachTrailPoint((p, alpha) => {
       ctx.fillStyle = hexToRgba(color, alpha);
@@ -637,7 +706,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.restore();
     });
 
-    const active = this.lastActive;
+    const active = this.animActive;
     if (active) {
       const blinkAlpha = this.blinkAlpha(now);
       const renderW = this.renderWidth(active);
@@ -813,11 +882,49 @@ class CursorSmithSettingTab extends PluginSettingTab {
     }
 
     if (this.plugin.settings.cursorStyle !== "Torch") {
+      // --- Smooth Cursor Global Category ---
+      containerEl.createEl("h3", { text: "Smooth Cursor Interpolation" });
+
+      new Setting(containerEl)
+        .setName("Enable Smooth Cursor")
+        .setDesc("Applies continuous physics and interpolation to the cursor movement.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothEnabled).onChange(set("smoothEnabled")));
+
+      new Setting(containerEl)
+        .setName("Stop Blinking While Moving")
+        .setDesc("Keeps the cursor solidly illuminated while typing or moving.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
+
+      new Setting(containerEl)
+        .setName("Animation Smoothness (5% - 30%)")
+        .setDesc("Controls how fluid the animation is. Higher values feel heavier or drag slightly behind.")
+        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(this.plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
+
+      new Setting(containerEl)
+        .setName("Catch-Up Speed (30% - 80%)")
+        .setDesc("How quickly the cursor bounds toward the text caret under normal conditions.")
+        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(this.plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
+
+      new Setting(containerEl)
+        .setName("Max Catch-Up Speed (50% - 100%)")
+        .setDesc("Sets the maximum speed limit for catching up during fast typing.")
+        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(this.plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+
+      new Setting(containerEl)
+        .setName("Adaptive Speed")
+        .setDesc("Automatically boosts the speed up to your Max Catch-Up Speed based on your live typing frequency.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
+
+      // --- Canvas Engine Customizations ---
       containerEl.createEl("h3", { text: "Canvas Engine Customizations" });
 
       new Setting(containerEl)
-        .setName("Cursor Base Color")
-        .addColorPicker((cp) => cp.setValue(this.plugin.settings.color).onChange(set("color")));
+        .setName("Cursor Base Color (Dark Theme)")
+        .addColorPicker((cp) => cp.setValue(this.plugin.settings.colorDark).onChange(set("colorDark")));
+        
+      new Setting(containerEl)
+        .setName("Cursor Base Color (Light Theme)")
+        .addColorPicker((cp) => cp.setValue(this.plugin.settings.colorLight).onChange(set("colorLight")));
 
       new Setting(containerEl)
         .setName("Glow Flare Aura")
@@ -863,11 +970,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("Trail Longevity / Fade (ms)")
         .addSlider((s) => s.setLimits(50, 1500, 25).setValue(this.plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
-
-      new Setting(containerEl)
-        .setName("Custom Trail Color Override")
-        .setDesc("Leave empty to fallback to standard active styling coloration.")
-        .addText((txt) => txt.setPlaceholder("#hexcolor").setValue(this.plugin.settings.trailColor).onChange(set("trailColor")));
     }
 
     if (this.plugin.settings.cursorStyle === "Torch") {

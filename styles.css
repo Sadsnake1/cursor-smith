@@ -11,6 +11,16 @@ body.retro-box-cursor-hide-native {
   caret-color: transparent !important;
 }
 
+/* CodeMirror 6 (Obsidian's editor) draws its own cursor as a DOM element
+   rather than relying on the browser's native caret, so caret-color alone
+   doesn't hide it - it has its own independent blink cycle and would
+   otherwise flash through whenever our custom cursor fades out. */
+body.retro-box-cursor-hide-native .cm-cursor,
+body.retro-box-cursor-hide-native .cm-cursor-primary,
+body.retro-box-cursor-hide-native .cm-cursor-secondary {
+  display: none !important;
+}
+
 /* --- Torch Engine Styles --- */
 .torch-cursor-overlay {
   position: fixed;
@@ -26,6 +36,14 @@ body.retro-box-cursor-hide-native {
     rgba(0, 0, 0, var(--torch-darkness)) 100%
   );
   overflow: hidden;
+}
+
+/* Used while a modal (Settings, Command Palette, etc.) is open and "Keep
+   Peripheral Sidebars Illuminated" is on, so the darkening never paints
+   over the modal. visibility is used instead of opacity because the
+   flicker keyframes below already animate opacity on this element. */
+.torch-cursor-overlay.torch-cursor-hidden {
+  visibility: hidden;
 }
 
 .torch-cursor-caret {

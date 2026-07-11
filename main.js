@@ -17,11 +17,12 @@ const DEFAULT_SETTINGS = {
   overlayColor: "#ff963c",
   overlayFlicker: true,
   overlaySpeed: 0.22, // lerp factor: how fast the torch chases its target
-  overlayCaretWidth: 3,
   overlayEmberCaret: true, // gradient flame caret
 
   // --- global caret properties ---
-  caretWidthMode: "character", // "fixed" | "character"
+  // Caret width is no longer a manual mode: Line and Torch always use a
+  // fixed pixel width (caretWidthPx below), Box and Underline always match
+  // the full character envelope automatically.
   caretWidthPx: 2,         
   popLetters: true,        // Enabled globally across all styles
 
@@ -79,8 +80,9 @@ function blinkAlphaAt(nowMs, speed) {
   else if (phase < p2) a = 1 - easeInOutSine((phase - p1) / fade);
   else if (phase < p3) a = 0;
   else a = easeInOutSine((phase - p3) / fade);
-  const minA = 0.05; 
-  return minA + a * (1 - minA);
+  // Fades all the way to 0 (not a residual minimum) so the cursor fully
+  // disappears during the "blinked out" phase.
+  return a;
 }
 
 module.exports = class CursorSmithPlugin extends Plugin {
@@ -100,6 +102,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Torch Overlay Engine State
     this.overlay = null;
     this.caretEl = null;
+    this.modalObserver = null;
+    this.modalOpen = false;
     this.x = this.tx = window.innerWidth / 2;
     this.y = this.ty = window.innerHeight / 2;
     this.lastCaret = null;
@@ -141,17 +145,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   toggle() {
-    const active = !!(this.canvas || this.overlay);
-    active ? this.disable() : this.enable();
-    this.settings.enabled = !(this.canvas || this.overlay);
+    const wasActive = !!(this.canvas || this.overlay);
+    wasActive ? this.disable() : this.enable();
+    // After enable()/disable() run, this.canvas/this.overlay already reflect
+    // the new state, so `enabled` must match it directly (no extra negation).
+    this.settings.enabled = !!(this.canvas || this.overlay);
     this.saveSettings();
   }
 
   applyBodyClasses() {
-    const isCanvasMode = ["Line", "Box", "Underline"].includes(this.settings.cursorStyle);
+    // "Hide Native Caret" is a global setting (per the README: "hides the
+    // default system cursor"), so it should apply whenever ANY engine
+    // (canvas styles or the Torch overlay) is active - not just canvas styles.
+    const engineActive = !!(this.canvas || this.overlay);
     document.body.classList.toggle(
       "retro-box-cursor-hide-native",
-      !!(this.canvas && isCanvasMode && this.settings.hideNativeCaret)
+      !!(engineActive && this.settings.hideNativeCaret)
     );
   }
 
@@ -163,7 +172,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     b.style.setProperty("--torch-darkness", String(s.overlayDarkness));
     b.style.setProperty("--torch-intensity", String(s.overlayIntensity));
     b.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
-    b.style.setProperty("--torch-caret-width", s.overlayCaretWidth + "px");
+    b.style.setProperty("--torch-caret-width", s.caretWidthPx + "px");
     b.classList.toggle("torch-no-flicker", !s.overlayFlicker);
     b.classList.toggle("torch-ember-caret", s.overlayEmberCaret);
   }
@@ -198,6 +207,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.overlay?.remove();
     this.overlay = null;
     this.caretEl = null;
+    this.modalObserver?.disconnect();
+    this.modalObserver = null;
+    this.modalOpen = false;
   }
 
   enableCanvasEngine() {
@@ -252,8 +264,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const lineEl = view.contentDOM.querySelector(".cm-line");
       const textColor = (lineEl ? getComputedStyle(lineEl).color : null) || contentStyle.color || "#ffffff";
 
+      // Line and Torch use a fixed pixel width; Box and Underline always
+      // match the full character envelope, regardless of caretWidthPx.
       let finalWidth = charWidth;
-      if (this.settings.caretWidthMode === "fixed") {
+      if (this.settings.cursorStyle === "Line" || this.settings.cursorStyle === "Torch") {
         finalWidth = this.settings.caretWidthPx;
       }
 
@@ -429,35 +443,97 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const ctx = this.ctx;
     if (!ctx) return;
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    
+
     this.drawLettersParticles();
 
-    if (this.settings.cursorStyle === "Line") this.drawGenericCaret(false);
-    else if (this.settings.cursorStyle === "Box") this.drawRetroBox();
-    else if (this.settings.cursorStyle === "Underline") this.drawGenericCaret(true);
+    switch (this.settings.cursorStyle) {
+      case "Line":
+        this.drawGenericCaret(false);
+        break;
+      case "Underline":
+        this.drawGenericCaret(true);
+        break;
+      case "Box":
+        this.drawRetroBox();
+        break;
+    }
+  }
+
+  // Caret width is resolved once by caretCoords() into `active.w` (fixed
+  // pixel width for Line/Torch, character envelope for Box/Underline), so
+  // callers can just read it directly instead of re-checking the style.
+  renderWidth(active) {
+    return active.w;
+  }
+
+  // --- Shared trail / smear helpers, reused by every canvas-engine style ---
+
+  // Runs `cb(point, alpha)` for each still-visible trail point, oldest first,
+  // and prunes points that have fully faded out.
+  forEachTrailPoint(cb) {
+    const now = performance.now();
+    const fade = Math.max(50, this.settings.trailFadeMs);
+    this.trail = this.trail.filter((p) => now - p.t < fade);
+    for (const p of this.trail) {
+      const age = (now - p.t) / fade;
+      const alpha = Math.max(0, 1 - age) * 0.55;
+      if (alpha > 0.02) cb(p, alpha);
+    }
+  }
+
+  // Runs `cb(smear)` with the current in-flight motion-blur smear, if the
+  // "Enable Smear Stretching" setting is on and a smear is currently active.
+  withSmear(cb) {
+    if (!this.settings.smear) return;
+    const smear = this.computeSmear(performance.now());
+    if (smear && smear.alpha > 0.02) cb(smear);
   }
 
   drawGenericCaret(isUnderline = false) {
     const ctx = this.ctx;
+    const settings = this.settings;
     const active = this.lastActive;
-    if (!active) return;
     const now = performance.now();
+    const trailColor = settings.trailColor || settings.color;
+
+    // Fading trail of recent positions
+    this.forEachTrailPoint((p, alpha) => {
+      ctx.fillStyle = hexToRgba(trailColor, alpha);
+      if (isUnderline) {
+        const uThickness = Math.max(2, Math.round(p.h * 0.15));
+        ctx.fillRect(p.x, p.y + p.h - uThickness, p.w, uThickness);
+      } else {
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+    });
+
+    // Directional motion-blur smear between the last two positions
+    this.withSmear((smear) => {
+      const thick = isUnderline ? Math.max(2, smear.thick * 0.25) : smear.thick;
+      ctx.save();
+      ctx.translate(smear.leadX, smear.leadY);
+      ctx.rotate(smear.angle);
+      ctx.fillStyle = hexToRgba(trailColor, smear.alpha);
+      ctx.fillRect(-smear.len, -thick / 2, smear.len, thick);
+      ctx.restore();
+    });
+
+    if (!active) return;
     const blinkAlpha = this.blinkAlpha(now);
-    const color = this.settings.color || active.textColor || "#ffffff";
-    
+    const color = settings.color || active.textColor || "#ffffff";
+
     ctx.save();
-    if (this.settings.glow) {
+    if (settings.glow) {
       ctx.shadowColor = color;
       ctx.shadowBlur = 8 * blinkAlpha;
     }
     ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha);
-    
+
     if (isUnderline) {
       const uThickness = Math.max(2, Math.round(active.h * 0.15));
       ctx.fillRect(active.x, active.top + active.h - uThickness, active.actualCharWidth, uThickness);
     } else {
-      const renderW = this.settings.caretWidthMode === "character" ? active.actualCharWidth : active.w;
-      ctx.fillRect(active.x, active.top, renderW, active.h);
+      ctx.fillRect(active.x, active.top, this.renderWidth(active), active.h);
     }
     ctx.restore();
   }
@@ -496,34 +572,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const ctx = this.ctx;
     const settings = this.settings;
     const now = performance.now();
-    const fade = Math.max(50, settings.trailFadeMs);
     const color = settings.trailColor || settings.color;
 
-    this.trail = this.trail.filter((p) => now - p.t < fade);
-    for (const p of this.trail) {
-      const age = (now - p.t) / fade; 
-      const alpha = Math.max(0, 1 - age) * 0.55;
-      if (alpha <= 0.02) continue;
+    this.forEachTrailPoint((p, alpha) => {
       ctx.fillStyle = hexToRgba(color, alpha);
       ctx.fillRect(p.x, p.y, p.w, p.h);
-    }
+    });
 
-    if (settings.smear) {
-      const smear = this.computeSmear(now);
-      if (smear && smear.alpha > 0.02) {
-        ctx.save();
-        ctx.translate(smear.leadX, smear.leadY);
-        ctx.rotate(smear.angle);
-        ctx.fillStyle = hexToRgba(color, smear.alpha);
-        ctx.fillRect(-smear.len, -smear.thick / 2, smear.len, smear.thick);
-        ctx.restore();
-      }
-    }
+    this.withSmear((smear) => {
+      ctx.save();
+      ctx.translate(smear.leadX, smear.leadY);
+      ctx.rotate(smear.angle);
+      ctx.fillStyle = hexToRgba(color, smear.alpha);
+      ctx.fillRect(-smear.len, -smear.thick / 2, smear.len, smear.thick);
+      ctx.restore();
+    });
 
     const active = this.lastActive;
     if (active) {
       const blinkAlpha = this.blinkAlpha(now);
-      const renderW = settings.caretWidthMode === "character" ? active.actualCharWidth : active.w;
+      const renderW = this.renderWidth(active);
 
       ctx.save();
       if (settings.glow) {
@@ -551,10 +619,23 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // --- Torch Overlay Variant (Ponytail System Engine) ---
   enableTorchOverlay() {
     this.applyOverlayStyle();
+    this.applyBodyClasses();
     document.body.classList.add("torch-cursor-active");
     this.overlay = document.body.createDiv({ cls: "torch-cursor-overlay" });
     this.overlay.createDiv({ cls: "torch-cursor-glow" });
     this.caretEl = this.overlay.createDiv({ cls: "torch-cursor-caret" });
+
+    // Obsidian modals (Settings, Command Palette, Quick Switcher, etc.) are
+    // appended directly to <body> as `.modal-container` elements. The torch
+    // overlay's z-index sits above them, so without this it would darken
+    // right over the top of any open modal. We watch for modals opening or
+    // closing and, when "Keep Peripheral Sidebars Illuminated" is on, hide
+    // the overlay entirely for as long as one is open.
+    this.modalOpen = !!document.body.querySelector(".modal-container");
+    this.modalObserver = new MutationObserver(() => {
+      this.modalOpen = !!document.body.querySelector(".modal-container");
+    });
+    this.modalObserver.observe(document.body, { childList: true });
 
     const tick = () => {
       if (!this.overlay) return;
@@ -567,6 +648,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.overlay.style.clipPath = this.settings.overlaySpareSidebars
         ? this.editorClip()
         : "";
+
+      const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
+      this.overlay.classList.toggle("torch-cursor-hidden", hideForModal);
 
       const c = this.lastCaret;
       if (c && c.focused) {
@@ -640,8 +724,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.enabled)
           .onChange(async (value) => {
             this.plugin.settings.enabled = value;
-            await this.plugin.saveSettings();
             value ? this.plugin.enable() : this.plugin.disable();
+            await this.plugin.saveSettings();
           })
       );
 
@@ -670,26 +754,21 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .setDesc("Spawns exploding letter particles on type modification input across all cursor models.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.popLetters).onChange(set("popLetters")));
 
-    new Setting(containerEl)
-      .setName("Caret Width Mode")
-      .setDesc("Toggle between fixed pixel dimensions or matching character layout bounding envelopes.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("fixed", "Fixed Pixel Dimensions")
-          .addOption("character", "Match Character Envelope Width")
-          .setValue(this.plugin.settings.caretWidthMode)
-          .onChange(set("caretWidthMode"))
-      );
-
-    new Setting(containerEl)
-      .setName("Fixed Caret Width (px)")
-      .addSlider((slider) =>
-        slider
-          .setLimits(1, 10, 1)
-          .setValue(this.plugin.settings.caretWidthPx)
-          .setDynamicTooltip()
-          .onChange(set("caretWidthPx"))
-      );
+    // Caret width is only ever a manual choice for Line and Torch - Box and
+    // Underline always match the character envelope automatically, so this
+    // slider would have no effect for them and is hidden instead.
+    if (["Line", "Torch"].includes(this.plugin.settings.cursorStyle)) {
+      new Setting(containerEl)
+        .setName("Caret Pixel Width")
+        .setDesc("Fixed pixel width for the Line and Torch caret. Box and Underline always match the full character width.")
+        .addSlider((slider) =>
+          slider
+            .setLimits(1, 12, 1)
+            .setValue(this.plugin.settings.caretWidthPx)
+            .setDynamicTooltip()
+            .onChange(set("caretWidthPx"))
+        );
+    }
 
     // --- CANVAS ENGINES OPTION SECTION (Box, Line, Underline) ---
     if (this.plugin.settings.cursorStyle !== "Torch") {
@@ -792,10 +871,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .setName("Torch Pursuit Speed (Lerp)")
         .setDesc("Chase latency speed scaling multiplier. Lower figures build abstract floaty dynamics.")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
-
-      new Setting(containerEl)
-        .setName("Torch Overlay Custom Caret Width")
-        .addSlider((s) => s.setLimits(1, 12, 1).setValue(this.plugin.settings.overlayCaretWidth).setDynamicTooltip().onChange(set("overlayCaretWidth")));
 
       new Setting(containerEl)
         .setName("Ember Gradient Caret")

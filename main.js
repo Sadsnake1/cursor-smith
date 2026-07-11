@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = {
   caretWidthPx: 2,         
   popLetters: true,        
   flameTrail: true,        
+  cursorOpacity: 1,
 
   // --- shared canvas engine settings ---
   trailLength: 10, 
@@ -591,9 +592,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const active = this.animActive;
     const now = performance.now();
     const trailColor = this.getActiveColor();
+    const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
 
     this.forEachTrailPoint((p, alpha) => {
-      ctx.fillStyle = hexToRgba(trailColor, alpha);
+      ctx.fillStyle = hexToRgba(trailColor, alpha * opacity);
       if (isUnderline) {
         const uThickness = Math.max(2, Math.round(p.h * 0.15));
         ctx.fillRect(p.x, p.y + p.h - uThickness, p.w, uThickness);
@@ -607,7 +609,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.save();
       ctx.translate(smear.leadX, smear.leadY);
       ctx.rotate(smear.angle);
-      ctx.fillStyle = hexToRgba(trailColor, smear.alpha);
+      ctx.fillStyle = hexToRgba(trailColor, smear.alpha * opacity);
       ctx.fillRect(-smear.len, -thick / 2, smear.len, thick);
       ctx.restore();
     });
@@ -621,7 +623,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.shadowColor = color;
       ctx.shadowBlur = 8 * blinkAlpha;
     }
-    ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha);
+    ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha * opacity);
 
     if (isUnderline) {
       const uThickness = Math.max(2, Math.round(active.h * 0.15));
@@ -691,9 +693,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const settings = this.settings;
     const now = performance.now();
     const color = this.getActiveColor();
+    const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
 
     this.forEachTrailPoint((p, alpha) => {
-      ctx.fillStyle = hexToRgba(color, alpha);
+      ctx.fillStyle = hexToRgba(color, alpha * opacity);
       ctx.fillRect(p.x, p.y, p.w, p.h);
     });
 
@@ -701,7 +704,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.save();
       ctx.translate(smear.leadX, smear.leadY);
       ctx.rotate(smear.angle);
-      ctx.fillStyle = hexToRgba(color, smear.alpha);
+      ctx.fillStyle = hexToRgba(color, smear.alpha * opacity);
       ctx.fillRect(-smear.len, -smear.thick / 2, smear.len, smear.thick);
       ctx.restore();
     });
@@ -716,7 +719,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         ctx.shadowColor = color;
         ctx.shadowBlur = 10 * blinkAlpha;
       }
-      ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha);
+      ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha * opacity);
       ctx.fillRect(active.x, active.top, renderW, active.h);
       ctx.restore();
 
@@ -825,8 +828,9 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
 
+    // ================= Core Configuration =================
     containerEl.createEl("h3", { text: "Core Configuration" });
-    
+
     new Setting(containerEl)
       .setName("Enable Plugin")
       .addToggle((toggle) =>
@@ -856,22 +860,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
           })
       );
 
-    containerEl.createEl("h3", { text: "Global Caret Properties" });
-
-    new Setting(containerEl)
-      .setName("Pop Letters Cascade Effect")
-      .setDesc("Spawns exploding letter particles on type modification input across all cursor models.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.popLetters).onChange(set("popLetters")));
-
-    new Setting(containerEl)
-      .setName("Pixelated Ghosting Trail")
-      .setDesc("Spawns horizontal pixelated ghost particles matching the cursor color with slight variance when moving.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(set("flameTrail")));
+    // ================= Appearance =================
+    containerEl.createEl("h3", { text: "Appearance" });
 
     if (["Line", "Torch"].includes(this.plugin.settings.cursorStyle)) {
       new Setting(containerEl)
-        .setName("Caret Pixel Width")
-        .setDesc("Fixed pixel width for the Line and Torch caret. Box and Underline always match the full character width.")
+        .setName("Cursor Thickness")
+        .setDesc("How thick the Line/Torch cursor is, in pixels. Box and Underline always match the letter width.")
         .addSlider((slider) =>
           slider
             .setLimits(1, 12, 1)
@@ -882,102 +877,125 @@ class CursorSmithSettingTab extends PluginSettingTab {
     }
 
     if (this.plugin.settings.cursorStyle !== "Torch") {
-      // --- Smooth Cursor Global Category ---
-      containerEl.createEl("h3", { text: "Smooth Cursor Interpolation" });
-
       new Setting(containerEl)
-        .setName("Enable Smooth Cursor")
-        .setDesc("Applies continuous physics and interpolation to the cursor movement.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothEnabled).onChange(set("smoothEnabled")));
-
-      new Setting(containerEl)
-        .setName("Stop Blinking While Moving")
-        .setDesc("Keeps the cursor solidly illuminated while typing or moving.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
-
-      new Setting(containerEl)
-        .setName("Animation Smoothness (5% - 30%)")
-        .setDesc("Controls how fluid the animation is. Higher values feel heavier or drag slightly behind.")
-        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(this.plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
-
-      new Setting(containerEl)
-        .setName("Catch-Up Speed (30% - 80%)")
-        .setDesc("How quickly the cursor bounds toward the text caret under normal conditions.")
-        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(this.plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
-
-      new Setting(containerEl)
-        .setName("Max Catch-Up Speed (50% - 100%)")
-        .setDesc("Sets the maximum speed limit for catching up during fast typing.")
-        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(this.plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-
-      new Setting(containerEl)
-        .setName("Adaptive Speed")
-        .setDesc("Automatically boosts the speed up to your Max Catch-Up Speed based on your live typing frequency.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
-
-      // --- Canvas Engine Customizations ---
-      containerEl.createEl("h3", { text: "Canvas Engine Customizations" });
-
-      new Setting(containerEl)
-        .setName("Cursor Base Color (Dark Theme)")
+        .setName("Cursor Color (Dark Theme)")
         .addColorPicker((cp) => cp.setValue(this.plugin.settings.colorDark).onChange(set("colorDark")));
-        
+
       new Setting(containerEl)
-        .setName("Cursor Base Color (Light Theme)")
+        .setName("Cursor Color (Light Theme)")
         .addColorPicker((cp) => cp.setValue(this.plugin.settings.colorLight).onChange(set("colorLight")));
 
       new Setting(containerEl)
-        .setName("Glow Flare Aura")
-        .setDesc("Enables soft shadow blur luminescence around the caret.")
+        .setName("Glow")
+        .setDesc("Adds a soft glow around the cursor.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.glow).onChange(set("glow")));
 
       new Setting(containerEl)
-        .setName("Hide Native Caret")
-        .setDesc("Hides the default browser system caret when custom models are active.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
+        .setName("Cursor Opacity")
+        .setDesc("How see-through the cursor is.")
+        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(this.plugin.settings.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
+
+      if (this.plugin.settings.cursorStyle === "Box") {
+        new Setting(containerEl)
+          .setName("Show Letter Inside Cursor")
+          .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
+          .addToggle((toggle) => toggle.setValue(this.plugin.settings.showChar).onChange(set("showChar")));
+      }
+
+      // ================= Blinking =================
+      containerEl.createEl("h3", { text: "Blinking" });
 
       new Setting(containerEl)
-        .setName("Display Character Inside Block")
-        .setDesc("Inverts and displays text characters directly within the block envelope.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.showChar).onChange(set("showChar")));
-
-      new Setting(containerEl)
-        .setName("Caret Pulse/Blink Speed")
-        .setDesc("Rate of standard breathing illumination cycle. Set to 0 to keep completely static.")
+        .setName("Blink Speed")
+        .setDesc("How fast the cursor blinks. Set to 0 to keep it always on.")
         .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(this.plugin.settings.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
 
       new Setting(containerEl)
-        .setName("Movement Propagation Delay (ms)")
-        .setDesc("Artificially delay custom cursor trail pursuit velocity.")
-        .addSlider((s) => s.setLimits(0, 500, 10).setValue(this.plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
-
-      containerEl.createEl("h4", { text: "Trails & Motion Smear" });
+        .setName("Hide Real Cursor")
+        .setDesc("Hides your browser's normal text cursor so only the custom one shows.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
 
       new Setting(containerEl)
-        .setName("Enable Smear Stretching")
-        .setDesc("Stretches the block morphologically between transition updates.")
+        .setName("Don't Blink While Typing")
+        .setDesc("Keeps the cursor fully lit while you type or move it, instead of blinking.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
+
+      // ================= Smooth Cursor =================
+      containerEl.createEl("h3", { text: "Smooth Movement" });
+
+      new Setting(containerEl)
+        .setName("Smooth Movement")
+        .setDesc("Makes the cursor glide to its new spot instead of jumping there instantly.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothEnabled).onChange(set("smoothEnabled")));
+
+      new Setting(containerEl)
+        .setName("Glide Amount")
+        .setDesc("How much the cursor eases into movement. Higher feels heavier and lags a bit more.")
+        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(this.plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
+
+      new Setting(containerEl)
+        .setName("Catch-Up Speed")
+        .setDesc("How fast the cursor catches up to where you're typing.")
+        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(this.plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
+
+      new Setting(containerEl)
+        .setName("Max Catch-Up Speed")
+        .setDesc("The fastest the cursor is allowed to catch up when you type quickly.")
+        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(this.plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+
+      new Setting(containerEl)
+        .setName("Speed Up When Typing Fast")
+        .setDesc("Automatically raises the catch-up speed the faster you type, up to the max above.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
+
+      new Setting(containerEl)
+        .setName("Movement Delay")
+        .setDesc("Adds a short delay, in milliseconds, before the cursor starts following you.")
+        .addSlider((s) => s.setLimits(0, 500, 10).setValue(this.plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
+
+      // ================= After Effects =================
+      containerEl.createEl("h3", { text: "After Effects" });
+
+      new Setting(containerEl)
+        .setName("Popping Letters")
+        .setDesc("Makes letters pop and fly off whenever you type.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.popLetters).onChange(set("popLetters")));
+
+      new Setting(containerEl)
+        .setName("Pixel Trail")
+        .setDesc("Leaves a fading trail of small blocks behind the cursor as it moves.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(set("flameTrail")));
+
+      new Setting(containerEl)
+        .setName("Motion Smear")
+        .setDesc("Stretches the cursor in the direction it's moving, like a smear.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.smear).onChange(set("smear")));
 
       new Setting(containerEl)
-        .setName("Smear Dynamic Duration (ms)")
+        .setName("Smear Duration")
+        .setDesc("How long the smear effect lasts, in milliseconds.")
         .addSlider((s) => s.setLimits(20, 300, 5).setValue(this.plugin.settings.smearDurationMs).setDynamicTooltip().onChange(set("smearDurationMs")));
 
       new Setting(containerEl)
-        .setName("Trail Echo History Size")
-        .setDesc("Number of historic block frames recorded.")
+        .setName("Trail Length")
+        .setDesc("How many past positions the trail remembers.")
         .addSlider((s) => s.setLimits(0, 30, 1).setValue(this.plugin.settings.trailLength).setDynamicTooltip().onChange(set("trailLength")));
 
       new Setting(containerEl)
-        .setName("Trail Longevity / Fade (ms)")
+        .setName("Trail Fade Time")
+        .setDesc("How long it takes for the trail to fully fade away, in milliseconds.")
         .addSlider((s) => s.setLimits(50, 1500, 25).setValue(this.plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
     }
 
+    // ================= Torch =================
     if (this.plugin.settings.cursorStyle === "Torch") {
-      containerEl.createEl("h3", { text: "Torch Spotlight Engine Settings" });
+      containerEl.createEl("h3", { text: "Torch" });
+
+      containerEl.createEl("h4", { text: "Spotlight" });
 
       new Setting(containerEl)
-        .setName("Spotlight Follow Mode")
-        .setDesc("Decides what the main light tracking source targets.")
+        .setName("Follow")
+        .setDesc("What the light follows: your text cursor, your mouse, or both automatically.")
         .addDropdown((d) =>
           d
             .addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
@@ -986,43 +1004,47 @@ class CursorSmithSettingTab extends PluginSettingTab {
         );
 
       new Setting(containerEl)
-        .setName("Torch Light Radius")
-        .setDesc("Size of the illuminated workspace region in pixels.")
+        .setName("Light Size")
+        .setDesc("How big the lit-up circle is, in pixels.")
         .addSlider((s) => s.setLimits(100, 800, 10).setValue(this.plugin.settings.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
 
       new Setting(containerEl)
-        .setName("Ambient Environment Darkness")
-        .setDesc("Opacity level outside the torch radius envelope.")
-        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(this.plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
-
-      new Setting(containerEl)
-        .setName("Glow Center Intensity")
-        .setDesc("Strength of the centralized ambient glow diffusion.")
-        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(this.plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
-
-      new Setting(containerEl)
-        .setName("Spotlight Warm Color")
+        .setName("Light Color")
         .addColorPicker((cp) => cp.setValue(this.plugin.settings.overlayColor).onChange(set("overlayColor")));
 
       new Setting(containerEl)
-        .setName("Candle Flicker Environment")
-        .setDesc("Simulates subtle structural flicker offsets.")
+        .setName("Follow Speed")
+        .setDesc("How quickly the light chases its target. Lower is slower and floatier.")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
+
+      containerEl.createEl("h4", { text: "Environment" });
+
+      new Setting(containerEl)
+        .setName("Darkness")
+        .setDesc("How dark the area outside the light is.")
+        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(this.plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
+
+      new Setting(containerEl)
+        .setName("Glow Strength")
+        .setDesc("How bright the light is at its center.")
+        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(this.plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
+
+      new Setting(containerEl)
+        .setName("Flicker")
+        .setDesc("Adds a subtle candle-like flicker to the light.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlayFlicker).onChange(set("overlayFlicker")));
 
       new Setting(containerEl)
-        .setName("Torch Pursuit Speed (Lerp)")
-        .setDesc("Chase latency speed scaling multiplier. Lower figures build abstract floaty dynamics.")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
-
-      new Setting(containerEl)
-        .setName("Ember Gradient Caret")
-        .setDesc("Transforms the plain cursor overlay column into a multi-colored plasma ember.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlayEmberCaret).onChange(set("overlayEmberCaret")));
-
-      new Setting(containerEl)
-        .setName("Keep Peripheral Sidebars Illuminated")
-        .setDesc("Restricts the dark clipping path area strictly to active file workspaces.")
+        .setName("Keep Sidebars Lit")
+        .setDesc("Keeps the sidebars visible instead of darkening them too.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
+
+      containerEl.createEl("h4", { text: "Caret" });
+
+      new Setting(containerEl)
+        .setName("Ember Cursor")
+        .setDesc("Gives the cursor a glowing orange ember look instead of a plain color.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlayEmberCaret).onChange(set("overlayEmberCaret")));
     }
   }
 }

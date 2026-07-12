@@ -2,7 +2,7 @@
 
 Most people never give their cursor a second thought, but I decided to change that. Cursor-Smith is more than just a tweaky-toy, it is the *MOST* advanced cursor engine ever created(maybe).
 
-It is designed for writers, users who need high-visibility accessibility options, and anyone who loves to customize their workspace. 
+It is designed for writers, users who need high-visibility accessibility options, and anyone who loves to customize theengs.
 
 Forge your cursor of choice!
 

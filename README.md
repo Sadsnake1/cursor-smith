@@ -62,7 +62,7 @@ Found a bug or have an idea for a new effect? Open an issue or use the thumbs-do
 
 ## Pricing
 
-Free for everyone! If you'd like to buy me a coffee to help fuel the next round of updates, I certainly won't say no.
+Free for everyone! If you'd like to buy me a coffee to help "fuel" the next round of updates and plugins, I certainly won't say no. Cheers!
 
 <div align="center">
   <a href="https://www.buymeacoffee.com/sadsnake1" target="_blank">

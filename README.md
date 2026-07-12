@@ -8,7 +8,9 @@ So,do you want a smooth blinking, smooth moving, relaxing caret? DONE. Want a je
 
 ## Showcase
 
-https://github.com/user-attachments/assets/31797653-d9f5-4f11-ad3b-bf54c1a76924
+
+
+https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
 
 
 ## Features

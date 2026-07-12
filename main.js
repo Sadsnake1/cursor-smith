@@ -5,8 +5,8 @@ const DEFAULT_SETTINGS = {
   cursorStyle: "Box", // "Line" | "Box" | "Underline" | "Torch"
 
   // --- appearance color controls ---
-  colorDark: "#39ff14", 
-  colorLight: "#333333",
+  colorDark: "#b771d1", 
+  colorLight: "#4574e3",
   glow: true, 
 
   // --- torch overlay style (ponytail DOM/CSS variant) ---
@@ -25,20 +25,24 @@ const DEFAULT_SETTINGS = {
   popLetters: true,        
   flameTrail: true,        
   cursorOpacity: 1,
+  energyEffect: false,
+  energySpeed: 1,
 
   // --- shared canvas engine settings ---
   trailLength: 10, 
   trailFadeMs: 450, 
-  blinkSpeed: 1.2,       
+  blinkSpeed: 0,       
   blinkOnOffBalance: 0.5,
   hideNativeCaret: true, 
   showChar: true, 
   moveDelayMs: 0,        
   smear: true,           
-  smearDurationMs: 80,   
+  smearStiffness: 0.6,
+  smearTrailingStiffness: 0.6,
+  smearDamping: 0.5,
 
   // --- smooth cursor global category ---
-  smoothEnabled: false,
+  smoothEnabled: true,
   smoothStopBlinking: true, 
   smoothness: 0.15,          // 5-30% range (0.05 - 0.30)
   catchUpSpeed: 0.55,        // 30-80% range (0.30 - 0.80)
@@ -74,6 +78,30 @@ function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
 
+function hexToHsl(hex) {
+  let h = (hex || "#39ff14").replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const int = parseInt(h, 16) || 0;
+  const r = ((int >> 16) & 255) / 255;
+  const g = ((int >> 8) & 255) / 255;
+  const b = (int & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let hue = 0, sat = 0;
+  const light = (max + min) / 2;
+  const d = max - min;
+  if (d !== 0) {
+    sat = d / (1 - Math.abs(2 * light - 1));
+    switch (max) {
+      case r: hue = ((g - b) / d) % 6; break;
+      case g: hue = (b - r) / d + 2; break;
+      default: hue = (r - g) / d + 4; break;
+    }
+    hue *= 60;
+    if (hue < 0) hue += 360;
+  }
+  return [hue, sat * 100, light * 100];
+}
+
 function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5) {
   if (speed <= 0) return 1;
   const period = 2500 / speed; 
@@ -107,7 +135,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.flamePixels = [];
     this.lastActive = null; 
     this.pending = null; 
-    this.smear = null; 
+    this.smearQuad = null;
+    this.smearCenterPrev = null;
+    this.smearQuadLastT = 0;
 
     // Smooth Cursor State
     this.animActive = null;
@@ -213,7 +243,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.canvas = null;
     this.ctx = null;
     this.pending = null;
-    this.smear = null;
+    this.smearQuad = null;
+    this.smearCenterPrev = null;
+    this.smearQuadLastT = 0;
     this.particles = [];
     this.flamePixels = [];
     this.animActive = null;
@@ -241,7 +273,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.flamePixels = [];
     this.lastActive = null;
     this.pending = null;
-    this.smear = null;
+    this.smearQuad = null;
+    this.smearCenterPrev = null;
+    this.smearQuadLastT = 0;
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
@@ -250,6 +284,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (!this.canvas) return;
       this.updateActivePoint();
       this.updateSmoothCursor();
+      this.updateSmearQuad();
       this.draw();
       this.raf = requestAnimationFrame(tick);
     };
@@ -421,8 +456,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   commitMove(caret) {
     this.pushTrail(this.lastActive);
-    if (this.settings.smear) this.startSmear(this.lastActive, caret);
-    
     if (this.lastActive) {
       this.spawnFlamePixels(this.lastActive);
     }
@@ -432,60 +465,106 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.lastMoveTime = performance.now(); 
   }
 
-  startSmear(from, to) {
-    this.smear = {
-      fromX: from.x,
-      fromY: from.top,
-      fromW: from.w,
-      fromH: from.h,
-      toX: to.x,
-      toY: to.top,
-      toW: to.w,
-      toH: to.h,
-      start: performance.now(),
+  // The rectangle the visible cursor shape currently occupies, per style.
+  // This is what the jelly quad springs toward.
+  getActiveRect() {
+    const active = this.animActive;
+    if (!active) return null;
+    if (this.settings.cursorStyle === "Underline") {
+      const uThickness = Math.max(2, Math.round(active.h * 0.15));
+      return { x: active.x, y: active.top + active.h - uThickness, w: active.actualCharWidth, h: uThickness };
+    }
+    return { x: active.x, y: active.top, w: this.renderWidth(active), h: active.h };
+  }
+
+  // Springs each of the cursor's 4 corners independently toward its target
+  // corner. Corners on the leading edge of travel use "stiffness" (catch up
+  // fast); corners on the trailing edge use "trailing stiffness" (lag
+  // behind), which is what stretches/squashes the shape into a jelly-like
+  // wobble. "Damping" controls how much it overshoots before settling.
+  updateSmearQuad() {
+    const now = performance.now();
+    if (!this.smearQuadLastT) this.smearQuadLastT = now;
+    let dt = (now - this.smearQuadLastT) / 1000;
+    this.smearQuadLastT = now;
+    dt = Math.min(dt, 0.05);
+
+    const settings = this.settings;
+    const rect = settings.smear && settings.cursorStyle !== "Torch" ? this.getActiveRect() : null;
+
+    if (!rect) {
+      this.smearQuad = null;
+      this.smearCenterPrev = null;
+      return;
+    }
+
+    const targets = {
+      tl: { x: rect.x, y: rect.y },
+      tr: { x: rect.x + rect.w, y: rect.y },
+      br: { x: rect.x + rect.w, y: rect.y + rect.h },
+      bl: { x: rect.x, y: rect.y + rect.h },
     };
+
+    if (!this.smearQuad) {
+      // Snap in on first appearance instead of springing in from nowhere.
+      this.smearQuad = {};
+      for (const key in targets) {
+        this.smearQuad[key] = { x: targets[key].x, y: targets[key].y, vx: 0, vy: 0 };
+      }
+      this.smearCenterPrev = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+      return;
+    }
+
+    const center = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+    let dirX = 0, dirY = 0;
+    if (this.smearCenterPrev) {
+      dirX = center.x - this.smearCenterPrev.x;
+      dirY = center.y - this.smearCenterPrev.y;
+    }
+    const dirLen = Math.hypot(dirX, dirY);
+    if (dirLen > 0.01) {
+      dirX /= dirLen;
+      dirY /= dirLen;
+    }
+    this.smearCenterPrev = center;
+
+    // Map the 0..1 sliders to spring frequencies/damping ratios.
+    const freqLead = 2 + Math.max(0, Math.min(1, settings.smearStiffness)) * 38;
+    const freqTrail = 2 + Math.max(0, Math.min(1, settings.smearTrailingStiffness)) * 38;
+    const dampingRatio = 0.15 + Math.max(0, Math.min(1, settings.smearDamping)) * 1.15;
+
+    for (const key in targets) {
+      const c = this.smearQuad[key];
+      const t = targets[key];
+
+      const offX = t.x - center.x;
+      const offY = t.y - center.y;
+      const offLen = Math.hypot(offX, offY) || 1;
+      const align = dirLen > 0.01 ? (offX / offLen) * dirX + (offY / offLen) * dirY : 0;
+      const freq = align >= 0 ? freqLead : freqTrail;
+
+      const k = freq * freq;
+      const damp = 2 * dampingRatio * freq;
+      const ax = k * (t.x - c.x) - damp * c.vx;
+      const ay = k * (t.y - c.y) - damp * c.vy;
+      c.vx += ax * dt;
+      c.vy += ay * dt;
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+
+      if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.vx) || !isFinite(c.vy)) {
+        c.x = t.x;
+        c.y = t.y;
+        c.vx = 0;
+        c.vy = 0;
+      }
+    }
   }
 
   pushTrail(point) {
     this.trail.push({ x: point.x, y: point.top, w: point.w, h: point.h, t: performance.now() });
     const max = Math.max(0, Math.round(this.settings.trailLength));
     while (this.trail.length > max) this.trail.shift();
-  }
-
-  computeSmear(now) {
-    if (!this.smear) return null;
-    const dur = Math.max(20, this.settings.smearDurationMs);
-    const t = (now - this.smear.start) / dur;
-    if (t >= 1) {
-      this.smear = null;
-      return null;
-    }
-    
-    const ease = 1 - Math.pow(1 - t, 3); 
-
-    const s = this.smear;
-    const fromCX = s.fromX + s.fromW / 2;
-    const fromCY = s.fromY + s.fromH / 2;
-    const toCX = s.toX + s.toW / 2;
-    const toCY = s.toY + s.toH / 2;
-    const dx = toCX - fromCX;
-    const dy = toCY - fromCY;
-    const dist = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx);
-
-    const thickStart = Math.min(s.fromH, s.toH) * 0.8;
-    const thickEnd = s.toH;
-    const thick = thickStart + (thickEnd - thickStart) * ease;
-    const len = (dist + s.toW) + (s.toW - (dist + s.toW)) * ease;
-
-    return { 
-      leadX: toCX, 
-      leadY: toCY, 
-      len: len, 
-      thick: thick, 
-      angle: angle, 
-      alpha: (1 - ease) * 0.7 
-    };
   }
 
   spawnLetterParticle(char, anchor) {
@@ -584,10 +663,46 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  withSmear(cb) {
-    if (!this.settings.smear) return;
-    const smear = this.computeSmear(performance.now());
-    if (smear && smear.alpha > 0.02) cb(smear);
+  // Fills either the live jelly quad (if Motion Smear is on and has settled
+  // state) or a plain rectangle, using whatever fillStyle is already set.
+  fillCursorShape(ctx, rx, ry, rw, rh) {
+    const q = this.settings.smear ? this.smearQuad : null;
+    if (q) {
+      ctx.beginPath();
+      ctx.moveTo(q.tl.x, q.tl.y);
+      ctx.lineTo(q.tr.x, q.tr.y);
+      ctx.lineTo(q.br.x, q.br.y);
+      ctx.lineTo(q.bl.x, q.bl.y);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillRect(rx, ry, rw, rh);
+    }
+  }
+
+  // A slowly rotating, pulsing gradient built from the cursor's own color.
+  // Cheap (one gradient per frame, no per-pixel loop) so it works fine on
+  // the thin Line/Underline shapes as well as the Box.
+  createEnergyGradient(x, y, w, h, baseColor, alpha) {
+    const ctx = this.ctx;
+    const speed = this.settings.energySpeed ?? 1;
+    const t = (performance.now() / 1000) * speed;
+    const [hue, sat, light] = hexToHsl(baseColor);
+
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const reach = Math.max(w, h) * 0.75 + 4;
+    const angle = t * 0.9;
+    const dx = Math.cos(angle) * reach;
+    const dy = Math.sin(angle) * reach;
+
+    const grad = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+    const mid = 0.5 + Math.sin(t * 1.6) * 0.25;
+    const s = Math.min(100, sat + 15);
+    grad.addColorStop(0, `hsla(${hue - 30}, ${s}%, ${Math.max(10, light - 20)}%, ${alpha})`);
+    grad.addColorStop(Math.max(0, Math.min(1, mid)), `hsla(${hue}, ${s}%, ${Math.min(90, light + 25)}%, ${alpha})`);
+    grad.addColorStop(1, `hsla(${hue + 30}, ${s}%, ${Math.max(10, light - 20)}%, ${alpha})`);
+    return grad;
   }
 
   drawGenericCaret(isUnderline = false) {
@@ -608,16 +723,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       }
     });
 
-    this.withSmear((smear) => {
-      const thick = isUnderline ? Math.max(2, smear.thick * 0.25) : smear.thick;
-      ctx.save();
-      ctx.translate(smear.leadX, smear.leadY);
-      ctx.rotate(smear.angle);
-      ctx.fillStyle = hexToRgba(trailColor, smear.alpha * opacity);
-      ctx.fillRect(-smear.len, -thick / 2, smear.len, thick);
-      ctx.restore();
-    });
-
     if (!active) return;
     const blinkAlpha = this.blinkAlpha(now);
     const color = this.getActiveColor() || active.textColor || "#ffffff";
@@ -627,14 +732,25 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.shadowColor = color;
       ctx.shadowBlur = 8 * blinkAlpha;
     }
-    ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha * opacity);
 
+    let rx, ry, rw, rh;
     if (isUnderline) {
       const uThickness = Math.max(2, Math.round(active.h * 0.15));
-      ctx.fillRect(active.x, active.top + active.h - uThickness, active.actualCharWidth, uThickness);
+      rx = active.x;
+      ry = active.top + active.h - uThickness;
+      rw = active.actualCharWidth;
+      rh = uThickness;
     } else {
-      ctx.fillRect(active.x, active.top, this.renderWidth(active), active.h);
+      rx = active.x;
+      ry = active.top;
+      rw = this.renderWidth(active);
+      rh = active.h;
     }
+
+    ctx.fillStyle = settings.energyEffect
+      ? this.createEnergyGradient(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
+      : hexToRgba(color, 0.9 * blinkAlpha * opacity);
+    this.fillCursorShape(ctx, rx, ry, rw, rh);
     ctx.restore();
   }
 
@@ -704,15 +820,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.fillRect(p.x, p.y, p.w, p.h);
     });
 
-    this.withSmear((smear) => {
-      ctx.save();
-      ctx.translate(smear.leadX, smear.leadY);
-      ctx.rotate(smear.angle);
-      ctx.fillStyle = hexToRgba(color, smear.alpha * opacity);
-      ctx.fillRect(-smear.len, -smear.thick / 2, smear.len, smear.thick);
-      ctx.restore();
-    });
-
     const active = this.animActive;
     if (active) {
       const blinkAlpha = this.blinkAlpha(now);
@@ -722,9 +829,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (settings.glow) {
         ctx.shadowColor = color;
         ctx.shadowBlur = 10 * blinkAlpha;
+        ctx.fillStyle = hexToRgba(color, 0.01);
+        this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
+        ctx.shadowBlur = 0;
       }
-      ctx.fillStyle = hexToRgba(color, 0.9 * blinkAlpha * opacity);
-      ctx.fillRect(active.x, active.top, renderW, active.h);
+      ctx.fillStyle = settings.energyEffect
+        ? this.createEnergyGradient(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity)
+        : hexToRgba(color, 0.9 * blinkAlpha * opacity);
+      this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
       ctx.restore();
 
       const displayChar = this.pending ? this.pending.holdChar : active.char;
@@ -977,13 +1089,33 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Motion Smear")
-        .setDesc("Stretches the cursor in the direction it's moving, like a smear.")
+        .setDesc("Makes the cursor itself squash, stretch, and wobble like jelly when it moves, instead of jumping as a rigid shape.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.smear).onChange(set("smear")));
 
       new Setting(containerEl)
-        .setName("Smear Duration")
-        .setDesc("How long the smear effect lasts, in milliseconds.")
-        .addSlider((s) => s.setLimits(20, 300, 5).setValue(this.plugin.settings.smearDurationMs).setDynamicTooltip().onChange(set("smearDurationMs")));
+        .setName("Stiffness")
+        .setDesc("How fast the leading edge catches up. Higher feels snappier and more controlled.")
+        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(this.plugin.settings.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
+
+      new Setting(containerEl)
+        .setName("Trailing Stiffness")
+        .setDesc("How fast the trailing edge catches up. Lower than Stiffness means more stretch and lag, like jelly.")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
+
+      new Setting(containerEl)
+        .setName("Damping")
+        .setDesc("How much it overshoots before settling. Lower is bouncier and more elastic; higher is firmer with less wobble.")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
+
+      new Setting(containerEl)
+        .setName("Energy Swirl")
+        .setDesc("Fills the cursor with a swirling, pulsing gradient instead of a flat color, giving it a sense of energy.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.energyEffect).onChange(set("energyEffect")));
+
+      new Setting(containerEl)
+        .setName("Energy Speed")
+        .setDesc("How fast the swirl moves.")
+        .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(this.plugin.settings.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
 
       new Setting(containerEl)
         .setName("Trail Length")

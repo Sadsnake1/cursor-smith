@@ -51,7 +51,7 @@ Found a bug or have an idea for a new effect? Open an issue or use the thumbs-do
 
 ## Pricing
 
-This plugin is provided to everyone for free, however if you would like to say thanks or help support continued development, feel free to send a little my wa
+Free for everyone! If you'd like to buy me a coffee to help fuel the next round of updates, I certainly won't say no
 
 <div align="center">
   <a href="https://www.buymeacoffee.com/sadsnake1" target="_blank">

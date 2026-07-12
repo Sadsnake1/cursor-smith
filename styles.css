@@ -37,7 +37,10 @@ body.retro-box-cursor-hide-native .cm-line {
   caret-color: transparent !important;
 }
 
-/* --- Torch Engine Styles --- */
+/* --- Torch Spotlight Effect ---
+   Runs alongside the Box/Line/Underline cursor drawn by the canvas engine
+   above; this only handles the ambient dimming/spotlight, not the caret
+   itself. */
 .torch-cursor-overlay {
   position: fixed;
   top: 0;
@@ -60,20 +63,6 @@ body.retro-box-cursor-hide-native .cm-line {
    flicker keyframes below already animate opacity on this element. */
 .torch-cursor-overlay.torch-cursor-hidden {
   visibility: hidden;
-}
-
-.torch-cursor-caret {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: var(--torch-caret-width);
-  background-color: rgb(var(--torch-warm));
-  box-shadow: 0 0 10px rgb(var(--torch-warm));
-  z-index: 9999;
-}
-
-.torch-ember-caret {
-  background: linear-gradient(to bottom, #ff4500, #ff963c);
 }
 
 /* --- Animation for Flicker --- */

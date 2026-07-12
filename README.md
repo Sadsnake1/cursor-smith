@@ -47,7 +47,6 @@ Every setting includes a short description in the panel itself, so you can tune 
 
 ## Feedback
 
-Found a bug or have an idea for a new effect? Open an issue or use the thumbs-down/feedback option in Obsidian to let us know.
+Found a bug or have an idea for a new effect? Open an issue or use the thumbs-down/feedback option in Obsidian to let us know
 
-
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Donate-yellow.svg)](https://www.buymeacoffee.com/sadsnake1)
+[![Buy Me a Coffee](https://img.shields.io/badge/Donate-Buy%20Me%20a%20Coffee-yellow?style=for-the-badge&logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/YOUR_USERNAME)

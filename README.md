@@ -1,15 +1,22 @@
 #  Cursor-Smith
 
-Replace Obsidian's plain text cursor with a custom, animated one. Choose from a solid **Box**, a thin **Line**, an **Underline**, or a full-screen **Torch** spotlight that follows you as you write — each with its own blinking, smoothing, and trail effects.
+For a quick introduction: There are many cursor plugins, but I've wanted an unified one-stop shop experience. So, I've made Cursor-Smith to forge your own cursor. It's not just a customization "engine" for the cursor/caret. It's probably the MOST !!!TweAakaBLe!!!? cursor engine ever made ... probably because people don't spend that much thinking about it X_x.
+
+It caters mostly to users that want a proper writing experience, users that have visbility issues, users that crave a certain typing vibe while writing their whimsical new bestseller or simply for users that want to customiiiiiize theengs.
+
+So,do you want a smooth blinking, smooth moving, relaxing caret? DONE. Want a jello-o green plasma moving caret? Done. CRT effects? Yup. Want to write dark fantasy with a torchlight? You name it!
+
+## Showcase
+[Screen recording 2026-07-12 10.54.56.webm](https://github.com/user-attachments/assets/d3cce9e3-035a-4306-ad3a-c8e2133f878d)
+
 
 ## Features
 
-- **Four cursor styles** — Box, Line, Underline, and Torch (a dimmed spotlight that follows your cursor or mouse).
+- **Cursor styles** — Box, Line, Underline.
 - **Smooth movement** — the cursor eases and glides between positions instead of jumping, with adjustable glide, catch-up speed, and an optional adaptive boost while typing fast.
 - **Customizable blinking** — control both how fast the cursor blinks and how the on/off time is balanced within each cycle, or turn blinking off entirely.
 - **After effects** — popping letters, a fading pixel trail, and motion smear for a more expressive, retro feel.
-- **Appearance controls** — separate colors for dark/light themes, adjustable thickness and opacity, glow, and (for the Box style) the option to show the letter under the cursor.
-- **Hides the real cursor** — the browser's native caret is hidden so only your custom one is visible.
+- **Appearance controls** — separate colors for dark/light themes, adjustable thickness and opacity, glow, and MORE, MUCH-MUCH MORE.
 
 ## Installation
 

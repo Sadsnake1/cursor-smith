@@ -1,10 +1,10 @@
 #  Cursor-Smith
 
-For a quick introduction: There are many cursor plugins, but I've wanted an unified one-stop shop experience. So, I've made Cursor-Smith to forge your own cursor. It's not just a customization "engine" for the cursor/caret. It's probably the MOST !!!TweAakaBLe!!!? cursor engine ever made ... probably because people don't spend that much thinking about it X_x.
+Most people never give their cursor a second thought, but I decided to change that. Cursor-Smith is more than just a tweaky-toy, it is the *MOST* advanced cursor engine ever created(maybe).
 
-It caters mostly to users that want a proper writing experience, users that have visbility issues, users that crave a certain typing vibe while writing their whimsical new bestseller or simply for users that want to customiiiiiize theengs.
+It is designed for writers, users who need high-visibility accessibility options, and anyone who loves to customize their workspace. 
 
-So,do you want a smooth blinking, smooth moving, relaxing caret? DONE. Want a jello-o green plasma moving caret? Done. CRT effects? Yup. Want to write dark fantasy with a torchlight? You name it!
+Forge your cursor of choice!
 
 ## Showcase
 

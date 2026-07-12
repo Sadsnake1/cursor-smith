@@ -7,7 +7,8 @@ It caters mostly to users that want a proper writing experience, users that have
 So,do you want a smooth blinking, smooth moving, relaxing caret? DONE. Want a jello-o green plasma moving caret? Done. CRT effects? Yup. Want to write dark fantasy with a torchlight? You name it!
 
 ## Showcase
-[Screen recording 2026-07-12 10.54.56.webm](https://github.com/user-attachments/assets/d3cce9e3-035a-4306-ad3a-c8e2133f878d)
+
+https://github.com/user-attachments/assets/31797653-d9f5-4f11-ad3b-bf54c1a76924
 
 
 ## Features

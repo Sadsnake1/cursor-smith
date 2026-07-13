@@ -67,7 +67,11 @@ function hexToRgba(hex, alpha) {
 }
 
 function hexToRgb(hex) {
-  const n = parseInt((hex || "#ff963c").replace("#", ""), 16) || 0;
+  let h = (hex || "#ff963c").replace("#", "");
+  if (h.length === 3) {
+    h = h.split("").map((c) => c + c).join("");
+  }
+  const n = parseInt(h, 16) || 0;
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
@@ -95,7 +99,7 @@ function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5) {
   const phase = (nowMs % period) / period; 
   const fade = 0.15; 
   const balance = Math.max(0.1, Math.min(0.9, onOffBalance));
-  const hold = 1 - fade * 2; // total time split between lit and dark
+  const hold = 1 - fade * 2; 
   const onHold = hold * balance;
   const offHold = hold * (1 - balance);
   const p1 = onHold;
@@ -114,7 +118,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const saved = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
-    // Canvas State
+    // Dynamic Multi-Window Tracking Engine
+    this._cleanups = [];
+    this.registeredDocuments = new Set();
+
+    // Engine Core States
+    this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
     this.trail = []; 
@@ -126,12 +135,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.smearCenterPrev = null;
     this.smearQuadLastT = 0;
 
-    // Smooth Cursor State
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
 
-    // Torch Overlay Engine State
     this.overlay = null;
     this.modalObserver = null;
     this.modalOpen = false;
@@ -142,16 +149,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.mouseX = this.x;
     this.mouseY = this.y;
     this.lastMouseMove = 0;
+    
+    this.canvasEngineActive = false;
+    this.torchEngineActive = false;
     this.canvasRaf = 0;
     this.torchRaf = 0;
-
-    this.registerDomEvent(document, "mousemove", (e) => {
-      this.mouseX = e.clientX;
-      this.mouseY = e.clientY;
-      this.lastMouseMove = Date.now();
-    });
-
-    this.registerDomEvent(window, "resize", () => this.resizeCanvas());
 
     this.addCommand({
       id: "toggle-cursor-smith",
@@ -168,6 +170,78 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   onunload() {
     this.disable();
+    if (this._cleanups) {
+      for (const cleanup of this._cleanups) cleanup();
+      this._cleanups = [];
+    }
+  }
+
+  injectStyles(doc) {
+    const id = "cursor-smith-dynamic-styles";
+    if (doc.getElementById(id)) return;
+    
+    const styleEl = doc.createElement("style");
+    styleEl.id = id;
+    styleEl.textContent = `
+      .retro-box-cursor-canvas {
+        pointer-events: none;
+      }
+      .retro-box-cursor-hide-native .cm-cursorLayer {
+        display: none !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+        animation: none !important;
+      }
+      .torch-cursor-overlay {
+        position: fixed;
+        pointer-events: none;
+        z-index: 9990;
+        background: radial-gradient(
+          circle var(--torch-radius, 250px) at var(--torch-x, 50%) var(--torch-y, 50%),
+          rgba(var(--torch-warm, 255, 150, 60), var(--torch-intensity, 0.1)) 0%,
+          rgba(0, 0, 0, var(--torch-darkness, 0.7)) 100%
+        );
+        mix-blend-mode: multiply;
+        opacity: 1;
+        transition: opacity 0.2s ease;
+      }
+      .torch-cursor-overlay.torch-cursor-hidden {
+        opacity: 0 !important;
+        display: none !important;
+      }
+      @keyframes torch-candle-flicker {
+        0% { transform: scale(1); opacity: 0.96; }
+        25% { transform: scale(1.02); opacity: 1.02; }
+        50% { transform: scale(0.99); opacity: 0.95; }
+        75% { transform: scale(1.01); opacity: 1.04; }
+        100% { transform: scale(1); opacity: 0.96; }
+      }
+      .torch-cursor-overlay:not(.torch-no-flicker) {
+        animation: torch-candle-flicker 0.2s infinite alternate ease-in-out;
+      }
+    `;
+    doc.head.appendChild(styleEl);
+  }
+
+  registerWindowEvents(doc) {
+    if (this.registeredDocuments.has(doc)) return;
+    this.registeredDocuments.add(doc);
+    
+    const onMouseMove = (e) => {
+      this.mouseX = e.clientX;
+      this.mouseY = e.clientY;
+      this.lastMouseMove = Date.now();
+    };
+    const onResize = () => this.resizeCanvas();
+    
+    doc.addEventListener("mousemove", onMouseMove);
+    const win = doc.defaultView;
+    if (win) win.addEventListener("resize", onResize);
+    
+    this._cleanups.push(() => {
+      doc.removeEventListener("mousemove", onMouseMove);
+      if (win) win.removeEventListener("resize", onResize);
+    });
   }
 
   async saveSettings() {
@@ -177,34 +251,100 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   toggle() {
-    const wasActive = !!(this.canvas || this.overlay);
+    const wasActive = !!(this.canvasEngineActive || this.torchEngineActive);
     wasActive ? this.disable() : this.enable();
-    this.settings.enabled = !!(this.canvas || this.overlay);
+    this.settings.enabled = !!(this.canvasEngineActive || this.torchEngineActive);
     this.saveSettings();
   }
 
   getActiveColor() {
-    const isDark = document.body.classList.contains("theme-dark");
+    const doc = this.canvas ? this.canvas.ownerDocument : activeDocument;
+    const isDark = doc.body.classList.contains("theme-dark");
     return isDark ? this.settings.colorDark : this.settings.colorLight;
   }
 
   applyBodyClasses() {
-    const engineActive = !!(this.canvas || this.overlay);
-    document.body.classList.toggle(
-      "retro-box-cursor-hide-native",
-      !!(engineActive && this.settings.hideNativeCaret)
-    );
+    const engineActive = !!(this.canvasEngineActive || this.torchEngineActive);
+    const docs = [activeDocument, ...Array.from(this.registeredDocuments)];
+    for (const doc of docs) {
+      if (doc && doc.body) {
+        doc.body.classList.toggle(
+          "retro-box-cursor-hide-native",
+          !!(engineActive && this.settings.hideNativeCaret)
+        );
+      }
+    }
   }
 
   applyOverlayStyle() {
-    if (!this.settings.torchEffect) return;
+    if (!this.overlay) return;
     const s = this.settings;
-    const b = document.body;
-    b.style.setProperty("--torch-radius", s.overlayRadius + "px");
-    b.style.setProperty("--torch-darkness", String(s.overlayDarkness));
-    b.style.setProperty("--torch-intensity", String(s.overlayIntensity));
-    b.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
-    b.classList.toggle("torch-no-flicker", !s.overlayFlicker);
+    const o = this.overlay;
+    o.style.setProperty("--torch-radius", s.overlayRadius + "px");
+    o.style.setProperty("--torch-darkness", String(s.overlayDarkness));
+    o.style.setProperty("--torch-intensity", String(s.overlayIntensity));
+    o.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
+    o.classList.toggle("torch-no-flicker", !s.overlayFlicker);
+  }
+
+  ensureCanvasForView(view) {
+    const targetDoc = view ? view.dom.ownerDocument : activeDocument;
+    if (this.canvasWrapper && this.canvasWrapper.ownerDocument !== targetDoc) {
+      this.canvasWrapper.remove();
+      this.canvasWrapper = null;
+      this.canvas = null;
+      this.ctx = null;
+    }
+    if (!this.canvasWrapper) {
+      targetDoc.body.classList.add("retro-box-cursor-active");
+      
+      // The wrapper creates a strict physical bounding box to unblock window dragging
+      this.canvasWrapper = targetDoc.createElement("div");
+      this.canvasWrapper.style.position = "fixed";
+      this.canvasWrapper.style.overflow = "hidden";
+      this.canvasWrapper.style.pointerEvents = "none";
+      this.canvasWrapper.style.zIndex = "10000";
+      targetDoc.body.appendChild(this.canvasWrapper);
+
+      this.canvas = targetDoc.createElement("canvas");
+      this.canvas.className = "retro-box-cursor-canvas";
+      this.canvas.style.position = "absolute"; // Force absolute so it obeys the wrapper
+      this.canvasWrapper.appendChild(this.canvas);
+      
+      this.ctx = this.canvas.getContext("2d");
+      this.injectStyles(targetDoc);
+      this.resizeCanvas();
+    }
+    if (!targetDoc.body.classList.contains("retro-box-cursor-active")) {
+      targetDoc.body.classList.add("retro-box-cursor-active");
+    }
+    targetDoc.body.classList.toggle("retro-box-cursor-hide-native", !!this.settings.hideNativeCaret);
+  }
+
+  ensureTorchOverlayForView(view) {
+    if (!this.settings.torchEffect) {
+      this.disableTorchOverlay();
+      return;
+    }
+    const targetDoc = view ? view.dom.ownerDocument : activeDocument;
+    if (this.overlay && this.overlay.ownerDocument !== targetDoc) {
+      this.overlay.remove();
+      this.overlay = null;
+      this.modalObserver?.disconnect();
+      this.modalObserver = null;
+    }
+    if (!this.overlay) {
+      targetDoc.body.classList.add("torch-cursor-active");
+      this.overlay = targetDoc.body.createDiv({ cls: "torch-cursor-overlay" });
+      this.injectStyles(targetDoc);
+      this.applyOverlayStyle();
+      
+      this.modalOpen = !!targetDoc.querySelector(".modal-container");
+      this.modalObserver = new MutationObserver(() => {
+        this.modalOpen = !!targetDoc.querySelector(".modal-container");
+      });
+      this.modalObserver.observe(targetDoc.body, { childList: true });
+    }
   }
 
   enable() {
@@ -219,13 +359,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   disableCanvasEngine() {
+    this.canvasEngineActive = false;
     if (this.canvasRaf) {
       cancelAnimationFrame(this.canvasRaf);
       this.canvasRaf = 0;
     }
-
-    document.body.classList.remove("retro-box-cursor-active", "retro-box-cursor-hide-native");
-    this.canvas?.remove();
+    const docs = [activeDocument, ...Array.from(this.registeredDocuments)];
+    for (const doc of docs) {
+      if (doc && doc.body) {
+        doc.body.classList.remove("retro-box-cursor-active", "retro-box-cursor-hide-native");
+        const canvas = doc.querySelector(".retro-box-cursor-canvas");
+        if (canvas) {
+          if (canvas.parentElement && canvas.parentElement.style.overflow === "hidden") {
+            canvas.parentElement.remove();
+          } else {
+            canvas.remove();
+          }
+        }
+      }
+    }
+    this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
     this.pending = null;
@@ -238,13 +391,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   disableTorchOverlay() {
+    this.torchEngineActive = false;
     if (this.torchRaf) {
       cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
     }
-
-    document.body.classList.remove("torch-cursor-active", "torch-no-flicker");
-    this.overlay?.remove();
+    const docs = [activeDocument, ...Array.from(this.registeredDocuments)];
+    for (const doc of docs) {
+      if (doc && doc.body) {
+        doc.body.classList.remove("torch-cursor-active", "torch-no-flicker");
+        doc.querySelector(".torch-cursor-overlay")?.remove();
+      }
+    }
     this.overlay = null;
     this.modalObserver?.disconnect();
     this.modalObserver = null;
@@ -252,14 +410,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   enableCanvasEngine() {
-    document.body.classList.add("retro-box-cursor-active");
-    this.canvas = document.createElement("canvas");
-    this.canvas.className = "retro-box-cursor-canvas";
-    document.body.appendChild(this.canvas);
-    this.ctx = this.canvas.getContext("2d");
-    this.applyBodyClasses();
-    this.resizeCanvas();
-
+    this.canvasEngineActive = true;
     this.trail = [];
     this.particles = [];
     this.flamePixels = [];
@@ -273,7 +424,29 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.typingSpeedMod = 1;
 
     const tick = () => {
-      if (!this.canvas) return;
+      if (!this.canvasEngineActive) return;
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      this.ensureCanvasForView(view);
+      if (view) this.registerWindowEvents(view.dom.ownerDocument);
+
+      if (this.canvasWrapper && this.canvas) {
+        const r = this.getPaneRect(view);
+        if (r) {
+          this.canvasWrapper.style.top = r.top + "px";
+          this.canvasWrapper.style.left = r.left + "px";
+          this.canvasWrapper.style.width = r.width + "px";
+          this.canvasWrapper.style.height = r.height + "px";
+          // Shift the canvas backward so absolute screen coordinates draw perfectly
+          this.canvas.style.transform = `translate(-${r.left}px, -${r.top}px)`;
+        } else {
+          this.canvasWrapper.style.top = "0px";
+          this.canvasWrapper.style.left = "0px";
+          this.canvasWrapper.style.width = "100vw";
+          this.canvasWrapper.style.height = "100vh";
+          this.canvas.style.transform = "none";
+        }
+      }
+
       this.updateActivePoint();
       this.updateSmoothCursor();
       this.updateSmearQuad();
@@ -285,9 +458,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   resizeCanvas() {
     if (!this.canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const win = this.canvas.ownerDocument.defaultView || window;
+    const dpr = win.devicePixelRatio || 1;
+    const w = win.innerWidth;
+    const h = win.innerHeight;
     this.canvas.style.width = w + "px";
     this.canvas.style.height = h + "px";
     this.canvas.width = Math.max(1, Math.round(w * dpr));
@@ -300,35 +474,45 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!view) return null;
     try {
       const pos = view.state.selection.main.head;
-
-      const active = document.activeElement;
+      const doc = view.dom.ownerDocument;
+      const active = doc.activeElement;
       const activeIsEditable =
         !!active && (active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT");
-      // document.activeElement for CodeMirror's contenteditable is always
-      // the outer .cm-content container, never an individual .cm-line - so
-      // that can't be used to detect "normal text vs. widget". A <table>
-      // ancestor is a much more precise signal for Obsidian's Live Preview
-      // table widget specifically.
       const inTable = !!active?.closest?.("table");
 
       let c = inTable ? null : (view.coordsAtPos(pos, -1) || view.coordsAtPos(pos, 1));
 
       if (!c) {
-        // CodeMirror can't map a pixel position for content inside a
-        // replaced/widget decoration - e.g. table cells. The browser's own
-        // selection still knows where the caret is on screen, so fall back
-        // to that instead of giving up.
-        c = this.selectionFallbackCoords();
+        c = this.selectionFallbackCoords(view);
         if (!c) return null;
+      }
+
+      // When the caret's document position is scrolled outside the visible
+      // editor pane (e.g. mouse-wheel scrolling without moving the text
+      // cursor), CodeMirror can still return a coordinate for it - typically
+      // clamped near the top or bottom edge of the rendered content, which
+      // lands right on the titlebar or just above the status bar. Treat an
+      // out-of-view caret the same as "not focused" rather than drawing a
+      // ghost cursor there; this also stops the smear spring from reacting
+      // to that spurious jump (which is what caused the wiggle on fast
+      // scrolling).
+      const paneRect = this.getPaneRect(view);
+      if (paneRect) {
+        const margin = 1; // avoid flicker right at the pane edge
+        const cBottom = c.bottom ?? c.top;
+        if (cBottom < paneRect.top - margin || c.top > paneRect.bottom + margin) {
+          return null;
+        }
       }
 
       const charWidth = view.defaultCharacterWidth || 8;
       const rawChar = view.state.doc.sliceString(pos, pos + 1);
       const char = rawChar && rawChar !== "\n" ? rawChar : "";
 
-      const contentStyle = getComputedStyle(view.contentDOM);
+      const win = doc.defaultView || window;
+      const contentStyle = win.getComputedStyle(view.contentDOM);
       const lineEl = view.contentDOM.querySelector(".cm-line");
-      const textColor = (lineEl ? getComputedStyle(lineEl).color : null) || contentStyle.color || "#ffffff";
+      const textColor = (lineEl ? win.getComputedStyle(lineEl).color : null) || contentStyle.color || "#ffffff";
 
       let finalWidth = charWidth;
       if (this.settings.cursorStyle === "Line") {
@@ -354,30 +538,25 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // Reads the caret's on-screen position from the browser's native
-  // selection instead of CodeMirror's line layout. Used whenever focus is on
-  // something editable that isn't a plain CM line (table cells and similar
-  // widgets), since coordsAtPos can't resolve pixel positions for those.
-  selectionFallbackCoords() {
-    const active = document.activeElement;
+  selectionFallbackCoords(view) {
+    const doc = view ? view.dom.ownerDocument : activeDocument;
+    const active = doc.activeElement;
     if (!active) return null;
     const editable = active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT";
     if (!editable) return null;
 
-    const sel = window.getSelection();
+    const win = doc.defaultView || window;
+    const sel = win.getSelection();
     if (sel && sel.rangeCount > 0 && active.isContentEditable) {
       const range = sel.getRangeAt(0).cloneRange();
       range.collapse(true);
       let rect = range.getClientRects()[0];
       if (!rect || (rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0)) {
-        // Collapsed ranges in empty cells sometimes report a zero rect.
         rect = active.getBoundingClientRect();
       }
       if (rect) return { left: rect.left, top: rect.top, bottom: rect.bottom || rect.top + rect.height };
     }
 
-    // Textareas/inputs aren't covered by window.getSelection() the same
-    // way - anchor to the element itself as a last resort.
     const rect = active.getBoundingClientRect();
     return rect ? { left: rect.left, top: rect.top, bottom: rect.bottom } : null;
   }
@@ -428,14 +607,38 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
 
     if (caret.pos === this.lastActive.pos) {
+      const dx = caret.x - this.lastActive.x;
+      const dy = caret.top - this.lastActive.top;
+      
       this.lastActive = caret;
+      
+      // If the coordinate changed but the document position didn't, it was a scroll/layout shift.
+      // We instantly shift the animation and spring physics to prevent the smear wiggle.
+      if (this.animActive && (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01)) {
+        this.animActive.x += dx;
+        this.animActive.top += dy;
+        this.animActive.w = caret.w;
+        this.animActive.h = caret.h;
+        
+        if (this.smearQuad) {
+          for (const key in this.smearQuad) {
+            this.smearQuad[key].x += dx;
+            this.smearQuad[key].y += dy;
+          }
+          if (this.smearCenterPrev) {
+            this.smearCenterPrev.x += dx;
+            this.smearCenterPrev.y += dy;
+          }
+        }
+      }
       return;
     }
 
     const delay = Math.max(0, Math.round(this.settings.moveDelayMs));
     if (delay <= 0) {
-      this.resolveHoldChar(caret);
+      const holdChar = this.resolveHoldChar(caret);
       this.commitMove(caret);
+      if (holdChar && this.lastActive) this.lastActive.holdChar = holdChar;
       return;
     }
 
@@ -467,7 +670,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     if (this.settings.smoothAdaptive) {
       const timeSinceMove = now - this.lastMoveTime;
-      // If moving rapidly (under 150ms between strokes), ramp up multiplier
       if (timeSinceMove < 150) {
         const maxMod = this.settings.maxCatchUpSpeed / Math.max(0.01, this.settings.catchUpSpeed);
         this.typingSpeedMod = Math.min(this.typingSpeedMod + 0.15, maxMod);
@@ -477,7 +679,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       targetSpeed = Math.min(this.settings.maxCatchUpSpeed, targetSpeed * this.typingSpeedMod);
     }
 
-    // Blend Catch-Up Speed with Animation Smoothness (damping)
     const lerpFactor = Math.min(1, targetSpeed * (1 - this.settings.smoothness));
 
     this.animActive.x += (this.lastActive.x - this.animActive.x) * lerpFactor;
@@ -485,9 +686,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive.w += (this.lastActive.w - this.animActive.w) * lerpFactor;
     this.animActive.h += (this.lastActive.h - this.animActive.h) * lerpFactor;
     
-    // Transfer hard references so styling applies correctly
     this.animActive.textColor = this.lastActive.textColor;
     this.animActive.char = this.lastActive.char;
+    this.animActive.holdChar = this.lastActive.holdChar;
     this.animActive.actualCharWidth = this.lastActive.actualCharWidth;
     this.animActive.fontFamily = this.lastActive.fontFamily;
     this.animActive.fontSize = this.lastActive.fontSize;
@@ -498,14 +699,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (this.lastActive) {
       this.spawnFlamePixels(this.lastActive);
     }
-
     this.lastActive = caret;
     this.pending = null;
     this.lastMoveTime = performance.now(); 
   }
 
-  // The rectangle the visible cursor shape currently occupies, per style.
-  // This is what the jelly quad springs toward.
   getActiveRect() {
     const active = this.animActive;
     if (!active) return null;
@@ -516,11 +714,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return { x: active.x, y: active.top, w: this.renderWidth(active), h: active.h };
   }
 
-  // Springs each of the cursor's 4 corners independently toward its target
-  // corner. Corners on the leading edge of travel use "stiffness" (catch up
-  // fast); corners on the trailing edge use "trailing stiffness" (lag
-  // behind), which is what stretches/squashes the shape into a jelly-like
-  // wobble. "Damping" controls how much it overshoots before settling.
   updateSmearQuad() {
     const now = performance.now();
     if (!this.smearQuadLastT) this.smearQuadLastT = now;
@@ -545,7 +738,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     };
 
     if (!this.smearQuad) {
-      // Snap in on first appearance instead of springing in from nowhere.
       this.smearQuad = {};
       for (const key in targets) {
         this.smearQuad[key] = { x: targets[key].x, y: targets[key].y, vx: 0, vy: 0 };
@@ -567,7 +759,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     this.smearCenterPrev = center;
 
-    // Map the 0..1 sliders to spring frequencies/damping ratios.
     const freqLead = 2 + Math.max(0, Math.min(1, settings.smearStiffness)) * 38;
     const freqTrail = 2 + Math.max(0, Math.min(1, settings.smearTrailingStiffness)) * 38;
     const dampingRatio = 0.15 + Math.max(0, Math.min(1, settings.smearDamping)) * 1.15;
@@ -601,6 +792,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   pushTrail(point) {
+    if (!point) return;
     this.trail.push({ x: point.x, y: point.top, w: point.w, h: point.h, t: performance.now() });
     const max = Math.max(0, Math.round(this.settings.trailLength));
     while (this.trail.length > max) this.trail.shift();
@@ -627,7 +819,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!this.settings.flameTrail) return;
     
     const count = Math.floor(6 + Math.random() * 6);
-    
     let baseHex = this.getActiveColor() || "#39ff14";
     let h = baseHex.replace("#", "");
     if (h.length === 3) h = h.split("").map(c => c + c).join("");
@@ -638,11 +829,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     for (let i = 0; i < count; i++) {
       const pX = anchor.x + Math.random() * (anchor.w || anchor.actualCharWidth);
       const pY = anchor.top + Math.random() * anchor.h;
-      
       const varR = Math.max(0, Math.min(255, r + Math.floor((Math.random() - 0.5) * 70)));
       const varG = Math.max(0, Math.min(255, g + Math.floor((Math.random() - 0.5) * 70)));
       const varB = Math.max(0, Math.min(255, b + Math.floor((Math.random() - 0.5) * 70)));
-      const pColor = `rgb(${varR}, ${varG}, ${varB})`;
       
       this.flamePixels.push({
         x: pX,
@@ -650,7 +839,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         vx: (Math.random() - 0.5) * 20, 
         vy: 0,                          
         size: 2.5 + Math.random() * 3,  
-        color: pColor,
+        color: `rgb(${varR}, ${varG}, ${varB})`,
         alpha: 1,
         start: performance.now()
       });
@@ -660,9 +849,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   blinkAlpha(now) {
     if (!this.settings.blinkingEnabled) return 1;
     if (this.settings.smoothEnabled && this.settings.smoothStopBlinking) {
-      if (now - this.lastMoveTime < 450) { 
-        return 1; 
-      }
+      if (now - this.lastMoveTime < 450) return 1; 
     }
     return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5);
   }
@@ -670,7 +857,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
   draw() {
     const ctx = this.ctx;
     if (!ctx) return;
-    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    const win = this.canvas.ownerDocument.defaultView || window;
+    ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
 
     this.drawLettersParticles();
     this.drawFlamePixels();
@@ -704,8 +892,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // Fills either the live jelly quad (if Motion Smear is on) or a plain
-  // rectangle, using whatever fillStyle is already set.
   fillCursorShape(ctx, rx, ry, rw, rh) {
     const q = this.settings.smear ? this.smearQuad : null;
     const corners = q || {
@@ -724,11 +910,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     ctx.fill();
   }
 
-  // A vertical beam running through the cursor: the cursor's own color
-  // pulses lighter and darker (traveling from bottom to top over time),
-  // with a slight color drift layered on top for a bit of life. No fixed
-  // accent color involved, so it works the same for any cursor color,
-  // including black and white.
   createEnergyGradient(x, y, w, h, baseColor, alpha) {
     const ctx = this.ctx;
     const speed = this.settings.energySpeed ?? 1;
@@ -739,11 +920,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const stops = 6;
     for (let i = 0; i <= stops; i++) {
       const pos = i / stops;
-      // Bright band travels from bottom (pos 0) to top (pos 1) as t grows.
       const pulse = 0.5 + 0.5 * Math.sin((pos - t * 0.6) * Math.PI * 2);
 
-      // Lighten toward white above the midpoint, darken toward black below
-      // it - done in plain RGB so it works for grayscale colors too.
       let r = base[0], g = base[1], b = base[2];
       if (pulse > 0.5) {
         const k = (pulse - 0.5) * 2;
@@ -757,8 +935,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
         b -= b * k * 0.45;
       }
 
-      // A slight color drift, independent per channel so it isn't a big
-      // hue jump - just a bit of shimmer.
       const shift = 14;
       r += Math.sin(t * 0.7 + pos * 6) * shift;
       g += Math.sin(t * 0.7 + pos * 6 + 2.1) * shift;
@@ -907,7 +1083,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
       ctx.restore();
 
-      const displayChar = this.pending ? this.pending.holdChar : active.char;
+      const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
       if (settings.showChar && displayChar) {
         ctx.save();
         ctx.globalAlpha = Math.min(1, 0.3 + blinkAlpha * 0.7);
@@ -922,47 +1098,64 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   enableTorchOverlay() {
-    this.applyOverlayStyle();
-    this.applyBodyClasses();
-    document.body.classList.add("torch-cursor-active");
-    this.overlay = document.body.createDiv({ cls: "torch-cursor-overlay" });
-    this.overlay.createDiv({ cls: "torch-cursor-glow" });
-
-    this.modalOpen = !!document.body.querySelector(".modal-container");
-    this.modalObserver = new MutationObserver(() => {
-      this.modalOpen = !!document.body.querySelector(".modal-container");
-    });
-    this.modalObserver.observe(document.body, { childList: true });
+    this.torchEngineActive = true;
+    this.x = this.tx = window.innerWidth / 2;
+    this.y = this.ty = window.innerHeight / 2;
 
     const tick = () => {
-      if (!this.overlay) return;
+      if (!this.torchEngineActive) return;
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      this.ensureTorchOverlayForView(view);
+      if (view) this.registerWindowEvents(view.dom.ownerDocument);
+
+      if (!this.overlay) {
+        this.torchRaf = requestAnimationFrame(tick);
+        return;
+      }
+
       this.updateOverlayTarget();
       const lerp = this.settings.overlaySpeed;
       this.x += (this.tx - this.x) * lerp;
       this.y += (this.ty - this.y) * lerp;
-      this.overlay.style.setProperty("--torch-x", this.x.toFixed(1) + "px");
-      this.overlay.style.setProperty("--torch-y", this.y.toFixed(1) + "px");
-      this.overlay.style.clipPath = this.settings.overlaySpareSidebars
-        ? this.editorClip()
-        : "";
+
+      const r = this.getPaneRect(view);
+      const usePane = r && this.settings.overlaySpareSidebars;
+
+      if (usePane) {
+        this.overlay.style.top = r.top + "px";
+        this.overlay.style.left = r.left + "px";
+        this.overlay.style.width = r.width + "px";
+        this.overlay.style.height = r.height + "px";
+      } else {
+        this.overlay.style.top = "0px";
+        this.overlay.style.left = "0px";
+        this.overlay.style.width = "100vw";
+        this.overlay.style.height = "100vh";
+      }
+
+      const offsetX = usePane ? r.left : 0;
+      const offsetY = usePane ? r.top : 0;
+
+      this.overlay.style.setProperty("--torch-x", (this.x - offsetX).toFixed(1) + "px");
+      this.overlay.style.setProperty("--torch-y", (this.y - offsetY).toFixed(1) + "px");
 
       const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
-      this.overlay.classList.toggle("torch-cursor-hidden", hideForModal);
+      this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
 
       this.torchRaf = requestAnimationFrame(tick);
     };
     this.torchRaf = requestAnimationFrame(tick);
   }
 
-  editorClip() {
-    const r = this.app.workspace.rootSplit?.containerEl?.getBoundingClientRect();
-    if (!r) return "";
-    return `inset(${r.top}px ${window.innerWidth - r.right}px ${window.innerHeight - r.bottom}px ${r.left}px)`;
+  getPaneRect(view) {
+    if (!view) return null;
+    const rootEl = view.dom.closest(".cm-editor") || view.dom.closest(".workspace-leaf");
+    if (!rootEl) return null;
+    return rootEl.getBoundingClientRect();
   }
 
   updateOverlayTarget() {
     const mode = this.settings.overlayFollowMode;
-    
     const caret = this.caretCoords();
     if (caret) {
       if (!this.lastCaret || caret.x !== this.lastCaret.x || caret.top !== this.lastCaret.top) {
@@ -1000,8 +1193,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
       await this.plugin.saveSettings();
     };
 
-    // Like set(), but also redraws the panel - use this for any toggle that
-    // shows/hides other settings underneath it.
     const setAndRedraw = (key) => async (v) => {
       this.plugin.settings[key] = v;
       await this.plugin.saveSettings();
@@ -1009,8 +1200,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
     };
 
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
-
-    // ================= Core Configuration =================
     containerEl.createEl("h3", { text: "Core Configuration" });
 
     new Setting(containerEl)
@@ -1046,13 +1235,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .setDesc("Hides your browser's normal text cursor so only the custom one shows.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
 
-    // ================= Appearance =================
     containerEl.createEl("h3", { text: "Appearance" });
 
     if (this.plugin.settings.cursorStyle === "Line") {
       new Setting(containerEl)
         .setName("Cursor Thickness")
-        .setDesc("How thick the Line cursor is, in pixels. Box and Underline always match the letter width.")
+        .setDesc("How thick the Line cursor is, in pixels.")
         .addSlider((slider) =>
           slider
             .setLimits(1, 12, 1)
@@ -1082,7 +1270,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.showChar).onChange(set("showChar")));
     }
 
-    // ================= Blinking =================
     containerEl.createEl("h3", { text: "Blinking" });
 
     new Setting(containerEl)
@@ -1098,16 +1285,15 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Blink Balance")
-        .setDesc("How the blink cycle is split between lit and dark. Lower keeps it dark longer, higher keeps it lit longer.")
+        .setDesc("How the blink cycle is split between lit and dark.")
         .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(this.plugin.settings.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
 
       new Setting(containerEl)
         .setName("Don't Blink While Typing")
-        .setDesc("Keeps the cursor fully lit while you type or move it, instead of blinking.")
+        .setDesc("Keeps the cursor fully lit while you type or move it.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
     }
 
-    // ================= Smooth Movement =================
     containerEl.createEl("h3", { text: "Smooth Movement" });
 
     new Setting(containerEl)
@@ -1118,102 +1304,83 @@ class CursorSmithSettingTab extends PluginSettingTab {
     if (this.plugin.settings.smoothEnabled) {
       new Setting(containerEl)
         .setName("Glide Amount")
-        .setDesc("How much the cursor eases into movement. Higher feels heavier and lags a bit more.")
         .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(this.plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
 
       new Setting(containerEl)
         .setName("Catch-Up Speed")
-        .setDesc("How fast the cursor catches up to where you're typing.")
         .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(this.plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
 
       new Setting(containerEl)
         .setName("Max Catch-Up Speed")
-        .setDesc("The fastest the cursor is allowed to catch up when you type quickly.")
         .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(this.plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
 
       new Setting(containerEl)
         .setName("Speed Up When Typing Fast")
-        .setDesc("Automatically raises the catch-up speed the faster you type, up to the max above.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
 
       new Setting(containerEl)
         .setName("Movement Delay")
-        .setDesc("Adds a short delay, in milliseconds, before the cursor starts following you.")
         .addSlider((s) => s.setLimits(0, 500, 10).setValue(this.plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
     }
 
-    // ================= Effects =================
     containerEl.createEl("h3", { text: "Effects" });
 
     new Setting(containerEl)
       .setName("Popping Letters")
-      .setDesc("Makes letters pop and fly off whenever you type.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.popLetters).onChange(set("popLetters")));
 
     new Setting(containerEl)
       .setName("Pixel Trail")
-      .setDesc("Leaves a fading trail of small blocks behind the cursor as it moves.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(set("flameTrail")));
 
     new Setting(containerEl)
       .setName("Motion Smear")
-      .setDesc("Makes the cursor itself squash, stretch, and wobble like jelly when it moves, instead of jumping as a rigid shape.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.smear).onChange(setAndRedraw("smear")));
 
     if (this.plugin.settings.smear) {
       new Setting(containerEl)
         .setName("Stiffness")
-        .setDesc("How fast the leading edge catches up. Higher feels snappier and more controlled.")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(this.plugin.settings.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
 
       new Setting(containerEl)
         .setName("Trailing Stiffness")
-        .setDesc("How fast the trailing edge catches up. Lower than Stiffness means more stretch and lag, like jelly.")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
 
       new Setting(containerEl)
         .setName("Damping")
-        .setDesc("How much it overshoots before settling. Lower is bouncier and more elastic; higher is firmer with less wobble.")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
     }
 
     new Setting(containerEl)
       .setName("Energy Beam")
-      .setDesc("Fills the cursor with a gradient that flows upward through it, giving it a sense of energy.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.energyEffect).onChange(setAndRedraw("energyEffect")));
 
     if (this.plugin.settings.energyEffect) {
       new Setting(containerEl)
         .setName("Beam Speed")
-        .setDesc("How fast the energy flows.")
         .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(this.plugin.settings.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
     }
 
     new Setting(containerEl)
       .setName("CRT Effect")
-      .setDesc("Gives the cursor an old-monitor feel: a fading phosphor trail behind it and a soft glow.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.crtEffect).onChange(setAndRedraw("crtEffect")));
 
     if (this.plugin.settings.crtEffect) {
       new Setting(containerEl)
         .setName("Trail Length")
-        .setDesc("How many past positions the trail remembers.")
         .addSlider((s) => s.setLimits(0, 30, 1).setValue(this.plugin.settings.trailLength).setDynamicTooltip().onChange(set("trailLength")));
 
       new Setting(containerEl)
         .setName("Trail Fade Time")
-        .setDesc("How long it takes for the trail to fully fade away, in milliseconds.")
         .addSlider((s) => s.setLimits(50, 1500, 25).setValue(this.plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
 
       new Setting(containerEl)
         .setName("Glow")
-        .setDesc("Adds a soft glow around the cursor.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.glow).onChange(set("glow")));
     }
 
     new Setting(containerEl)
       .setName("Torch Spotlight")
-      .setDesc("Dims the rest of the screen and lights up a soft spotlight around your cursor. Works alongside any cursor style above.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.torchEffect).onChange(async (value) => {
           this.plugin.settings.torchEffect = value;
@@ -1230,7 +1397,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Follow")
-        .setDesc("What the light follows: your text cursor, your mouse, or both automatically.")
         .addDropdown((d) =>
           d
             .addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
@@ -1240,7 +1406,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Light Size")
-        .setDesc("How big the lit-up circle is, in pixels.")
         .addSlider((s) => s.setLimits(100, 800, 10).setValue(this.plugin.settings.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
 
       new Setting(containerEl)
@@ -1249,29 +1414,24 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName("Follow Speed")
-        .setDesc("How quickly the light chases its target. Lower is slower and floatier.")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
 
       containerEl.createEl("h4", { text: "Environment" });
 
       new Setting(containerEl)
         .setName("Darkness")
-        .setDesc("How dark the area outside the light is.")
         .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(this.plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
 
       new Setting(containerEl)
         .setName("Glow Strength")
-        .setDesc("How bright the light is at its center.")
         .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(this.plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
 
       new Setting(containerEl)
         .setName("Flicker")
-        .setDesc("Adds a subtle candle-like flicker to the light.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlayFlicker).onChange(set("overlayFlicker")));
 
       new Setting(containerEl)
         .setName("Keep Sidebars Lit")
-        .setDesc("Keeps the sidebars visible instead of darkening them too.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
     }
   }

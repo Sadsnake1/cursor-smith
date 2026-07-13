@@ -1,9 +1,9 @@
 {
   "id": "cursor-smith",
   "name": "Cursor-Smith",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "minAppVersion": "1.0.0",
-  "description": "Forge your perfect editing experience with custom cursor styles, including terminal blocks, animated trails, and dynamic torch effects.",
+  "description": "Forge your cursor with the most advanced cursor engine there is.",
   "author": "SadSnake1",
   "authorUrl": "",
   "isDesktopOnly": false

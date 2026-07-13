@@ -47,9 +47,7 @@ The settings panel is organized into the following sections:
 | **Blinking** | Blink speed, the on/off balance of each blink, and hiding the browser's native caret. |
 | **Smooth Movement** | Enable gliding motion and tune its speed, catch-up behavior, and typing-adaptive boost. |
 | **After Effects** | Popping letters, pixel trail, and motion smear. |
-| **Torch** *(Torch style only)* | Spotlight follow mode, size, color, and speed; environment darkness, glow, and flicker; and an ember-styled caret. |
-
-Every setting includes a short description in the panel itself, so you can tune things to taste without leaving Obsidian.
+| **Torch** | Spotlight follow mode, size, color, and speed; environment darkness, glow, and flicker. |
 
 ## Compatibility notes
 

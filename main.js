@@ -505,14 +505,44 @@ module.exports = class CursorSmithPlugin extends Plugin {
         }
       }
 
-      const charWidth = view.defaultCharacterWidth || 8;
       const rawChar = view.state.doc.sliceString(pos, pos + 1);
       const char = rawChar && rawChar !== "\n" ? rawChar : "";
 
       const win = doc.defaultView || window;
       const contentStyle = win.getComputedStyle(view.contentDOM);
-      const lineEl = view.contentDOM.querySelector(".cm-line");
-      const textColor = (lineEl ? win.getComputedStyle(lineEl).color : null) || contentStyle.color || "#ffffff";
+
+      // Find the actual DOM element rendering the character at the caret
+      // (not just "the first .cm-line in the document"), so headings,
+      // inline code, and any other differently-sized text report their own
+      // real font metrics instead of the editor's base font-size/family.
+      const sampleX = Math.min(c.left + 2, doc.documentElement.clientWidth - 1);
+      const sampleY = (c.top + c.bottom) / 2;
+      const elAtCaret = doc.elementFromPoint ? doc.elementFromPoint(sampleX, sampleY) : null;
+      const lineEl = (elAtCaret && elAtCaret.closest && elAtCaret.closest(".cm-line")) ||
+        view.contentDOM.querySelector(".cm-line");
+      const charStyle = elAtCaret && lineEl && lineEl.contains(elAtCaret)
+        ? win.getComputedStyle(elAtCaret)
+        : (lineEl ? win.getComputedStyle(lineEl) : contentStyle);
+      const textColor = charStyle.color || contentStyle.color || "#ffffff";
+
+      // Measure the character's real rendered width directly from its own
+      // coordinates rather than CodeMirror's cached defaultCharacterWidth,
+      // which reflects only the editor's base font-size and doesn't update
+      // for bigger/smaller text (headings, inline code, etc). This is what
+      // keeps the Box/Underline cursor from partially wrapping characters
+      // that are larger or smaller than the default size.
+      let charWidth = view.defaultCharacterWidth || 8;
+      if (char) {
+        try {
+          const nextCoords = view.coordsAtPos(pos + 1, -1) || view.coordsAtPos(pos + 1, 1);
+          if (nextCoords) {
+            const measured = nextCoords.left - c.left;
+            if (measured > 0.5 && measured < charWidth * 6) charWidth = measured;
+          }
+        } catch {
+          /* fall back to defaultCharacterWidth */
+        }
+      }
 
       let finalWidth = charWidth;
       if (this.settings.cursorStyle === "Line") {
@@ -528,8 +558,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
         actualCharWidth: charWidth,
         char,
         textColor,
-        fontSize: parseFloat(contentStyle.fontSize) || 14,
-        fontFamily: contentStyle.fontFamily || "monospace",
+        fontSize: parseFloat(charStyle.fontSize) || parseFloat(contentStyle.fontSize) || 14,
+        fontFamily: charStyle.fontFamily || contentStyle.fontFamily || "monospace",
         focused: view.hasFocus || (inTable && activeIsEditable),
         pos,
       };
@@ -1089,9 +1119,27 @@ module.exports = class CursorSmithPlugin extends Plugin {
         ctx.globalAlpha = Math.min(1, 0.3 + blinkAlpha * 0.7);
         ctx.fillStyle = invertColor(active.textColor);
         ctx.font = `${active.fontSize}px ${active.fontFamily}`;
+
+        // Canvas's "middle" baseline centers a glyph within its own font
+        // em-box (roughly ascent/descent of the font itself), but active.h
+        // is the rendered *line height*, which is usually taller than that
+        // em-box (CSS line-height adds extra leading above/below the
+        // glyph). Centering purely on font metrics ignores that leading and
+        // makes the drawn character sit noticeably higher than the real
+        // text, which is vertically centered within the full line box.
+        // Measuring real ascent/descent and centering the glyph's em-box
+        // inside active.h (the same way the browser centers line content)
+        // lines it up with where the actual character renders.
+        const metrics = ctx.measureText(displayChar);
+        const ascent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent ?? active.fontSize * 0.8;
+        const descent = metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent ?? active.fontSize * 0.2;
+        const glyphBoxHeight = ascent + descent;
+        const leading = active.h - glyphBoxHeight;
+        const baselineY = active.top + ascent + leading / 2;
+
         ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(displayChar, active.x + renderW / 2, active.top + active.h / 2 + 1);
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(displayChar, active.x + renderW / 2, baselineY);
         ctx.restore();
       }
     }
@@ -1151,7 +1199,47 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!view) return null;
     const rootEl = view.dom.closest(".cm-editor") || view.dom.closest(".workspace-leaf");
     if (!rootEl) return null;
-    return rootEl.getBoundingClientRect();
+    const rect = rootEl.getBoundingClientRect();
+    const doc = rootEl.ownerDocument;
+
+    // Clipping to the editor pane's own bounding rect assumes the status
+    // bar/titlebar always take up real space in document flow, pushing the
+    // pane's rect to stop short of them. Some themes and CSS snippets
+    // instead position those elements as floating overlays (fixed/absolute)
+    // that sit on top of the pane rather than shrinking it - in that case
+    // the pane's rect still extends underneath them, so clipping to it
+    // alone doesn't stop the canvas (z-index 10000) from painting over
+    // them. Explicitly clamp against whichever of these elements actually
+    // overlaps the pane rect.
+    let top = rect.top;
+    let bottom = rect.bottom;
+
+    const statusBar = doc.querySelector(".status-bar");
+    if (statusBar) {
+      const sbRect = statusBar.getBoundingClientRect();
+      if (sbRect.height > 0 && sbRect.top < bottom && sbRect.bottom > top) {
+        bottom = Math.min(bottom, sbRect.top);
+      }
+    }
+
+    const titleBar = doc.querySelector(".titlebar");
+    if (titleBar) {
+      const tbRect = titleBar.getBoundingClientRect();
+      if (tbRect.height > 0 && tbRect.bottom > top && tbRect.top < bottom) {
+        top = Math.max(top, tbRect.bottom);
+      }
+    }
+
+    if (bottom <= top) return rect; // safety net: never collapse to an empty/inverted rect
+
+    return {
+      top,
+      bottom,
+      left: rect.left,
+      right: rect.right,
+      width: rect.width,
+      height: bottom - top,
+    };
   }
 
   updateOverlayTarget() {
@@ -1436,3 +1524,4 @@ class CursorSmithSettingTab extends PluginSettingTab {
     }
   }
 }
+/* nosourcemap */

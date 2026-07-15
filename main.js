@@ -262,14 +262,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   getActiveColor() {
-    const doc = this.canvas ? this.canvas.ownerDocument : activeDocument;
+    const doc = this.canvas ? this.canvas.ownerDocument : document;
     const isDark = doc.body.classList.contains("theme-dark");
     return isDark ? this.settings.colorDark : this.settings.colorLight;
   }
 
   applyBodyClasses() {
     const engineActive = !!(this.canvasEngineActive || this.torchEngineActive);
-    const docs = [activeDocument, ...Array.from(this.registeredDocuments)];
+    const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
         doc.body.classList.toggle(
@@ -292,7 +292,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   ensureCanvasForView(view) {
-    const targetDoc = view ? view.dom.ownerDocument : activeDocument;
+    const targetDoc = view ? view.dom.ownerDocument : this.overlay.ownerDocument;
     if (this.canvasWrapper && this.canvasWrapper.ownerDocument !== targetDoc) {
       this.canvasWrapper.remove();
       this.canvasWrapper = null;
@@ -330,7 +330,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.disableTorchOverlay();
       return;
     }
-    const targetDoc = view ? view.dom.ownerDocument : activeDocument;
+    const targetDoc = view ? view.dom.ownerDocument : this.overlay.ownerDocument;
     if (this.overlay && this.overlay.ownerDocument !== targetDoc) {
       this.overlay.remove();
       this.overlay = null;
@@ -368,7 +368,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       cancelAnimationFrame(this.canvasRaf);
       this.canvasRaf = 0;
     }
-    const docs = [activeDocument, ...Array.from(this.registeredDocuments)];
+    const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
         doc.body.classList.remove("retro-box-cursor-active", "retro-box-cursor-hide-native");
@@ -402,7 +402,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
     }
-    const docs = [activeDocument, ...Array.from(this.registeredDocuments)];
+    const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
         doc.body.classList.remove("torch-cursor-active", "torch-no-flicker");
@@ -625,7 +625,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
   selectionFallbackCoords(view) {
-    const doc = view ? view.dom.ownerDocument : activeDocument;
+    const doc = view ? view.dom.ownerDocument : this.canvas?.ownerDocument ?? document;
     const active = doc.activeElement;
     if (!active) return null;
     const isFormField = active.tagName === "TEXTAREA" || active.tagName === "INPUT";
@@ -848,7 +848,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // element's own computed style instead.
   genericCaretCoords() {
     try {
-      const doc = activeDocument;
+      const doc = document;
       const active = doc.activeElement;
       const editable =
         !!active && (active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT");
@@ -913,7 +913,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   measureCharWidth(char, fontFamily, fontSize) {
     try {
       if (!this._measureCtx) {
-        const canvas = (activeDocument || document).createElement("canvas");
+        const canvas = (this.canvas?.ownerDocument ?? document).createElement("canvas");
         this._measureCtx = canvas.getContext("2d");
       }
       this._measureCtx.font = `${fontSize}px ${fontFamily}`;
@@ -1535,7 +1535,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.x += (this.tx - this.x) * lerp;
       this.y += (this.ty - this.y) * lerp;
 
-      const targetDoc = view ? view.dom.ownerDocument : activeDocument;
+      const targetDoc = view ? view.dom.ownerDocument : this.canvas?.ownerDocument ?? document;
       const r = this.getPaneRect(view);
       const usePane = r && this.settings.overlaySpareSidebars;
       // Even when we're not sparing the sidebars, the overlay must still

@@ -38,42 +38,16 @@ body.retro-box-cursor-hide-native .cm-line {
 }
 
 /* --- Torch Spotlight Effect ---
-   Runs alongside the Box/Line/Underline cursor drawn by the canvas engine
-   above; this only handles the ambient dimming/spotlight, not the caret
-   itself. */
-.torch-cursor-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  pointer-events: none;
-  z-index: 9998;
-  background: radial-gradient(
-    circle var(--torch-radius) at var(--torch-x) var(--torch-y),
-    rgba(var(--torch-warm), var(--torch-intensity)) 0%,
-    rgba(0, 0, 0, var(--torch-darkness)) 100%
-  );
-  overflow: hidden;
-}
-
-/* Used while a modal (Settings, Command Palette, etc.) is open and "Keep
-   Peripheral Sidebars Illuminated" is on, so the darkening never paints
-   over the modal. visibility is used instead of opacity because the
-   flicker keyframes below already animate opacity on this element. */
-.torch-cursor-overlay.torch-cursor-hidden {
-  visibility: hidden;
-}
-
-/* --- Animation for Flicker --- */
-@keyframes torch-flicker {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.95; }
-}
-
-body:not(.torch-no-flicker) .torch-cursor-overlay {
-  animation: torch-flicker 0.1s infinite;
-}
+   All of the torch overlay's CSS (positioning, gradient, blend mode, and
+   the flicker keyframes) now lives entirely in the dynamically-injected
+   stylesheet in main.js (injectStyles), since the overlay's colors,
+   radius, and flicker on/off state are all driven live from plugin
+   settings via CSS custom properties. Do NOT re-add a .torch-cursor-overlay
+   rule here: a version of this rule used to live in this file and, because
+   its selector (body:not(.torch-no-flicker) .torch-cursor-overlay) was
+   more specific than the one in main.js, it silently won the cascade and
+   flickered at a fixed 0.1s rate regardless of the user's "flicker"
+   setting. Keep all torch-cursor-overlay styling in main.js only. */
 
 
 /* Note: we used to force .titlebar/.status-bar to a very high z-index here

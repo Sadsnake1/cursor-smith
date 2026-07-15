@@ -388,6 +388,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.particles = [];
     this.flamePixels = [];
     this.animActive = null;
+    this._formMirror?.remove();
+    this._formMirror = null;
   }
 
   disableTorchOverlay() {
@@ -430,7 +432,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (view) this.registerWindowEvents(view.dom.ownerDocument);
 
       if (this.canvasWrapper && this.canvas) {
-        const r = this.getPaneRect(view);
+        // Only clip to the editor pane while the note editor is the thing
+        // actually focused. The moment focus moves anywhere else - file
+        // tree rename box, Command Palette, Settings, other modals - there's
+        // no reason to keep the canvas boxed inside the pane, and doing so
+        // is exactly what made the cursor invisible outside the editor.
+        const r = view && view.hasFocus ? this.getPaneRect(view) : null;
         if (r) {
           this.canvasWrapper.style.top = r.top + "px";
           this.canvasWrapper.style.left = r.left + "px";
@@ -471,7 +478,24 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   caretCoords() {
     const view = this.app.workspace.activeEditor?.editor?.cm;
-    if (!view) return null;
+
+    // The note editor (CodeMirror) itself has focus - use the precise,
+    // CodeMirror-aware caret info (real glyph metrics, table handling, etc).
+    if (view && view.hasFocus) {
+      return this.cmCaretCoords(view);
+    }
+
+    // Focus is somewhere else in the app that isn't CodeMirror at all - the
+    // file-tree rename box, the Command Palette / Quick Switcher input,
+    // Settings text fields, other plugins' modals, and so on. These never
+    // had a caret to draw before, which is why the custom cursor (and the
+    // native one, hidden globally by our CSS) both went missing there.
+    // Fall back to a generic caret built from the browser's own selection/
+    // element rect so the cursor still shows up on any editable surface.
+    return this.genericCaretCoords();
+  }
+
+  cmCaretCoords(view) {
     try {
       const pos = view.state.selection.main.head;
       const doc = view.dom.ownerDocument;
@@ -572,23 +596,336 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const doc = view ? view.dom.ownerDocument : activeDocument;
     const active = doc.activeElement;
     if (!active) return null;
-    const editable = active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT";
+    const isFormField = active.tagName === "TEXTAREA" || active.tagName === "INPUT";
+    const editable = active.isContentEditable || isFormField;
     if (!editable) return null;
+
+    // <input>/<textarea> don't participate in window.getSelection() at all -
+    // the caret lives at el.selectionStart, not in the DOM Selection API, so
+    // this used to fall straight through to getBoundingClientRect() below
+    // and report the same left-edge coordinate no matter where the caret
+    // actually was (which is why it "stuck to the left side" in the Command
+    // Palette and other search boxes). Measure the real position instead.
+    if (isFormField) {
+      const fieldRect = this.formFieldCaretCoords(active);
+      if (fieldRect) return fieldRect;
+    }
 
     const win = doc.defaultView || window;
     const sel = win.getSelection();
     if (sel && sel.rangeCount > 0 && active.isContentEditable) {
-      const range = sel.getRangeAt(0).cloneRange();
-      range.collapse(true);
-      let rect = range.getClientRects()[0];
-      if (!rect || (rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0)) {
-        rect = active.getBoundingClientRect();
+      const isDegenerate = (r) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
+
+      // Prefer measuring an actual adjacent character over a collapsed
+      // point. A *collapsed* range's client rect is inconsistent across
+      // browsers and often reports only the glyph's own tight font metrics
+      // rather than the full rendered line-box - which is exactly what made
+      // the cursor's height mismatch the browser's own (line-box-based)
+      // selection highlight, and, downstream, made the character drawn
+      // inside the box sit higher than the real text. A *non-collapsed*
+      // one-character range renders the same way real text/selections do,
+      // so its rect uses the real line-height metrics.
+      const spanRect = this.adjacentCharRect(doc, sel.focusNode, sel.focusOffset);
+      if (spanRect) return spanRect;
+
+      // sel.getRangeAt(0) is always normalized to document order (start
+      // before end), which isn't necessarily where the live caret is - drag
+      // a selection right-to-left and the blinking caret sits at the range's
+      // start, not its end. sel.focusNode/focusOffset is the actual, live,
+      // direction-aware caret position.
+      let range;
+      try {
+        range = doc.createRange();
+        range.setStart(sel.focusNode, sel.focusOffset);
+        range.collapse(true);
+      } catch {
+        range = sel.getRangeAt(0).cloneRange();
+        range.collapse(true);
       }
-      if (rect) return { left: rect.left, top: rect.top, bottom: rect.bottom || rect.top + rect.height };
+      let rect = range.getClientRects()[0] || (range.getBoundingClientRect?.() ?? null);
+
+      if (isDegenerate(rect)) {
+        // Blank lines often have no text node for the range to measure -
+        // there's simply nothing there to produce a client rect. Rather than
+        // mutating the document to force one (risky in a third-party editor
+        // we don't own, e.g. it could confuse its own input handling), climb
+        // from the range's container to its nearest element - i.e. that
+        // line's own wrapper - and use its rect instead. This keeps the
+        // caret at the correct line and left edge without touching the DOM.
+        let node = range.startContainer;
+        let lineEl = node.nodeType === 1 ? node : node.parentElement;
+        // Skip past the direct wrapper if it's the entire editable surface
+        // itself (e.g. a fully empty editor) - that's handled by the
+        // size-clamped fallback further down instead.
+        if (lineEl && lineEl !== active) {
+          const lineRect = lineEl.getBoundingClientRect();
+          if (!isDegenerate(lineRect)) rect = lineRect;
+        }
+      }
+
+      if (!isDegenerate(rect)) {
+        return { left: rect.left, top: rect.top, bottom: rect.bottom || rect.top + rect.height };
+      }
     }
 
+    // No usable in-place caret rect. Only fall back to the focused element's
+    // own bounding box when it's small enough to plausibly BE a single-line
+    // caret host (e.g. a compact rename/edit box) - never for a large
+    // multi-line surface like a full code editor, where that produces a
+    // cursor that's as tall as the entire view.
     const rect = active.getBoundingClientRect();
-    return rect ? { left: rect.left, top: rect.top, bottom: rect.bottom } : null;
+    if (!rect) return null;
+    const style = win.getComputedStyle(active);
+    const approxLineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 20;
+    if (rect.height > approxLineHeight * 3) return null;
+    return { left: rect.left, top: rect.top, bottom: rect.bottom };
+  }
+
+  // Measures a real, rendered one-character span next to the caret (rather
+  // than a collapsed point) so the resulting rect uses the browser's actual
+  // line-box metrics - the same metrics it uses to paint text and selection
+  // highlights - instead of a font's tight glyph metrics.
+  adjacentCharRect(doc, node, offset) {
+    if (!node || node.nodeType !== 3) return null;
+    const text = node.data || "";
+    const isDegenerate = (r) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
+    try {
+      if (offset < text.length) {
+        const r = doc.createRange();
+        r.setStart(node, offset);
+        r.setEnd(node, offset + 1);
+        const rect = r.getClientRects()[0] || r.getBoundingClientRect();
+        if (!isDegenerate(rect)) return { left: rect.left, top: rect.top, bottom: rect.bottom };
+      }
+      if (offset > 0) {
+        const r = doc.createRange();
+        r.setStart(node, offset - 1);
+        r.setEnd(node, offset);
+        const rect = r.getClientRects()[0] || r.getBoundingClientRect();
+        // Caret sits after this character, so anchor to its right edge.
+        if (!isDegenerate(rect)) return { left: rect.right, top: rect.top, bottom: rect.bottom };
+      }
+    } catch {
+      /* fall through to the collapsed-range approach */
+    }
+    return null;
+  }
+
+  // Measures where the caret actually sits inside an <input>/<textarea> by
+  // mirroring the field's text (up to selectionStart) into an offscreen
+  // element with identical font/box metrics, then reading the position of a
+  // marker placed at the caret. This is the standard technique for this
+  // problem since native form fields expose no coordinate API for the caret.
+  formFieldCaretCoords(el) {
+    try {
+      const doc = el.ownerDocument;
+      const win = doc.defaultView || window;
+      const style = win.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      const isTextarea = el.tagName === "TEXTAREA";
+      const value = el.value != null ? String(el.value) : "";
+      let selStart = value.length;
+      try {
+        const s = el.selectionStart, e = el.selectionEnd;
+        if (typeof s === "number" && typeof e === "number") {
+          // The live caret sits at whichever end of the selection is the
+          // "focus" - the end that moves while dragging. For a
+          // backward-dragged selection that's selectionStart; otherwise
+          // (forward, or no selection at all) it's selectionEnd.
+          selStart = el.selectionDirection === "backward" ? s : e;
+        }
+      } catch {
+        /* some input types (color, number, etc.) throw - just use the end */
+      }
+
+      let mirror = this._formMirror;
+      if (!mirror || mirror.ownerDocument !== doc) {
+        mirror?.remove();
+        mirror = doc.createElement("div");
+        mirror.setAttribute("aria-hidden", "true");
+        mirror.style.position = "absolute";
+        mirror.style.visibility = "hidden";
+        mirror.style.top = "0";
+        mirror.style.left = "0";
+        mirror.style.zIndex = "-1";
+        mirror.style.pointerEvents = "none";
+        doc.body.appendChild(mirror);
+        this._formMirror = mirror;
+      }
+
+      const props = [
+        "boxSizing", "width", "height",
+        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+        "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+        "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "lineHeight",
+        "fontFamily", "letterSpacing", "textIndent", "textTransform", "wordSpacing", "tabSize",
+      ];
+      for (const p of props) mirror.style[p] = style[p];
+      mirror.style.whiteSpace = isTextarea ? "pre-wrap" : "pre";
+      mirror.style.wordWrap = isTextarea ? "break-word" : "normal";
+      mirror.style.overflow = "hidden";
+      if (!isTextarea) mirror.style.height = "auto";
+
+      mirror.textContent = "";
+      mirror.appendChild(doc.createTextNode(value.substring(0, selStart)));
+      const marker = doc.createElement("span");
+      marker.textContent = "\u200b"; // needs a real glyph to have a box
+      mirror.appendChild(marker);
+
+      const markerRect = marker.getBoundingClientRect();
+      const mirrorRect = mirror.getBoundingClientRect();
+      const offsetX = markerRect.left - mirrorRect.left;
+      const offsetY = markerRect.top - mirrorRect.top;
+
+      const scrollLeft = el.scrollLeft || 0;
+      const scrollTop = el.scrollTop || 0;
+      const fontSize = parseFloat(style.fontSize) || 14;
+      const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.2 || 16;
+
+      const left = rect.left + offsetX - scrollLeft;
+
+      let top, height;
+      if (isTextarea) {
+        top = rect.top + offsetY - scrollTop;
+        height = lineHeight;
+      } else {
+        // Single-line <input> elements vertically center their text within
+        // their own box using internal UA rendering, not plain CSS line-box
+        // layout - a mirror <div> doesn't reproduce that centering exactly,
+        // which is what made the cursor sit off-center vertically. Anchor to
+        // the input's own box center instead of the mirror's Y offset.
+        height = Math.min(lineHeight, rect.height) || fontSize * 1.2;
+        top = rect.top + (rect.height - height) / 2;
+      }
+
+      // Clamp to the field's own box so a caret scrolled out of view (long
+      // single-line input, caret past the visible edge) doesn't draw outside it.
+      const clampedLeft = Math.min(Math.max(left, rect.left), rect.right);
+      const clampedTop = Math.min(Math.max(top, rect.top), rect.bottom - 1);
+
+      return { left: clampedLeft, top: clampedTop, bottom: clampedTop + height };
+    } catch {
+      return null;
+    }
+  }
+
+  // Caret info for editable elements outside the note editor entirely -
+  // file-tree rename input, Command Palette / Quick Switcher, Settings text
+  // fields, other plugins' modals, etc. There's no CodeMirror here, so we
+  // don't have real glyph metrics; approximate them from the focused
+  // element's own computed style instead.
+  genericCaretCoords() {
+    try {
+      const doc = activeDocument;
+      const active = doc.activeElement;
+      const editable =
+        !!active && (active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT");
+      if (!editable) return null;
+
+      const c = this.selectionFallbackCoords(null);
+      if (!c) return null;
+
+      const win = doc.defaultView || window;
+
+      // Sample the actual element under the caret rather than just the
+      // editable container's own style, so syntax-highlighted text (e.g. in
+      // other CodeMirror-based plugins like a CSS editor) reports its own
+      // real color instead of one flat container color.
+      const sampleX = Math.min(c.left + 2, doc.documentElement.clientWidth - 1);
+      const sampleY = (c.top + c.bottom) / 2;
+      const elAtCaret = doc.elementFromPoint ? doc.elementFromPoint(sampleX, sampleY) : null;
+      const styleSource = elAtCaret && active.contains?.(elAtCaret) ? elAtCaret : active;
+      const style = win.getComputedStyle(styleSource);
+
+      const fontSize = parseFloat(style.fontSize) || 14;
+      const fontFamily = style.fontFamily || "inherit";
+      const char = this.genericCaretChar(active);
+
+      // Generic inputs aren't fixed-width like the note editor, so there's
+      // no single "character width" to assume - measure the actual glyph
+      // under the caret with a canvas (accurate for proportional fonts,
+      // unlike a flat fontSize-based guess). Falls back to an estimate only
+      // when there's no character to measure (end of text, blank line).
+      const measured = char ? this.measureCharWidth(char, fontFamily, fontSize) : null;
+      const charWidth = measured || Math.max(4, fontSize * 0.55);
+      const height = Math.max(4, (c.bottom - c.top) || fontSize * 1.2);
+
+      let finalWidth = charWidth;
+      if (this.settings.cursorStyle === "Line") {
+        finalWidth = this.settings.caretWidthPx;
+      }
+
+      return {
+        x: c.left,
+        top: c.top,
+        bottom: c.top + height,
+        h: height,
+        w: finalWidth,
+        actualCharWidth: charWidth,
+        char,
+        textColor: style.color || "#ffffff",
+        fontSize,
+        fontFamily,
+        focused: true,
+        pos: null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // Measures the real rendered width of a single character in a given font,
+  // used to size the Box/Underline cursor accurately for proportional
+  // (non-monospace) fonts - a flat fontSize-based guess consistently under-
+  // or over-shoots for anything but a true monospace font.
+  measureCharWidth(char, fontFamily, fontSize) {
+    try {
+      if (!this._measureCtx) {
+        const canvas = (activeDocument || document).createElement("canvas");
+        this._measureCtx = canvas.getContext("2d");
+      }
+      this._measureCtx.font = `${fontSize}px ${fontFamily}`;
+      const w = this._measureCtx.measureText(char).width;
+      return w > 0 ? w : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The character sitting immediately after the caret, for elements outside
+  // the note editor - mirrors what cmCaretCoords does for CodeMirror. Used
+  // to draw the "letter inside the cursor" effect in non-editor fields too.
+  genericCaretChar(active) {
+    try {
+      if (active.tagName === "INPUT" || active.tagName === "TEXTAREA") {
+        const value = active.value != null ? String(active.value) : "";
+        let selStart = value.length;
+        try {
+          const s = active.selectionStart, e = active.selectionEnd;
+          if (typeof s === "number" && typeof e === "number") {
+            selStart = active.selectionDirection === "backward" ? s : e;
+          }
+        } catch {
+          /* input types without selectionStart support */
+        }
+        const ch = value.charAt(selStart);
+        return ch && ch !== "\n" ? ch : "";
+      }
+
+      if (active.isContentEditable) {
+        const doc = active.ownerDocument;
+        const win = doc.defaultView || window;
+        const sel = win.getSelection();
+        if (sel && sel.focusNode && sel.focusNode.nodeType === 3) {
+          const text = sel.focusNode.data || "";
+          const ch = text.charAt(sel.focusOffset);
+          return ch && ch !== "\n" ? ch : "";
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+    return "";
   }
 
   resolveHoldChar(newCaret) {
@@ -636,7 +973,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       return;
     }
 
-    if (caret.pos === this.lastActive.pos) {
+    if (caret.pos !== null && caret.pos === this.lastActive.pos) {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
       

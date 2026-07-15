@@ -209,15 +209,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
         opacity: 0 !important;
         display: none !important;
       }
+      /* Opacity-only flicker: no transform/scale here. Scaling a hard-clipped
+         fixed-size overlay shifts its edges by a pixel or two every frame,
+         which is invisible against a dark background but reads as a visible
+         flashing seam against a light one. This is the single source of
+         truth for the flicker animation - do not duplicate this rule in
+         styles.css, since a more specific selector there will silently win
+         the cascade and ignore the "flicker" setting entirely. */
       @keyframes torch-candle-flicker {
-        0% { transform: scale(1); opacity: 0.96; }
-        25% { transform: scale(1.02); opacity: 1.02; }
-        50% { transform: scale(0.99); opacity: 0.95; }
-        75% { transform: scale(1.01); opacity: 1.04; }
-        100% { transform: scale(1); opacity: 0.96; }
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.93; }
       }
       .torch-cursor-overlay:not(.torch-no-flicker) {
-        animation: torch-candle-flicker 0.2s infinite alternate ease-in-out;
+        animation: torch-candle-flicker 0.9s infinite ease-in-out;
       }
     `;
     doc.head.appendChild(styleEl);
@@ -547,24 +551,36 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const charStyle = elAtCaret && lineEl && lineEl.contains(elAtCaret)
         ? win.getComputedStyle(elAtCaret)
         : (lineEl ? win.getComputedStyle(lineEl) : contentStyle);
+// ... existing code ...
       const textColor = charStyle.color || contentStyle.color || "#ffffff";
 
-      // Measure the character's real rendered width directly from its own
-      // coordinates rather than CodeMirror's cached defaultCharacterWidth,
-      // which reflects only the editor's base font-size and doesn't update
-      // for bigger/smaller text (headings, inline code, etc). This is what
-      // keeps the Box/Underline cursor from partially wrapping characters
-      // that are larger or smaller than the default size.
+      // Extract exact font metrics
+      const fontSize = parseFloat(charStyle.fontSize) || parseFloat(contentStyle.fontSize) || 14;
+      const fontFamily = charStyle.fontFamily || contentStyle.fontFamily || "monospace";
+      
+      // Grab letter-spacing (getComputedStyle resolves this to 'px' even if set in 'em')
+      const letterSpacingStr = charStyle.letterSpacing || contentStyle.letterSpacing;
+      let letterSpacing = 0;
+      if (letterSpacingStr && letterSpacingStr.endsWith('px')) {
+        letterSpacing = parseFloat(letterSpacingStr) || 0;
+      }
+
+      // 1. Flawless Width Fix: Measure glyph AND add the CSS letter-spacing gap
       let charWidth = view.defaultCharacterWidth || 8;
       if (char) {
-        try {
-          const nextCoords = view.coordsAtPos(pos + 1, -1) || view.coordsAtPos(pos + 1, 1);
-          if (nextCoords) {
-            const measured = nextCoords.left - c.left;
-            if (measured > 0.5 && measured < charWidth * 6) charWidth = measured;
+        const measuredW = this.measureCharWidth(char, fontFamily, fontSize);
+        if (measuredW) {
+          charWidth = measuredW + letterSpacing;
+        } else {
+          try {
+            const nextCoords = view.coordsAtPos(pos + 1, -1) || view.coordsAtPos(pos + 1, 1);
+            if (nextCoords) {
+              const measured = nextCoords.left - c.left;
+              if (measured > 0.5 && measured < charWidth * 6) charWidth = measured;
+            }
+          } catch {
+            /* fall back to defaultCharacterWidth */
           }
-        } catch {
-          /* fall back to defaultCharacterWidth */
         }
       }
 
@@ -573,17 +589,34 @@ module.exports = class CursorSmithPlugin extends Plugin {
         finalWidth = this.settings.caretWidthPx;
       }
 
+      // 2. Exact Height Fix: Match the browser's native selection highlight box.
+      // We read the exact CSS line-height that dictates the highlight block's size.
+      let h = Math.max(4, c.bottom - c.top);
+      
+      const rawLineHeight = charStyle.lineHeight || contentStyle.lineHeight;
+      if (rawLineHeight && rawLineHeight.endsWith('px')) {
+        h = parseFloat(rawLineHeight);
+      } else if (rawLineHeight && !isNaN(parseFloat(rawLineHeight)) && rawLineHeight !== "normal") {
+        // Handle multiplier formats (e.g., line-height: 1.5)
+        h = fontSize * parseFloat(rawLineHeight);
+      }
+
+      // Center the box vertically around the CodeMirror line coordinate
+      const centerY = (c.top + c.bottom) / 2;
+      const top = centerY - (h / 2);
+      const bottom = centerY + (h / 2);
+
       return {
         x: c.left,
-        top: c.top,
-        bottom: c.bottom,
-        h: Math.max(4, c.bottom - c.top),
+        top: top,
+        bottom: bottom,
+        h: h,
         w: finalWidth,
         actualCharWidth: charWidth,
         char,
         textColor,
-        fontSize: parseFloat(charStyle.fontSize) || parseFloat(contentStyle.fontSize) || 14,
-        fontFamily: charStyle.fontFamily || contentStyle.fontFamily || "monospace",
+        fontSize,
+        fontFamily,
         focused: view.hasFocus || (inTable && activeIsEditable),
         pos,
       };
@@ -591,7 +624,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
       return null; 
     }
   }
-
   selectionFallbackCoords(view) {
     const doc = view ? view.dom.ownerDocument : activeDocument;
     const active = doc.activeElement;
@@ -1503,26 +1535,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.x += (this.tx - this.x) * lerp;
       this.y += (this.ty - this.y) * lerp;
 
+      const targetDoc = view ? view.dom.ownerDocument : activeDocument;
       const r = this.getPaneRect(view);
       const usePane = r && this.settings.overlaySpareSidebars;
+      // Even when we're not sparing the sidebars, the overlay must still
+      // never cover the titlebar/status bar - getFullViewportRect clamps
+      // around them the same way getPaneRect does for the editor pane.
+      const rect = usePane ? r : this.getFullViewportRect(targetDoc);
 
-      if (usePane) {
-        this.overlay.style.top = r.top + "px";
-        this.overlay.style.left = r.left + "px";
-        this.overlay.style.width = r.width + "px";
-        this.overlay.style.height = r.height + "px";
-      } else {
-        this.overlay.style.top = "0px";
-        this.overlay.style.left = "0px";
-        this.overlay.style.width = "100vw";
-        this.overlay.style.height = "100vh";
-      }
+      this.overlay.style.top = rect.top + "px";
+      this.overlay.style.left = rect.left + "px";
+      this.overlay.style.width = rect.width + "px";
+      this.overlay.style.height = rect.height + "px";
 
-      const offsetX = usePane ? r.left : 0;
-      const offsetY = usePane ? r.top : 0;
-
-      this.overlay.style.setProperty("--torch-x", (this.x - offsetX).toFixed(1) + "px");
-      this.overlay.style.setProperty("--torch-y", (this.y - offsetY).toFixed(1) + "px");
+      this.overlay.style.setProperty("--torch-x", (this.x - rect.left).toFixed(1) + "px");
+      this.overlay.style.setProperty("--torch-y", (this.y - rect.top).toFixed(1) + "px");
 
       const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
       this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
@@ -1532,54 +1559,50 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.torchRaf = requestAnimationFrame(tick);
   }
 
+  // Same clamping logic as getPaneRect, but spanning the full window width -
+  // used when there's no editor pane to clip to (or "spare sidebars" is
+  // off). Never returns a rect that overlaps the titlebar: a full-viewport
+  // fixed-position layer sitting over the titlebar - even one with
+  // pointer-events:none - breaks Electron's native window-drag hit-testing
+  // on frameless/custom-titlebar windows (seen on Linux and macOS).
+  // A titlebar/status-bar element can have a perfectly normal non-zero size
+  // in the layout while being invisible - many themes and "zen mode"
+  // implementations hide these bars via opacity/visibility rather than
+  // removing them from flow, precisely so hovering near the edge can still
+  // reveal them (or, for the titlebar, so the OS drag-region keeps working).
+  // Checking rect.height alone treats that reserved-but-invisible space as
+  // real chrome and clamps the overlay around it anyway, leaving a dead
+  // strip with no overlay where the bar used to be visible.
+  _isVisiblyRendered(el) {
+    if (!el) return false;
+    const win = el.ownerDocument.defaultView || window;
+    const cs = win.getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden") return false;
+    if (parseFloat(cs.opacity) <= 0.01) return false;
+    return true;
+  }
+
+getFullViewportRect(doc) {
+    const win = doc.defaultView || window;
+    // No clamps. Returns the absolute full window dimensions.
+    return { 
+      top: 0, 
+      bottom: win.innerHeight, 
+      left: 0, 
+      right: win.innerWidth, 
+      width: win.innerWidth, 
+      height: win.innerHeight 
+    };
+  }
+
   getPaneRect(view) {
     if (!view) return null;
     const rootEl = view.dom.closest(".cm-editor") || view.dom.closest(".workspace-leaf");
     if (!rootEl) return null;
-    const rect = rootEl.getBoundingClientRect();
-    const doc = rootEl.ownerDocument;
-
-    // Clipping to the editor pane's own bounding rect assumes the status
-    // bar/titlebar always take up real space in document flow, pushing the
-    // pane's rect to stop short of them. Some themes and CSS snippets
-    // instead position those elements as floating overlays (fixed/absolute)
-    // that sit on top of the pane rather than shrinking it - in that case
-    // the pane's rect still extends underneath them, so clipping to it
-    // alone doesn't stop the canvas (z-index 10000) from painting over
-    // them. Explicitly clamp against whichever of these elements actually
-    // overlaps the pane rect.
-    let top = rect.top;
-    let bottom = rect.bottom;
-
-    const statusBar = doc.querySelector(".status-bar");
-    if (statusBar) {
-      const sbRect = statusBar.getBoundingClientRect();
-      if (sbRect.height > 0 && sbRect.top < bottom && sbRect.bottom > top) {
-        bottom = Math.min(bottom, sbRect.top);
-      }
-    }
-
-    const titleBar = doc.querySelector(".titlebar");
-    if (titleBar) {
-      const tbRect = titleBar.getBoundingClientRect();
-      if (tbRect.height > 0 && tbRect.bottom > top && tbRect.top < bottom) {
-        top = Math.max(top, tbRect.bottom);
-      }
-    }
-
-    if (bottom <= top) return rect; // safety net: never collapse to an empty/inverted rect
-
-    return {
-      top,
-      bottom,
-      left: rect.left,
-      right: rect.right,
-      width: rect.width,
-      height: bottom - top,
-    };
-  }
-
-  updateOverlayTarget() {
+    
+    // No clamps. Returns the exact physical boundaries of the text editor pane.
+    return rootEl.getBoundingClientRect();
+  }  updateOverlayTarget() {
     const mode = this.settings.overlayFollowMode;
     const caret = this.caretCoords();
     if (caret) {
@@ -1861,4 +1884,5 @@ class CursorSmithSettingTab extends PluginSettingTab {
     }
   }
 }
+/* nosourcemap */
 /* nosourcemap */

@@ -155,6 +155,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.canvasRaf = 0;
     this.torchRaf = 0;
 
+    // Per-frame write-dedupe + chrome-inset cache (see _chromeInsets)
+    this._lastWrapperRect = "";
+    this._lastOverlayRect = "";
+    this._chromeCache = null;
+    this._tickErrorLogged = false;
+    this._torchErrorLogged = false;
+
     this.addCommand({
       id: "toggle-cursor-smith",
       name: "Toggle custom cursor",
@@ -183,6 +190,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const styleEl = doc.createElement("style");
     styleEl.id = id;
     styleEl.textContent = `
+      /* NO -webkit-app-region declaration on any of our layers.
+         Electron composes drag regions by unioning elements with
+         app-region:drag, then SUBTRACTING elements with app-region:no-drag
+         (alias: none). An element with NO declaration is completely neutral
+         - Electron ignores it for hit-testing. Setting app-region:none on
+         our layers was actively punching holes in the tab bar's drag rects
+         (confirmed: wrapper computed as "no-drag", killed dragging entirely
+         even though the wrapper rect was already below the tab bar). The
+         correct approach is: declare nothing, keep pointer-events:none so
+         clicks pass through, and rely on the physical rect not covering
+         the drag surface (enforced by _chromeInsets in the tick loops). */
       .retro-box-cursor-canvas {
         pointer-events: none;
       }
@@ -195,6 +213,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
       .torch-cursor-overlay {
         position: fixed;
         pointer-events: none;
+        /* Collapsed by default: the tick loop sizes this inline every
+           frame; these defaults only cover the gap between DOM insertion
+           and the first frame, so the overlay can never sit over the
+           drag surface during that window. */
+        top: 0;
+        left: 0;
+        width: 0;
+        height: 0;
         z-index: 9990;
         background: radial-gradient(
           circle var(--torch-radius, 250px) at var(--torch-x, 50%) var(--torch-y, 50%),
@@ -236,7 +262,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.mouseY = e.clientY;
       this.lastMouseMove = Date.now();
     };
-    const onResize = () => this.resizeCanvas();
+    const onResize = () => {
+      // Chrome insets and the deduped wrapper/overlay rects are all stale
+      // after a resize - drop them so the next frame re-measures instead
+      // of waiting out the 500ms cache window.
+      this._chromeCache = null;
+      this._lastWrapperRect = "";
+      this._lastOverlayRect = "";
+      this.resizeCanvas();
+    };
     
     doc.addEventListener("mousemove", onMouseMove);
     const win = doc.defaultView;
@@ -292,7 +326,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   ensureCanvasForView(view) {
-    const targetDoc = view ? view.dom.ownerDocument : this.overlay.ownerDocument;
+    // CRASH FIX: this used to read `this.overlay.ownerDocument` when there
+    // was no view - but this.overlay belongs to the torch engine and is
+    // null whenever the torch is off (and even briefly when it's on). On
+    // window refocus, activeEditor is momentarily null, so view is null,
+    // and the null-deref threw inside the rAF tick, killing the loop and
+    // making the cursor vanish until plugin reload. Fall back to the
+    // canvas's own current document (don't migrate anywhere while there's
+    // no view), then to Obsidian's activeDocument, then to the main doc.
+    const targetDoc =
+      (view && view.dom.ownerDocument) ||
+      (this.canvasWrapper && this.canvasWrapper.ownerDocument) ||
+      (typeof activeDocument !== "undefined" && activeDocument) ||
+      document;
     if (this.canvasWrapper && this.canvasWrapper.ownerDocument !== targetDoc) {
       this.canvasWrapper.remove();
       this.canvasWrapper = null;
@@ -302,17 +348,31 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!this.canvasWrapper) {
       targetDoc.body.classList.add("retro-box-cursor-active");
       
-      // The wrapper creates a strict physical bounding box to unblock window dragging
+      // The wrapper creates a strict physical bounding box to unblock window
+      // dragging. See _chromeInsets / getFullViewportRect for the sizing
+      // logic - the wrapper is never sized to overlap the tab bar.
       this.canvasWrapper = targetDoc.createElement("div");
       this.canvasWrapper.style.position = "fixed";
       this.canvasWrapper.style.overflow = "hidden";
       this.canvasWrapper.style.pointerEvents = "none";
       this.canvasWrapper.style.zIndex = "10000";
-      targetDoc.body.appendChild(this.canvasWrapper);
+      this.canvasWrapper.style.top = "0px";
+      this.canvasWrapper.style.left = "0px";
+      this.canvasWrapper.style.width = "0px";
+      this.canvasWrapper.style.height = "0px";
+      this._lastWrapperRect = "";
+      // Append inside .app-container rather than directly on body.
+      // Obsidian's app.css has: body.is-frameless > .app-container ~ * { app-region: no-drag }
+      // which targets every direct-body-child sibling of .app-container —
+      // exactly what we were. Inside .app-container that rule doesn't match
+      // and our elements stay neutral (no app-region) as intended.
+      const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
+      appContainer.appendChild(this.canvasWrapper);
 
       this.canvas = targetDoc.createElement("canvas");
       this.canvas.className = "retro-box-cursor-canvas";
-      this.canvas.style.position = "absolute"; // Force absolute so it obeys the wrapper
+      this.canvas.style.position = "absolute";
+      // NO app-region declaration (same rationale as wrapper above).
       this.canvasWrapper.appendChild(this.canvas);
       
       this.ctx = this.canvas.getContext("2d");
@@ -330,7 +390,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.disableTorchOverlay();
       return;
     }
-    const targetDoc = view ? view.dom.ownerDocument : this.overlay.ownerDocument;
+    // CRASH FIX: same null-deref as ensureCanvasForView - this function
+    // exists to CREATE this.overlay, so it can't rely on this.overlay
+    // already existing to pick a document. With no view (refocus, no note
+    // open) and no overlay yet, the old code threw and the torch rAF loop
+    // died silently.
+    const targetDoc =
+      (view && view.dom.ownerDocument) ||
+      (this.overlay && this.overlay.ownerDocument) ||
+      (typeof activeDocument !== "undefined" && activeDocument) ||
+      document;
     if (this.overlay && this.overlay.ownerDocument !== targetDoc) {
       this.overlay.remove();
       this.overlay = null;
@@ -339,7 +408,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     if (!this.overlay) {
       targetDoc.body.classList.add("torch-cursor-active");
-      this.overlay = targetDoc.body.createDiv({ cls: "torch-cursor-overlay" });
+      // Same as canvas wrapper: append inside .app-container to avoid
+      // Obsidian's body.is-frameless > .app-container ~ * { no-drag } rule.
+      const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
+      this.overlay = appContainer.createDiv({ cls: "torch-cursor-overlay" });
+      this.overlay.style.top = "0px";
+      this.overlay.style.left = "0px";
+      this.overlay.style.width = "0px";
+      this.overlay.style.height = "0px";
+      this._lastOverlayRect = "";
       this.injectStyles(targetDoc);
       this.applyOverlayStyle();
       
@@ -431,37 +508,64 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     const tick = () => {
       if (!this.canvasEngineActive) return;
-      const view = this.app.workspace.activeEditor?.editor?.cm;
-      this.ensureCanvasForView(view);
-      if (view) this.registerWindowEvents(view.dom.ownerDocument);
+      // The whole frame is wrapped so a single bad frame (e.g. a transient
+      // null during window refocus, a detached node mid-layout) can never
+      // kill the rAF loop permanently - that's exactly the "cursor
+      // disappears until plugin reload" failure mode. We log the first
+      // error to the console for debugging and keep ticking.
+      try {
+        const view = this.app.workspace.activeEditor?.editor?.cm;
+        this.ensureCanvasForView(view);
+        if (view) this.registerWindowEvents(view.dom.ownerDocument);
 
-      if (this.canvasWrapper && this.canvas) {
-        // Only clip to the editor pane while the note editor is the thing
-        // actually focused. The moment focus moves anywhere else - file
-        // tree rename box, Command Palette, Settings, other modals - there's
-        // no reason to keep the canvas boxed inside the pane, and doing so
-        // is exactly what made the cursor invisible outside the editor.
-        const r = view && view.hasFocus ? this.getPaneRect(view) : null;
-        if (r) {
-          this.canvasWrapper.style.top = r.top + "px";
-          this.canvasWrapper.style.left = r.left + "px";
-          this.canvasWrapper.style.width = r.width + "px";
-          this.canvasWrapper.style.height = r.height + "px";
-          // Shift the canvas backward so absolute screen coordinates draw perfectly
-          this.canvas.style.transform = `translate(-${r.left}px, -${r.top}px)`;
-        } else {
-          this.canvasWrapper.style.top = "0px";
-          this.canvasWrapper.style.left = "0px";
-          this.canvasWrapper.style.width = "100vw";
-          this.canvasWrapper.style.height = "100vh";
-          this.canvas.style.transform = "none";
+        if (this.canvasWrapper && this.canvas) {
+          // Only clip to the editor pane while the note editor is the thing
+          // actually focused. The moment focus moves anywhere else - file
+          // tree rename box, Command Palette, Settings, other modals - there's
+          // no reason to keep the canvas boxed inside the pane, and doing so
+          // is exactly what made the cursor invisible outside the editor.
+          const r = (view && view.hasFocus ? this.getPaneRect(view) : null) ||
+            // Never 100vw/100vh here: a full-viewport layer over the
+            // titlebar kills Electron's window-drag hit-testing on
+            // Linux/Windows (drag regions compose in DOM order; z-index
+            // and pointer-events are irrelevant to them).
+            this.getFullViewportRect(this.canvas.ownerDocument);
+
+          // Round and dedupe: writing identical style values every frame
+          // still costs style-recalc work in Blink, and fractional pixel
+          // sizes force continuous compositor re-uploads - both showed up
+          // as stutter with the smear effect on (worst on weak GPUs, e.g.
+          // ChromeOS Crostini's virtualized one).
+          const top = Math.round(r.top);
+          const left = Math.round(r.left);
+          const width = Math.round(r.width);
+          const height = Math.round(r.height);
+          const key = top + "," + left + "," + width + "," + height;
+          if (key !== this._lastWrapperRect) {
+            this._lastWrapperRect = key;
+            this.canvasWrapper.style.top = top + "px";
+            this.canvasWrapper.style.left = left + "px";
+            this.canvasWrapper.style.width = width + "px";
+            this.canvasWrapper.style.height = height + "px";
+            // Shift the canvas backward so absolute screen coordinates draw
+            // perfectly. transform: none when there's no offset avoids
+            // promoting the canvas to a separate compositor layer for
+            // nothing.
+            this.canvas.style.transform =
+              top === 0 && left === 0 ? "none" : `translate(${-left}px, ${-top}px)`;
+          }
+        }
+
+        this.updateActivePoint();
+        this.updateSmoothCursor();
+        this.updateSmearQuad();
+        this.draw();
+      } catch (e) {
+        if (!this._tickErrorLogged) {
+          this._tickErrorLogged = true;
+          console.error("[cursor-smith] canvas tick error (loop kept alive):", e);
         }
       }
-
-      this.updateActivePoint();
-      this.updateSmoothCursor();
-      this.updateSmearQuad();
-      this.draw();
       this.canvasRaf = requestAnimationFrame(tick);
     };
     this.canvasRaf = requestAnimationFrame(tick);
@@ -557,6 +661,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // Extract exact font metrics
       const fontSize = parseFloat(charStyle.fontSize) || parseFloat(contentStyle.fontSize) || 14;
       const fontFamily = charStyle.fontFamily || contentStyle.fontFamily || "monospace";
+      const fontWeight = charStyle.fontWeight || contentStyle.fontWeight || "normal";
+      const fontStyleCss = charStyle.fontStyle || contentStyle.fontStyle || "normal";
       
       // Grab letter-spacing (getComputedStyle resolves this to 'px' even if set in 'em')
       const letterSpacingStr = charStyle.letterSpacing || contentStyle.letterSpacing;
@@ -565,10 +671,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
         letterSpacing = parseFloat(letterSpacingStr) || 0;
       }
 
-      // 1. Flawless Width Fix: Measure glyph AND add the CSS letter-spacing gap
+      // Width: canvas measurement primary (accurate for proportional fonts,
+      // respects letter-spacing), coordsAtPos delta as fallback only when
+      // there's no character to measure (end of text, blank line).
+      // Note: coordsAtPos(pos+1) at end-of-line returns the start of the
+      // NEXT line, making the delta garbage - so it must be the fallback,
+      // not the primary source. The canvas measurement handles end-of-line
+      // correctly because it measures the actual glyph, not a position delta.
       let charWidth = view.defaultCharacterWidth || 8;
       if (char) {
-        const measuredW = this.measureCharWidth(char, fontFamily, fontSize);
+        const measuredW = this.measureCharWidth(char, fontFamily, fontSize, fontWeight, fontStyleCss);
         if (measuredW) {
           charWidth = measuredW + letterSpacing;
         } else {
@@ -589,15 +701,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
         finalWidth = this.settings.caretWidthPx;
       }
 
-      // 2. Exact Height Fix: Match the browser's native selection highlight box.
-      // We read the exact CSS line-height that dictates the highlight block's size.
+      // Height: match the browser's native selection highlight box by
+      // reading CSS line-height. contentStyle (the CM editor) is the
+      // reliable source; charStyle from elementFromPoint can land on a
+      // decoration or embed with an unrelated line-height, so prefer
+      // contentStyle when charStyle gives something wildly different.
       let h = Math.max(4, c.bottom - c.top);
-      
       const rawLineHeight = charStyle.lineHeight || contentStyle.lineHeight;
       if (rawLineHeight && rawLineHeight.endsWith('px')) {
         h = parseFloat(rawLineHeight);
       } else if (rawLineHeight && !isNaN(parseFloat(rawLineHeight)) && rawLineHeight !== "normal") {
-        // Handle multiplier formats (e.g., line-height: 1.5)
         h = fontSize * parseFloat(rawLineHeight);
       }
 
@@ -848,7 +961,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // element's own computed style instead.
   genericCaretCoords() {
     try {
-      const doc = document;
+      // Follow the canvas's document rather than hardcoding the main
+      // window's - the canvas migrates to whichever window hosts the
+      // active view, so this keeps interface carets working in pop-outs.
+      const doc = this.canvas?.ownerDocument ?? document;
       const active = doc.activeElement;
       const editable =
         !!active && (active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT");
@@ -878,7 +994,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // under the caret with a canvas (accurate for proportional fonts,
       // unlike a flat fontSize-based guess). Falls back to an estimate only
       // when there's no character to measure (end of text, blank line).
-      const measured = char ? this.measureCharWidth(char, fontFamily, fontSize) : null;
+      const measured = char
+        ? this.measureCharWidth(char, fontFamily, fontSize, style.fontWeight, style.fontStyle)
+        : null;
       const charWidth = measured || Math.max(4, fontSize * 0.55);
       const height = Math.max(4, (c.bottom - c.top) || fontSize * 1.2);
 
@@ -909,14 +1027,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // Measures the real rendered width of a single character in a given font,
   // used to size the Box/Underline cursor accurately for proportional
   // (non-monospace) fonts - a flat fontSize-based guess consistently under-
-  // or over-shoots for anything but a true monospace font.
-  measureCharWidth(char, fontFamily, fontSize) {
+  // or over-shoots for anything but a true monospace font. Weight and style
+  // matter: a bold glyph is meaningfully wider than its regular counterpart,
+  // and measuring without them left the box visibly too narrow on bold or
+  // italic text.
+  measureCharWidth(char, fontFamily, fontSize, fontWeight, fontStyle) {
     try {
       if (!this._measureCtx) {
         const canvas = (this.canvas?.ownerDocument ?? document).createElement("canvas");
         this._measureCtx = canvas.getContext("2d");
       }
-      this._measureCtx.font = `${fontSize}px ${fontFamily}`;
+      const weight = fontWeight && fontWeight !== "normal" ? fontWeight + " " : "";
+      const style = fontStyle && fontStyle !== "normal" ? fontStyle + " " : "";
+      this._measureCtx.font = `${style}${weight}${fontSize}px ${fontFamily}`;
       const w = this._measureCtx.measureText(char).width;
       return w > 0 ? w : null;
     } catch {
@@ -1521,58 +1644,65 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     const tick = () => {
       if (!this.torchEngineActive) return;
-      const view = this.app.workspace.activeEditor?.editor?.cm;
-      this.ensureTorchOverlayForView(view);
-      if (view) this.registerWindowEvents(view.dom.ownerDocument);
+      try {
+        const view = this.app.workspace.activeEditor?.editor?.cm;
+        this.ensureTorchOverlayForView(view);
+        if (view) this.registerWindowEvents(view.dom.ownerDocument);
 
-      if (!this.overlay) {
-        this.torchRaf = requestAnimationFrame(tick);
-        return;
+        if (!this.overlay) {
+          this.torchRaf = requestAnimationFrame(tick);
+          return;
+        }
+
+        this.updateOverlayTarget();
+        const lerp = this.settings.overlaySpeed;
+        this.x += (this.tx - this.x) * lerp;
+        this.y += (this.ty - this.y) * lerp;
+
+        const r = this.getPaneRect(view);
+        const usePane = r && this.settings.overlaySpareSidebars;
+        // Even when we're not sparing the sidebars, the overlay must never
+        // cover the titlebar - getFullViewportRect clamps around it (see
+        // its comment for the drag-hit-testing rationale). The overlay is
+        // guaranteed non-null here, so its own document is the right one.
+        const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
+
+        const top = Math.round(rect.top);
+        const left = Math.round(rect.left);
+        const width = Math.round(rect.width);
+        const height = Math.round(rect.height);
+        const key = top + "," + left + "," + width + "," + height;
+        if (key !== this._lastOverlayRect) {
+          this._lastOverlayRect = key;
+          this.overlay.style.top = top + "px";
+          this.overlay.style.left = left + "px";
+          this.overlay.style.width = width + "px";
+          this.overlay.style.height = height + "px";
+        }
+
+        this.overlay.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
+        this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
+
+        const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
+        this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
+      } catch (e) {
+        if (!this._torchErrorLogged) {
+          this._torchErrorLogged = true;
+          console.error("[cursor-smith] torch tick error (loop kept alive):", e);
+        }
       }
-
-      this.updateOverlayTarget();
-      const lerp = this.settings.overlaySpeed;
-      this.x += (this.tx - this.x) * lerp;
-      this.y += (this.ty - this.y) * lerp;
-
-      const targetDoc = view ? view.dom.ownerDocument : this.canvas?.ownerDocument ?? document;
-      const r = this.getPaneRect(view);
-      const usePane = r && this.settings.overlaySpareSidebars;
-      // Even when we're not sparing the sidebars, the overlay must still
-      // never cover the titlebar/status bar - getFullViewportRect clamps
-      // around them the same way getPaneRect does for the editor pane.
-      const rect = usePane ? r : this.getFullViewportRect(targetDoc);
-
-      this.overlay.style.top = rect.top + "px";
-      this.overlay.style.left = rect.left + "px";
-      this.overlay.style.width = rect.width + "px";
-      this.overlay.style.height = rect.height + "px";
-
-      this.overlay.style.setProperty("--torch-x", (this.x - rect.left).toFixed(1) + "px");
-      this.overlay.style.setProperty("--torch-y", (this.y - rect.top).toFixed(1) + "px");
-
-      const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
-      this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
-
       this.torchRaf = requestAnimationFrame(tick);
     };
     this.torchRaf = requestAnimationFrame(tick);
   }
 
-  // Same clamping logic as getPaneRect, but spanning the full window width -
-  // used when there's no editor pane to clip to (or "spare sidebars" is
-  // off). Never returns a rect that overlaps the titlebar: a full-viewport
-  // fixed-position layer sitting over the titlebar - even one with
-  // pointer-events:none - breaks Electron's native window-drag hit-testing
-  // on frameless/custom-titlebar windows (seen on Linux and macOS).
-  // A titlebar/status-bar element can have a perfectly normal non-zero size
-  // in the layout while being invisible - many themes and "zen mode"
-  // implementations hide these bars via opacity/visibility rather than
-  // removing them from flow, precisely so hovering near the edge can still
-  // reveal them (or, for the titlebar, so the OS drag-region keeps working).
-  // Checking rect.height alone treats that reserved-but-invisible space as
-  // real chrome and clamps the overlay around it anyway, leaving a dead
-  // strip with no overlay where the bar used to be visible.
+  // True when the element is actually painted (not display:none, hidden,
+  // or fully transparent). Used by _chromeInsets to decide whether the
+  // STATUS BAR should clamp the overlay: an invisible-but-in-flow status
+  // bar (zen-mode themes hide it via opacity so it can reveal on hover)
+  // shouldn't leave a dead unshaded strip. Deliberately NOT used for the
+  // titlebar - see _chromeInsets for why the titlebar clamps regardless
+  // of visibility.
   _isVisiblyRendered(el) {
     if (!el) return false;
     const win = el.ownerDocument.defaultView || window;
@@ -1582,16 +1712,85 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return true;
   }
 
-getFullViewportRect(doc) {
+  // Cached top/bottom insets around Obsidian's window chrome, refreshed at
+  // most every 500ms (or on window resize via _bumpChromeInsets). Both tick
+  // loops need these every frame; uncached, that's 2 querySelectors + 2
+  // getBoundingClientRects + 2 getComputedStyles per frame per loop, which
+  // is measurable jank on weak GPUs (ChromeOS Crostini) - and Chromium has
+  // a known slow path where layout reads get more expensive whenever any
+  // app-region: drag element exists in the document, which is always true
+  // in frameless Obsidian.
+  //
+  // Titlebar: clamps whenever it occupies layout space, VISIBLE OR NOT.
+  // Drag hit-testing doesn't care about visibility - an opacity-0 titlebar
+  // (zen-mode themes) still owns the window's drag region, and covering it
+  // breaks dragging just the same. Drag correctness beats the cosmetic
+  // cost of a few undarkened pixels.
+  //
+  // Status bar: clamps only when visibly rendered. It has no drag role, so
+  // for an invisible-but-in-flow status bar the clamp would just leave a
+  // dead unshaded strip for no benefit (the concern _isVisiblyRendered was
+  // originally written for).
+  _chromeInsets(doc) {
+    const now = Date.now();
+    const c = this._chromeCache;
+    if (c && c.doc === doc && now - c.t < 500) return c;
+
+    let top = 0;
+    const titleBar = doc.querySelector(".titlebar");
+    // is-hidden-frameless: titlebar element exists but contains no visible
+    // content (window controls hidden). The tab bar spacers are the drag
+    // surface but they're visually transparent - we can paint over them
+    // since our overlay has no app-region declaration and doesn't affect
+    // Electron's drag hit-testing. Start from t:0 in this mode.
+    // is-frameless (without is-hidden-frameless): custom titlebar IS visible,
+    // clamp below it so we don't cover the window controls.
+    const isHiddenFrameless = doc.body.classList.contains("is-hidden-frameless");
+    if (titleBar && !isHiddenFrameless) {
+      const tb = titleBar.getBoundingClientRect();
+      if (tb.height > 0 && tb.top <= tb.height) top = Math.max(top, tb.bottom);
+    }
+    // When there's no titlebar at all (native frame style or non-Electron),
+    // tab bars at t:0 are still the drag surface but again our overlay
+    // doesn't affect app-region so no clamp needed there either.
+    // Only clamp against tab bars when a VISIBLE titlebar pushes them down
+    // and we need to cover the gap between titlebar bottom and tab bar bottom.
+
+    // No bottom clamp for the status bar. It sits above our overlay via its
+    // own stacking context (the overlay is z-index:9990 and the status bar
+    // renders on top naturally). Clamping to sb.top was incorrectly cutting
+    // the torch overlay short before the status bar, leaving the bottom of
+    // the note unilluminated. The original file had no bottom clamp here.
+
+    this._chromeCache = { doc, t: now, top, bottomInset: 0 };
+    return this._chromeCache;
+  }
+
+  // Full-window rect minus the window chrome. Never returns a rect that
+  // overlaps the titlebar: a full-viewport fixed-position layer sitting
+  // over the titlebar - even one with pointer-events: none - breaks
+  // Electron's native window-drag hit-testing on frameless/custom-titlebar
+  // windows (Electron composes drag regions in DOM order; z-index and
+  // pointer-events don't participate). Seen in the wild on Linux X11 (KDE)
+  // and ChromeOS Crostini: window resizes fine, refuses to move.
+  // Note: when Obsidian runs with the NATIVE frame there's no .titlebar in
+  // the DOM at all - and none is needed, because the OS titlebar lives
+  // outside the web contents where nothing we render can cover it. The
+  // zero inset we compute in that case is correct, not a missed clamp.
+  getFullViewportRect(doc) {
     const win = doc.defaultView || window;
-    // No clamps. Returns the absolute full window dimensions.
-    return { 
-      top: 0, 
-      bottom: win.innerHeight, 
-      left: 0, 
-      right: win.innerWidth, 
-      width: win.innerWidth, 
-      height: win.innerHeight 
+    const { top } = this._chromeInsets(doc);
+    const bottom = win.innerHeight; // no bottom clamp - status bar stacks above us
+    if (bottom <= top) {
+      return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 };
+    }
+    return {
+      top,
+      bottom,
+      left: 0,
+      right: win.innerWidth,
+      width: win.innerWidth,
+      height: bottom - top,
     };
   }
 
@@ -1599,10 +1798,34 @@ getFullViewportRect(doc) {
     if (!view) return null;
     const rootEl = view.dom.closest(".cm-editor") || view.dom.closest(".workspace-leaf");
     if (!rootEl) return null;
-    
-    // No clamps. Returns the exact physical boundaries of the text editor pane.
-    return rootEl.getBoundingClientRect();
-  }  updateOverlayTarget() {
+    const rect = rootEl.getBoundingClientRect();
+
+    // Clipping to the pane's own rect assumes the titlebar/status bar take
+    // up real space in flow, pushing the pane to stop short of them. Some
+    // themes float those bars over the pane instead (fixed/absolute), so
+    // the pane's rect extends underneath - and our z-index 10000 canvas
+    // would paint over them, with the same drag-breaking consequence as
+    // the full-viewport case for the titlebar. Clamp against the cached
+    // chrome insets (cheap - no extra layout reads per frame).
+    const doc = rootEl.ownerDocument;
+    const win = doc.defaultView || window;
+    const { top: chromeTop } = this._chromeInsets(doc);
+    const top = Math.max(rect.top, chromeTop);
+    const bottom = rect.bottom; // no bottom clamp - status bar stacks above us
+
+    if (bottom <= top) return rect;
+
+    return {
+      top,
+      bottom,
+      left: rect.left,
+      right: rect.right,
+      width: rect.width,
+      height: bottom - top,
+    };
+  }
+
+  updateOverlayTarget() {
     const mode = this.settings.overlayFollowMode;
     const caret = this.caretCoords();
     if (caret) {
@@ -1885,4 +2108,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
   }
 }
 /* nosourcemap */
+/* nosourcemap */
+
 /* nosourcemap */

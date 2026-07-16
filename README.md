@@ -56,7 +56,7 @@ The settings panel is organized into the following sections:
 
 ## Feedback
 
-Found a bug or have an idea for a new effect? Open an issue or use the thumbs-down/feedback option in Obsidian to let us know
+Found a bug or have an idea for a new effect? Open an issue!
 
 ## Pricing
 
@@ -68,3 +68,7 @@ If youâ€™d like to support the project and help me keep the updates coming, youâ
     <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
   </a>
 </div>
+
+## License
+MIT
+

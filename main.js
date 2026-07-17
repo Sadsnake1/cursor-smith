@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   blinkingEnabled: true,
   blinkSpeed: 1.2,       
   blinkOnOffBalance: 0.5,
+  blinkDelayMs: 0,       // ms of full-on hold after any move/keystroke before blinking resumes
   hideNativeCaret: true, 
   showChar: true, 
   moveDelayMs: 0,        
@@ -93,6 +94,27 @@ function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
 
+// Returns true only for elements that actually host a blinking text caret.
+// contentEditable and <textarea> always qualify. For <input> we filter by
+// type: text/search/url/tel/email/password/number are text fields; checkbox,
+// radio, range, color, button, etc. don't have a caret and must be excluded
+// so clicking an Obsidian settings toggle (which is <input type="checkbox">)
+// doesn't cause the plugin to draw a cursor on top of it.
+function isTextCaretHost(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA") return true;
+  if (tag === "INPUT") {
+    const type = (el.type || "text").toLowerCase();
+    return (
+      type === "text" || type === "search" || type === "url" || type === "tel" ||
+      type === "email" || type === "password" || type === "number"
+    );
+  }
+  return false;
+}
+
 function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5) {
   if (speed <= 0) return 1;
   const period = 2500 / speed; 
@@ -129,6 +151,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.trail = []; 
     this.particles = []; 
     this.flamePixels = [];
+    this.secondaryCarets = []; // dashed 2px vertical lines for CM6 multi-cursor mode
     this.lastActive = null; 
     this.pending = null; 
     this.smearQuad = null;
@@ -204,11 +227,27 @@ module.exports = class CursorSmithPlugin extends Plugin {
       .retro-box-cursor-canvas {
         pointer-events: none;
       }
-      .retro-box-cursor-hide-native .cm-cursorLayer {
+      /* Hide the primary cursor by BOTH position (first child of the
+         cursor layer) and class (.cm-cursor-primary), so this works whether
+         Obsidian's CM6 uses per-cursor class distinctions or not. */
+      .retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor:first-child,
+      .retro-box-cursor-hide-native .cm-cursor-primary,
+      .retro-box-cursor-hide-native .cm-fat-cursor,
+      .retro-box-cursor-hide-native .cm-dropCursor {
         display: none !important;
         opacity: 0 !important;
         visibility: hidden !important;
+        border-color: transparent !important;
+        background-color: transparent !important;
         animation: none !important;
+      }
+      /* Force every subsequent cursor visible for multi-cursor editing,
+         matched by both position and class name. */
+      .retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor:not(:first-child),
+      .retro-box-cursor-hide-native .cm-cursor-secondary {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
       }
       .torch-cursor-overlay {
         position: fixed;
@@ -303,12 +342,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   applyBodyClasses() {
     const engineActive = !!(this.canvasEngineActive || this.torchEngineActive);
+    // During a presentation the canvas clears itself and the torch hides, so
+    // there's no custom cursor visible - don't suppress the native caret then
+    // either (it stays hidden behind the Slides overlay anyway, but removing
+    // our class avoids any edge-case where the native cursor is needed and
+    // was globally suppressed by us).
+    const presenting = this.isPresentationModeActive();
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
         doc.body.classList.toggle(
           "retro-box-cursor-hide-native",
-          !!(engineActive && this.settings.hideNativeCaret)
+          !!(engineActive && this.settings.hideNativeCaret && !presenting)
         );
       }
     }
@@ -428,6 +473,39 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
+  // Returns true when Obsidian's Slides plugin is showing a presentation
+  // overlay. In that state the note editor is still technically "active" and
+  // hasFocus can still return true, so without this guard the canvas engine
+  // keeps drawing a blinking cursor over the slides - and keystrokes still
+  // reach the underlying CM editor, causing live edits during a presentation.
+  //
+  // Detection strategy (most-to-least specific):
+  //   1. A .slides-container element is present and visible (Slides plugin
+  //      presentation overlay - the most direct signal).
+  //   2. The active leaf's view type is "slides" (covers the same case via
+  //      Obsidian's own workspace API, without relying on DOM class names).
+  //   3. body.is-fullscreen alone is NOT used: other things (e.g. Obsidian's
+  //      native full-screen mode) also set it and would cause a false positive.
+  isPresentationModeActive() {
+    try {
+      // 1. DOM-level check: Slides plugin injects a .slides-container element
+      //    into the active leaf while presenting. It's removed when the
+      //    presentation ends, so presence + visibility = presenting now.
+      const doc = (this.canvas?.ownerDocument) ??
+        (typeof activeDocument !== "undefined" && activeDocument) ?? document;
+      const slidesContainer = doc.querySelector(".slides-container");
+      if (slidesContainer && this._isVisiblyRendered(slidesContainer)) return true;
+
+      // 2. Workspace API check: the active leaf's view type becomes "slides"
+      //    for the duration of the presentation.
+      const activeLeaf = this.app.workspace.activeLeaf;
+      if (activeLeaf?.view?.getViewType?.() === "slides") return true;
+    } catch {
+      // Never crash the tick loop over a failed presentation check.
+    }
+    return false;
+  }
+
   enable() {
     this.disable(); 
     this.enableCanvasEngine();
@@ -468,6 +546,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.smearQuadLastT = 0;
     this.particles = [];
     this.flamePixels = [];
+    this.secondaryCarets = [];
     this.animActive = null;
     this._formMirror?.remove();
     this._formMirror = null;
@@ -497,6 +576,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.trail = [];
     this.particles = [];
     this.flamePixels = [];
+    this.secondaryCarets = [];
     this.lastActive = null;
     this.pending = null;
     this.smearQuad = null;
@@ -514,6 +594,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // disappears until plugin reload" failure mode. We log the first
       // error to the console for debugging and keep ticking.
       try {
+        // Don't draw anything during a Slides presentation. The note editor
+        // stays open underneath the presentation overlay and its CM view
+        // can still report hasFocus, so without this guard the cursor keeps
+        // blinking over the slides and keystrokes still reach the editor.
+        if (this.isPresentationModeActive()) {
+          // Clear whatever was on canvas from the previous frame and park.
+          if (this.ctx && this.canvas) {
+            const win = this.canvas.ownerDocument.defaultView || window;
+            this.ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
+          }
+          this.canvasRaf = requestAnimationFrame(tick);
+          return;
+        }
+
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureCanvasForView(view);
         if (view) this.registerWindowEvents(view.dom.ownerDocument);
@@ -558,6 +652,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
         this.updateActivePoint();
         this.updateSmoothCursor();
+        // Multi-cursor: gather all non-primary carets so draw() can stamp a
+        // dashed line at each. Independent of the smoothing/smearing pipeline
+        // that only tracks the primary caret.
+        this.secondaryCarets = this.secondaryCaretCoords(view);
         this.updateSmearQuad();
         this.draw();
       } catch (e) {
@@ -608,8 +706,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const pos = view.state.selection.main.head;
       const doc = view.dom.ownerDocument;
       const active = doc.activeElement;
-      const activeIsEditable =
-        !!active && (active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT");
+      const activeIsEditable = isTextCaretHost(active);
       const inTable = !!active?.closest?.("table");
 
       let c = inTable ? null : (view.coordsAtPos(pos, -1) || view.coordsAtPos(pos, 1));
@@ -737,13 +834,57 @@ module.exports = class CursorSmithPlugin extends Plugin {
       return null; 
     }
   }
+
+  // CodeMirror 6 supports multiple cursors: state.selection.ranges is an
+  // array and state.selection.mainIndex points at the "primary" one that the
+  // rest of the plugin (smoothing, smearing, letter-pop, trails) already
+  // draws. This function returns raw pixel coords for every *other* range's
+  // caret head so we can render each as a simple dashed vertical line -
+  // enough to see where the additional carets are without duplicating the
+  // full effect pipeline for them. Returns [] when there's only one range
+  // or the view isn't focused.
+  secondaryCaretCoords(view) {
+    const out = [];
+    if (!view || !view.hasFocus) return out;
+    try {
+      const sel = view.state.selection;
+      const ranges = sel.ranges;
+      if (!ranges || ranges.length <= 1) return out;
+      const mainIndex = sel.mainIndex;
+
+      // Same out-of-view clamp as cmCaretCoords: CodeMirror can hand back a
+      // coordinate for a caret that's scrolled off, and drawing it would
+      // stamp a stray dashed line at the pane edge.
+      const paneRect = this.getPaneRect(view);
+      const margin = 1;
+
+      for (let i = 0; i < ranges.length; i++) {
+        if (i === mainIndex) continue;
+        const head = ranges[i].head;
+        const c = view.coordsAtPos(head, -1) || view.coordsAtPos(head, 1);
+        if (!c) continue;
+        if (paneRect) {
+          const cBottom = c.bottom ?? c.top;
+          if (cBottom < paneRect.top - margin || c.top > paneRect.bottom + margin) continue;
+        }
+        out.push({ x: c.left, top: c.top, bottom: c.bottom });
+      }
+    } catch {
+      /* fall through - a bad frame shouldn't kill the tick loop */
+    }
+    return out;
+  }
+
   selectionFallbackCoords(view) {
     const doc = view ? view.dom.ownerDocument : this.canvas?.ownerDocument ?? document;
     const active = doc.activeElement;
     if (!active) return null;
+    // Only text-caret input types count as editable here. Toggles, radios,
+    // range sliders, colour pickers, etc. are all <input> but have no caret -
+    // treating them as editable made the plugin draw a cursor on top of them
+    // (visible when clicking the toggle boxes in the plugin's own settings).
+    if (!isTextCaretHost(active)) return null;
     const isFormField = active.tagName === "TEXTAREA" || active.tagName === "INPUT";
-    const editable = active.isContentEditable || isFormField;
-    if (!editable) return null;
 
     // <input>/<textarea> don't participate in window.getSelection() at all -
     // the caret lives at el.selectionStart, not in the DOM Selection API, so
@@ -966,9 +1107,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // active view, so this keeps interface carets working in pop-outs.
       const doc = this.canvas?.ownerDocument ?? document;
       const active = doc.activeElement;
-      const editable =
-        !!active && (active.isContentEditable || active.tagName === "TEXTAREA" || active.tagName === "INPUT");
-      if (!editable) return null;
+      // See isTextCaretHost: this excludes checkboxes, radios, sliders, etc.
+      // so the plugin doesn't draw a cursor on top of Obsidian's own toggle
+      // controls when they gain focus (e.g. clicking a setting toggle box).
+      if (!isTextCaretHost(active)) return null;
 
       const c = this.selectionFallbackCoords(null);
       if (!c) return null;
@@ -1370,9 +1512,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   blinkAlpha(now) {
     if (!this.settings.blinkingEnabled) return 1;
-    if (this.settings.smoothEnabled && this.settings.smoothStopBlinking) {
-      if (now - this.lastMoveTime < 450) return 1; 
-    }
+    // Build the effective hold window from two independent sources:
+    //   • smoothStopBlinking (existing): 450 ms hold, only active when smooth
+    //     movement is on (behaviour unchanged for existing users).
+    //   • blinkDelayMs (new): explicit user-controlled delay that works
+    //     regardless of whether smooth movement is enabled.
+    // We take the larger of the two so neither setting silently overrides the other.
+    let holdMs = 0;
+    if (this.settings.smoothEnabled && this.settings.smoothStopBlinking) holdMs = 450;
+    const delayMs = Math.max(0, this.settings.blinkDelayMs ?? 0);
+    if (delayMs > holdMs) holdMs = delayMs;
+    if (holdMs > 0 && now - this.lastMoveTime < holdMs) return 1;
     return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5);
   }
 
@@ -1396,6 +1546,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.drawRetroBox();
         break;
     }
+
+    // Secondary carets sit on top of the main cursor's trail/particles but
+    // don't participate in smear/glow - just plain dashed vertical lines.
+    this.drawSecondaryCarets();
   }
 
   renderWidth(active) {
@@ -1517,6 +1671,36 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ? this.createEnergyGradient(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
       : hexToRgba(color, 0.9 * blinkAlpha * opacity);
     this.fillCursorShape(ctx, rx, ry, rw, rh);
+    ctx.restore();
+  }
+
+  // Simple solid 2px vertical line per non-primary caret, drawn in the
+  // active cursor colour. Deliberately minimal: no smear (independent
+  // spring per caret would be visually noisy and expensive with many
+  // cursors), no letter-inside-box, no trail. Blinks in sync with the
+  // main cursor so all carets fade together.
+  drawSecondaryCarets() {
+    const carets = this.secondaryCarets;
+    if (!carets || carets.length === 0) return;
+    const ctx = this.ctx;
+    const color = this.getActiveColor();
+    const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
+    const alpha = this.blinkAlpha(performance.now()) * opacity;
+    if (alpha <= 0.01) return;
+
+    ctx.save();
+    ctx.strokeStyle = hexToRgba(color, 0.9 * alpha);
+    ctx.lineWidth = 2;
+    ctx.lineCap = "butt";
+    for (const c of carets) {
+      // 0.5-pixel offset so a 2px stroke lands on whole pixels rather than
+      // straddling a boundary and antialiasing to a blurry 3px stripe.
+      const x = Math.round(c.x) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, c.top);
+      ctx.lineTo(x, c.bottom);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -1645,6 +1829,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const tick = () => {
       if (!this.torchEngineActive) return;
       try {
+        // Same presentation-mode guard as the canvas engine: hide the torch
+        // overlay during a Slides presentation so it doesn't bleed through
+        // the presentation overlay.
+        if (this.isPresentationModeActive()) {
+          if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
+          this.torchRaf = requestAnimationFrame(tick);
+          return;
+        }
+        if (this.overlay) this.overlay.classList.remove("torch-cursor-hidden");
+
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureTorchOverlayForView(view);
         if (view) this.registerWindowEvents(view.dom.ownerDocument);
@@ -1903,7 +2097,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Hide Real Cursor")
-      .setDesc("Hides your browser's normal text cursor so only the custom one shows.")
+      .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
 
     containerEl.createEl("h3", { text: "Appearance" });
@@ -1963,6 +2157,17 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .setName("Don't Blink While Typing")
         .setDesc("Keeps the cursor fully lit while you type or move it.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
+
+      new Setting(containerEl)
+        .setName("Blink Delay")
+        .setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
+        .addSlider((s) =>
+          s
+            .setLimits(0, 2000, 50)
+            .setValue(this.plugin.settings.blinkDelayMs ?? 0)
+            .setDynamicTooltip()
+            .onChange(set("blinkDelayMs"))
+        );
     }
 
     containerEl.createEl("h3", { text: "Smooth Movement" });

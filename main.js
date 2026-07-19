@@ -703,13 +703,25 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   cmCaretCoords(view) {
     try {
-      const pos = view.state.selection.main.head;
+      const main = view.state.selection.main;
+      const pos = main.head;
       const doc = view.dom.ownerDocument;
       const active = doc.activeElement;
       const activeIsEditable = isTextCaretHost(active);
       const inTable = !!active?.closest?.("table");
 
-      let c = inTable ? null : (view.coordsAtPos(pos, -1) || view.coordsAtPos(pos, 1));
+      // At a soft-wrap boundary the same document position has TWO valid
+      // visual locations: end of the previous visual row (side -1) or start
+      // of the next visual row (side 1). CodeMirror records which one the
+      // cursor logically sits at in selection.main.assoc (this is exactly
+      // what its own drawSelection plugin uses: coordsAtPos(head, assoc || 1)),
+      // so honor it instead of hardcoding -1. Note: CodeMirror's rightward
+      // char motion always produces assoc -1, so arrowing right across a
+      // wrap renders end-of-row then before-the-second-char, never stopping
+      // at the start of the new row - that matches CodeMirror's own native
+      // cursor and is left as-is deliberately.
+      const side = main.assoc || 1;
+      let c = inTable ? null : (view.coordsAtPos(pos, side) || view.coordsAtPos(pos, -side));
 
       if (!c) {
         c = this.selectionFallbackCoords(view);
@@ -829,6 +841,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         fontFamily,
         focused: view.hasFocus || (inTable && activeIsEditable),
         pos,
+        // Needed by updateActivePoint: an assoc flip at a wrap boundary is a
+        // real cursor move (row1-end -> row2-start) even though pos is equal,
+        // and must NOT be swallowed by the scroll-compensation branch.
+        assoc: main.assoc,
       };
     } catch {
       return null; 
@@ -861,7 +877,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       for (let i = 0; i < ranges.length; i++) {
         if (i === mainIndex) continue;
         const head = ranges[i].head;
-        const c = view.coordsAtPos(head, -1) || view.coordsAtPos(head, 1);
+        // Same soft-wrap disambiguation as the primary caret in cmCaretCoords.
+        const s = ranges[i].assoc || 1;
+        const c = view.coordsAtPos(head, s) || view.coordsAtPos(head, -s);
         if (!c) continue;
         if (paneRect) {
           const cBottom = c.bottom ?? c.top;
@@ -1270,7 +1288,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
       return;
     }
 
-    if (caret.pos !== null && caret.pos === this.lastActive.pos) {
+    // Same doc position AND same assoc = the caret didn't logically move, so
+    // any coordinate delta is a scroll/layout shift. If assoc differs, the
+    // cursor hopped across a soft-wrap boundary (end of one visual row ->
+    // start of the next) at the same position - that's a genuine move and
+    // must go through the normal commit path (trails, smear, smoothing).
+    if (caret.pos !== null && caret.pos === this.lastActive.pos && caret.assoc === this.lastActive.assoc) {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
       
@@ -1317,6 +1340,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   updateSmoothCursor() {
     if (!this.lastActive) {
       this.animActive = null;
+      this._smoothLastT = 0;
       return;
     }
 
@@ -1330,25 +1354,77 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
 
     const now = performance.now();
+
+    // Frame delta in seconds, clamped so a background-tab hiccup doesn't
+    // teleport the cursor. This is the core fix for "smooth does nothing":
+    // the old code applied a fixed per-FRAME lerp of
+    // targetSpeed * (1 - smoothness), i.e. ~0.47 per frame at defaults -
+    // the cursor closed >90% of the gap within 3 frames (~50 ms at 60 Hz,
+    // ~25 ms at 120 Hz), which is visually indistinguishable from off.
+    let dt = (now - (this._smoothLastT || now)) / 1000;
+    this._smoothLastT = now;
+    dt = Math.max(0.001, Math.min(dt, 0.05));
+
     let targetSpeed = this.settings.catchUpSpeed;
+    let typingBoost = 1;
 
     if (this.settings.smoothAdaptive) {
       const timeSinceMove = now - this.lastMoveTime;
+      const maxMod = this.settings.maxCatchUpSpeed / Math.max(0.01, this.settings.catchUpSpeed);
       if (timeSinceMove < 150) {
-        const maxMod = this.settings.maxCatchUpSpeed / Math.max(0.01, this.settings.catchUpSpeed);
-        this.typingSpeedMod = Math.min(this.typingSpeedMod + 0.15, maxMod);
+        // Reach the cap after ~0.12 s of sustained input. Slower ramps feel
+        // nice for a single keypress but let the cursor fall several glyphs
+        // behind on key repeat before the speed-up ever kicks in.
+        this.typingSpeedMod = Math.min(this.typingSpeedMod + (maxMod - 1) * 8 * dt, maxMod);
       } else {
-        this.typingSpeedMod = Math.max(this.typingSpeedMod - 0.05, 1);
+        this.typingSpeedMod = Math.max(this.typingSpeedMod - (maxMod - 1) * 2 * dt, 1);
       }
       targetSpeed = Math.min(this.settings.maxCatchUpSpeed, targetSpeed * this.typingSpeedMod);
+
+      // Backlog drain: during sustained input (key repeat, held arrows), if
+      // the animated cursor has fallen more than ~one glyph behind the real
+      // one, scale the rate up with the deficit so the lag stays around a
+      // character instead of accumulating. Gated on timeSinceMove so a
+      // single long jump (mouse click across the note) still animates at
+      // the user's configured speed.
+      if (timeSinceMove < 150) {
+        const cw = Math.max(4, this.lastActive.actualCharWidth || 8);
+        const dist = Math.hypot(
+          this.lastActive.x - this.animActive.x,
+          this.lastActive.top - this.animActive.top
+        );
+        const backlogChars = Math.max(0, dist / cw - 1);
+        typingBoost = 1 + Math.min(3, backlogChars);
+      }
     }
 
-    const lerpFactor = Math.min(1, targetSpeed * (1 - this.settings.smoothness));
+    // Exponential approach with a time constant, so the feel is identical at
+    // 60/120/144 Hz. RATE_SCALE maps the existing setting ranges
+    // (catchUpSpeed 0.30-0.80, smoothness 0.05-0.30) onto visible settle
+    // times of roughly 100-360 ms to 95% of the way there for single moves;
+    // the adaptive typingBoost can multiply that by up to 4x under sustained
+    // typing so the cursor keeps pace with key repeat.
+    const RATE_SCALE = 40;
+    const rate = Math.max(0.5, targetSpeed * (1 - this.settings.smoothness) * RATE_SCALE * typingBoost);
+    const lerpFactor = 1 - Math.exp(-rate * dt);
 
     this.animActive.x += (this.lastActive.x - this.animActive.x) * lerpFactor;
     this.animActive.top += (this.lastActive.top - this.animActive.top) * lerpFactor;
     this.animActive.w += (this.lastActive.w - this.animActive.w) * lerpFactor;
     this.animActive.h += (this.lastActive.h - this.animActive.h) * lerpFactor;
+
+    // Snap when essentially arrived - avoids an endless sub-pixel tail that
+    // keeps the canvas repainting and makes the blink-hold logic think the
+    // cursor is still moving.
+    if (
+      Math.abs(this.lastActive.x - this.animActive.x) < 0.25 &&
+      Math.abs(this.lastActive.top - this.animActive.top) < 0.25
+    ) {
+      this.animActive.x = this.lastActive.x;
+      this.animActive.top = this.lastActive.top;
+      this.animActive.w = this.lastActive.w;
+      this.animActive.h = this.lastActive.h;
+    }
     
     this.animActive.textColor = this.lastActive.textColor;
     this.animActive.char = this.lastActive.char;
@@ -2315,4 +2391,5 @@ class CursorSmithSettingTab extends PluginSettingTab {
 /* nosourcemap */
 /* nosourcemap */
 
+/* nosourcemap */
 /* nosourcemap */

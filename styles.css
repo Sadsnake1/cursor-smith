@@ -11,22 +11,13 @@ body.retro-box-cursor-hide-native {
   caret-color: transparent !important;
 }
 
-/* CodeMirror 6 draws every cursor as a .cm-cursor div inside .cm-cursorLayer.
-   The primary cursor is always the FIRST child of that layer, and in most
-   CM6 builds also carries the class .cm-cursor-primary. Every additional
-   (secondary) cursor for multi-cursor editing is a subsequent sibling and
-   carries .cm-cursor-secondary in builds that use that class.
-
-   Hide rules: match the primary via position (first-child) AND class name,
-   so the primary is suppressed regardless of which convention this Obsidian
-   build follows. .cm-fat-cursor and .cm-dropCursor are always the single
-   primary insert point.
-
-   Show rules further down: force visibility on every non-first-child cursor
-   so no cascaded/inherited hide from a theme or other rule can silently
-   suppress the secondary cursors we want to keep visible. */
-body.retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor:first-child,
+/* CodeMirror 6 (Obsidian's editor) draws its own cursor as a DOM element
+   rather than relying on the browser's native caret, so caret-color alone
+   doesn't hide it - it has its own independent blink cycle and would
+   otherwise flash through whenever our custom cursor fades out. */
+body.retro-box-cursor-hide-native .cm-cursor,
 body.retro-box-cursor-hide-native .cm-cursor-primary,
+body.retro-box-cursor-hide-native .cm-cursor-secondary,
 body.retro-box-cursor-hide-native .cm-fat-cursor,
 body.retro-box-cursor-hide-native .cm-dropCursor {
   display: none !important;
@@ -34,17 +25,6 @@ body.retro-box-cursor-hide-native .cm-dropCursor {
   visibility: hidden !important;
   border-color: transparent !important;
   background-color: transparent !important;
-}
-
-/* Force secondary cursors visible. Two selectors cover both naming schemes:
-   position (any .cm-cursor after the first) and class (.cm-cursor-secondary).
-   Use display:block (CM6 renders cursors as blocks) and visible so nothing
-   in the cascade can silently hide them. */
-body.retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor:not(:first-child),
-body.retro-box-cursor-hide-native .cm-cursor-secondary {
-  display: block !important;
-  visibility: visible !important;
-  opacity: 1 !important;
 }
 
 /* Belt-and-braces: some CM themes set caret-color directly on .cm-content

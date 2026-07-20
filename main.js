@@ -27,6 +27,15 @@ const DEFAULT_SETTINGS = {
   caretWidthPx: 2,         
   popLetters: true,        
   flameTrail: true,        
+  backspaceDisintegrate: false,  // Backspace/Delete → invert flame trail direction + colors
+  lineSerifs: false,             // Line cursor: add horizontal serifs (I-beam look)
+  boxHollow: false,              // Box cursor: outline only, no fill
+  boxHollowWidth: 2,             // Outline stroke width when boxHollow is on
+
+  // --- Speed Demon: cursor heats up with typing speed ---
+  speedDemon: false,
+  speedDemonSparks: true,        // spawn small fire particles at high heat
+  speedDemonSensitivity: 1,      // 0.5..2 multiplier on how fast heat builds
   cursorOpacity: 1,
   energyEffect: false,
   energySpeed: 1,
@@ -161,6 +170,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
+
+    // Speed Demon heat: 0..1, ramps on keystrokes, decays per frame in the
+    // canvas tick. Kept separate from typingSpeedMod (which drives smooth-
+    // movement catch-up) because the two ease with very different curves
+    // and share no math beyond "user is typing".
+    this.heat = 0;
+    this._lastSparkT = 0;
 
     this.overlay = null;
     this.modalObserver = null;
@@ -301,6 +317,32 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.mouseY = e.clientY;
       this.lastMouseMove = Date.now();
     };
+    // Backspace/Delete flag: set on keydown, consumed by the next
+    // commitMove() so the flame-pixel burst at the *old* caret position
+    // knows it was caused by deletion (and can invert direction + color).
+    // Timestamped so a stale flag from ~200ms ago doesn't wrongly colour a
+    // burst caused by unrelated caret movement that arrived late.
+    const onKeyDown = (e) => {
+      if (e.key === "Backspace" || e.key === "Delete") {
+        this._deletePending = performance.now();
+      }
+      // Speed Demon: any key that plausibly represents "the user is typing"
+      // bumps heat. Filter out pure modifiers, navigation, function keys,
+      // and IME composition - none of those feel like writing to the user
+      // and shouldn't heat the cursor. Single-character keys ("a", "1",
+      // "?") plus Backspace/Enter/Space/Tab cover the real cases.
+      if (this.settings.speedDemon && !e.isComposing && !e.repeat) {
+        const k = e.key;
+        const isTyping =
+          (typeof k === "string" && k.length === 1) ||
+          k === "Backspace" || k === "Enter" || k === " " ||
+          k === "Spacebar" || k === "Tab";
+        if (isTyping) {
+          const bump = 0.09 * (this.settings.speedDemonSensitivity ?? 1);
+          this.heat = Math.min(1, this.heat + bump);
+        }
+      }
+    };
     const onResize = () => {
       // Chrome insets and the deduped wrapper/overlay rects are all stale
       // after a resize - drop them so the next frame re-measures instead
@@ -312,11 +354,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
     };
     
     doc.addEventListener("mousemove", onMouseMove);
+    doc.addEventListener("keydown", onKeyDown, true);
     const win = doc.defaultView;
     if (win) win.addEventListener("resize", onResize);
     
     this._cleanups.push(() => {
       doc.removeEventListener("mousemove", onMouseMove);
+      doc.removeEventListener("keydown", onKeyDown, true);
       if (win) win.removeEventListener("resize", onResize);
     });
   }
@@ -337,7 +381,125 @@ module.exports = class CursorSmithPlugin extends Plugin {
   getActiveColor() {
     const doc = this.canvas ? this.canvas.ownerDocument : document;
     const isDark = doc.body.classList.contains("theme-dark");
+    const baseColor = isDark ? this.settings.colorDark : this.settings.colorLight;
+    if (!this.settings.speedDemon) return baseColor;
+    return this.heatColor(this.heat, baseColor);
+  }
+
+  // Get the base (non-heated) color. Used by Speed Demon internally so its
+  // "cold" endpoint desaturates the user's chosen colour rather than
+  // always starting from the same grey - a green-configured cursor cools
+  // to a dim moss, an orange one cools to slate.
+  getBaseColor() {
+    const doc = this.canvas ? this.canvas.ownerDocument : document;
+    const isDark = doc.body.classList.contains("theme-dark");
     return isDark ? this.settings.colorDark : this.settings.colorLight;
+  }
+
+  // Map heat (0..1) to an rgb() string along a cold → hot ramp:
+  //   0.00  desaturated + dimmed version of the user's cursor colour
+  //   0.50  mid: user's colour blended toward warm orange
+  //   0.85  vivid orange-red
+  //   1.00  near-white, "white-hot"
+  // Piecewise-linear in RGB is crude but reads well because each segment
+  // is short and the eye interprets the sequence as temperature, not as
+  // three separate interpolations.
+  heatColor(heat, baseHex) {
+    const h = Math.max(0, Math.min(1, heat));
+    const [br, bg, bb] = hexToRgbTuple(baseHex);
+    // Cold endpoint: 30% saturation-preserving desaturation toward mid-grey,
+    // then dim to ~55% brightness. Uses luma (Rec. 601 coefficients) so
+    // the grey we blend toward matches the perceived brightness of the
+    // base colour instead of muddying dark colours.
+    const luma = 0.299 * br + 0.587 * bg + 0.114 * bb;
+    const desatMix = 0.7;                      // higher = greyer
+    const dim = 0.55;
+    const coldR = ((1 - desatMix) * br + desatMix * luma) * dim;
+    const coldG = ((1 - desatMix) * bg + desatMix * luma) * dim;
+    const coldB = ((1 - desatMix) * bb + desatMix * luma) * dim;
+
+    // Warm waypoints (classic blackbody-ish ramp).
+    const warm  = [255, 140,  40];             // orange
+    const hot   = [255,  70,  30];             // red-orange
+    const white = [255, 240, 200];             // white-hot
+
+    let r, g, b;
+    if (h < 0.5) {
+      // cold → user's colour (fully saturated again) → warm
+      const t = h / 0.5;
+      // First half of the interpolation blends cold → base, second half
+      // blends base → warm, but doing that as two segments makes 0.5 look
+      // like a kink. Smoother: use base as a midpoint of a single curve
+      // via easeInOutSine.
+      const e = easeInOutSine(t);
+      r = coldR + (warm[0] - coldR) * e;
+      g = coldG + (warm[1] - coldG) * e;
+      b = coldB + (warm[2] - coldB) * e;
+      // Nudge back toward the user's colour in the mid-range so it doesn't
+      // feel like the base colour disappears entirely.
+      const nudge = 1 - Math.abs(t - 0.5) * 2; // 0 at ends, 1 at t=0.5
+      r = r * (1 - 0.25 * nudge) + br * 0.25 * nudge;
+      g = g * (1 - 0.25 * nudge) + bg * 0.25 * nudge;
+      b = b * (1 - 0.25 * nudge) + bb * 0.25 * nudge;
+    } else if (h < 0.85) {
+      const t = (h - 0.5) / 0.35;
+      r = warm[0] + (hot[0] - warm[0]) * t;
+      g = warm[1] + (hot[1] - warm[1]) * t;
+      b = warm[2] + (hot[2] - warm[2]) * t;
+    } else {
+      const t = (h - 0.85) / 0.15;
+      r = hot[0] + (white[0] - hot[0]) * t;
+      g = hot[1] + (white[1] - hot[1]) * t;
+      b = hot[2] + (white[2] - hot[2]) * t;
+    }
+    return `#${((1 << 24) | (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b))
+      .toString(16).slice(1)}`;
+  }
+
+  // Emit small upward-rising fire embers when heat is high enough.
+  // Rate scales with heat so mid-heat is a lazy simmer and full heat is
+  // a proper flame. Cap total live sparks to keep the canvas fill-rate
+  // sane even when the user is chugging (each spark is a small fillRect,
+  // so it's not free).
+  maybeSpawnSpeedDemonSparks() {
+    if (this.heat < 0.4) return;
+    if (this.flamePixels.length > 120) return;
+    const now = performance.now();
+    // Time-gated spawn: emit at most once per (frame budget) ms, scaled by
+    // heat. At heat=0.4 that's ~60ms between bursts; at heat=1 it's ~14ms.
+    const gap = 70 - 55 * this.heat;
+    if (now - this._lastSparkT < gap) return;
+    this._lastSparkT = now;
+
+    const active = this.animActive;
+    const anchorW = active.w || active.actualCharWidth || 8;
+    const count = 1 + Math.floor(this.heat * 3); // 1..4 sparks per burst
+    const heatCol = this.heatColor(Math.min(1, this.heat + 0.1), this.getBaseColor());
+    const [hr, hg, hb] = hexToRgbTuple(heatCol);
+
+    for (let i = 0; i < count; i++) {
+      // Spawn along the top edge of the cursor - embers rising off a
+      // white-hot surface. A little jitter on x/y keeps them from looking
+      // like a straight line of pixels.
+      const pX = active.x + Math.random() * anchorW;
+      const pY = active.top + Math.random() * (active.h * 0.4);
+      const varR = Math.max(0, Math.min(255, hr + Math.floor((Math.random() - 0.5) * 40)));
+      const varG = Math.max(0, Math.min(255, hg + Math.floor((Math.random() - 0.5) * 30)));
+      const varB = Math.max(0, Math.min(255, hb + Math.floor((Math.random() - 0.5) * 20)));
+
+      this.flamePixels.push({
+        x: pX,
+        y: pY,
+        // Upward drift + light horizontal jitter. Speed scales with heat
+        // so hotter cursor throws embers further before they fade.
+        vx: (Math.random() - 0.5) * 12,
+        vy: -20 - Math.random() * 30 - this.heat * 20,
+        size: 1.5 + Math.random() * 2, // smaller than backspace/normal pixels
+        color: `rgb(${varR}, ${varG}, ${varB})`,
+        alpha: 1,
+        start: now
+      });
+    }
   }
 
   applyBodyClasses() {
@@ -657,6 +819,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // that only tracks the primary caret.
         this.secondaryCarets = this.secondaryCaretCoords(view);
         this.updateSmearQuad();
+
+        // Speed Demon: cool the cursor down every frame regardless of
+        // whether the feature is enabled - if the user toggled it off
+        // mid-heat we want the value to settle back to 0 so re-enabling
+        // starts from cold. 0.985/frame at ~60fps gives a ~1s half-life:
+        // dropping from full heat to cold in roughly 4 seconds of silence.
+        if (this.heat > 0) {
+          this.heat *= 0.985;
+          if (this.heat < 0.001) this.heat = 0;
+        }
+        if (this.settings.speedDemon && this.settings.speedDemonSparks && this.animActive) {
+          this.maybeSpawnSpeedDemonSparks();
+        }
+
         this.draw();
       } catch (e) {
         if (!this._tickErrorLogged) {
@@ -1437,7 +1613,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
   commitMove(caret) {
     this.pushTrail(this.lastActive);
     if (this.lastActive) {
-      this.spawnFlamePixels(this.lastActive);
+      // Consume a pending Backspace/Delete keystroke if it happened
+      // recently enough to plausibly be the cause of this caret move.
+      // 250ms covers slow input pipelines but not so long that unrelated
+      // caret motion (mouse click, arrow keys) inherits the deletion look.
+      const now = performance.now();
+      const disintegrate =
+        this.settings.backspaceDisintegrate &&
+        this._deletePending &&
+        now - this._deletePending < 250;
+      this.spawnFlamePixels(this.lastActive, disintegrate);
+      this._deletePending = 0;
     }
     this.lastActive = caret;
     this.pending = null;
@@ -1555,30 +1741,64 @@ module.exports = class CursorSmithPlugin extends Plugin {
     });
   }
 
-  spawnFlamePixels(anchor) {
+  spawnFlamePixels(anchor, disintegrate = false) {
     if (!this.settings.flameTrail) return;
     
-    const count = Math.floor(6 + Math.random() * 6);
+    // Disintegration bursts get a few more particles and a stronger scatter
+    // so deletion feels heavier than a normal cursor move.
+    const count = disintegrate
+      ? Math.floor(10 + Math.random() * 8)
+      : Math.floor(6 + Math.random() * 6);
     let baseHex = this.getActiveColor() || "#39ff14";
     let h = baseHex.replace("#", "");
     if (h.length === 3) h = h.split("").map(c => c + c).join("");
     let r = (parseInt(h, 16) >> 16) & 255;
     let g = (parseInt(h, 16) >> 8) & 255;
     let b = parseInt(h, 16) & 255;
-    
+    // Colour inversion: photographic negative of the cursor colour. Gives
+    // a distinct "wrong colour" flash that reads as destruction against
+    // any theme, without needing a separate configurable colour.
+    if (disintegrate) {
+      r = 255 - r; g = 255 - g; b = 255 - b;
+    }
+
+    // Anchor centre - disintegration particles fly *outward from* this
+    // point (with an extra outward bias on their velocity), while normal
+    // flame pixels stay near where they spawn and drift sideways.
+    const anchorW = anchor.w || anchor.actualCharWidth || 8;
+    const cx = anchor.x + anchorW / 2;
+    const cy = anchor.top + anchor.h / 2;
+
     for (let i = 0; i < count; i++) {
-      const pX = anchor.x + Math.random() * (anchor.w || anchor.actualCharWidth);
+      const pX = anchor.x + Math.random() * anchorW;
       const pY = anchor.top + Math.random() * anchor.h;
       const varR = Math.max(0, Math.min(255, r + Math.floor((Math.random() - 0.5) * 70)));
       const varG = Math.max(0, Math.min(255, g + Math.floor((Math.random() - 0.5) * 70)));
       const varB = Math.max(0, Math.min(255, b + Math.floor((Math.random() - 0.5) * 70)));
-      
+
+      let vx, vy;
+      if (disintegrate) {
+        // Radial explosion from the deleted char's centre. Normalise the
+        // offset vector so particles at the edge don't fly out much
+        // faster than ones near the middle, then scale up to ~2-3x the
+        // normal drift so the burst reads as violent rather than gentle.
+        const dx = pX - cx;
+        const dy = pY - cy;
+        const len = Math.hypot(dx, dy) || 1;
+        const speed = 30 + Math.random() * 25;
+        vx = (dx / len) * speed;
+        vy = (dy / len) * speed - 10; // slight upward bias, like debris
+      } else {
+        vx = (Math.random() - 0.5) * 20;
+        vy = 0;
+      }
+
       this.flamePixels.push({
         x: pX,
         y: pY,
-        vx: (Math.random() - 0.5) * 20, 
-        vy: 0,                          
-        size: 2.5 + Math.random() * 3,  
+        vx,
+        vy,
+        size: 2.5 + Math.random() * 3,
         color: `rgb(${varR}, ${varG}, ${varB})`,
         alpha: 1,
         start: performance.now()
@@ -1747,6 +1967,23 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ? this.createEnergyGradient(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
       : hexToRgba(color, 0.9 * blinkAlpha * opacity);
     this.fillCursorShape(ctx, rx, ry, rw, rh);
+
+    // Line + serifs = classic I-beam. Only for the Line style (underline
+    // wouldn't make visual sense with serifs). Serifs are axis-aligned
+    // even when the stem smears - a smeared serif reads as a broken glyph
+    // rather than a cursor cap. Serif span follows the actual char width
+    // under the caret so it matches the text; falls back to a multiple of
+    // the stem on empty lines.
+    if (!isUnderline && settings.lineSerifs) {
+      const stem = rw;
+      const serifThickness = Math.max(1, Math.round(stem * 0.9));
+      const charW = active.actualCharWidth;
+      const rawSpan = charW && charW > 0 ? charW : stem * 7;
+      const serifSpan = Math.max(stem * 3, Math.min(rawSpan, stem * 10));
+      const serifX = active.x + stem / 2 - serifSpan / 2;
+      ctx.fillRect(serifX, active.top, serifSpan, serifThickness);
+      ctx.fillRect(serifX, active.top + active.h - serifThickness, serifSpan, serifThickness);
+    }
     ctx.restore();
   }
 
@@ -1840,10 +2077,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const now = performance.now();
     const color = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
+    const hollow = settings.boxHollow;
+    const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
 
     this.forEachTrailPoint((p, alpha) => {
-      ctx.fillStyle = hexToRgba(color, alpha * opacity);
-      ctx.fillRect(p.x, p.y, p.w, p.h);
+      if (hollow) {
+        ctx.strokeStyle = hexToRgba(color, alpha * opacity);
+        ctx.lineWidth = strokeW;
+        // Inset by half the stroke so the outline lands inside the same
+        // footprint the filled trail dot would occupy (canvas strokes
+        // straddle the path centerline).
+        const inset = strokeW / 2;
+        ctx.strokeRect(p.x + inset, p.y + inset, Math.max(0, p.w - strokeW), Math.max(0, p.h - strokeW));
+      } else {
+        ctx.fillStyle = hexToRgba(color, alpha * opacity);
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
     });
 
     const active = this.animActive;
@@ -1855,18 +2104,54 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (settings.crtEffect && settings.glow) {
         ctx.shadowColor = color;
         ctx.shadowBlur = 10 * blinkAlpha;
-        ctx.fillStyle = hexToRgba(color, 0.01);
-        this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
-        ctx.shadowBlur = 0;
+        if (!hollow) {
+          // Ghost pre-fill just to seed the shadow; solid box does this
+          // to get a soft halo, but a stroked outline already draws a
+          // shadow around the line itself so this step is unnecessary
+          // (and would add a second inner halo).
+          ctx.fillStyle = hexToRgba(color, 0.01);
+          this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
+          ctx.shadowBlur = 0;
+        }
       }
-      ctx.fillStyle = settings.energyEffect
+
+      const paintStyle = settings.energyEffect
         ? this.createEnergyGradient(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity)
         : hexToRgba(color, 0.9 * blinkAlpha * opacity);
-      this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
+
+      if (hollow) {
+        // Stroke the smear quad so the outline deforms with movement the
+        // same way a filled box would. Reuses fillCursorShape's corner
+        // logic inline (we need stroke here, not fill).
+        const q = settings.smear ? this.smearQuad : null;
+        const corners = q || {
+          tl: { x: active.x, y: active.top },
+          tr: { x: active.x + renderW, y: active.top },
+          br: { x: active.x + renderW, y: active.top + active.h },
+          bl: { x: active.x, y: active.top + active.h },
+        };
+        ctx.strokeStyle = paintStyle;
+        ctx.lineWidth = strokeW;
+        ctx.lineJoin = "miter";
+        ctx.beginPath();
+        ctx.moveTo(corners.tl.x, corners.tl.y);
+        ctx.lineTo(corners.tr.x, corners.tr.y);
+        ctx.lineTo(corners.br.x, corners.br.y);
+        ctx.lineTo(corners.bl.x, corners.bl.y);
+        ctx.closePath();
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = paintStyle;
+        this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
+      }
       ctx.restore();
 
+      // Character-inside-box only makes sense when the box is filled
+      // (invert-color glyph on a solid background). On a hollow outline
+      // the real character is already visible through the middle, so
+      // drawing an inverted glyph on top would duplicate it.
       const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
-      if (settings.showChar && displayChar) {
+      if (!hollow && settings.showChar && displayChar) {
         ctx.save();
         ctx.globalAlpha = Math.min(1, 0.3 + blinkAlpha * 0.7);
         ctx.fillStyle = invertColor(active.textColor);
@@ -2189,6 +2474,11 @@ class CursorSmithSettingTab extends PluginSettingTab {
             .setDynamicTooltip()
             .onChange(set("caretWidthPx"))
         );
+
+      new Setting(containerEl)
+        .setName("Serifs")
+        .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.lineSerifs).onChange(set("lineSerifs")));
     }
 
     new Setting(containerEl)
@@ -2209,6 +2499,24 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .setName("Show Letter Inside Cursor")
         .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.showChar).onChange(set("showChar")));
+
+      new Setting(containerEl)
+        .setName("Hollow")
+        .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.boxHollow).onChange(setAndRedraw("boxHollow")));
+
+      if (this.plugin.settings.boxHollow) {
+        new Setting(containerEl)
+          .setName("Outline Width")
+          .setDesc("Thickness of the hollow box's outline, in pixels.")
+          .addSlider((slider) =>
+            slider
+              .setLimits(1, 6, 1)
+              .setValue(this.plugin.settings.boxHollowWidth)
+              .setDynamicTooltip()
+              .onChange(set("boxHollowWidth"))
+          );
+      }
     }
 
     containerEl.createEl("h3", { text: "Blinking" });
@@ -2283,7 +2591,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Pixel Trail")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(set("flameTrail")));
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(setAndRedraw("flameTrail")));
+
+    if (this.plugin.settings.flameTrail) {
+      new Setting(containerEl)
+        .setName("Backspace Disintegration")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
+    }
 
     new Setting(containerEl)
       .setName("Motion Smear")
@@ -2329,6 +2643,26 @@ class CursorSmithSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("Glow")
         .addToggle((toggle) => toggle.setValue(this.plugin.settings.glow).onChange(set("glow")));
+    }
+
+    new Setting(containerEl)
+      .setName("Speed Demon")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.speedDemon).onChange(setAndRedraw("speedDemon")));
+
+    if (this.plugin.settings.speedDemon) {
+      new Setting(containerEl)
+        .setName("Fire Sparks")
+        .addToggle((toggle) => toggle.setValue(this.plugin.settings.speedDemonSparks).onChange(set("speedDemonSparks")));
+
+      new Setting(containerEl)
+        .setName("Sensitivity")
+        .addSlider((s) =>
+          s
+            .setLimits(0.5, 2, 0.1)
+            .setValue(this.plugin.settings.speedDemonSensitivity)
+            .setDynamicTooltip()
+            .onChange(set("speedDemonSensitivity"))
+        );
     }
 
     new Setting(containerEl)
@@ -2391,5 +2725,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
 /* nosourcemap */
 /* nosourcemap */
 
+/* nosourcemap */
 /* nosourcemap */
 /* nosourcemap */

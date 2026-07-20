@@ -1,4 +1,4 @@
-const { Plugin, PluginSettingTab, Setting } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -373,6 +373,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
       callback: () => this.toggle(),
     });
 
+    this.addCommand({
+      id: "cycle-preset",
+      name: "Cycle preset",
+      callback: () => this.cyclePreset(1),
+    });
+
     this.addSettingTab(new CursorSmithSettingTab(this.app, this));
 
     this.app.workspace.onLayoutReady(() => {
@@ -568,11 +574,33 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.settings.userPresets = presets;    // restore presets dict
     await this.saveSettings();
     if (this.settings.enabled) this.enable();
+    // Track which preset is active so cyclePreset() knows where to start.
+    this._activePresetName = name;
   }
 
   async deleteUserPreset(name) {
     delete this.getUserPresets()[name];
     await this.saveSettings();
+  }
+
+  cyclePreset(direction) {
+    const presets = this.getUserPresets();
+    const names = Object.keys(presets);
+    if (names.length === 0) return;
+
+    // Find index of the currently active preset (last loaded), or start at -1
+    // so the first forward step lands on index 0.
+    const current = this._activePresetName ?? null;
+    const currentIdx = names.indexOf(current);
+    const nextIdx = (currentIdx + direction + names.length) % names.length;
+    const nextName = names[nextIdx];
+
+    this.loadUserPreset(nextName).then(() => {
+      this._activePresetName = nextName;
+      // Persist the pending name so the settings tab reflects the active preset.
+      this._pendingPresetName = nextName;
+      new Notice(`Cursor-Smith: ${nextName}`);
+    });
   }
 
   // Returns the name it was saved under, or null if the code was invalid.

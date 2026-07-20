@@ -64,6 +64,162 @@ const DEFAULT_SETTINGS = {
   smoothAdaptive: true,      // Adaptive speed toggle
 };
 
+// ---------------------------------------------------------------------------
+// Default starter presets — seeded into new installs (or any install that
+// does not yet have a userPresets key in its data file). Existing user
+// presets are never touched; only missing keys are added.
+// ---------------------------------------------------------------------------
+const DEFAULT_PRESETS = {
+  "Jell-O": {
+    "cursorStyle": "Box", "colorDark": "#31edae", "colorLight": "#147133",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": true, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1.4, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1.5, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200, "hideNativeCaret": true, "showChar": true,
+    "moveDelayMs": 0, "smear": true, "smearStiffness": 0.65,
+    "smearTrailingStiffness": 0.15, "smearDamping": 0.4,
+    "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
+    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+  },
+  "Torch-Crt": {
+    "cursorStyle": "Line", "colorDark": "#f3c258", "colorLight": "#147133",
+    "crtEffect": true, "glow": true, "torchEffect": true,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": true, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1.4, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1.5, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200, "hideNativeCaret": true, "showChar": true,
+    "moveDelayMs": 0, "smear": false, "smearStiffness": 0.7,
+    "smearTrailingStiffness": 0.4, "smearDamping": 0.5,
+    "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
+    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+  },
+  "mr.Blue": {
+    "cursorStyle": "Line", "colorDark": "#3182ed", "colorLight": "#0077aa",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": true, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1.4, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": true, "blinkSpeed": 1, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200, "hideNativeCaret": true, "showChar": true,
+    "moveDelayMs": 0, "smear": false, "smearStiffness": 0.7,
+    "smearTrailingStiffness": 0.4, "smearDamping": 0.8,
+    "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
+    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+  },
+  "FairyDust": {
+    "cursorStyle": "Underline", "colorDark": "#fff6bd", "colorLight": "#e9cb35",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": true,
+    "backspaceDisintegrate": true, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": true,
+    "energySpeed": 1.4, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200, "hideNativeCaret": true, "showChar": true,
+    "moveDelayMs": 0, "smear": true, "smearStiffness": 0.7,
+    "smearTrailingStiffness": 0.4, "smearDamping": 0.8,
+    "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
+    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+  },
+  "DarkMatter": {
+    "cursorStyle": "Box", "colorDark": "#3ba2e3", "colorLight": "#e15ff2",
+    "crtEffect": true, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": true,
+    "backspaceDisintegrate": true, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": true, "speedDemonSparks": true,
+    "speedDemonSensitivity": 0.5, "cursorOpacity": 1, "energyEffect": true,
+    "energySpeed": 1.4, "trailLength": 3, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200, "hideNativeCaret": true, "showChar": true,
+    "moveDelayMs": 0, "smear": false, "smearStiffness": 0.7,
+    "smearTrailingStiffness": 0.4, "smearDamping": 0.8,
+    "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
+    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+  },
+  "old_Joe": {
+    "cursorStyle": "Box", "colorDark": "#c2c2c2", "colorLight": "#454545",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": true, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1.4, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1.5, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200, "hideNativeCaret": true, "showChar": true,
+    "moveDelayMs": 0, "smear": false, "smearStiffness": 0.65,
+    "smearTrailingStiffness": 0.15, "smearDamping": 0.4,
+    "smoothEnabled": false, "smoothStopBlinking": true, "smoothness": 0.15,
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
+    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Preset share-code codec
+// A share code is the preset snapshot JSON encoded as base64url (no padding).
+// The preset name is embedded inside the JSON so the recipient gets both the
+// name and the settings in a single string.
+// ---------------------------------------------------------------------------
+function presetToCode(name, snap) {
+  const payload = JSON.stringify(Object.assign({ __name: name }, snap));
+  // btoa works on latin-1; encodeURIComponent + unescape widens to UTF-8.
+  return btoa(unescape(encodeURIComponent(payload)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function codeToPreset(code) {
+  try {
+    const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
+    const json = decodeURIComponent(escape(atob(b64)));
+    const obj = JSON.parse(json);
+    const name = obj.__name || "Imported preset";
+    const snap = Object.assign({}, obj);
+    delete snap.__name;
+    return { name, snap };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User-preset helpers
+// Presets are stored as { [name]: settingsSnapshot } in plugin data under the
+// key "userPresets". They are a full snapshot of settings at save time so
+// loading one is always a complete restore, not a partial merge.
+// ---------------------------------------------------------------------------
+
 function hexToRgba(hex, alpha) {
   let h = (hex || "#39ff14").replace("#", "");
   if (h.length === 3) {
@@ -148,6 +304,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
   async onload() {
     const saved = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+
+    // Seed default presets for first-time users (or any install missing them).
+    // Only adds keys that don't already exist — never overwrites user presets.
+    if (!this.settings.userPresets) this.settings.userPresets = {};
+    for (const [name, snap] of Object.entries(DEFAULT_PRESETS)) {
+      if (!(name in this.settings.userPresets)) {
+        this.settings.userPresets[name] = snap;
+      }
+    }
+
 
     // Dynamic Multi-Window Tracking Engine
     this._cleanups = [];
@@ -366,9 +532,56 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   async saveSettings() {
+    // userPresets lives inside this.settings so it survives every saveData
+    // call automatically - no separate load/merge step needed anywhere.
     await this.saveData(this.settings);
     this.applyBodyClasses();
     this.applyOverlayStyle();
+  }
+
+  // ---- User preset CRUD ----
+
+  getUserPresets() {
+    // Keep userPresets directly on this.settings so saveSettings() persists
+    // them automatically. Initialise lazily on first use.
+    if (!this.settings.userPresets) this.settings.userPresets = {};
+    return this.settings.userPresets;
+  }
+
+  async saveUserPreset(name) {
+    // Snapshot cursor settings only - exclude housekeeping keys that must
+    // not be restored when the preset is loaded later.
+    const snap = Object.assign({}, this.settings);
+    delete snap.enabled;
+    delete snap.userPresets;
+    this.getUserPresets()[name] = snap;
+    await this.saveSettings();
+  }
+
+  async loadUserPreset(name) {
+    const preset = this.getUserPresets()[name];
+    if (!preset) return;
+    const wasEnabled = this.settings.enabled;
+    const presets = this.getUserPresets();   // hold ref before overwrite
+    Object.assign(this.settings, preset);
+    this.settings.enabled = wasEnabled;
+    this.settings.userPresets = presets;    // restore presets dict
+    await this.saveSettings();
+    if (this.settings.enabled) this.enable();
+  }
+
+  async deleteUserPreset(name) {
+    delete this.getUserPresets()[name];
+    await this.saveSettings();
+  }
+
+  // Returns the name it was saved under, or null if the code was invalid.
+  async importPreset(code) {
+    const result = codeToPreset(code.trim());
+    if (!result) return null;
+    this.getUserPresets()[result.name] = result.snap;
+    await this.saveSettings();
+    return result.name;
   }
 
   toggle() {
@@ -2426,6 +2639,142 @@ class CursorSmithSettingTab extends PluginSettingTab {
     };
 
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
+
+    // -----------------------------------------------------------------------
+    // Presets section
+    // -----------------------------------------------------------------------
+    containerEl.createEl("h3", { text: "Presets" });
+
+    // --- Save current settings as a new preset ---
+    // _pendingPresetName survives display() re-renders (caused by setAndRedraw
+    // settings) because it lives on the plugin instance, not as a local var.
+    if (this.plugin._pendingPresetName === undefined) {
+      this.plugin._pendingPresetName = "";
+    }
+    new Setting(containerEl)
+      .setName("Save current settings as preset")
+      .setDesc("Give your cursor a name, then click Save.")
+      .addText((text) => {
+        text.setPlaceholder("My cursor name");
+        text.setValue(this.plugin._pendingPresetName);
+        text.onChange((v) => { this.plugin._pendingPresetName = v; });
+      })
+      .addButton((btn) => {
+        btn.setButtonText("Save").setCta();
+        btn.onClick(async () => {
+          const name = this.plugin._pendingPresetName.trim();
+          if (!name) return;
+          await this.plugin.saveUserPreset(name);
+          this.plugin._pendingPresetName = "";
+          this.display();
+        });
+      });
+
+    // --- Import a shared preset ---
+    let importCode = "";
+    new Setting(containerEl)
+      .setName("Import preset")
+      .setDesc("Paste a share code from someone else to add their preset.")
+      .addText((text) => {
+        text.setPlaceholder("Paste code here…");
+        text.onChange((v) => { importCode = v.trim(); });
+        text.inputEl.style.fontFamily = "var(--font-monospace)";
+        text.inputEl.style.fontSize = "var(--font-smaller)";
+        text.inputEl.style.width = "14em";
+      })
+      .addButton((btn) => {
+        btn.setButtonText("Import").onClick(async () => {
+          if (!importCode) return;
+          const imported = await this.plugin.importPreset(importCode);
+          if (imported) {
+            this.display();
+          } else {
+            btn.setButtonText("Invalid code");
+            setTimeout(() => btn.setButtonText("Import"), 2000);
+          }
+        });
+      });
+
+    // --- Saved presets list ---
+    // getUserPresets is now synchronous (reads from this.settings directly).
+    const presets = this.plugin.getUserPresets();
+    const names = Object.keys(presets);
+
+    if (names.length === 0) {
+      const empty = containerEl.createEl("p", {
+        text: "No saved presets yet. Configure your cursor below, then save it above.",
+      });
+      empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
+    } else {
+      for (const name of names) {
+        const code = presetToCode(name, presets[name]);
+
+        const setting = new Setting(containerEl).setName(name);
+
+        // Share code: truncated monospace pill sitting in the controls row,
+        // between the name and the action buttons.
+        const codeEl = setting.controlEl.createEl("code", { text: code });
+        codeEl.style.cssText = [
+          "font-size:10px", "letter-spacing:0.01em",
+          "color:var(--text-muted)", "background:var(--background-secondary)",
+          "border:1px solid var(--background-modifier-border)",
+          "border-radius:3px", "padding:1px 6px",
+          "max-width:10em", "overflow:hidden",
+          "text-overflow:ellipsis", "white-space:nowrap",
+          "display:inline-block", "vertical-align:middle",
+          "cursor:pointer", "user-select:all",
+          "margin-right:4px",
+        ].join(";");
+        codeEl.title = code;
+
+        // Copy button inline with the code
+        const copyBtn = setting.controlEl.createEl("button", { text: "Copy" });
+        copyBtn.style.cssText = [
+          "font-size:10px", "padding:2px 8px", "margin-right:6px",
+          "border-radius:3px", "cursor:pointer",
+          "border:1px solid var(--background-modifier-border)",
+          "background:var(--background-secondary)",
+          "color:var(--text-muted)",
+        ].join(";");
+        copyBtn.addEventListener("click", () => {
+          navigator.clipboard.writeText(code).then(() => {
+            copyBtn.textContent = "Copied!";
+            setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+          });
+        });
+
+        setting
+          .addButton((btn) => {
+            btn.setButtonText("Load").onClick(async () => {
+              await this.plugin.loadUserPreset(name);
+              // Show the loaded preset name in the save field so the user
+              // knows which preset is active and can quickly re-save it.
+              this.plugin._pendingPresetName = name;
+              this.display();
+            });
+          })
+          .addButton((btn) => {
+            // Edit: load the preset settings AND put the name in the save
+            // field so clicking Save overwrites this preset in one step.
+            btn.setButtonText("Edit").onClick(async () => {
+              await this.plugin.loadUserPreset(name);
+              this.plugin._pendingPresetName = name;
+              this.display();
+              // Scroll the save field into view so the user sees it's ready.
+              containerEl.scrollTop = 0;
+            });
+          })
+          .addButton((btn) => {
+            btn.setButtonText("Delete")
+              .setWarning()
+              .onClick(async () => {
+                await this.plugin.deleteUserPreset(name);
+                this.display();
+              });
+          });
+      }
+    }
+
     containerEl.createEl("h3", { text: "Core Configuration" });
 
     new Setting(containerEl)

@@ -1,6 +1,7 @@
-#  Cursor-Smith
+# Cursor-Smith
+
 ## Intro
-Most people never give their cursor a second thought, but I decided to change that. Cursor-Smith is more than just a tweaky-toy, it is the *MOST* advanced cursor engine ever created (maybe).
+Most people never give their cursor a second thought, but I decided to change that. Cursor-Smith is more than just a tweaky-toy — it is the *MOST* advanced cursor engine ever created (maybe).
 It is designed for writers, users who need high-visibility accessibility options, and anyone who loves to customize theengs.
 Forge your cursor of choice!
 
@@ -15,6 +16,7 @@ https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
 - **Appearance controls** — separate colors for dark/light themes, adjustable thickness and opacity, glow, and MORE, MUCH-MUCH MORE.
 - **Presets** — save any cursor configuration as a named preset, load or edit it later, and cycle through all your presets with a single command.
 - **Preset sharing** — every preset gets a compact share code. Copy it, send it to a friend, and they can paste it straight into their own vault.
+- **Vim mode** — per-mode cursors for Normal, Insert, Visual, Replace, and Command, each fully configurable. The live mode indicator sits in the status bar vim-style (`-- NORMAL --`), tinted to match the active cursor color.
 
 ## Installation
 1. Download `main.js`, `styles.css`, and `manifest.json` (or clone this repo).
@@ -24,8 +26,8 @@ https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
 
 ## Usage
 Once enabled, the plugin activates automatically. You can:
-- Toggle it on/off anytime with the **Toggle custom cursor** command in the Command Palette (`Ctrl/Cmd + P`).
-- Cycle through all your saved presets with the **Cycle preset** command — assign it a hotkey in **Settings → Hotkeys** for quick switching.
+- Toggle it on/off anytime with the **Toggle Cursor-Smith on/off** command in the Command Palette (`Ctrl/Cmd + P`).
+- Cycle through all your saved presets with the **Cycle preset** command — assign it a hotkey in **Settings → Hotkeys** for quick switching. In CUA mode it cycles CUA presets; in Vim mode it cycles Vim presets.
 - Adjust every visual detail from **Settings → Cursor-Smith**.
 
 ## Settings
@@ -60,6 +62,27 @@ Cursor-Smith ships with six starter presets so you have something to work from r
 **Sharing a preset** — each preset row shows a short share code next to its name. Click **Copy** to copy it, then send it to anyone. They paste it into the **Import preset** field and click **Import** — done.
 
 **Cycling presets** — run **Cursor-Smith: Cycle preset** from the Command Palette (or bind it to a hotkey) to step through all your presets one by one. A small toast notification shows the name of the preset that just loaded.
+
+## Vim Mode
+Switch to **Vim** using the CUA / Vim toggle at the top of the settings panel. Each of the five Vim modes gets its own fully independent cursor — style, color, blinking, motion effects, everything.
+
+| Mode | When it applies |
+|---|---|
+| **Normal** | The default editing mode |
+| **Insert** | After pressing `i`, `a`, `o`, etc. |
+| **Visual** | After pressing `v`, `V`, or `Ctrl-v` |
+| **Replace** | After pressing `R` |
+| **Command** | The `:` / `/` prompt, plus the Command Palette, Quick Switcher, search boxes, and other interface fields |
+
+Use the **tab row** in *Per-Mode Cursors* to switch between modes — each inactive tab is tinted with that mode's own cursor color as a live preview of your setup.
+
+**Vim presets** work the same as CUA presets: save your full five-mode setup under a name, load it later, share it with a code. The **Cycle preset** command automatically cycles Vim presets when you are in Vim mode.
+
+### Status bar
+When Vim mode is active a `-- MODE --` indicator appears on the **left side** of the status bar, styled after Vim's own `showmode`. Enable coloring in settings to tint the text with the active mode's cursor color.
+
+### Keybindings
+Turn on **Control Obsidian's Vim key bindings** to let the plugin own that setting: switching to Vim mode forces Obsidian's native vim keybindings on, and switching to CUA forces them off. Turn it off if you manage that setting yourself.
 
 ## Compatibility notes
 - Built for CodeMirror 6, the editor used in current versions of Obsidian.

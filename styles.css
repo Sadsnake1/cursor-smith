@@ -1,3 +1,25 @@
+/* --- Settings panel: indent sub-options nested under a parent toggle
+   (or style dropdown), so conditional groups - e.g. Torch Spotlight's
+   Follow/Light Size/etc., or Box style's Hollow -> Outline Width - read
+   as a visual hierarchy instead of a flat list of settings. Two levels
+   are used: level 1 for direct children of a toggle/dropdown, level 2
+   for a setting that's conditional on another indented setting (e.g.
+   Outline Width only appears once Hollow, itself indented, is on). */
+.cursor-smith-indent-1,
+.cursor-smith-indent-2 {
+  border-left: 2px solid var(--background-modifier-border);
+}
+
+.cursor-smith-indent-1 {
+  margin-left: 16px;
+  padding-left: 14px;
+}
+
+.cursor-smith-indent-2 {
+  margin-left: 32px;
+  padding-left: 14px;
+}
+
 /* --- Canvas Engine Styles (Box, Line, Underline) --- */
 .retro-box-cursor-canvas {
   position: fixed;

@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
   // --- global caret properties ---
   caretWidthPx: 2,         
   popLetters: true,        
+  popRainbow: false,       // cycle each popped letter through a rainbow of colors
   flameTrail: true,        
   backspaceDisintegrate: false,  // Backspace/Delete → invert flame trail direction + colors
   lineSerifs: false,             // Line cursor: add horizontal serifs (I-beam look)
@@ -37,6 +38,8 @@ const DEFAULT_SETTINGS = {
   speedDemon: false,
   speedDemonSparks: true,        // spawn small fire particles at high heat
   speedDemonSensitivity: 1,      // 0.5..2 multiplier on how fast heat builds
+  speedDemonSparkQuantity: 1,    // 0..3 multiplier on how many sparks spawn per burst
+  speedDemonSparkTrail: 0,       // 0..30px comet-tail trailing behind each spark; 0 = no trail
   cursorOpacity: 1,
   energyEffect: false,
   energySpeed: 1,
@@ -106,9 +109,10 @@ const LOOK_KEYS = [
   "crtEffect", "glow",
   "torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius",
   "overlayDarkness", "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed",
-  "caretWidthPx", "popLetters", "flameTrail", "backspaceDisintegrate",
+  "caretWidthPx", "popLetters", "popRainbow", "flameTrail", "backspaceDisintegrate",
   "lineSerifs", "boxHollow", "boxHollowWidth",
   "speedDemon", "speedDemonSparks", "speedDemonSensitivity",
+  "speedDemonSparkQuantity", "speedDemonSparkTrail",
   "cursorOpacity", "energyEffect", "energySpeed",
   "trailLength", "trailFadeMs",
   "blinkingEnabled", "blinkSpeed", "blinkOnOffBalance", "blinkDelayMs",
@@ -478,6 +482,36 @@ function hexToRgbTuple(hex) {
   return [(int >> 16) & 255, (int >> 8) & 255, int & 255];
 }
 
+// Converts an HSL color (h in degrees, s/l in 0..1) to an "rgb(r, g, b)"
+// string, matching the format the particle system already uses for colors.
+function hslToRgbString(h, s, l) {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r1 = 0, g1 = 0, b1 = 0;
+  if (hue < 60) { r1 = c; g1 = x; b1 = 0; }
+  else if (hue < 120) { r1 = x; g1 = c; b1 = 0; }
+  else if (hue < 180) { r1 = 0; g1 = c; b1 = x; }
+  else if (hue < 240) { r1 = 0; g1 = x; b1 = c; }
+  else if (hue < 300) { r1 = x; g1 = 0; b1 = c; }
+  else { r1 = c; g1 = 0; b1 = x; }
+  const r = Math.round((r1 + m) * 255);
+  const g = Math.round((g1 + m) * 255);
+  const b = Math.round((b1 + m) * 255);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+// Re-expresses an "rgb(r, g, b)" (or "rgba(r, g, b, a)") string at a new
+// alpha - used to fade a spark's comet-tail from solid at the head to
+// transparent at the tip without disturbing its base color.
+function rgbStringToRgba(rgbStr, alpha) {
+  const nums = (rgbStr || "").match(/[\d.]+/g);
+  if (!nums || nums.length < 3) return `rgba(255, 255, 255, ${alpha})`;
+  const [r, g, b] = nums;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function invertColor(colorStr) {
   const nums = (colorStr || "").match(/[\d.]+/g);
   if (!nums || nums.length < 3) return "#000000";
@@ -628,6 +662,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // and share no math beyond "user is typing".
     this.heat = 0;
     this._lastSparkT = 0;
+
+    // Popping Letters rainbow: a running hue that advances with each popped
+    // letter (rather than picking randomly) so consecutive letters step
+    // smoothly around the color wheel instead of jumping around.
+    this._popRainbowHue = 0;
 
     this.overlay = null;
     this.modalObserver = null;
@@ -1640,7 +1679,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     const active = this.animActive;
     const anchorW = active.w || active.actualCharWidth || 8;
-    const count = 1 + Math.floor(this.heat * 3); // 1..4 sparks per burst
+    const baseCount = 1 + Math.floor(this.heat * 3); // 1..4 sparks per burst
+    // Spark Quantity: 0..3 multiplier on the base burst size, so 1 is the
+    // original feel, 0 effectively stops sparks without touching the Fire
+    // Sparks toggle, and >1 throws a heavier shower at the same heat level.
+    const qty = Math.max(0, this.styleFor("speedDemonSparkQuantity") ?? 1);
+    const count = Math.round(baseCount * qty);
     const heatCol = this.heatColor(Math.min(1, this.heat + 0.1), this.getBaseColor());
     const [hr, hg, hb] = hexToRgbTuple(heatCol);
 
@@ -1664,7 +1708,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
         size: 1.5 + Math.random() * 2, // smaller than backspace/normal pixels
         color: `rgb(${varR}, ${varG}, ${varB})`,
         alpha: 1,
-        start: now
+        start: now,
+        // Marks this particle as a Speed Demon spark (as opposed to a Pixel
+        // Trail / backspace-disintegration particle sharing the same pool)
+        // so drawFlamePixels only trails the ones that should have one.
+        spark: true
       });
     }
   }
@@ -3011,6 +3059,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   spawnLetterParticle(char, anchor) {
     if (!char.trim()) return;
+
+    // Rainbow suboption: step a running hue forward per letter (instead of
+    // the normal single cursor color) so a fast typing burst reads as a
+    // smooth sweep around the color wheel rather than a flat color or a
+    // jittery random one.
+    let color = this.getActiveColor() || anchor.textColor;
+    if (this.styleFor("popRainbow")) {
+      color = hslToRgbString(this._popRainbowHue, 0.85, 0.6);
+      this._popRainbowHue = (this._popRainbowHue + 33) % 360;
+    }
+
     this.particles.push({
       char: char,
       x: anchor.x + (anchor.w || anchor.actualCharWidth) / 2,
@@ -3021,7 +3080,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       alpha: 1,
       fontSize: anchor.fontSize,
       fontFamily: anchor.fontFamily,
-      color: this.getActiveColor() || anchor.textColor, 
+      color,
       start: performance.now()
     });
   }
@@ -3335,6 +3394,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   drawFlamePixels() {
     const ctx = this.ctx;
     const now = performance.now();
+    // Only Speed Demon sparks (tagged `spark: true` when spawned) ever grow a
+    // trail - Pixel Trail and backspace-disintegration particles share this
+    // same pool but are untouched by the setting.
+    const trailAmt = Math.max(0, this.styleFor("speedDemonSparkTrail") || 0);
 
     this.flamePixels = this.flamePixels.filter(p => {
       const elapsed = (now - p.start) / 1000;
@@ -3348,6 +3411,30 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       ctx.save();
       ctx.globalAlpha = Math.max(0, p.alpha);
+
+      if (p.spark && trailAmt > 0) {
+        // Stretch a fading tail back along the spark's direction of travel -
+        // longer and more pronounced the faster it's currently moving, so a
+        // freshly-launched ember gets a proper streak while a nearly-spent
+        // one only trails a little.
+        const speed = Math.hypot(p.vx, p.vy) || 1;
+        const dirX = p.vx / speed;
+        const dirY = p.vy / speed;
+        const tailLen = trailAmt * (0.5 + Math.min(1, speed / 45) * 0.5);
+        const tailX = curX - dirX * tailLen;
+        const tailY = curY - dirY * tailLen;
+        const grad = ctx.createLinearGradient(curX, curY, tailX, tailY);
+        grad.addColorStop(0, rgbStringToRgba(p.color, 0.9));
+        grad.addColorStop(1, rgbStringToRgba(p.color, 0));
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = Math.max(1, p.size * 0.85);
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(curX, curY);
+        ctx.lineTo(tailX, tailY);
+        ctx.stroke();
+      }
+
       ctx.fillStyle = p.color;
       ctx.fillRect(curX, curY, p.size, p.size);
       ctx.restore();
@@ -3922,12 +4009,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Appearance" });
 
     if (plugin.settings.cursorStyle === "Line") {
-      new Setting(containerEl)
+      new Setting(containerEl).setClass("cursor-smith-indent-1")
         .setName("Cursor Thickness")
         .setDesc("How thick the Line cursor is, in pixels.")
         .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(plugin.settings.caretWidthPx).setDynamicTooltip().onChange(set("caretWidthPx")));
 
-      new Setting(containerEl)
+      new Setting(containerEl).setClass("cursor-smith-indent-1")
         .setName("Serifs")
         .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
         .addToggle((toggle) => toggle.setValue(plugin.settings.lineSerifs).onChange(set("lineSerifs")));
@@ -3941,18 +4028,18 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(plugin.settings.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
 
     if (plugin.settings.cursorStyle === "Box") {
-      new Setting(containerEl)
+      new Setting(containerEl).setClass("cursor-smith-indent-1")
         .setName("Show Letter Inside Cursor")
         .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
         .addToggle((toggle) => toggle.setValue(plugin.settings.showChar).onChange(set("showChar")));
 
-      new Setting(containerEl)
+      new Setting(containerEl).setClass("cursor-smith-indent-1")
         .setName("Hollow")
         .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
         .addToggle((toggle) => toggle.setValue(plugin.settings.boxHollow).onChange(setAndRedraw("boxHollow")));
 
       if (plugin.settings.boxHollow) {
-        new Setting(containerEl)
+        new Setting(containerEl).setClass("cursor-smith-indent-2")
           .setName("Outline Width")
           .setDesc("Thickness of the hollow box's outline, in pixels.")
           .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(plugin.settings.boxHollowWidth).setDynamicTooltip().onChange(set("boxHollowWidth")));
@@ -3967,13 +4054,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .addToggle((toggle) => toggle.setValue(plugin.settings.blinkingEnabled).onChange(setAndRedraw("blinkingEnabled")));
 
     if (plugin.settings.blinkingEnabled) {
-      new Setting(containerEl).setName("Blink Speed").setDesc("How fast the cursor blinks.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Speed").setDesc("How fast the cursor blinks.")
         .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(plugin.settings.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
-      new Setting(containerEl).setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
         .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(plugin.settings.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-      new Setting(containerEl).setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
         .addToggle((toggle) => toggle.setValue(plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
-      new Setting(containerEl).setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
         .addSlider((s) => s.setLimits(0, 2000, 50).setValue(plugin.settings.blinkDelayMs ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
     }
 
@@ -3985,65 +4072,78 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .addToggle((toggle) => toggle.setValue(plugin.settings.smoothEnabled).onChange(setAndRedraw("smoothEnabled")));
 
     if (plugin.settings.smoothEnabled) {
-      new Setting(containerEl).setName("Glide Amount")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glide Amount")
         .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
-      new Setting(containerEl).setName("Catch-Up Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Catch-Up Speed")
         .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
-      new Setting(containerEl).setName("Max Catch-Up Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Max Catch-Up Speed")
         .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-      new Setting(containerEl).setName("Speed Up When Typing Fast")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Speed Up When Typing Fast")
         .addToggle((toggle) => toggle.setValue(plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
-      new Setting(containerEl).setName("Movement Delay")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Movement Delay")
         .addSlider((s) => s.setLimits(0, 500, 10).setValue(plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
     }
 
     containerEl.createEl("h3", { text: "Effects" });
 
     new Setting(containerEl).setName("Popping Letters")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.popLetters).onChange(set("popLetters")));
+      .addToggle((toggle) => toggle.setValue(plugin.settings.popLetters).onChange(setAndRedraw("popLetters")));
+    if (plugin.settings.popLetters) {
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Rainbow")
+        .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.popRainbow).onChange(set("popRainbow")));
+    }
 
     new Setting(containerEl).setName("Pixel Trail")
       .addToggle((toggle) => toggle.setValue(plugin.settings.flameTrail).onChange(setAndRedraw("flameTrail")));
     if (plugin.settings.flameTrail) {
-      new Setting(containerEl).setName("Backspace Disintegration")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Backspace Disintegration")
         .addToggle((toggle) => toggle.setValue(plugin.settings.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
     }
 
     new Setting(containerEl).setName("Motion Smear")
       .addToggle((toggle) => toggle.setValue(plugin.settings.smear).onChange(setAndRedraw("smear")));
     if (plugin.settings.smear) {
-      new Setting(containerEl).setName("Stiffness")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Stiffness")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(plugin.settings.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
-      new Setting(containerEl).setName("Trailing Stiffness")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trailing Stiffness")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
-      new Setting(containerEl).setName("Damping")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Damping")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
     }
 
     new Setting(containerEl).setName("Energy Beam")
       .addToggle((toggle) => toggle.setValue(plugin.settings.energyEffect).onChange(setAndRedraw("energyEffect")));
     if (plugin.settings.energyEffect) {
-      new Setting(containerEl).setName("Beam Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Beam Speed")
         .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(plugin.settings.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
     }
 
     new Setting(containerEl).setName("CRT Effect")
       .addToggle((toggle) => toggle.setValue(plugin.settings.crtEffect).onChange(setAndRedraw("crtEffect")));
     if (plugin.settings.crtEffect) {
-      new Setting(containerEl).setName("Trail Length")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Length")
         .addSlider((s) => s.setLimits(0, 30, 1).setValue(plugin.settings.trailLength).setDynamicTooltip().onChange(set("trailLength")));
-      new Setting(containerEl).setName("Trail Fade Time")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Fade Time")
         .addSlider((s) => s.setLimits(50, 1500, 25).setValue(plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
-      new Setting(containerEl).setName("Glow")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow")
         .addToggle((toggle) => toggle.setValue(plugin.settings.glow).onChange(set("glow")));
     }
 
     new Setting(containerEl).setName("Speed Demon")
       .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemon).onChange(setAndRedraw("speedDemon")));
     if (plugin.settings.speedDemon) {
-      new Setting(containerEl).setName("Fire Sparks")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemonSparks).onChange(set("speedDemonSparks")));
-      new Setting(containerEl).setName("Sensitivity")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Fire Sparks")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemonSparks).onChange(setAndRedraw("speedDemonSparks")));
+      if (plugin.settings.speedDemonSparks) {
+        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Quantity")
+          .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
+          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(plugin.settings.speedDemonSparkQuantity ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
+        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Trail")
+          .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
+          .addSlider((s) => s.setLimits(0, 30, 1).setValue(plugin.settings.speedDemonSparkTrail ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
+      }
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Sensitivity")
         .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(plugin.settings.speedDemonSensitivity).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
     }
 
@@ -4062,24 +4162,24 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     if (plugin.settings.torchEffect) {
       containerEl.createEl("h4", { text: "Spotlight" });
-      new Setting(containerEl).setName("Follow")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow")
         .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
           .setValue(plugin.settings.overlayFollowMode).onChange(set("overlayFollowMode")));
-      new Setting(containerEl).setName("Light Size")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Size")
         .addSlider((s) => s.setLimits(100, 800, 10).setValue(plugin.settings.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
-      new Setting(containerEl).setName("Light Color")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Color")
         .addColorPicker((cp) => cp.setValue(plugin.settings.overlayColor).onChange(set("overlayColor")));
-      new Setting(containerEl).setName("Follow Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow Speed")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
 
       containerEl.createEl("h4", { text: "Environment" });
-      new Setting(containerEl).setName("Darkness")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Darkness")
         .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
-      new Setting(containerEl).setName("Glow Strength")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow Strength")
         .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
-      new Setting(containerEl).setName("Flicker")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Flicker")
         .addToggle((toggle) => toggle.setValue(plugin.settings.overlayFlicker).onChange(set("overlayFlicker")));
-      new Setting(containerEl).setName("Keep Sidebars Lit")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
         .addToggle((toggle) => toggle.setValue(plugin.settings.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
     }
   }
@@ -4163,7 +4263,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       );
 
     if (plugin.settings.vimStatusBar) {
-      new Setting(containerEl)
+      new Setting(containerEl).setClass("cursor-smith-indent-1")
         .setName("Color status bar text to match the cursor")
         .setDesc("Tints the mode name with that mode's cursor color — Normal shows in the Normal cursor's blue, Insert in its green, and so on. Off uses your theme's normal status bar color.")
         .addToggle((toggle) =>
@@ -4333,9 +4433,9 @@ class CursorSmithSettingTab extends PluginSettingTab {
       );
 
     if (target.cursorStyle === "Line") {
-      new Setting(containerEl).setName("Cursor Thickness").setDesc("How thick the Line cursor is, in pixels.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Cursor Thickness").setDesc("How thick the Line cursor is, in pixels.")
         .addSlider((s) => s.setLimits(1, 12, 1).setValue(target.caretWidthPx).setDynamicTooltip().onChange(set("caretWidthPx")));
-      new Setting(containerEl).setName("Serifs").setDesc("Adds classic I-beam serifs at the top and bottom of the line cursor.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Serifs").setDesc("Adds classic I-beam serifs at the top and bottom of the line cursor.")
         .addToggle((t) => t.setValue(target.lineSerifs).onChange(set("lineSerifs")));
     }
 
@@ -4347,12 +4447,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(target.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
 
     if (target.cursorStyle === "Box") {
-      new Setting(containerEl).setName("Show Letter Inside Cursor").setDesc("Shows the letter under the cursor inside the block, colors flipped.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Show Letter Inside Cursor").setDesc("Shows the letter under the cursor inside the block, colors flipped.")
         .addToggle((t) => t.setValue(target.showChar).onChange(set("showChar")));
-      new Setting(containerEl).setName("Hollow").setDesc("Draws only the outline of the box instead of a filled block.")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Hollow").setDesc("Draws only the outline of the box instead of a filled block.")
         .addToggle((t) => t.setValue(target.boxHollow).onChange(setR("boxHollow")));
       if (target.boxHollow) {
-        new Setting(containerEl).setName("Outline Width").setDesc("Thickness of the hollow box's outline, in pixels.")
+        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Outline Width").setDesc("Thickness of the hollow box's outline, in pixels.")
           .addSlider((s) => s.setLimits(1, 6, 1).setValue(target.boxHollowWidth).setDynamicTooltip().onChange(set("boxHollowWidth")));
       }
     }
@@ -4361,13 +4461,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Blinking").setDesc("Makes the cursor blink. Off keeps it fully lit.")
       .addToggle((t) => t.setValue(target.blinkingEnabled).onChange(setR("blinkingEnabled")));
     if (target.blinkingEnabled) {
-      new Setting(containerEl).setName("Blink Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Speed")
         .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(target.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
-      new Setting(containerEl).setName("Blink Balance")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Balance")
         .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(target.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-      new Setting(containerEl).setName("Don't Blink While Typing")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Don't Blink While Typing")
         .addToggle((t) => t.setValue(target.smoothStopBlinking).onChange(set("smoothStopBlinking")));
-      new Setting(containerEl).setName("Blink Delay")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Delay")
         .addSlider((s) => s.setLimits(0, 2000, 50).setValue(target.blinkDelayMs ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
     }
 
@@ -4375,88 +4475,101 @@ class CursorSmithSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Smooth Movement").setDesc("Glide to the new spot instead of jumping.")
       .addToggle((t) => t.setValue(target.smoothEnabled).onChange(setR("smoothEnabled")));
     if (target.smoothEnabled) {
-      new Setting(containerEl).setName("Glide Amount")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glide Amount")
         .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(target.smoothness).setDynamicTooltip().onChange(set("smoothness")));
-      new Setting(containerEl).setName("Catch-Up Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Catch-Up Speed")
         .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(target.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
-      new Setting(containerEl).setName("Max Catch-Up Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Max Catch-Up Speed")
         .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(target.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-      new Setting(containerEl).setName("Speed Up When Typing Fast")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Speed Up When Typing Fast")
         .addToggle((t) => t.setValue(target.smoothAdaptive).onChange(set("smoothAdaptive")));
-      new Setting(containerEl).setName("Movement Delay")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Movement Delay")
         .addSlider((s) => s.setLimits(0, 500, 10).setValue(target.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
     }
 
     containerEl.createEl("h5", { text: "Effects" });
     new Setting(containerEl).setName("Popping Letters")
-      .addToggle((t) => t.setValue(target.popLetters).onChange(set("popLetters")));
+      .addToggle((t) => t.setValue(target.popLetters).onChange(setR("popLetters")));
+    if (target.popLetters) {
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Rainbow")
+        .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
+        .addToggle((t) => t.setValue(target.popRainbow).onChange(set("popRainbow")));
+    }
 
     new Setting(containerEl).setName("Pixel Trail")
       .addToggle((t) => t.setValue(target.flameTrail).onChange(setR("flameTrail")));
     if (target.flameTrail) {
-      new Setting(containerEl).setName("Backspace Disintegration")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Backspace Disintegration")
         .addToggle((t) => t.setValue(target.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
     }
 
     new Setting(containerEl).setName("Motion Smear")
       .addToggle((t) => t.setValue(target.smear).onChange(setR("smear")));
     if (target.smear) {
-      new Setting(containerEl).setName("Stiffness")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Stiffness")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(target.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
-      new Setting(containerEl).setName("Trailing Stiffness")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trailing Stiffness")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
-      new Setting(containerEl).setName("Damping")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Damping")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
     }
 
     new Setting(containerEl).setName("Energy Beam")
       .addToggle((t) => t.setValue(target.energyEffect).onChange(setR("energyEffect")));
     if (target.energyEffect) {
-      new Setting(containerEl).setName("Beam Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Beam Speed")
         .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(target.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
     }
 
     new Setting(containerEl).setName("CRT Effect")
       .addToggle((t) => t.setValue(target.crtEffect).onChange(setR("crtEffect")));
     if (target.crtEffect) {
-      new Setting(containerEl).setName("Trail Length")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Length")
         .addSlider((s) => s.setLimits(0, 30, 1).setValue(target.trailLength).setDynamicTooltip().onChange(set("trailLength")));
-      new Setting(containerEl).setName("Trail Fade Time")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Fade Time")
         .addSlider((s) => s.setLimits(50, 1500, 25).setValue(target.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
-      new Setting(containerEl).setName("Glow")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow")
         .addToggle((t) => t.setValue(target.glow).onChange(set("glow")));
     }
 
     new Setting(containerEl).setName("Speed Demon")
       .addToggle((t) => t.setValue(target.speedDemon).onChange(setR("speedDemon")));
     if (target.speedDemon) {
-      new Setting(containerEl).setName("Fire Sparks")
-        .addToggle((t) => t.setValue(target.speedDemonSparks).onChange(set("speedDemonSparks")));
-      new Setting(containerEl).setName("Sensitivity")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Fire Sparks")
+        .addToggle((t) => t.setValue(target.speedDemonSparks).onChange(setR("speedDemonSparks")));
+      if (target.speedDemonSparks) {
+        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Quantity")
+          .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
+          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(target.speedDemonSparkQuantity ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
+        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Trail")
+          .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
+          .addSlider((s) => s.setLimits(0, 30, 1).setValue(target.speedDemonSparkTrail ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
+      }
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Sensitivity")
         .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(target.speedDemonSensitivity).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
     }
 
     new Setting(containerEl).setName("Torch Spotlight")
       .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
     if (target.torchEffect) {
-      new Setting(containerEl).setName("Follow")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow")
         .addDropdown((d) =>
           d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
             .setValue(target.overlayFollowMode).onChange(set("overlayFollowMode"))
         );
-      new Setting(containerEl).setName("Light Size")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Size")
         .addSlider((s) => s.setLimits(100, 800, 10).setValue(target.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
-      new Setting(containerEl).setName("Light Color")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Color")
         .addColorPicker((cp) => cp.setValue(target.overlayColor).onChange(set("overlayColor")));
-      new Setting(containerEl).setName("Follow Speed")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow Speed")
         .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
-      new Setting(containerEl).setName("Darkness")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Darkness")
         .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(target.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
-      new Setting(containerEl).setName("Glow Strength")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow Strength")
         .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(target.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
-      new Setting(containerEl).setName("Flicker")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Flicker")
         .addToggle((t) => t.setValue(target.overlayFlicker).onChange(set("overlayFlicker")));
-      new Setting(containerEl).setName("Keep Sidebars Lit")
+      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
         .addToggle((t) => t.setValue(target.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
     }
   }

@@ -3,6 +3,7 @@ const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 const DEFAULT_SETTINGS = {
   enabled: true,
   cursorStyle: "Box", // "Line" | "Box" | "Underline"
+  uiMode: "cua", // "cua" | "vim" — which settings panel is shown; drives vimModeEnabled
 
   // --- appearance color controls ---
   colorDark: "#39ff14", 
@@ -62,7 +63,221 @@ const DEFAULT_SETTINGS = {
   catchUpSpeed: 0.55,        // 30-80% range (0.30 - 0.80)
   maxCatchUpSpeed: 0.85,     // 50-100% range (0.50 - 1.00)
   smoothAdaptive: true,      // Adaptive speed toggle
+
+  // --- Vim-aware cursors ---------------------------------------------------
+  // When vimModeEnabled is on AND Obsidian's own Vim keybindings are active,
+  // the ENTIRE cursor look/effect config swaps per Vim mode. Each entry in
+  // vimModes is a full snapshot of every look/effect setting (see LOOK_KEYS),
+  // so a mode can differ from the global cursor in any way at all — style,
+  // colors, blinking, CRT trail, speed demon, smear, torch, etc.
+  // vimControlObsidian: when on, the plugin owns Obsidian's own Vim
+  // keybindings — Vim mode forces them on, CUA mode forces them off.
+  vimModeEnabled: false,
+  vimControlObsidian: true,
+  vimActivePreset: "",        // name of the vim preset last applied (for the UI)
+  vimStatusBar: true,         // show the live Vim mode in Obsidian's status bar
+  vimStatusBarColor: true,    // ...tinted with that mode's cursor color
+  vimModes: {},               // filled in below with full per-mode snapshots
 };
+
+// Housekeeping keys belonging to the Vim system. A regular (CUA) cursor preset
+// must never carry or clobber these — they're listed once here so saving and
+// loading a preset can't drift apart as new vim keys get added.
+const VIM_STATE_KEYS = [
+  "vimPresets", "vimModes", "vimModeEnabled", "vimActivePreset",
+  "vimControlObsidian", "vimStatusBar", "vimStatusBarColor",
+];
+
+// The Vim modes the plugin themes, in cycle order. "command" is the ":" / "/"
+// prompt that @replit/codemirror-vim (the engine Obsidian bundles) opens as a
+// CodeMirror panel at the bottom of the editor — see isVimCommandLineActive().
+const VIM_MODE_KEYS = ["normal", "insert", "visual", "replace", "command"];
+const VIM_MODE_LABELS = {
+  normal: "Normal", insert: "Insert", visual: "Visual",
+  replace: "Replace", command: "Command",
+};
+
+// Every setting a Vim mode is allowed to override — i.e. everything that
+// affects how the cursor looks or behaves. Structural/housekeeping keys
+// (enabled, hideNativeCaret, presets, the vim-control keys) are intentionally
+// excluded. A per-mode config is a snapshot containing exactly these keys.
+const LOOK_KEYS = [
+  "cursorStyle", "colorDark", "colorLight",
+  "crtEffect", "glow",
+  "torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius",
+  "overlayDarkness", "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed",
+  "caretWidthPx", "popLetters", "flameTrail", "backspaceDisintegrate",
+  "lineSerifs", "boxHollow", "boxHollowWidth",
+  "speedDemon", "speedDemonSparks", "speedDemonSensitivity",
+  "cursorOpacity", "energyEffect", "energySpeed",
+  "trailLength", "trailFadeMs",
+  "blinkingEnabled", "blinkSpeed", "blinkOnOffBalance", "blinkDelayMs",
+  "showChar", "moveDelayMs",
+  "smear", "smearStiffness", "smearTrailingStiffness", "smearDamping",
+  "smoothEnabled", "smoothStopBlinking", "smoothness", "catchUpSpeed",
+  "maxCatchUpSpeed", "smoothAdaptive",
+];
+
+// Copy only the look keys out of an arbitrary settings-shaped object.
+function pickLook(src) {
+  const o = {};
+  if (!src) return o;
+  for (const k of LOOK_KEYS) if (k in src) o[k] = src[k];
+  return o;
+}
+
+// Build a complete per-mode snapshot: the global defaults for every look key,
+// with the given overrides applied on top. Guarantees no key is ever missing.
+function fullVimMode(overrides) {
+  return Object.assign(pickLook(DEFAULT_SETTINGS), pickLook(overrides));
+}
+
+// Build one mode's snapshot, falling back to that mode's starter look when the
+// source has nothing for it. This matters for "command", which was added after
+// people had already saved Vim presets: without the fallback an older preset
+// would expand to the plain global defaults for Command and every preset would
+// end up with an identical, uncustomised command-line cursor.
+function vimModeSnapshot(modeKey, overrides) {
+  return fullVimMode(overrides || VIM_MODE_STARTERS[modeKey]);
+}
+
+// Clone a whole vimModes map (or preset) into fresh, complete snapshots so
+// callers never share nested references with this.settings.
+function cloneVimModes(modes) {
+  const out = {};
+  for (const k of VIM_MODE_KEYS) out[k] = vimModeSnapshot(k, modes && modes[k]);
+  return out;
+}
+
+// Starter per-mode looks seeded into new installs. Each lists only what it
+// changes from the global defaults; fullVimMode() fills in the rest. They
+// double as a showcase — every mode looks distinctly different.
+const VIM_MODE_STARTERS = {
+  normal:  { cursorStyle: "Box", colorDark: "#4aa3ff", colorLight: "#1e6fd0",
+             blinkingEnabled: true, speedDemon: false, crtEffect: false },       // blue blinking box
+  insert:  { cursorStyle: "Line", colorDark: "#39ff14", colorLight: "#2a7d2e",
+             blinkingEnabled: false, caretWidthPx: 2 },                          // thin steady line
+  visual:  { cursorStyle: "Box", colorDark: "#f5a623", colorLight: "#b26a00",
+             boxHollow: true, blinkingEnabled: false },                          // hollow amber box
+  replace: { cursorStyle: "Underline", colorDark: "#ff3b3b", colorLight: "#b30000",
+             caretWidthPx: 3, blinkingEnabled: true },                          // red underline
+  // Command (":" / "/" prompt) lives in a one-line <input>, not the note
+  // editor, so the motion effects are deliberately off: smear and smooth
+  // catch-up both look like jitter in a field that's ~20px tall.
+  command: { cursorStyle: "Line", colorDark: "#c792ea", colorLight: "#7d3fbf",
+             caretWidthPx: 2, blinkingEnabled: true, blinkSpeed: 1,
+             smear: false, smoothEnabled: false, crtEffect: false,
+             speedDemon: false, torchEffect: false },                            // violet line
+};
+
+// ---------------------------------------------------------------------------
+// "Preset1" — the baked-in Vim starting point every new install gets.
+//
+// Written out as COMPLETE per-mode snapshots rather than sparse overrides on
+// purpose. Sparse entries inherit anything they don't list from
+// DEFAULT_SETTINGS, and several of those globals (popLetters, flameTrail,
+// backspaceDisintegrate) default to values this preset does not want, so an
+// abbreviated version would not actually reproduce the intended look.
+// ---------------------------------------------------------------------------
+const PRESET1_VIM_MODES = {
+  normal: {
+    "cursorStyle": "Box", "colorDark": "#499bf3", "colorLight": "#3c6ebe",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 2, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": false, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1.2, "blinkOnOffBalance": 0.5,
+    "blinkDelayMs": 0, "showChar": true, "moveDelayMs": 0,
+    "smear": true, "smearStiffness": 0.8, "smearTrailingStiffness": 0.55,
+    "smearDamping": 0.35, "smoothEnabled": true, "smoothStopBlinking": true,
+    "smoothness": 0.15, "catchUpSpeed": 0.55, "maxCatchUpSpeed": 0.85,
+    "smoothAdaptive": true
+  },
+  insert: {
+    "cursorStyle": "Line", "colorDark": "#4fe87d", "colorLight": "#29bc3a",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 2, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": false, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": true, "blinkSpeed": 0.9, "blinkOnOffBalance": 0.5,
+    "blinkDelayMs": 1200, "showChar": true, "moveDelayMs": 0,
+    "smear": false, "smearStiffness": 0.6, "smearTrailingStiffness": 0.4,
+    "smearDamping": 0.8, "smoothEnabled": true, "smoothStopBlinking": true,
+    "smoothness": 0.15, "catchUpSpeed": 0.55, "maxCatchUpSpeed": 0.85,
+    "smoothAdaptive": true
+  },
+  visual: {
+    "cursorStyle": "Box", "colorDark": "#e3cb31", "colorLight": "#e8bd21",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 2, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": false, "lineSerifs": false, "boxHollow": true,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1.2, "blinkOnOffBalance": 0.5,
+    "blinkDelayMs": 0, "showChar": true, "moveDelayMs": 0,
+    "smear": false, "smearStiffness": 0.6, "smearTrailingStiffness": 0.4,
+    "smearDamping": 0.8, "smoothEnabled": false, "smoothStopBlinking": true,
+    "smoothness": 0.15, "catchUpSpeed": 0.55, "maxCatchUpSpeed": 0.85,
+    "smoothAdaptive": true
+  },
+  replace: {
+    "cursorStyle": "Underline", "colorDark": "#f54747", "colorLight": "#ff1a1a",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": false, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": false, "blinkSpeed": 1.2, "blinkOnOffBalance": 0.5,
+    "blinkDelayMs": 0, "showChar": true, "moveDelayMs": 0,
+    "smear": true, "smearStiffness": 0.6, "smearTrailingStiffness": 0.4,
+    "smearDamping": 0.8, "smoothEnabled": false, "smoothStopBlinking": true,
+    "smoothness": 0.15, "catchUpSpeed": 0.55, "maxCatchUpSpeed": 0.85,
+    "smoothAdaptive": true
+  },
+  // Violet line for the ":" prompt — distinct from the other four modes at a
+  // glance, with the motion effects off (see VIM_MODE_STARTERS.command).
+  command: {
+    "cursorStyle": "Line", "colorDark": "#c792ea", "colorLight": "#7d3fbf",
+    "crtEffect": false, "glow": true, "torchEffect": false,
+    "overlaySpareSidebars": true, "overlayFollowMode": "caret",
+    "overlayRadius": 250, "overlayDarkness": 0.7, "overlayIntensity": 0.1,
+    "overlayColor": "#ff963c", "overlayFlicker": false, "overlaySpeed": 0.22,
+    "caretWidthPx": 2, "popLetters": false, "flameTrail": false,
+    "backspaceDisintegrate": false, "lineSerifs": false, "boxHollow": false,
+    "boxHollowWidth": 2, "speedDemon": false, "speedDemonSparks": true,
+    "speedDemonSensitivity": 1, "cursorOpacity": 1, "energyEffect": false,
+    "energySpeed": 1, "trailLength": 10, "trailFadeMs": 450,
+    "blinkingEnabled": true, "blinkSpeed": 1, "blinkOnOffBalance": 0.5,
+    "blinkDelayMs": 0, "showChar": true, "moveDelayMs": 0,
+    "smear": false, "smearStiffness": 0.6, "smearTrailingStiffness": 0.4,
+    "smearDamping": 0.8, "smoothEnabled": false, "smoothStopBlinking": true,
+    "smoothness": 0.15, "catchUpSpeed": 0.55, "maxCatchUpSpeed": 0.85,
+    "smoothAdaptive": true
+  },
+};
+
+// Populate the default vimModes now that the helpers exist. A fresh install
+// therefore opens on exactly the Preset1 look rather than on a set of
+// per-mode defaults that don't correspond to any saved preset.
+DEFAULT_SETTINGS.vimModes = cloneVimModes(PRESET1_VIM_MODES);
 
 // ---------------------------------------------------------------------------
 // Default starter presets — seeded into new installs (or any install that
@@ -187,6 +402,21 @@ const DEFAULT_PRESETS = {
 };
 
 // ---------------------------------------------------------------------------
+// Default Vim presets — seeded into any install that doesn't already have a
+// vimPresets key. Existing user vim presets are never overwritten, and a name
+// that already exists is left alone.
+//
+// There is exactly one: "Preset1", the baked-in starting point defined above.
+// Shipping a single, complete preset (rather than a showcase library) means a
+// brand-new install's saved preset and its live per-mode config are the same
+// thing, so the Vim panel opens on a preset that is genuinely "Currently
+// active" instead of an unsaved config that merely resembles one.
+// ---------------------------------------------------------------------------
+const DEFAULT_VIM_PRESETS = {
+  "Preset1": PRESET1_VIM_MODES,
+};
+
+// ---------------------------------------------------------------------------
 // Preset share-code codec
 // A share code is the preset snapshot JSON encoded as base64url (no padding).
 // The preset name is embedded inside the JSON so the recipient gets both the
@@ -305,6 +535,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const saved = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
+    // Migrate: existing installs that already had Vim cursors on should land
+    // on the Vim panel by default instead of silently reverting to CUA.
+    if (saved && saved.uiMode === undefined) {
+      this.settings.uiMode = this.settings.vimModeEnabled ? "vim" : "cua";
+    }
+
+    // Retired key: the "restore Obsidian's previous vim state" machinery is
+    // gone (see setVimModeEnabled), and a stale saved value used to poison
+    // the CUA switch into re-enabling vim forever. Drop it from settings so
+    // it also disappears from data.json on the next save.
+    delete this.settings.vimPrevObsidianVim;
+
     // Seed default presets for first-time users (or any install missing them).
     // Only adds keys that don't already exist — never overwrites user presets.
     if (!this.settings.userPresets) this.settings.userPresets = {};
@@ -312,6 +554,49 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (!(name in this.settings.userPresets)) {
         this.settings.userPresets[name] = snap;
       }
+    }
+
+    // Vim: rebuild every mode as a COMPLETE look snapshot. This backfills any
+    // missing key (including all the effect keys added when per-mode support
+    // went full-featured) and migrates the old v1 shape, which only stored a
+    // few keys plus a "useCustomColors" gate: when that gate was off the mode
+    // used to inherit the global colors, so bake those in now.
+    {
+      const savedModes =
+        this.settings.vimModes && typeof this.settings.vimModes === "object"
+          ? this.settings.vimModes
+          : {};
+      const fresh = {};
+      for (const mode of VIM_MODE_KEYS) {
+        const saved = Object.assign({}, savedModes[mode] || {});
+        if (saved.useCustomColors === false) {
+          saved.colorDark = this.settings.colorDark;
+          saved.colorLight = this.settings.colorLight;
+        }
+        delete saved.useCustomColors;
+        // Start from this mode's starter defaults, then apply the saved values
+        // so a returning user keeps their choices while gaining the new keys.
+        fresh[mode] = Object.assign({}, DEFAULT_SETTINGS.vimModes[mode], pickLook(saved));
+      }
+      this.settings.vimModes = fresh;
+    }
+
+    // Seed default vim presets (only names that don't already exist).
+    const hadVimPresets = !!this.settings.vimPresets;
+    if (!this.settings.vimPresets) this.settings.vimPresets = {};
+    for (const [name, snap] of Object.entries(DEFAULT_VIM_PRESETS)) {
+      if (!(name in this.settings.vimPresets)) {
+        this.settings.vimPresets[name] = cloneVimModes(snap);
+      }
+    }
+
+    // On a genuinely fresh install the live per-mode config IS Preset1 (see
+    // DEFAULT_SETTINGS.vimModes), so name it as the active preset — otherwise
+    // the Vim panel would show a saved preset that nothing is marked as using.
+    // Guarded on hadVimPresets so an existing user who deliberately cleared
+    // vimActivePreset (by hand-editing a mode) doesn't get it re-asserted.
+    if (!hadVimPresets && !this.settings.vimActivePreset) {
+      this.settings.vimActivePreset = "Preset1";
     }
 
 
@@ -367,27 +652,73 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._tickErrorLogged = false;
     this._torchErrorLogged = false;
 
-    this.addCommand({
-      id: "toggle-cursor-smith",
-      name: "Toggle custom cursor",
-      callback: () => this.toggle(),
-    });
-
+    // -----------------------------------------------------------------------
+    // Command palette — exactly two entries, registered unconditionally.
+    //
+    // Both work regardless of whether Cursor-Smith itself is toggled on: the
+    // Vim system deliberately never reads settings.enabled or the engine
+    // flags, so "Cycle preset" keeps functioning with the custom cursors off.
+    //
+    // The CUA/Vim mode switch is intentionally NOT a palette command anymore.
+    // Toggling it from the palette meant setVimModeEnabled could fire from
+    // any app state (mid-typing, palette focus in flight, no editor, etc.),
+    // and its side-effect chain — flipping Obsidian's vim keybindings via
+    // updateOptions(), which rebuilds every editor's extensions, plus the
+    // synthetic-Escape normal-mode forcing — proved too heavy/fragile to run
+    // from arbitrary contexts. The mode switch lives only in the settings
+    // panel (renderModeSwitch), where it runs from a known-quiet state.
+    //
+    // "Cycle preset" is one command that dispatches on the current mode
+    // (CUA presets in CUA mode, Vim presets in Vim mode) under a single
+    // stable ID, so one hotkey works in both modes.
+    // -----------------------------------------------------------------------
     this.addCommand({
       id: "cycle-preset",
       name: "Cycle preset",
-      callback: () => this.cyclePreset(1),
+      callback: () => this.cycleActivePreset(1),
+    });
+
+    this.addCommand({
+      id: "toggle-cursor-smith",
+      name: "Toggle Cursor-Smith on/off",
+      callback: () => this.toggle(),
     });
 
     this.addSettingTab(new CursorSmithSettingTab(this.app, this));
 
+    // Status bar indicator. The canvas tick calls updateVimStatusBar() the
+    // instant the mode changes, so while the cursor engine runs this interval
+    // is pure backstop — it only matters with the custom cursors toggled off,
+    // and for noticing a theme switch. 250ms is plenty for that, and past the
+    // signature check the update is a no-op, keeping the steady-state cost to
+    // one memoized mode read per tick.
+    this.registerInterval(window.setInterval(() => this.updateVimStatusBar(), 250));
+
     this.app.workspace.onLayoutReady(() => {
+      // Honor the auto-control setting on startup: if Vim cursors are on and
+      // we're meant to drive Obsidian's Vim keybindings, make sure they're on.
+      if (this.settings.vimModeEnabled && this.settings.vimControlObsidian) {
+        this.setObsidianVim(true);
+      }
       if (this.settings.enabled) this.enable();
+      this.syncVimStatusBar();
     });
   }
 
   onunload() {
     this.disable();
+    // Cancel any pending Normal-mode retry so it can't fire after unload.
+    if (this._vimNormalRetryT) {
+      window.clearTimeout(this._vimNormalRetryT);
+      this._vimNormalRetryT = 0;
+    }
+    // Obsidian removes status bar items registered through addStatusBarItem
+    // on unload anyway, but doing it explicitly keeps hot-reload (e.g. via the
+    // BRAT / hot-reload dev plugins) from briefly showing a stale label.
+    if (this.vimStatusEl) {
+      this.vimStatusEl.remove();
+      this.vimStatusEl = null;
+    }
     if (this._cleanups) {
       for (const cleanup of this._cleanups) cleanup();
       this._cleanups = [];
@@ -541,8 +872,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // userPresets lives inside this.settings so it survives every saveData
     // call automatically - no separate load/merge step needed anywhere.
     await this.saveData(this.settings);
-    this.applyBodyClasses();
-    this.applyOverlayStyle();
+    // Everything below is cosmetic. Each step is isolated so a failure in one
+    // (or in an engine that's currently torn down) can neither block the
+    // others nor bubble up and abort whichever command called saveSettings.
+    try { this.applyBodyClasses(); } catch (e) { console.error("[cursor-smith] applyBodyClasses failed:", e); }
+    try { this.applyOverlayStyle(); } catch (e) { console.error("[cursor-smith] applyOverlayStyle failed:", e); }
+    // A per-mode color may have just been edited. The status bar dedupes on
+    // (mode, theme, tint) — none of which changed — so drop the signature to
+    // force it to re-read the color it should now be showing.
+    try {
+      this._vimStatusSig = null;
+      this.updateVimStatusBar();
+    } catch (e) { console.error("[cursor-smith] status bar refresh failed:", e); }
+    // A per-mode torch setting (or the global one) may have just changed which
+    // means the torch engine might now be needed, or no longer needed. Keep it
+    // in sync so a mode that uses the spotlight lights up even when the global
+    // torch is off. The torch tick handles per-frame show/hide + restyle.
+    if (this.canvasEngineActive) {
+      if (this.torchPossible() && !this.torchEngineActive) this.enableTorchOverlay();
+      else if (!this.torchPossible() && this.torchEngineActive) this.disableTorchOverlay();
+    }
   }
 
   // ---- User preset CRUD ----
@@ -560,6 +909,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const snap = Object.assign({}, this.settings);
     delete snap.enabled;
     delete snap.userPresets;
+    // Vim theming is its own independent system with its own presets — a
+    // regular cursor preset must not carry (or later clobber) it.
+    for (const k of VIM_STATE_KEYS) delete snap[k];
     this.getUserPresets()[name] = snap;
     await this.saveSettings();
   }
@@ -569,9 +921,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!preset) return;
     const wasEnabled = this.settings.enabled;
     const presets = this.getUserPresets();   // hold ref before overwrite
+    // Snapshot the independent vim state so an old/imported preset can't wipe
+    // it (normal snapshots exclude these, but share codes are untrusted).
+    const vimState = {};
+    for (const k of VIM_STATE_KEYS) vimState[k] = this.settings[k];
     Object.assign(this.settings, preset);
     this.settings.enabled = wasEnabled;
     this.settings.userPresets = presets;    // restore presets dict
+    Object.assign(this.settings, vimState);
     await this.saveSettings();
     if (this.settings.enabled) this.enable();
     // Track which preset is active so cyclePreset() knows where to start.
@@ -581,6 +938,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
   async deleteUserPreset(name) {
     delete this.getUserPresets()[name];
     await this.saveSettings();
+  }
+
+  // Whether the plugin is currently "in Vim mode" for command purposes.
+  // uiMode is the user-facing switch and vimModeEnabled is the feature flag;
+  // renderModeSwitch and setVimModeEnabled keep them in step, but an install that
+  // predates uiMode can have only the latter, so treat either as Vim.
+  isVimUiMode() {
+    return (this.settings.uiMode || "cua") === "vim" || !!this.settings.vimModeEnabled;
+  }
+
+  // The single palette command routes here: cycle whichever preset library
+  // belongs to the mode the user is actually in.
+  cycleActivePreset(direction) {
+    if (this.isVimUiMode()) return this.cycleVimPreset(direction);
+    return this.cyclePreset(direction);
   }
 
   cyclePreset(direction) {
@@ -619,9 +991,472 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.saveSettings();
   }
 
+  // =========================================================================
+  // Vim-aware cursors
+  // =========================================================================
+
+  // Single entry point for turning the plugin's Vim cursors on/off. Only
+  // reachable from the settings panel's CUA/Vim switch (renderModeSwitch) —
+  // deliberately not exposed as a palette command; see the note where the
+  // commands are registered. Also:
+  //  • drives Obsidian's own Vim keybindings when vimControlObsidian is set
+  //    (remembering the prior state so turning the feature off restores it),
+  //  • creates/removes the status bar mode indicator.
+  async setVimModeEnabled(value) {
+    value = !!value;
+
+    // 1. Flip and PERSIST the core state before any side effect runs, so the
+    //    mode change is on disk no matter what the steps below do.
+    this.settings.vimModeEnabled = value;
+    this.settings.uiMode = value ? "vim" : "cua";
+    await this.saveSettings();
+
+    // 2. Drive Obsidian's own Vim keybindings — symmetric and level-triggered:
+    //    Vim mode means ON, CUA mode means OFF, every time, no edge detection
+    //    and no memory. This used to "restore whatever Obsidian's vim was
+    //    before we forced it on", which is cleverer but proved fragile in
+    //    practice: any bug or crash that captured OUR OWN forced-on state as
+    //    the "previous" value poisoned the restore permanently — switching to
+    //    CUA would then dutifully restore vim to on, forever, and the toggle
+    //    looked dead. With vimControlObsidian the user has said the plugin
+    //    owns this setting, so own it plainly in both directions. (Someone who
+    //    manages Obsidian's vim by hand should keep vimControlObsidian off,
+    //    which skips this entirely.)
+    if (this.settings.vimControlObsidian) {
+      try {
+        if (value) {
+          this.setObsidianVim(true);
+          // Switching the vim engine on mid-session leaves the editor in
+          // insert mode: the vim extension is added to an editor that was
+          // already accepting free-form typing, and nothing tells it to enter
+          // normal. Vim itself would land you in normal, so force it.
+          this.forceVimNormalMode();
+        } else {
+          this.setObsidianVim(false);
+        }
+      } catch (e) {
+        console.error("[cursor-smith] driving Obsidian vim keybindings failed:", e);
+      }
+    }
+
+    // 3. Create or tear down the status bar item to match the new mode.
+    try {
+      this.syncVimStatusBar();
+    } catch (e) {
+      console.error("[cursor-smith] vim status bar update failed:", e);
+    }
+  }
+
+  // Drop every open editor into Normal mode.
+  //
+  // Sending a synthetic Escape rather than poking cm.state.vim.insertMode
+  // directly is deliberate: exiting insert is not just a flag flip. The vim
+  // engine also has to close the change/undo group it opened on entry, run any
+  // pending repeat (so a half-finished "3i" doesn't fire later), and move the
+  // caret back one column the way real vim does. Clearing the flag by hand
+  // skips all of that and leaves the engine inconsistent — Escape runs the
+  // engine's own exit path, which is the only thing that gets it all right.
+  //
+  // updateOptions() rebuilds the editor's extensions asynchronously, so the
+  // vim extension usually isn't installed yet on the first attempt; retry on a
+  // short timer until the adapter shows up, then give up rather than spin.
+  forceVimNormalMode(attempt = 0) {
+    // Single-flight: a fresh call (or a mode flip back to CUA) supersedes any
+    // pending retry, so rapid toggling of the settings switch can never stack
+    // parallel retry chains, each dispatching its own Escapes.
+    if (this._vimNormalRetryT) {
+      window.clearTimeout(this._vimNormalRetryT);
+      this._vimNormalRetryT = 0;
+    }
+    // The feature was switched off while a retry was pending — stop.
+    if (!this.settings.vimModeEnabled) return;
+    let anyEditor = false;
+    try {
+      for (const view of this.allEditorViews()) {
+        anyEditor = true;
+        const cm = this.getVimAdapter(view);
+        // No adapter yet => the vim extension hasn't loaded into this editor.
+        if (!cm) { anyEditor = false; break; }
+        const v = cm.state.vim || {};
+        if (!v.insertMode && !v.visualMode) continue; // already normal
+        const target = view.contentDOM;
+        if (!target) continue;
+        const win = target.ownerDocument.defaultView || window;
+        target.dispatchEvent(new win.KeyboardEvent("keydown", {
+          key: "Escape", code: "Escape", keyCode: 27, which: 27,
+          bubbles: true, cancelable: true,
+        }));
+      }
+    } catch {
+      /* best effort — never let this break the mode switch itself */
+    }
+    if (!anyEditor && attempt < 20) {
+      this._vimNormalRetryT = window.setTimeout(() => {
+        this._vimNormalRetryT = 0;
+        this.forceVimNormalMode(attempt + 1);
+      }, 50);
+    }
+  }
+
+  // Every live CodeMirror view across all open markdown leaves (including
+  // pop-out windows), not just the focused one — switching modes should settle
+  // every editor, otherwise a background tab stays in insert until you visit
+  // it and press Escape yourself.
+  allEditorViews() {
+    const views = [];
+    const push = (v) => { if (v && !views.includes(v)) views.push(v); };
+    try {
+      push(this.app.workspace.activeEditor?.editor?.cm);
+      this.app.workspace.iterateAllLeaves?.((leaf) => {
+        push(leaf?.view?.editor?.cm);
+      });
+    } catch {
+      /* iterateAllLeaves is stable API, but stay defensive */
+    }
+    return views;
+  }
+
+  // Turn Obsidian's built-in Vim keybindings on/off. setConfig is semi-internal
+  // (guarded); updateOptions asks the workspace to re-derive editor extensions
+  // so the change can take effect without a reload where that's supported.
+  setObsidianVim(on) {
+    try {
+      if (this.app.vault.setConfig) this.app.vault.setConfig("vimMode", !!on);
+      this.app.workspace.updateOptions?.();
+    } catch {
+      /* best-effort; otherwise applies on the next editor reload */
+    }
+  }
+
+  // Whether Obsidian's own Vim keybindings are turned on (Settings → Editor →
+  // Vim key bindings). getConfig is a semi-internal API, so it's fully guarded.
+  isObsidianVimOn() {
+    try {
+      return !!(this.app.vault.getConfig && this.app.vault.getConfig("vimMode"));
+    } catch {
+      return false;
+    }
+  }
+
+  // @replit/codemirror-vim (the vim engine Obsidian bundles) stashes a CM5-
+  // compatible adapter on the EditorView; its own getCM(view) helper just
+  // returns view.cm. We read it directly rather than importing the vim module,
+  // since that module isn't guaranteed to be requireable from a plugin. The
+  // adapter exposes the live vim state at cm.state.vim, which is what we need.
+  getVimAdapter(view) {
+    try {
+      const cm = view && view.cm;
+      if (cm && cm.state && cm.state.vim) return cm;
+    } catch {
+      /* fall through to DOM detection */
+    }
+    return null;
+  }
+
+  // Is a block ("fat") cursor currently shown? @replit/codemirror-vim toggles
+  // the .cm-fat-cursor class on the content element for block-cursor modes
+  // (normal/visual/replace). Insert mode uses a thin caret. This is the
+  // fallback signal when the adapter isn't reachable.
+  _vimBlockCursorShown(view) {
+    try {
+      const content = view.contentDOM;
+      if (content && content.classList && content.classList.contains("cm-fat-cursor")) return true;
+      const root = view.dom;
+      return !!(root && root.querySelector && root.querySelector(".cm-fat-cursor"));
+    } catch {
+      return false;
+    }
+  }
+
+  // Resolve the current Vim mode to one of VIM_MODE_KEYS, or null when it
+  // can't be determined. Prefers the adapter's authoritative state (the only
+  // way to reliably see "replace"); falls back to selection + block-cursor
+  // heuristics, which cover normal/insert/visual but report replace as normal.
+  detectVimMode(view) {
+    const cm = this.getVimAdapter(view);
+    if (cm) {
+      const v = cm.state.vim || {};
+      if (v.visualMode) return "visual";
+      if (v.insertMode) {
+        // Overwrite/replace ("R") is an insert-family state; the adapter marks
+        // it via state.overwrite (and, in some builds, a vim flag). Either one
+        // means replace.
+        const replace = cm.state.overwrite || v.insertModeReplace || v.replaceMode;
+        return replace ? "replace" : "insert";
+      }
+      return "normal";
+    }
+    // Adapter unavailable — infer from the editor.
+    try {
+      if (!view.state.selection.main.empty) return "visual";
+      return this._vimBlockCursorShown(view) ? "normal" : "insert";
+    } catch {
+      return null;
+    }
+  }
+
+  // Is the caret currently somewhere in Obsidian's interface rather than in a
+  // note? That covers both halves of what "Command" means here:
+  //
+  //   • the built-in Vim command line — the ":" / "/" prompt, which the vim
+  //     engine mounts as a CodeMirror panel with its own <input>, and
+  //   • every other interface text field: Command Palette, Quick Switcher,
+  //     search, file-tree rename, Settings inputs, other plugins' modals.
+  //
+  // The test is "a text field has focus and it isn't the note editor", which
+  // is exactly the condition under which caretCoords() falls through to
+  // genericCaretCoords() — so Command mode themes precisely the carets the
+  // editor-aware path doesn't handle, with no gap and no overlap.
+  //
+  // isTextCaretHost keeps this off elements that have no caret at all
+  // (checkboxes, sliders, buttons); without it, clicking a toggle in Obsidian's
+  // own settings would count as entering Command mode.
+  isVimCommandContext() {
+    try {
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      // The note editor has focus, so a real editing mode applies instead.
+      if (view && view.hasFocus) return false;
+      // Follow the active editor's window, then the canvas's, so this keeps
+      // working in pop-out windows (same convention as the caret helpers).
+      const doc =
+        (view && view.dom && view.dom.ownerDocument) ||
+        this.canvas?.ownerDocument ||
+        document;
+      return isTextCaretHost(doc.activeElement);
+    } catch {
+      return false;
+    }
+  }
+
+  // The Vim mode that should currently drive the cursor's look, or null when
+  // vim theming shouldn't apply (feature off, Obsidian vim off, or no caret
+  // anywhere). Memoized for a frame so the several styleFor()/color reads per
+  // draw don't each re-run detection.
+  currentVimMode() {
+    if (!this.settings.vimModeEnabled) return null;
+    const now = performance.now();
+    if (this._vimModeCacheT && now - this._vimModeCacheT < 15) return this._vimModeCache;
+
+    let mode = null;
+    try {
+      if (this.isObsidianVimOn()) {
+        // Interface/command line first. Whenever one of those fields has focus
+        // the editor does not, so view.hasFocus is false and the branch below
+        // would report null (no vim theming at all) — this check has to happen
+        // before that gate, not inside it.
+        if (this.isVimCommandContext()) {
+          mode = "command";
+        } else {
+          const view = this.app.workspace.activeEditor?.editor?.cm;
+          if (view && view.hasFocus) mode = this.detectVimMode(view);
+        }
+      }
+    } catch {
+      mode = null;
+    }
+    this._vimModeCache = mode;
+    this._vimModeCacheT = now;
+    return mode;
+  }
+
+  // The look/effect settings in force right now. When a Vim mode is active its
+  // full snapshot is layered over the global settings; otherwise the global
+  // settings are returned unchanged. The per-frame tick swaps this.settings to
+  // this object for the duration of the draw, so every existing read of
+  // this.settings in the engine automatically honors the active mode — no
+  // per-key plumbing needed.
+  effectiveSettings(mode) {
+    if (mode === undefined) mode = this.currentVimMode();
+    if (!mode) return this.settings;
+    const cfg = this.settings.vimModes && this.settings.vimModes[mode];
+    if (!cfg) return this.settings;
+    return Object.assign({}, this.settings, cfg);
+  }
+
+  // Thin passthrough kept so existing draw-path reads keep working. Because the
+  // tick swaps this.settings to the effective (mode-merged) object, reading
+  // this.settings[key] here already yields the active mode's value.
+  styleFor(key) {
+    return this.settings[key];
+  }
+
+  // Whether the torch overlay engine might be needed: either the global cursor
+  // uses it, or Vim cursors are on and some mode uses it. The torch tick then
+  // shows/hides + restyles the overlay per the effective (per-mode) settings.
+  torchPossible() {
+    if (this.settings.torchEffect) return true;
+    if (this.settings.vimModeEnabled && this.settings.vimModes) {
+      for (const m of VIM_MODE_KEYS) {
+        if (this.settings.vimModes[m] && this.settings.vimModes[m].torchEffect) return true;
+      }
+    }
+    return false;
+  }
+
+  // Called from the canvas tick the frame the active Vim mode changes. The
+  // torch tick already reacts per-frame to the effective settings, but clearing
+  // its cached style/rect signatures here makes the spotlight update on the
+  // very next frame instead of waiting for the dedupe key to differ.
+  onVimModeChanged() {
+    this._overlaySig = "";
+    this._lastOverlayRect = "";
+    // Repaint the status bar label on the same frame as the cursor, so the two
+    // never disagree about which mode you're in.
+    this.updateVimStatusBar();
+  }
+
+  // =========================================================================
+  // Vim mode indicator in Obsidian's status bar
+  // =========================================================================
+
+  // The mode the status bar should name. Falls back to reading the editor
+  // directly when currentVimMode() returns null (focus is on a button, the
+  // ribbon, empty space...): the editor is still in whatever mode it was, and
+  // blanking the item every time focus touches a non-text element would make
+  // it flicker constantly.
+  statusBarVimMode() {
+    if (!this.settings.vimModeEnabled || !this.isObsidianVimOn()) return null;
+    const live = this.currentVimMode();
+    if (live) return live;
+    try {
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      if (view) return this.detectVimMode(view);
+    } catch {
+      /* no editor open */
+    }
+    return null;
+  }
+
+  // Create the status bar element on demand, remove it when it shouldn't be
+  // there. Kept as add/remove rather than a permanently-present hidden element
+  // so the status bar doesn't carry an empty slot (and its separator padding)
+  // for everyone who has the indicator switched off.
+  syncVimStatusBar() {
+    // addStatusBarItem is a desktop-only Obsidian API (mobile has no status
+    // bar). Guarded so the whole mode toggle can't die over an indicator.
+    if (typeof this.addStatusBarItem !== "function") return;
+    const wanted = !!(this.settings.vimStatusBar && this.settings.vimModeEnabled);
+    if (wanted && !this.vimStatusEl) {
+      this.vimStatusEl = this.addStatusBarItem();
+      this.vimStatusEl.addClass?.("cursor-smith-vim-status");
+      // Pin to the LEFT edge of the status bar. Obsidian lays status items
+      // out in one flex row packed toward the right; there's no official
+      // "left side" API. flex `order` puts this item first in the row, and
+      // `margin-right: auto` then absorbs all the free space after it, which
+      // shoves every other item to the right and leaves this one flush left
+      // — the standard flexbox left/right split. Inline (not styles.css) so
+      // it can't be lost to a stale cached stylesheet.
+      this.vimStatusEl.style.order = "-9999";
+      this.vimStatusEl.style.marginRight = "auto";
+      this._vimStatusSig = null;
+    } else if (!wanted && this.vimStatusEl) {
+      this.vimStatusEl.remove();
+      this.vimStatusEl = null;
+      this._vimStatusSig = null;
+    }
+    this.updateVimStatusBar();
+  }
+
+  updateVimStatusBar() {
+    const el = this.vimStatusEl;
+    if (!el) return;
+    try {
+      const mode = this.statusBarVimMode();
+
+      // Theme is part of the signature because the per-mode colors are
+      // theme-dependent: switching dark→light has to re-tint the text even
+      // though the mode itself never changed.
+      const doc = el.ownerDocument || document;
+      const isDark = doc.body.classList.contains("theme-dark");
+      const tint = !!this.settings.vimStatusBarColor;
+      const sig = `${mode}|${isDark}|${tint}`;
+      if (sig === this._vimStatusSig) return;
+      this._vimStatusSig = sig;
+
+      if (!mode) { el.setText(""); el.style.color = ""; return; }
+
+      // Vim's own showmode format: "-- INSERT --", all caps.
+      el.setText(`-- ${(VIM_MODE_LABELS[mode] || mode).toUpperCase()} --`);
+      if (!tint) {
+        // Clear rather than assign a "default": the status bar's own color is
+        // theme-provided, so inheriting it is the only way to stay correct
+        // across themes.
+        el.style.color = "";
+        return;
+      }
+      // Read the mode's stored config, NOT this.settings — the canvas tick
+      // swaps this.settings to the merged per-mode object for the duration of
+      // a frame, and this runs on its own timer.
+      const cfg = (this.settings.vimModes && this.settings.vimModes[mode]) || null;
+      el.style.color = cfg ? (isDark ? cfg.colorDark : cfg.colorLight) : "";
+    } catch {
+      /* a bad frame must not kill the interval */
+    }
+  }
+
+  // ---- Vim preset CRUD (independent of the regular cursor presets) ----
+
+  getVimPresets() {
+    if (!this.settings.vimPresets) this.settings.vimPresets = {};
+    return this.settings.vimPresets;
+  }
+
+  async saveVimPreset(name) {
+    this.getVimPresets()[name] = cloneVimModes(this.settings.vimModes);
+    this.settings.vimActivePreset = name;
+    await this.saveSettings();
+  }
+
+  async loadVimPreset(name) {
+    const preset = this.getVimPresets()[name];
+    if (!preset) return;
+    // Expand each mode to a complete snapshot so a preset saved before some key
+    // existed still lands on a fully-defined config. A mode the preset has no
+    // entry for at all (e.g. "command" in a preset saved before it existed)
+    // falls back to that mode's starter look — see vimModeSnapshot.
+    for (const mode of VIM_MODE_KEYS) {
+      this.settings.vimModes[mode] = vimModeSnapshot(mode, preset[mode]);
+    }
+    this.settings.vimActivePreset = name;
+    await this.saveSettings();
+  }
+
+  async deleteVimPreset(name) {
+    delete this.getVimPresets()[name];
+    if (this.settings.vimActivePreset === name) this.settings.vimActivePreset = "";
+    await this.saveSettings();
+  }
+
+  async cycleVimPreset(direction) {
+    const names = Object.keys(this.getVimPresets());
+    if (names.length === 0) {
+      new Notice("Cursor-Smith: no Vim presets saved");
+      return;
+    }
+    const currentIdx = names.indexOf(this.settings.vimActivePreset);
+    const nextIdx = (currentIdx + direction + names.length) % names.length;
+    const nextName = names[nextIdx];
+    // Applying a preset while the feature is off makes no sense — turn it on
+    // (which also flips Obsidian's vim bindings when auto-control is set).
+    if (!this.settings.vimModeEnabled) await this.setVimModeEnabled(true);
+    await this.loadVimPreset(nextName);
+    new Notice(`Cursor-Smith: Vim preset — ${nextName}`);
+  }
+
+  // Returns the name it was saved under, or null if the code was invalid.
+  async importVimPreset(code) {
+    const result = codeToPreset(code.trim());
+    if (!result) return null;
+    this.getVimPresets()[result.name] = cloneVimModes(result.snap);
+    this.settings.vimActivePreset = result.name;
+    await this.saveSettings();
+    return result.name;
+  }
+
   getActiveColor() {
     const doc = this.canvas ? this.canvas.ownerDocument : document;
     const isDark = doc.body.classList.contains("theme-dark");
+    // this.settings is the effective (per-mode when active) config during draw.
     const baseColor = isDark ? this.settings.colorDark : this.settings.colorLight;
     if (!this.settings.speedDemon) return baseColor;
     return this.heatColor(this.heat, baseColor);
@@ -912,7 +1747,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   enable() {
     this.disable(); 
     this.enableCanvasEngine();
-    if (this.settings.torchEffect) this.enableTorchOverlay();
+    // torchPossible() covers both the global torch and any per-mode torch, so
+    // the engine is up whenever a spotlight could appear; the torch tick then
+    // shows/hides it per the effective (per-mode) settings each frame.
+    if (this.torchPossible()) this.enableTorchOverlay();
   }
 
   disable() {
@@ -1053,28 +1891,45 @@ module.exports = class CursorSmithPlugin extends Plugin {
           }
         }
 
-        this.updateActivePoint();
-        this.updateSmoothCursor();
-        // Multi-cursor: gather all non-primary carets so draw() can stamp a
-        // dashed line at each. Independent of the smoothing/smearing pipeline
-        // that only tracks the primary caret.
-        this.secondaryCarets = this.secondaryCaretCoords(view);
-        this.updateSmearQuad();
-
-        // Speed Demon: cool the cursor down every frame regardless of
-        // whether the feature is enabled - if the user toggled it off
-        // mid-heat we want the value to settle back to 0 so re-enabling
-        // starts from cold. 0.985/frame at ~60fps gives a ~1s half-life:
-        // dropping from full heat to cold in roughly 4 seconds of silence.
-        if (this.heat > 0) {
-          this.heat *= 0.985;
-          if (this.heat < 0.001) this.heat = 0;
+        // Vim-aware: figure out the active mode once, then swap this.settings
+        // to the effective (mode-merged) config for the entire caret/draw
+        // pipeline. Every read of this.settings below therefore reflects the
+        // current Vim mode's full look/effect snapshot with zero per-key
+        // plumbing, and is restored in the finally so persisted settings and
+        // everything outside the frame stay untouched.
+        const _vimMode = this.currentVimMode();
+        if (_vimMode !== this._appliedVimMode) {
+          this._appliedVimMode = _vimMode;
+          this.onVimModeChanged(_vimMode);
         }
-        if (this.settings.speedDemon && this.settings.speedDemonSparks && this.animActive) {
-          this.maybeSpawnSpeedDemonSparks();
-        }
+        const _realSettings = this.settings;
+        this.settings = this.effectiveSettings(_vimMode);
+        try {
+          this.updateActivePoint();
+          this.updateSmoothCursor();
+          // Multi-cursor: gather all non-primary carets so draw() can stamp a
+          // dashed line at each. Independent of the smoothing/smearing pipeline
+          // that only tracks the primary caret.
+          this.secondaryCarets = this.secondaryCaretCoords(view);
+          this.updateSmearQuad();
 
-        this.draw();
+          // Speed Demon: cool the cursor down every frame regardless of
+          // whether the feature is enabled - if the user toggled it off
+          // mid-heat we want the value to settle back to 0 so re-enabling
+          // starts from cold. 0.985/frame at ~60fps gives a ~1s half-life:
+          // dropping from full heat to cold in roughly 4 seconds of silence.
+          if (this.heat > 0) {
+            this.heat *= 0.985;
+            if (this.heat < 0.001) this.heat = 0;
+          }
+          if (this.settings.speedDemon && this.settings.speedDemonSparks && this.animActive) {
+            this.maybeSpawnSpeedDemonSparks();
+          }
+
+          this.draw();
+        } finally {
+          this.settings = _realSettings;
+        }
       } catch (e) {
         if (!this._tickErrorLogged) {
           this._tickErrorLogged = true;
@@ -1223,8 +2078,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
       }
 
       let finalWidth = charWidth;
-      if (this.settings.cursorStyle === "Line") {
-        finalWidth = this.settings.caretWidthPx;
+      if (this.styleFor("cursorStyle") === "Line") {
+        finalWidth = this.styleFor("caretWidthPx");
       }
 
       // Height: match the browser's native selection highlight box by
@@ -1578,8 +2433,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const height = Math.max(4, (c.bottom - c.top) || fontSize * 1.2);
 
       let finalWidth = charWidth;
-      if (this.settings.cursorStyle === "Line") {
-        finalWidth = this.settings.caretWidthPx;
+      if (this.styleFor("cursorStyle") === "Line") {
+        finalWidth = this.styleFor("caretWidthPx");
       }
 
       return {
@@ -1874,7 +2729,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   getActiveRect() {
     const active = this.animActive;
     if (!active) return null;
-    if (this.settings.cursorStyle === "Underline") {
+    if (this.styleFor("cursorStyle") === "Underline") {
       const uThickness = Math.max(2, Math.round(active.h * 0.15));
       return { x: active.x, y: active.top + active.h - uThickness, w: active.actualCharWidth, h: uThickness };
     }
@@ -2072,7 +2927,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.drawLettersParticles();
     this.drawFlamePixels();
 
-    switch (this.settings.cursorStyle) {
+    switch (this.styleFor("cursorStyle")) {
       case "Line":
         this.drawGenericCaret(false);
         break;
@@ -2318,7 +3173,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const now = performance.now();
     const color = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
-    const hollow = settings.boxHollow;
+    const hollow = this.styleFor("boxHollow");
     const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
 
     this.forEachTrailPoint((p, alpha) => {
@@ -2431,56 +3286,75 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const tick = () => {
       if (!this.torchEngineActive) return;
       try {
-        // Same presentation-mode guard as the canvas engine: hide the torch
-        // overlay during a Slides presentation so it doesn't bleed through
-        // the presentation overlay.
-        if (this.isPresentationModeActive()) {
-          if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
-          this.torchRaf = requestAnimationFrame(tick);
-          return;
+        // Swap in the effective (per-mode when active) settings for the whole
+        // frame so the spotlight's on/off state, color, size and follow speed
+        // can all differ per Vim mode. Structured without early returns so the
+        // frame is always rescheduled at the bottom.
+        const _mode = this.currentVimMode();
+        const _real = this.settings;
+        this.settings = this.effectiveSettings(_mode);
+        try {
+          if (this.isPresentationModeActive()) {
+            // Same presentation-mode guard as the canvas engine.
+            if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
+          } else if (!this.settings.torchEffect) {
+            // This mode (or the global cursor) doesn't want the spotlight — just
+            // hide it. Don't disable the engine: another mode may want it, and
+            // switching back should be instant.
+            if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
+          } else {
+            const view = this.app.workspace.activeEditor?.editor?.cm;
+            this.ensureTorchOverlayForView(view);
+            if (view) this.registerWindowEvents(view.dom.ownerDocument);
+
+            if (this.overlay) {
+              // Re-apply overlay CSS variables only when the effective look
+              // actually changed (per-mode color/size/etc.), to avoid style
+              // churn every frame.
+              const sig = [
+                this.settings.overlayRadius, this.settings.overlayDarkness,
+                this.settings.overlayIntensity, this.settings.overlayColor,
+                this.settings.overlayFlicker,
+              ].join("|");
+              if (sig !== this._overlaySig) {
+                this._overlaySig = sig;
+                this.applyOverlayStyle();
+              }
+
+              this.updateOverlayTarget();
+              const lerp = this.settings.overlaySpeed;
+              this.x += (this.tx - this.x) * lerp;
+              this.y += (this.ty - this.y) * lerp;
+
+              const r = this.getPaneRect(view);
+              const usePane = r && this.settings.overlaySpareSidebars;
+              // Even when not sparing the sidebars, the overlay must never
+              // cover the titlebar - getFullViewportRect clamps around it.
+              const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
+
+              const top = Math.round(rect.top);
+              const left = Math.round(rect.left);
+              const width = Math.round(rect.width);
+              const height = Math.round(rect.height);
+              const key = top + "," + left + "," + width + "," + height;
+              if (key !== this._lastOverlayRect) {
+                this._lastOverlayRect = key;
+                this.overlay.style.top = top + "px";
+                this.overlay.style.left = left + "px";
+                this.overlay.style.width = width + "px";
+                this.overlay.style.height = height + "px";
+              }
+
+              this.overlay.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
+              this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
+
+              const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
+              this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
+            }
+          }
+        } finally {
+          this.settings = _real;
         }
-        if (this.overlay) this.overlay.classList.remove("torch-cursor-hidden");
-
-        const view = this.app.workspace.activeEditor?.editor?.cm;
-        this.ensureTorchOverlayForView(view);
-        if (view) this.registerWindowEvents(view.dom.ownerDocument);
-
-        if (!this.overlay) {
-          this.torchRaf = requestAnimationFrame(tick);
-          return;
-        }
-
-        this.updateOverlayTarget();
-        const lerp = this.settings.overlaySpeed;
-        this.x += (this.tx - this.x) * lerp;
-        this.y += (this.ty - this.y) * lerp;
-
-        const r = this.getPaneRect(view);
-        const usePane = r && this.settings.overlaySpareSidebars;
-        // Even when we're not sparing the sidebars, the overlay must never
-        // cover the titlebar - getFullViewportRect clamps around it (see
-        // its comment for the drag-hit-testing rationale). The overlay is
-        // guaranteed non-null here, so its own document is the right one.
-        const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
-
-        const top = Math.round(rect.top);
-        const left = Math.round(rect.left);
-        const width = Math.round(rect.width);
-        const height = Math.round(rect.height);
-        const key = top + "," + left + "," + width + "," + height;
-        if (key !== this._lastOverlayRect) {
-          this._lastOverlayRect = key;
-          this.overlay.style.top = top + "px";
-          this.overlay.style.left = left + "px";
-          this.overlay.style.width = width + "px";
-          this.overlay.style.height = height + "px";
-        }
-
-        this.overlay.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
-        this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
-
-        const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
-        this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
       } catch (e) {
         if (!this._torchErrorLogged) {
           this._torchErrorLogged = true;
@@ -2655,50 +3529,105 @@ class CursorSmithSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    const set = (key) => async (v) => {
-      this.plugin.settings[key] = v;
-      await this.plugin.saveSettings();
-    };
-
-    const setAndRedraw = (key) => async (v) => {
-      this.plugin.settings[key] = v;
-      await this.plugin.saveSettings();
-      this.display();
-    };
-
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
 
-    // -----------------------------------------------------------------------
-    // Presets section
-    // -----------------------------------------------------------------------
+    // --- Enable Plugin: always on top ---
+    new Setting(containerEl)
+      .setName("Enable Plugin")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enabled)
+          .onChange(async (value) => {
+            this.plugin.settings.enabled = value;
+            value ? this.plugin.enable() : this.plugin.disable();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    // --- CUA/Normal vs Vim mode switch ---
+    this.renderModeSwitch(containerEl);
+
+    if ((this.plugin.settings.uiMode || "cua") === "vim") {
+      this.renderVimSection(containerEl);
+    } else {
+      this.renderNormalSection(containerEl);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Segmented CUA/Normal ↔ Vim switch. Selecting "Vim" turns Vim-aware
+  // cursors on (and, per vimControlObsidian, flips Obsidian's own Vim
+  // keybindings); selecting "CUA/Normal" turns them off. This one control is
+  // both the panel switch and the feature's on/off switch.
+  // -------------------------------------------------------------------------
+  renderModeSwitch(containerEl) {
+    const plugin = this.plugin;
+    const current = plugin.settings.uiMode || "cua";
+
+    const wrap = containerEl.createDiv();
+    wrap.style.cssText = [
+      "display:flex", "border:1px solid var(--background-modifier-border)",
+      "border-radius:6px", "overflow:hidden", "margin:0.4em 0 1.4em", "max-width:340px",
+    ].join(";");
+
+    const makeBtn = (label, key) => {
+      const btn = wrap.createEl("button", { text: label });
+      const active = current === key;
+      btn.style.cssText = [
+        "flex:1", "padding:7px 10px", "border:none", "cursor:pointer",
+        "font-size:var(--font-ui-small)", "font-weight:" + (active ? "600" : "400"),
+        "background:" + (active ? "var(--interactive-accent)" : "var(--background-secondary)"),
+        "color:" + (active ? "var(--text-on-accent)" : "var(--text-normal)"),
+        "transition:background 0.1s ease",
+      ].join(";");
+      btn.addEventListener("click", async () => {
+        if ((plugin.settings.uiMode || "cua") === key) return;
+        // Deliberately NOT setting uiMode here: setVimModeEnabled writes it
+        // (keeping both flags in one place), and it needs the pre-click state
+        // intact to decide whether the "restore Obsidian's vim" path applies.
+        // Writing uiMode first blinded that check whenever the two flags had
+        // drifted apart, silently skipping the restore.
+        await plugin.setVimModeEnabled(key === "vim");
+        this.display();
+      });
+      return btn;
+    };
+
+    makeBtn("CUA / Normal", "cua");
+    makeBtn("Vim", "vim");
+  }
+
+  // -------------------------------------------------------------------------
+  // Normal (CUA) cursor settings: presets + core config + appearance/blink/
+  // smooth/effects.
+  // -------------------------------------------------------------------------
+  renderNormalSection(containerEl) {
+    const plugin = this.plugin;
+    const set = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); };
+    const setAndRedraw = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); this.display(); };
+
     containerEl.createEl("h3", { text: "Presets" });
 
-    // --- Save current settings as a new preset ---
-    // _pendingPresetName survives display() re-renders (caused by setAndRedraw
-    // settings) because it lives on the plugin instance, not as a local var.
-    if (this.plugin._pendingPresetName === undefined) {
-      this.plugin._pendingPresetName = "";
-    }
+    if (plugin._pendingPresetName === undefined) plugin._pendingPresetName = "";
     new Setting(containerEl)
       .setName("Save current settings as preset")
       .setDesc("Give your cursor a name, then click Save.")
       .addText((text) => {
         text.setPlaceholder("My cursor name");
-        text.setValue(this.plugin._pendingPresetName);
-        text.onChange((v) => { this.plugin._pendingPresetName = v; });
+        text.setValue(plugin._pendingPresetName);
+        text.onChange((v) => { plugin._pendingPresetName = v; });
       })
       .addButton((btn) => {
         btn.setButtonText("Save").setCta();
         btn.onClick(async () => {
-          const name = this.plugin._pendingPresetName.trim();
+          const name = plugin._pendingPresetName.trim();
           if (!name) return;
-          await this.plugin.saveUserPreset(name);
-          this.plugin._pendingPresetName = "";
+          await plugin.saveUserPreset(name);
+          plugin._pendingPresetName = "";
           this.display();
         });
       });
 
-    // --- Import a shared preset ---
     let importCode = "";
     new Setting(containerEl)
       .setName("Import preset")
@@ -2713,7 +3642,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .addButton((btn) => {
         btn.setButtonText("Import").onClick(async () => {
           if (!importCode) return;
-          const imported = await this.plugin.importPreset(importCode);
+          const imported = await plugin.importPreset(importCode);
           if (imported) {
             this.display();
           } else {
@@ -2723,9 +3652,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         });
       });
 
-    // --- Saved presets list ---
-    // getUserPresets is now synchronous (reads from this.settings directly).
-    const presets = this.plugin.getUserPresets();
+    const presets = plugin.getUserPresets();
     const names = Object.keys(presets);
 
     if (names.length === 0) {
@@ -2735,164 +3662,77 @@ class CursorSmithSettingTab extends PluginSettingTab {
       empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
     } else {
       for (const name of names) {
-        const code = presetToCode(name, presets[name]);
-
-        const setting = new Setting(containerEl).setName(name);
-
-        // Share code: truncated monospace pill sitting in the controls row,
-        // between the name and the action buttons.
-        const codeEl = setting.controlEl.createEl("code", { text: code });
-        codeEl.style.cssText = [
-          "font-size:10px", "letter-spacing:0.01em",
-          "color:var(--text-muted)", "background:var(--background-secondary)",
-          "border:1px solid var(--background-modifier-border)",
-          "border-radius:3px", "padding:1px 6px",
-          "max-width:10em", "overflow:hidden",
-          "text-overflow:ellipsis", "white-space:nowrap",
-          "display:inline-block", "vertical-align:middle",
-          "cursor:pointer", "user-select:all",
-          "margin-right:4px",
-        ].join(";");
-        codeEl.title = code;
-
-        // Copy button inline with the code
-        const copyBtn = setting.controlEl.createEl("button", { text: "Copy" });
-        copyBtn.style.cssText = [
-          "font-size:10px", "padding:2px 8px", "margin-right:6px",
-          "border-radius:3px", "cursor:pointer",
-          "border:1px solid var(--background-modifier-border)",
-          "background:var(--background-secondary)",
-          "color:var(--text-muted)",
-        ].join(";");
-        copyBtn.addEventListener("click", () => {
-          navigator.clipboard.writeText(code).then(() => {
-            copyBtn.textContent = "Copied!";
-            setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
-          });
+        this.renderPresetRow(containerEl, name, presets[name], {
+          onLoad: async () => { await plugin.loadUserPreset(name); plugin._pendingPresetName = name; this.display(); },
+          onEdit: async () => {
+            await plugin.loadUserPreset(name);
+            plugin._pendingPresetName = name;
+            this.display();
+            containerEl.scrollTop = 0;
+          },
+          onDelete: async () => { await plugin.deleteUserPreset(name); this.display(); },
         });
-
-        setting
-          .addButton((btn) => {
-            btn.setButtonText("Load").onClick(async () => {
-              await this.plugin.loadUserPreset(name);
-              // Show the loaded preset name in the save field so the user
-              // knows which preset is active and can quickly re-save it.
-              this.plugin._pendingPresetName = name;
-              this.display();
-            });
-          })
-          .addButton((btn) => {
-            // Edit: load the preset settings AND put the name in the save
-            // field so clicking Save overwrites this preset in one step.
-            btn.setButtonText("Edit").onClick(async () => {
-              await this.plugin.loadUserPreset(name);
-              this.plugin._pendingPresetName = name;
-              this.display();
-              // Scroll the save field into view so the user sees it's ready.
-              containerEl.scrollTop = 0;
-            });
-          })
-          .addButton((btn) => {
-            btn.setButtonText("Delete")
-              .setWarning()
-              .onClick(async () => {
-                await this.plugin.deleteUserPreset(name);
-                this.display();
-              });
-          });
       }
     }
 
     containerEl.createEl("h3", { text: "Core Configuration" });
 
     new Setting(containerEl)
-      .setName("Enable Plugin")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.enabled)
-          .onChange(async (value) => {
-            this.plugin.settings.enabled = value;
-            value ? this.plugin.enable() : this.plugin.disable();
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
       .setName("Cursor Style")
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("Box", "Box")
-          .addOption("Line", "Line")
-          .addOption("Underline", "Underline")
-          .setValue(this.plugin.settings.cursorStyle)
+          .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
+          .setValue(plugin.settings.cursorStyle)
           .onChange(async (value) => {
-            this.plugin.settings.cursorStyle = value;
-            await this.plugin.saveSettings();
-            this.plugin.enable();
-            this.display(); 
+            plugin.settings.cursorStyle = value;
+            await plugin.saveSettings();
+            plugin.enable();
+            this.display();
           })
       );
 
     new Setting(containerEl)
       .setName("Hide Real Cursor")
       .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
+      .addToggle((toggle) => toggle.setValue(plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
 
     containerEl.createEl("h3", { text: "Appearance" });
 
-    if (this.plugin.settings.cursorStyle === "Line") {
+    if (plugin.settings.cursorStyle === "Line") {
       new Setting(containerEl)
         .setName("Cursor Thickness")
         .setDesc("How thick the Line cursor is, in pixels.")
-        .addSlider((slider) =>
-          slider
-            .setLimits(1, 12, 1)
-            .setValue(this.plugin.settings.caretWidthPx)
-            .setDynamicTooltip()
-            .onChange(set("caretWidthPx"))
-        );
+        .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(plugin.settings.caretWidthPx).setDynamicTooltip().onChange(set("caretWidthPx")));
 
       new Setting(containerEl)
         .setName("Serifs")
         .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.lineSerifs).onChange(set("lineSerifs")));
+        .addToggle((toggle) => toggle.setValue(plugin.settings.lineSerifs).onChange(set("lineSerifs")));
     }
 
-    new Setting(containerEl)
-      .setName("Cursor Color (Dark Theme)")
-      .addColorPicker((cp) => cp.setValue(this.plugin.settings.colorDark).onChange(set("colorDark")));
+    new Setting(containerEl).setName("Cursor Color (Dark Theme)")
+      .addColorPicker((cp) => cp.setValue(plugin.settings.colorDark).onChange(set("colorDark")));
+    new Setting(containerEl).setName("Cursor Color (Light Theme)")
+      .addColorPicker((cp) => cp.setValue(plugin.settings.colorLight).onChange(set("colorLight")));
+    new Setting(containerEl).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
+      .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(plugin.settings.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
 
-    new Setting(containerEl)
-      .setName("Cursor Color (Light Theme)")
-      .addColorPicker((cp) => cp.setValue(this.plugin.settings.colorLight).onChange(set("colorLight")));
-
-    new Setting(containerEl)
-      .setName("Cursor Opacity")
-      .setDesc("How see-through the cursor is.")
-      .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(this.plugin.settings.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
-
-    if (this.plugin.settings.cursorStyle === "Box") {
+    if (plugin.settings.cursorStyle === "Box") {
       new Setting(containerEl)
         .setName("Show Letter Inside Cursor")
         .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.showChar).onChange(set("showChar")));
+        .addToggle((toggle) => toggle.setValue(plugin.settings.showChar).onChange(set("showChar")));
 
       new Setting(containerEl)
         .setName("Hollow")
         .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.boxHollow).onChange(setAndRedraw("boxHollow")));
+        .addToggle((toggle) => toggle.setValue(plugin.settings.boxHollow).onChange(setAndRedraw("boxHollow")));
 
-      if (this.plugin.settings.boxHollow) {
+      if (plugin.settings.boxHollow) {
         new Setting(containerEl)
           .setName("Outline Width")
           .setDesc("Thickness of the hollow box's outline, in pixels.")
-          .addSlider((slider) =>
-            slider
-              .setLimits(1, 6, 1)
-              .setValue(this.plugin.settings.boxHollowWidth)
-              .setDynamicTooltip()
-              .onChange(set("boxHollowWidth"))
-          );
+          .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(plugin.settings.boxHollowWidth).setDynamicTooltip().onChange(set("boxHollowWidth")));
       }
     }
 
@@ -2901,34 +3741,17 @@ class CursorSmithSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Blinking")
       .setDesc("Makes the cursor blink. Turn off to keep it always fully lit.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.blinkingEnabled).onChange(setAndRedraw("blinkingEnabled")));
+      .addToggle((toggle) => toggle.setValue(plugin.settings.blinkingEnabled).onChange(setAndRedraw("blinkingEnabled")));
 
-    if (this.plugin.settings.blinkingEnabled) {
-      new Setting(containerEl)
-        .setName("Blink Speed")
-        .setDesc("How fast the cursor blinks.")
-        .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(this.plugin.settings.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
-
-      new Setting(containerEl)
-        .setName("Blink Balance")
-        .setDesc("How the blink cycle is split between lit and dark.")
-        .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(this.plugin.settings.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-
-      new Setting(containerEl)
-        .setName("Don't Blink While Typing")
-        .setDesc("Keeps the cursor fully lit while you type or move it.")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
-
-      new Setting(containerEl)
-        .setName("Blink Delay")
-        .setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
-        .addSlider((s) =>
-          s
-            .setLimits(0, 2000, 50)
-            .setValue(this.plugin.settings.blinkDelayMs ?? 0)
-            .setDynamicTooltip()
-            .onChange(set("blinkDelayMs"))
-        );
+    if (plugin.settings.blinkingEnabled) {
+      new Setting(containerEl).setName("Blink Speed").setDesc("How fast the cursor blinks.")
+        .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(plugin.settings.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
+      new Setting(containerEl).setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
+        .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(plugin.settings.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
+      new Setting(containerEl).setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
+      new Setting(containerEl).setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
+        .addSlider((s) => s.setLimits(0, 2000, 50).setValue(plugin.settings.blinkDelayMs ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
     }
 
     containerEl.createEl("h3", { text: "Smooth Movement" });
@@ -2936,166 +3759,482 @@ class CursorSmithSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Smooth Movement")
       .setDesc("Makes the cursor glide to its new spot instead of jumping there instantly.")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothEnabled).onChange(setAndRedraw("smoothEnabled")));
+      .addToggle((toggle) => toggle.setValue(plugin.settings.smoothEnabled).onChange(setAndRedraw("smoothEnabled")));
 
-    if (this.plugin.settings.smoothEnabled) {
-      new Setting(containerEl)
-        .setName("Glide Amount")
-        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(this.plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
-
-      new Setting(containerEl)
-        .setName("Catch-Up Speed")
-        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(this.plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
-
-      new Setting(containerEl)
-        .setName("Max Catch-Up Speed")
-        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(this.plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-
-      new Setting(containerEl)
-        .setName("Speed Up When Typing Fast")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
-
-      new Setting(containerEl)
-        .setName("Movement Delay")
-        .addSlider((s) => s.setLimits(0, 500, 10).setValue(this.plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
+    if (plugin.settings.smoothEnabled) {
+      new Setting(containerEl).setName("Glide Amount")
+        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
+      new Setting(containerEl).setName("Catch-Up Speed")
+        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
+      new Setting(containerEl).setName("Max Catch-Up Speed")
+        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+      new Setting(containerEl).setName("Speed Up When Typing Fast")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
+      new Setting(containerEl).setName("Movement Delay")
+        .addSlider((s) => s.setLimits(0, 500, 10).setValue(plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
     }
 
     containerEl.createEl("h3", { text: "Effects" });
 
-    new Setting(containerEl)
-      .setName("Popping Letters")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.popLetters).onChange(set("popLetters")));
+    new Setting(containerEl).setName("Popping Letters")
+      .addToggle((toggle) => toggle.setValue(plugin.settings.popLetters).onChange(set("popLetters")));
 
-    new Setting(containerEl)
-      .setName("Pixel Trail")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.flameTrail).onChange(setAndRedraw("flameTrail")));
-
-    if (this.plugin.settings.flameTrail) {
-      new Setting(containerEl)
-        .setName("Backspace Disintegration")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
+    new Setting(containerEl).setName("Pixel Trail")
+      .addToggle((toggle) => toggle.setValue(plugin.settings.flameTrail).onChange(setAndRedraw("flameTrail")));
+    if (plugin.settings.flameTrail) {
+      new Setting(containerEl).setName("Backspace Disintegration")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
     }
 
-    new Setting(containerEl)
-      .setName("Motion Smear")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.smear).onChange(setAndRedraw("smear")));
-
-    if (this.plugin.settings.smear) {
-      new Setting(containerEl)
-        .setName("Stiffness")
-        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(this.plugin.settings.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
-
-      new Setting(containerEl)
-        .setName("Trailing Stiffness")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
-
-      new Setting(containerEl)
-        .setName("Damping")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
+    new Setting(containerEl).setName("Motion Smear")
+      .addToggle((toggle) => toggle.setValue(plugin.settings.smear).onChange(setAndRedraw("smear")));
+    if (plugin.settings.smear) {
+      new Setting(containerEl).setName("Stiffness")
+        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(plugin.settings.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
+      new Setting(containerEl).setName("Trailing Stiffness")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
+      new Setting(containerEl).setName("Damping")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
     }
 
-    new Setting(containerEl)
-      .setName("Energy Beam")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.energyEffect).onChange(setAndRedraw("energyEffect")));
-
-    if (this.plugin.settings.energyEffect) {
-      new Setting(containerEl)
-        .setName("Beam Speed")
-        .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(this.plugin.settings.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
+    new Setting(containerEl).setName("Energy Beam")
+      .addToggle((toggle) => toggle.setValue(plugin.settings.energyEffect).onChange(setAndRedraw("energyEffect")));
+    if (plugin.settings.energyEffect) {
+      new Setting(containerEl).setName("Beam Speed")
+        .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(plugin.settings.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
     }
 
-    new Setting(containerEl)
-      .setName("CRT Effect")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.crtEffect).onChange(setAndRedraw("crtEffect")));
-
-    if (this.plugin.settings.crtEffect) {
-      new Setting(containerEl)
-        .setName("Trail Length")
-        .addSlider((s) => s.setLimits(0, 30, 1).setValue(this.plugin.settings.trailLength).setDynamicTooltip().onChange(set("trailLength")));
-
-      new Setting(containerEl)
-        .setName("Trail Fade Time")
-        .addSlider((s) => s.setLimits(50, 1500, 25).setValue(this.plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
-
-      new Setting(containerEl)
-        .setName("Glow")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.glow).onChange(set("glow")));
+    new Setting(containerEl).setName("CRT Effect")
+      .addToggle((toggle) => toggle.setValue(plugin.settings.crtEffect).onChange(setAndRedraw("crtEffect")));
+    if (plugin.settings.crtEffect) {
+      new Setting(containerEl).setName("Trail Length")
+        .addSlider((s) => s.setLimits(0, 30, 1).setValue(plugin.settings.trailLength).setDynamicTooltip().onChange(set("trailLength")));
+      new Setting(containerEl).setName("Trail Fade Time")
+        .addSlider((s) => s.setLimits(50, 1500, 25).setValue(plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
+      new Setting(containerEl).setName("Glow")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.glow).onChange(set("glow")));
     }
 
-    new Setting(containerEl)
-      .setName("Speed Demon")
-      .addToggle((toggle) => toggle.setValue(this.plugin.settings.speedDemon).onChange(setAndRedraw("speedDemon")));
-
-    if (this.plugin.settings.speedDemon) {
-      new Setting(containerEl)
-        .setName("Fire Sparks")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.speedDemonSparks).onChange(set("speedDemonSparks")));
-
-      new Setting(containerEl)
-        .setName("Sensitivity")
-        .addSlider((s) =>
-          s
-            .setLimits(0.5, 2, 0.1)
-            .setValue(this.plugin.settings.speedDemonSensitivity)
-            .setDynamicTooltip()
-            .onChange(set("speedDemonSensitivity"))
-        );
+    new Setting(containerEl).setName("Speed Demon")
+      .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemon).onChange(setAndRedraw("speedDemon")));
+    if (plugin.settings.speedDemon) {
+      new Setting(containerEl).setName("Fire Sparks")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemonSparks).onChange(set("speedDemonSparks")));
+      new Setting(containerEl).setName("Sensitivity")
+        .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(plugin.settings.speedDemonSensitivity).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
     }
 
     new Setting(containerEl)
       .setName("Torch Spotlight")
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.torchEffect).onChange(async (value) => {
-          this.plugin.settings.torchEffect = value;
-          await this.plugin.saveSettings();
-          if (this.plugin.settings.enabled) {
-            value ? this.plugin.enableTorchOverlay() : this.plugin.disableTorchOverlay();
+        toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
+          plugin.settings.torchEffect = value;
+          await plugin.saveSettings();
+          if (plugin.settings.enabled) {
+            value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
           }
           this.display();
         })
       );
 
-    if (this.plugin.settings.torchEffect) {
+    if (plugin.settings.torchEffect) {
       containerEl.createEl("h4", { text: "Spotlight" });
-
-      new Setting(containerEl)
-        .setName("Follow")
-        .addDropdown((d) =>
-          d
-            .addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
-            .setValue(this.plugin.settings.overlayFollowMode)
-            .onChange(set("overlayFollowMode"))
-        );
-
-      new Setting(containerEl)
-        .setName("Light Size")
-        .addSlider((s) => s.setLimits(100, 800, 10).setValue(this.plugin.settings.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
-
-      new Setting(containerEl)
-        .setName("Light Color")
-        .addColorPicker((cp) => cp.setValue(this.plugin.settings.overlayColor).onChange(set("overlayColor")));
-
-      new Setting(containerEl)
-        .setName("Follow Speed")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(this.plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
+      new Setting(containerEl).setName("Follow")
+        .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
+          .setValue(plugin.settings.overlayFollowMode).onChange(set("overlayFollowMode")));
+      new Setting(containerEl).setName("Light Size")
+        .addSlider((s) => s.setLimits(100, 800, 10).setValue(plugin.settings.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
+      new Setting(containerEl).setName("Light Color")
+        .addColorPicker((cp) => cp.setValue(plugin.settings.overlayColor).onChange(set("overlayColor")));
+      new Setting(containerEl).setName("Follow Speed")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
 
       containerEl.createEl("h4", { text: "Environment" });
+      new Setting(containerEl).setName("Darkness")
+        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
+      new Setting(containerEl).setName("Glow Strength")
+        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
+      new Setting(containerEl).setName("Flicker")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.overlayFlicker).onChange(set("overlayFlicker")));
+      new Setting(containerEl).setName("Keep Sidebars Lit")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
+    }
+  }
 
-      new Setting(containerEl)
-        .setName("Darkness")
-        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(this.plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
+  // -------------------------------------------------------------------------
+  // Shared preset-row UI (name, share code pill, Copy, Load, Edit, Delete).
+  // -------------------------------------------------------------------------
+  renderPresetRow(containerEl, name, snap, { onLoad, onEdit, onDelete }) {
+    const code = presetToCode(name, snap);
+    const setting = new Setting(containerEl).setName(name);
 
-      new Setting(containerEl)
-        .setName("Glow Strength")
-        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(this.plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
+    const codeEl = setting.controlEl.createEl("code", { text: code });
+    codeEl.style.cssText = [
+      "font-size:10px", "letter-spacing:0.01em",
+      "color:var(--text-muted)", "background:var(--background-secondary)",
+      "border:1px solid var(--background-modifier-border)",
+      "border-radius:3px", "padding:1px 6px",
+      "max-width:10em", "overflow:hidden",
+      "text-overflow:ellipsis", "white-space:nowrap",
+      "display:inline-block", "vertical-align:middle",
+      "cursor:pointer", "user-select:all",
+      "margin-right:4px",
+    ].join(";");
+    codeEl.title = code;
 
-      new Setting(containerEl)
-        .setName("Flicker")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlayFlicker).onChange(set("overlayFlicker")));
+    const copyBtn = setting.controlEl.createEl("button", { text: "Copy" });
+    copyBtn.style.cssText = [
+      "font-size:10px", "padding:2px 8px", "margin-right:6px",
+      "border-radius:3px", "cursor:pointer",
+      "border:1px solid var(--background-modifier-border)",
+      "background:var(--background-secondary)",
+      "color:var(--text-muted)",
+    ].join(";");
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(code).then(() => {
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+      });
+    });
 
+    setting
+      .addButton((btn) => btn.setButtonText("Load").onClick(onLoad))
+      .addButton((btn) => btn.setButtonText("Edit").onClick(onEdit))
+      .addButton((btn) => btn.setButtonText("Delete").setWarning().onClick(onDelete));
+
+    return setting;
+  }
+
+  // -------------------------------------------------------------------------
+  // Vim Mode settings section — shown in full when the switch is on "Vim".
+  // -------------------------------------------------------------------------
+  renderVimSection(containerEl) {
+    const plugin = this.plugin;
+
+    containerEl.createEl("h3", { text: "⌨ Vim Cursors" });
+
+    new Setting(containerEl)
+      .setName("Control Obsidian's Vim key bindings")
+      .setDesc("When on, this plugin owns Obsidian's Vim key bindings: switching to Vim mode turns them on, switching to CUA/Normal turns them off. Turn this off if you manage Vim key bindings yourself in Settings → Editor.")
+      .addToggle((toggle) =>
+        toggle.setValue(plugin.settings.vimControlObsidian).onChange(async (value) => {
+          plugin.settings.vimControlObsidian = value;
+          // Taking ownership mid-session: immediately enforce the current
+          // mode so the keybindings match what the panel shows.
+          if (value) plugin.setObsidianVim(!!plugin.settings.vimModeEnabled);
+          await plugin.saveSettings();
+          this.display();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Show Vim mode in status bar")
+      .setDesc("Displays the live mode on the left side of Obsidian's status bar, vim-style: -- NORMAL --, -- INSERT --, and so on.")
+      .addToggle((toggle) =>
+        toggle.setValue(plugin.settings.vimStatusBar).onChange(async (value) => {
+          plugin.settings.vimStatusBar = value;
+          plugin.syncVimStatusBar();
+          await plugin.saveSettings();
+          this.display();
+        })
+      );
+
+    if (plugin.settings.vimStatusBar) {
       new Setting(containerEl)
-        .setName("Keep Sidebars Lit")
-        .addToggle((toggle) => toggle.setValue(this.plugin.settings.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
+        .setName("Color status bar text to match the cursor")
+        .setDesc("Tints the mode name with that mode's cursor color — Normal shows in the Normal cursor's blue, Insert in its green, and so on. Off uses your theme's normal status bar color.")
+        .addToggle((toggle) =>
+          toggle.setValue(plugin.settings.vimStatusBarColor).onChange(async (value) => {
+            plugin.settings.vimStatusBarColor = value;
+            await plugin.saveSettings();
+          })
+        );
+    }
+
+    if (!plugin.isObsidianVimOn()) {
+      const warn = containerEl.createEl("p", {
+        text: plugin.settings.vimControlObsidian
+          ? "⚠ Obsidian's Vim key bindings look off right now. They should switch on automatically — reopen the editor if the mode cursors don't appear."
+          : "⚠ Obsidian's Vim key bindings are off, so mode cursors won't appear. Enable them in Settings → Editor → Vim key bindings, or turn on \"Control Obsidian's Vim key bindings\" above.",
+      });
+      warn.style.cssText = "font-size:var(--font-smaller);color:var(--text-warning, var(--text-muted));margin:0.2em 0 1em";
+    }
+
+    // --- Vim presets, styled exactly like the normal preset list ---
+    containerEl.createEl("h3", { text: "Vim Presets" });
+
+    if (plugin._pendingVimPresetName === undefined) plugin._pendingVimPresetName = "";
+    new Setting(containerEl)
+      .setName("Save current Vim setup as preset")
+      .setDesc("Give this set of per-mode cursors a name, then click Save.")
+      .addText((text) => {
+        text.setPlaceholder("My vim theme");
+        text.setValue(plugin._pendingVimPresetName);
+        text.onChange((v) => { plugin._pendingVimPresetName = v; });
+      })
+      .addButton((btn) => {
+        btn.setButtonText("Save").setCta();
+        btn.onClick(async () => {
+          const name = (plugin._pendingVimPresetName || "").trim();
+          if (!name) return;
+          await plugin.saveVimPreset(name);
+          plugin._pendingVimPresetName = "";
+          this.display();
+        });
+      });
+
+    let importVimCode = "";
+    new Setting(containerEl)
+      .setName("Import Vim preset")
+      .setDesc("Paste a share code from someone else to add their Vim preset.")
+      .addText((text) => {
+        text.setPlaceholder("Paste code here…");
+        text.onChange((v) => { importVimCode = v.trim(); });
+        text.inputEl.style.fontFamily = "var(--font-monospace)";
+        text.inputEl.style.fontSize = "var(--font-smaller)";
+        text.inputEl.style.width = "14em";
+      })
+      .addButton((btn) => {
+        btn.setButtonText("Import").onClick(async () => {
+          if (!importVimCode) return;
+          const imported = await plugin.importVimPreset(importVimCode);
+          if (imported) {
+            this.display();
+          } else {
+            btn.setButtonText("Invalid code");
+            setTimeout(() => btn.setButtonText("Import"), 2000);
+          }
+        });
+      });
+
+    const presets = plugin.getVimPresets();
+    const names = Object.keys(presets);
+
+    if (names.length === 0) {
+      const empty = containerEl.createEl("p", {
+        text: "No saved Vim presets yet. Configure each mode below, then save it above.",
+      });
+      empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
+    } else {
+      for (const name of names) {
+        const setting = this.renderPresetRow(containerEl, name, presets[name], {
+          onLoad: async () => {
+            await plugin.loadVimPreset(name);
+            plugin._pendingVimPresetName = name;
+            this.display();
+          },
+          onEdit: async () => {
+            await plugin.loadVimPreset(name);
+            plugin._pendingVimPresetName = name;
+            this.display();
+            containerEl.scrollTop = 0;
+          },
+          onDelete: async () => { await plugin.deleteVimPreset(name); this.display(); },
+        });
+        if (name === plugin.settings.vimActivePreset) setting.setDesc("Currently active");
+      }
+    }
+
+    // --- Per-mode editor: pick one mode, then edit its FULL cursor config ---
+    containerEl.createEl("h3", { text: "Per-Mode Cursors" });
+
+    if (!VIM_MODE_KEYS.includes(plugin._vimEditMode)) plugin._vimEditMode = "normal";
+
+    // Tab row — one tab per Vim mode, replacing the old dropdown. Same visual
+    // language as the CUA/Vim segmented switch at the top of the panel. Each
+    // inactive tab's label is tinted with that mode's own cursor color (for
+    // the current theme), so the row doubles as a live color legend; the
+    // active tab uses the accent background instead, where a tint would be
+    // unreadable.
+    const isDarkTheme = containerEl.ownerDocument?.body?.classList?.contains("theme-dark") ?? true;
+    const tabWrap = containerEl.createDiv();
+    tabWrap.style.cssText = [
+      "display:flex", "border:1px solid var(--background-modifier-border)",
+      "border-radius:6px", "overflow:hidden", "margin:0.4em 0 1em", "max-width:520px",
+    ].join(";");
+    for (const m of VIM_MODE_KEYS) {
+      const active = plugin._vimEditMode === m;
+      const cfg = plugin.settings.vimModes[m] || {};
+      const tint = isDarkTheme ? cfg.colorDark : cfg.colorLight;
+      const btn = tabWrap.createEl("button", { text: VIM_MODE_LABELS[m] });
+      btn.style.cssText = [
+        "flex:1", "padding:7px 4px", "border:none", "cursor:pointer",
+        "font-size:var(--font-ui-small)", "font-weight:" + (active ? "600" : "400"),
+        "background:" + (active ? "var(--interactive-accent)" : "var(--background-secondary)"),
+        "color:" + (active ? "var(--text-on-accent)" : (tint || "var(--text-normal)")),
+        "transition:background 0.1s ease",
+      ].join(";");
+      btn.addEventListener("click", () => {
+        if (plugin._vimEditMode === m) return;
+        plugin._vimEditMode = m;
+        this.display();
+      });
+    }
+
+    const mode = plugin._vimEditMode;
+    const target = plugin.settings.vimModes[mode];
+    const heading = containerEl.createEl("h4", { text: `${VIM_MODE_LABELS[mode]} mode cursor` });
+    heading.style.marginTop = "0.4em";
+
+    if (mode === "command") {
+      const note = containerEl.createEl("p", {
+        text:
+          "Applies whenever the caret leaves the note editor: the built-in Vim command " +
+          "line (the \":\" / \"/\" prompt) and the rest of the Obsidian interface — Command " +
+          "Palette, Quick Switcher, search, rename boxes, Settings fields and plugin modals. " +
+          "Motion effects (smear, smooth movement, CRT trail) are best left off here: these " +
+          "are all single-line fields, so they read as jitter rather than movement.",
+      });
+      note.style.cssText =
+        "font-size:var(--font-smaller);color:var(--text-muted);margin:0.2em 0 1em";
+    }
+
+    this.renderModeControls(containerEl, target, () => {
+      plugin.settings.vimActivePreset = "";
+    });
+  }
+
+  // Renders the FULL set of cursor look/effect controls bound to an arbitrary
+  // settings-shaped `target` object (here, one Vim mode's snapshot).
+  renderModeControls(containerEl, target, onEdit) {
+    const plugin = this.plugin;
+    const after = onEdit || (() => {});
+    const set = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); };
+    const setR = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); this.display(); };
+
+    new Setting(containerEl)
+      .setName("Style")
+      .addDropdown((d) =>
+        d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
+          .setValue(target.cursorStyle).onChange(setR("cursorStyle"))
+      );
+
+    if (target.cursorStyle === "Line") {
+      new Setting(containerEl).setName("Cursor Thickness").setDesc("How thick the Line cursor is, in pixels.")
+        .addSlider((s) => s.setLimits(1, 12, 1).setValue(target.caretWidthPx).setDynamicTooltip().onChange(set("caretWidthPx")));
+      new Setting(containerEl).setName("Serifs").setDesc("Adds classic I-beam serifs at the top and bottom of the line cursor.")
+        .addToggle((t) => t.setValue(target.lineSerifs).onChange(set("lineSerifs")));
+    }
+
+    new Setting(containerEl).setName("Cursor Color (Dark Theme)")
+      .addColorPicker((cp) => cp.setValue(target.colorDark).onChange(set("colorDark")));
+    new Setting(containerEl).setName("Cursor Color (Light Theme)")
+      .addColorPicker((cp) => cp.setValue(target.colorLight).onChange(set("colorLight")));
+    new Setting(containerEl).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
+      .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(target.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
+
+    if (target.cursorStyle === "Box") {
+      new Setting(containerEl).setName("Show Letter Inside Cursor").setDesc("Shows the letter under the cursor inside the block, colors flipped.")
+        .addToggle((t) => t.setValue(target.showChar).onChange(set("showChar")));
+      new Setting(containerEl).setName("Hollow").setDesc("Draws only the outline of the box instead of a filled block.")
+        .addToggle((t) => t.setValue(target.boxHollow).onChange(setR("boxHollow")));
+      if (target.boxHollow) {
+        new Setting(containerEl).setName("Outline Width").setDesc("Thickness of the hollow box's outline, in pixels.")
+          .addSlider((s) => s.setLimits(1, 6, 1).setValue(target.boxHollowWidth).setDynamicTooltip().onChange(set("boxHollowWidth")));
+      }
+    }
+
+    containerEl.createEl("h5", { text: "Blinking" });
+    new Setting(containerEl).setName("Blinking").setDesc("Makes the cursor blink. Off keeps it fully lit.")
+      .addToggle((t) => t.setValue(target.blinkingEnabled).onChange(setR("blinkingEnabled")));
+    if (target.blinkingEnabled) {
+      new Setting(containerEl).setName("Blink Speed")
+        .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(target.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
+      new Setting(containerEl).setName("Blink Balance")
+        .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(target.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
+      new Setting(containerEl).setName("Don't Blink While Typing")
+        .addToggle((t) => t.setValue(target.smoothStopBlinking).onChange(set("smoothStopBlinking")));
+      new Setting(containerEl).setName("Blink Delay")
+        .addSlider((s) => s.setLimits(0, 2000, 50).setValue(target.blinkDelayMs ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
+    }
+
+    containerEl.createEl("h5", { text: "Smooth Movement" });
+    new Setting(containerEl).setName("Smooth Movement").setDesc("Glide to the new spot instead of jumping.")
+      .addToggle((t) => t.setValue(target.smoothEnabled).onChange(setR("smoothEnabled")));
+    if (target.smoothEnabled) {
+      new Setting(containerEl).setName("Glide Amount")
+        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(target.smoothness).setDynamicTooltip().onChange(set("smoothness")));
+      new Setting(containerEl).setName("Catch-Up Speed")
+        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(target.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
+      new Setting(containerEl).setName("Max Catch-Up Speed")
+        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(target.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+      new Setting(containerEl).setName("Speed Up When Typing Fast")
+        .addToggle((t) => t.setValue(target.smoothAdaptive).onChange(set("smoothAdaptive")));
+      new Setting(containerEl).setName("Movement Delay")
+        .addSlider((s) => s.setLimits(0, 500, 10).setValue(target.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
+    }
+
+    containerEl.createEl("h5", { text: "Effects" });
+    new Setting(containerEl).setName("Popping Letters")
+      .addToggle((t) => t.setValue(target.popLetters).onChange(set("popLetters")));
+
+    new Setting(containerEl).setName("Pixel Trail")
+      .addToggle((t) => t.setValue(target.flameTrail).onChange(setR("flameTrail")));
+    if (target.flameTrail) {
+      new Setting(containerEl).setName("Backspace Disintegration")
+        .addToggle((t) => t.setValue(target.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
+    }
+
+    new Setting(containerEl).setName("Motion Smear")
+      .addToggle((t) => t.setValue(target.smear).onChange(setR("smear")));
+    if (target.smear) {
+      new Setting(containerEl).setName("Stiffness")
+        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(target.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
+      new Setting(containerEl).setName("Trailing Stiffness")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
+      new Setting(containerEl).setName("Damping")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
+    }
+
+    new Setting(containerEl).setName("Energy Beam")
+      .addToggle((t) => t.setValue(target.energyEffect).onChange(setR("energyEffect")));
+    if (target.energyEffect) {
+      new Setting(containerEl).setName("Beam Speed")
+        .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(target.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
+    }
+
+    new Setting(containerEl).setName("CRT Effect")
+      .addToggle((t) => t.setValue(target.crtEffect).onChange(setR("crtEffect")));
+    if (target.crtEffect) {
+      new Setting(containerEl).setName("Trail Length")
+        .addSlider((s) => s.setLimits(0, 30, 1).setValue(target.trailLength).setDynamicTooltip().onChange(set("trailLength")));
+      new Setting(containerEl).setName("Trail Fade Time")
+        .addSlider((s) => s.setLimits(50, 1500, 25).setValue(target.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
+      new Setting(containerEl).setName("Glow")
+        .addToggle((t) => t.setValue(target.glow).onChange(set("glow")));
+    }
+
+    new Setting(containerEl).setName("Speed Demon")
+      .addToggle((t) => t.setValue(target.speedDemon).onChange(setR("speedDemon")));
+    if (target.speedDemon) {
+      new Setting(containerEl).setName("Fire Sparks")
+        .addToggle((t) => t.setValue(target.speedDemonSparks).onChange(set("speedDemonSparks")));
+      new Setting(containerEl).setName("Sensitivity")
+        .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(target.speedDemonSensitivity).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
+    }
+
+    new Setting(containerEl).setName("Torch Spotlight")
+      .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
+    if (target.torchEffect) {
+      new Setting(containerEl).setName("Follow")
+        .addDropdown((d) =>
+          d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
+            .setValue(target.overlayFollowMode).onChange(set("overlayFollowMode"))
+        );
+      new Setting(containerEl).setName("Light Size")
+        .addSlider((s) => s.setLimits(100, 800, 10).setValue(target.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
+      new Setting(containerEl).setName("Light Color")
+        .addColorPicker((cp) => cp.setValue(target.overlayColor).onChange(set("overlayColor")));
+      new Setting(containerEl).setName("Follow Speed")
+        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
+      new Setting(containerEl).setName("Darkness")
+        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(target.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
+      new Setting(containerEl).setName("Glow Strength")
+        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(target.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
+      new Setting(containerEl).setName("Flicker")
+        .addToggle((t) => t.setValue(target.overlayFlicker).onChange(set("overlayFlicker")));
+      new Setting(containerEl).setName("Keep Sidebars Lit")
+        .addToggle((t) => t.setValue(target.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
     }
   }
 }

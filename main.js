@@ -145,6 +145,19 @@ function vimModeSnapshot(modeKey, overrides) {
   return fullVimMode(overrides || VIM_MODE_STARTERS[modeKey]);
 }
 
+// Regular (non-Vim) equivalent of fullVimMode(): backfills any look/effect
+// key the preset is missing (i.e. an option added after the preset was
+// created) with the current global default, without disturbing any key -
+// look or otherwise (uiMode, etc.) - the preset *does* carry. Unlike
+// fullVimMode, this does NOT pickLook() the preset itself, since a regular
+// preset snapshot legitimately carries a few non-LOOK_KEYS fields and those
+// must pass through untouched. Without this, loading an older or built-in
+// preset silently left newly-added settings at whatever value happened to
+// be set before the preset was loaded, rather than the preset's own look.
+function presetWithDefaults(preset) {
+  return Object.assign({}, pickLook(DEFAULT_SETTINGS), preset);
+}
+
 // Clone a whole vimModes map (or preset) into fresh, complete snapshots so
 // callers never share nested references with this.settings.
 function cloneVimModes(modes) {
@@ -500,16 +513,6 @@ function hslToRgbString(h, s, l) {
   const g = Math.round((g1 + m) * 255);
   const b = Math.round((b1 + m) * 255);
   return `rgb(${r}, ${g}, ${b})`;
-}
-
-// Re-expresses an "rgb(r, g, b)" (or "rgba(r, g, b, a)") string at a new
-// alpha - used to fade a spark's comet-tail from solid at the head to
-// transparent at the tip without disturbing its base color.
-function rgbStringToRgba(rgbStr, alpha) {
-  const nums = (rgbStr || "").match(/[\d.]+/g);
-  if (!nums || nums.length < 3) return `rgba(255, 255, 255, ${alpha})`;
-  const [r, g, b] = nums;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function invertColor(colorStr) {
@@ -990,7 +993,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // it (normal snapshots exclude these, but share codes are untrusted).
     const vimState = {};
     for (const k of VIM_STATE_KEYS) vimState[k] = this.settings[k];
-    Object.assign(this.settings, preset);
+    // Backfill first: an older/built-in preset saved before some setting
+    // existed should land on that setting's default, not on whatever this
+    // vault happened to have set beforehand (see presetWithDefaults).
+    Object.assign(this.settings, presetWithDefaults(preset));
     this.settings.enabled = wasEnabled;
     this.settings.userPresets = presets;    // restore presets dict
     Object.assign(this.settings, vimState);
@@ -1707,6 +1713,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
         vy: -20 - Math.random() * 30 - this.heat * 20,
         size: 1.5 + Math.random() * 2, // smaller than backspace/normal pixels
         color: `rgb(${varR}, ${varG}, ${varB})`,
+        // Cached numeric channels alongside `color`: the trail gradient in
+        // drawFlamePixels needs r/g/b at custom alphas every frame, and
+        // re-deriving them from the formatted string via regex each time
+        // (for every live spark, every frame) is needless work when we
+        // already have the numbers right here at spawn time.
+        r: varR, g: varG, b: varB,
         alpha: 1,
         start: now,
         // Marks this particle as a Speed Demon spark (as opposed to a Pixel
@@ -3424,8 +3436,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const tailX = curX - dirX * tailLen;
         const tailY = curY - dirY * tailLen;
         const grad = ctx.createLinearGradient(curX, curY, tailX, tailY);
-        grad.addColorStop(0, rgbStringToRgba(p.color, 0.9));
-        grad.addColorStop(1, rgbStringToRgba(p.color, 0));
+        grad.addColorStop(0, `rgba(${p.r}, ${p.g}, ${p.b}, 0.9)`);
+        grad.addColorStop(1, `rgba(${p.r}, ${p.g}, ${p.b}, 0)`);
         ctx.strokeStyle = grad;
         ctx.lineWidth = Math.max(1, p.size * 0.85);
         ctx.lineCap = "round";
@@ -3908,280 +3920,349 @@ class CursorSmithSettingTab extends PluginSettingTab {
   }
 
   // -------------------------------------------------------------------------
-  // Normal (CUA) cursor settings: presets + core config + appearance/blink/
-  // smooth/effects.
+  // Collapsible section helper. Wraps a named group of settings in a native
+  // <details>/<summary> so the panel's 60+ settings can be collapsed down to
+  // whichever groups someone actually uses - Effects alone now covers 8
+  // separate features. Sections default open: collapsibility is the point,
+  // not being hidden by default.
   // -------------------------------------------------------------------------
+  renderSection(containerEl, title, renderFn, { open = true } = {}) {
+    const details = containerEl.createEl("details", { cls: "cursor-smith-section" });
+    details.open = open;
+    const summary = details.createEl("summary");
+    summary.createEl("span", { cls: "cursor-smith-section-title", text: title });
+    renderFn(details);
+    return details;
+  }
+
+  // Small all-caps label used to split a section into sub-groups (e.g. Torch
+  // Spotlight's "Spotlight" vs "Environment" controls) without opening a
+  // whole new collapsible section for them.
+  renderSubheading(containerEl, title) {
+    containerEl.createEl("div", { cls: "cursor-smith-subsection-title", text: title });
+  }
+
+  // -------------------------------------------------------------------------
+  // Shared look/effect settings renderer.
+  //
+  // renderNormalSection (the global cursor) and renderModeControls (one Vim
+  // mode's own snapshot) render an identical set of settings - Appearance,
+  // Blinking, Smooth Movement, Effects - that used to be duplicated by hand
+  // across both, ~150 lines each. The only real differences between the two
+  // are *where the values live* and *what happens after a save*, so those are
+  // the only things a caller supplies:
+  //
+  //   get(key)                    - read the current value for `key`
+  //   set(key)                    - returns an onChange handler: save only
+  //   setAndRedraw(key)           - returns an onChange handler: save +
+  //                                 re-render the settings panel (for changes
+  //                                 that reveal or hide other settings)
+  //   renderCursorStyleSetting(body) - builds the "Cursor Style" dropdown
+  //                                 Setting. Kept as a caller-supplied hook
+  //                                 (rather than generic set/setAndRedraw)
+  //                                 because the global panel needs an extra
+  //                                 plugin.enable() call after saving that a
+  //                                 Vim mode does not.
+  //   renderTorchToggleSetting(body) - builds the "Torch Spotlight" toggle
+  //                                 Setting. Also a caller-supplied hook: the
+  //                                 global panel must start/stop the torch
+  //                                 engine immediately on toggle, which has no
+  //                                 Vim-mode equivalent (see the comment at
+  //                                 that call site).
+  // -------------------------------------------------------------------------
+  renderLookSettings(containerEl, { get, set, setAndRedraw, renderCursorStyleSetting, renderTorchToggleSetting }) {
+    this.renderSection(containerEl, "Appearance", (body) => {
+      renderCursorStyleSetting(body);
+
+      if (get("cursorStyle") === "Line") {
+        new Setting(body).setClass("cursor-smith-indent-1")
+          .setName("Cursor Thickness")
+          .setDesc("How thick the Line cursor is, in pixels.")
+          .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(get("caretWidthPx")).setDynamicTooltip().onChange(set("caretWidthPx")));
+
+        new Setting(body).setClass("cursor-smith-indent-1")
+          .setName("Serifs")
+          .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
+          .addToggle((toggle) => toggle.setValue(get("lineSerifs")).onChange(set("lineSerifs")));
+      }
+
+      new Setting(body).setName("Cursor Color (Dark Theme)")
+        .addColorPicker((cp) => cp.setValue(get("colorDark")).onChange(set("colorDark")));
+      new Setting(body).setName("Cursor Color (Light Theme)")
+        .addColorPicker((cp) => cp.setValue(get("colorLight")).onChange(set("colorLight")));
+      new Setting(body).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
+        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")));
+
+      if (get("cursorStyle") === "Box") {
+        new Setting(body).setClass("cursor-smith-indent-1")
+          .setName("Show Letter Inside Cursor")
+          .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
+          .addToggle((toggle) => toggle.setValue(get("showChar")).onChange(set("showChar")));
+
+        new Setting(body).setClass("cursor-smith-indent-1")
+          .setName("Hollow")
+          .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
+          .addToggle((toggle) => toggle.setValue(get("boxHollow")).onChange(setAndRedraw("boxHollow")));
+
+        if (get("boxHollow")) {
+          new Setting(body).setClass("cursor-smith-indent-2")
+            .setName("Outline Width")
+            .setDesc("Thickness of the hollow box's outline, in pixels.")
+            .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(get("boxHollowWidth")).setDynamicTooltip().onChange(set("boxHollowWidth")));
+        }
+      }
+    });
+
+    this.renderSection(containerEl, "Blinking", (body) => {
+      new Setting(body)
+        .setName("Blinking")
+        .setDesc("Makes the cursor blink. Turn off to keep it always fully lit.")
+        .addToggle((toggle) => toggle.setValue(get("blinkingEnabled")).onChange(setAndRedraw("blinkingEnabled")));
+
+      if (get("blinkingEnabled")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Blink Speed").setDesc("How fast the cursor blinks.")
+          .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(get("blinkSpeed")).setDynamicTooltip().onChange(set("blinkSpeed")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
+          .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(get("blinkOnOffBalance")).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
+          .addToggle((toggle) => toggle.setValue(get("smoothStopBlinking")).onChange(set("smoothStopBlinking")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
+          .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
+      }
+    });
+
+    this.renderSection(containerEl, "Smooth Movement", (body) => {
+      new Setting(body)
+        .setName("Smooth Movement")
+        .setDesc("Makes the cursor glide to its new spot instead of jumping there instantly.")
+        .addToggle((toggle) => toggle.setValue(get("smoothEnabled")).onChange(setAndRedraw("smoothEnabled")));
+
+      if (get("smoothEnabled")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Glide Amount")
+          .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(get("smoothness")).setDynamicTooltip().onChange(set("smoothness")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Catch-Up Speed")
+          .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(get("catchUpSpeed")).setDynamicTooltip().onChange(set("catchUpSpeed")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Max Catch-Up Speed")
+          .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Speed Up When Typing Fast")
+          .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(set("smoothAdaptive")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Movement Delay")
+          .addSlider((s) => s.setLimits(0, 500, 10).setValue(get("moveDelayMs")).setDynamicTooltip().onChange(set("moveDelayMs")));
+      }
+    });
+
+    this.renderSection(containerEl, "Effects", (body) => {
+      new Setting(body).setName("Popping Letters")
+        .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
+      if (get("popLetters")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Rainbow")
+          .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
+          .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(set("popRainbow")));
+      }
+
+      new Setting(body).setName("Pixel Trail")
+        .addToggle((toggle) => toggle.setValue(get("flameTrail")).onChange(setAndRedraw("flameTrail")));
+      if (get("flameTrail")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Backspace Disintegration")
+          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
+      }
+
+      new Setting(body).setName("Motion Smear")
+        .addToggle((toggle) => toggle.setValue(get("smear")).onChange(setAndRedraw("smear")));
+      if (get("smear")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Stiffness")
+          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearStiffness")).setDynamicTooltip().onChange(set("smearStiffness")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Trailing Stiffness")
+          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearTrailingStiffness")).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Damping")
+          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearDamping")).setDynamicTooltip().onChange(set("smearDamping")));
+      }
+
+      new Setting(body).setName("Energy Beam")
+        .addToggle((toggle) => toggle.setValue(get("energyEffect")).onChange(setAndRedraw("energyEffect")));
+      if (get("energyEffect")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Beam Speed")
+          .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("energySpeed")).setDynamicTooltip().onChange(set("energySpeed")));
+      }
+
+      new Setting(body).setName("CRT Effect")
+        .addToggle((toggle) => toggle.setValue(get("crtEffect")).onChange(setAndRedraw("crtEffect")));
+      if (get("crtEffect")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Trail Length")
+          .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("trailLength")).setDynamicTooltip().onChange(set("trailLength")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Trail Fade Time")
+          .addSlider((s) => s.setLimits(50, 1500, 25).setValue(get("trailFadeMs")).setDynamicTooltip().onChange(set("trailFadeMs")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Glow")
+          .addToggle((toggle) => toggle.setValue(get("glow")).onChange(set("glow")));
+      }
+
+      new Setting(body).setName("Speed Demon")
+        .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(setAndRedraw("speedDemon")));
+      if (get("speedDemon")) {
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Fire Sparks")
+          .addToggle((toggle) => toggle.setValue(get("speedDemonSparks")).onChange(setAndRedraw("speedDemonSparks")));
+        if (get("speedDemonSparks")) {
+          new Setting(body).setClass("cursor-smith-indent-2").setName("Spark Quantity")
+            .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
+            .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("speedDemonSparkQuantity") ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
+          new Setting(body).setClass("cursor-smith-indent-2").setName("Spark Trail")
+            .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
+            .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
+        }
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Sensitivity")
+          .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
+      }
+
+      renderTorchToggleSetting(body);
+      if (get("torchEffect")) {
+        this.renderSubheading(body, "Spotlight");
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Follow")
+          .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
+            .setValue(get("overlayFollowMode")).onChange(set("overlayFollowMode")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Light Size")
+          .addSlider((s) => s.setLimits(100, 800, 10).setValue(get("overlayRadius")).setDynamicTooltip().onChange(set("overlayRadius")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Light Color")
+          .addColorPicker((cp) => cp.setValue(get("overlayColor")).onChange(set("overlayColor")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Follow Speed")
+          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlaySpeed")).setDynamicTooltip().onChange(set("overlaySpeed")));
+
+        this.renderSubheading(body, "Environment");
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Darkness")
+          .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Glow Strength")
+          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Flicker")
+          .addToggle((toggle) => toggle.setValue(get("overlayFlicker")).onChange(set("overlayFlicker")));
+        new Setting(body).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
+          .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
+      }
+    });
+  }
+
   renderNormalSection(containerEl) {
     const plugin = this.plugin;
     const set = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); };
     const setAndRedraw = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); this.display(); };
 
-    containerEl.createEl("h3", { text: "Presets" });
-
-    if (plugin._pendingPresetName === undefined) plugin._pendingPresetName = "";
-    new Setting(containerEl)
-      .setName("Save current settings as preset")
-      .setDesc("Give your cursor a name, then click Save.")
-      .addText((text) => {
-        text.setPlaceholder("My cursor name");
-        text.setValue(plugin._pendingPresetName);
-        text.onChange((v) => { plugin._pendingPresetName = v; });
-      })
-      .addButton((btn) => {
-        btn.setButtonText("Save").setCta();
-        btn.onClick(async () => {
-          const name = plugin._pendingPresetName.trim();
-          if (!name) return;
-          await plugin.saveUserPreset(name);
-          plugin._pendingPresetName = "";
-          this.display();
-        });
-      });
-
-    let importCode = "";
-    new Setting(containerEl)
-      .setName("Import preset")
-      .setDesc("Paste a share code from someone else to add their preset.")
-      .addText((text) => {
-        text.setPlaceholder("Paste code here…");
-        text.onChange((v) => { importCode = v.trim(); });
-        text.inputEl.style.fontFamily = "var(--font-monospace)";
-        text.inputEl.style.fontSize = "var(--font-smaller)";
-        text.inputEl.style.width = "14em";
-      })
-      .addButton((btn) => {
-        btn.setButtonText("Import").onClick(async () => {
-          if (!importCode) return;
-          const imported = await plugin.importPreset(importCode);
-          if (imported) {
-            this.display();
-          } else {
-            btn.setButtonText("Invalid code");
-            setTimeout(() => btn.setButtonText("Import"), 2000);
-          }
-        });
-      });
-
-    const presets = plugin.getUserPresets();
-    const names = Object.keys(presets);
-
-    if (names.length === 0) {
-      const empty = containerEl.createEl("p", {
-        text: "No saved presets yet. Configure your cursor below, then save it above.",
-      });
-      empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
-    } else {
-      for (const name of names) {
-        this.renderPresetRow(containerEl, name, presets[name], {
-          onLoad: async () => { await plugin.loadUserPreset(name); plugin._pendingPresetName = name; this.display(); },
-          onEdit: async () => {
-            await plugin.loadUserPreset(name);
-            plugin._pendingPresetName = name;
-            this.display();
-            containerEl.scrollTop = 0;
-          },
-          onDelete: async () => { await plugin.deleteUserPreset(name); this.display(); },
-        });
-      }
-    }
-
-    containerEl.createEl("h3", { text: "Core Configuration" });
-
-    new Setting(containerEl)
-      .setName("Cursor Style")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
-          .setValue(plugin.settings.cursorStyle)
-          .onChange(async (value) => {
-            plugin.settings.cursorStyle = value;
-            await plugin.saveSettings();
-            plugin.enable();
-            this.display();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Hide Real Cursor")
-      .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
-
-    containerEl.createEl("h3", { text: "Appearance" });
-
-    if (plugin.settings.cursorStyle === "Line") {
-      new Setting(containerEl).setClass("cursor-smith-indent-1")
-        .setName("Cursor Thickness")
-        .setDesc("How thick the Line cursor is, in pixels.")
-        .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(plugin.settings.caretWidthPx).setDynamicTooltip().onChange(set("caretWidthPx")));
-
-      new Setting(containerEl).setClass("cursor-smith-indent-1")
-        .setName("Serifs")
-        .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.lineSerifs).onChange(set("lineSerifs")));
-    }
-
-    new Setting(containerEl).setName("Cursor Color (Dark Theme)")
-      .addColorPicker((cp) => cp.setValue(plugin.settings.colorDark).onChange(set("colorDark")));
-    new Setting(containerEl).setName("Cursor Color (Light Theme)")
-      .addColorPicker((cp) => cp.setValue(plugin.settings.colorLight).onChange(set("colorLight")));
-    new Setting(containerEl).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
-      .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(plugin.settings.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
-
-    if (plugin.settings.cursorStyle === "Box") {
-      new Setting(containerEl).setClass("cursor-smith-indent-1")
-        .setName("Show Letter Inside Cursor")
-        .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.showChar).onChange(set("showChar")));
-
-      new Setting(containerEl).setClass("cursor-smith-indent-1")
-        .setName("Hollow")
-        .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.boxHollow).onChange(setAndRedraw("boxHollow")));
-
-      if (plugin.settings.boxHollow) {
-        new Setting(containerEl).setClass("cursor-smith-indent-2")
-          .setName("Outline Width")
-          .setDesc("Thickness of the hollow box's outline, in pixels.")
-          .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(plugin.settings.boxHollowWidth).setDynamicTooltip().onChange(set("boxHollowWidth")));
-      }
-    }
-
-    containerEl.createEl("h3", { text: "Blinking" });
-
-    new Setting(containerEl)
-      .setName("Blinking")
-      .setDesc("Makes the cursor blink. Turn off to keep it always fully lit.")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.blinkingEnabled).onChange(setAndRedraw("blinkingEnabled")));
-
-    if (plugin.settings.blinkingEnabled) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Speed").setDesc("How fast the cursor blinks.")
-        .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(plugin.settings.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
-        .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(plugin.settings.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.smoothStopBlinking).onChange(set("smoothStopBlinking")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
-        .addSlider((s) => s.setLimits(0, 2000, 50).setValue(plugin.settings.blinkDelayMs ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
-    }
-
-    containerEl.createEl("h3", { text: "Smooth Movement" });
-
-    new Setting(containerEl)
-      .setName("Smooth Movement")
-      .setDesc("Makes the cursor glide to its new spot instead of jumping there instantly.")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.smoothEnabled).onChange(setAndRedraw("smoothEnabled")));
-
-    if (plugin.settings.smoothEnabled) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glide Amount")
-        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(plugin.settings.smoothness).setDynamicTooltip().onChange(set("smoothness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Catch-Up Speed")
-        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(plugin.settings.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Max Catch-Up Speed")
-        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(plugin.settings.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Speed Up When Typing Fast")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.smoothAdaptive).onChange(set("smoothAdaptive")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Movement Delay")
-        .addSlider((s) => s.setLimits(0, 500, 10).setValue(plugin.settings.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
-    }
-
-    containerEl.createEl("h3", { text: "Effects" });
-
-    new Setting(containerEl).setName("Popping Letters")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.popLetters).onChange(setAndRedraw("popLetters")));
-    if (plugin.settings.popLetters) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Rainbow")
-        .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.popRainbow).onChange(set("popRainbow")));
-    }
-
-    new Setting(containerEl).setName("Pixel Trail")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.flameTrail).onChange(setAndRedraw("flameTrail")));
-    if (plugin.settings.flameTrail) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Backspace Disintegration")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
-    }
-
-    new Setting(containerEl).setName("Motion Smear")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.smear).onChange(setAndRedraw("smear")));
-    if (plugin.settings.smear) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Stiffness")
-        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(plugin.settings.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trailing Stiffness")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Damping")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
-    }
-
-    new Setting(containerEl).setName("Energy Beam")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.energyEffect).onChange(setAndRedraw("energyEffect")));
-    if (plugin.settings.energyEffect) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Beam Speed")
-        .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(plugin.settings.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
-    }
-
-    new Setting(containerEl).setName("CRT Effect")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.crtEffect).onChange(setAndRedraw("crtEffect")));
-    if (plugin.settings.crtEffect) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Length")
-        .addSlider((s) => s.setLimits(0, 30, 1).setValue(plugin.settings.trailLength).setDynamicTooltip().onChange(set("trailLength")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Fade Time")
-        .addSlider((s) => s.setLimits(50, 1500, 25).setValue(plugin.settings.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.glow).onChange(set("glow")));
-    }
-
-    new Setting(containerEl).setName("Speed Demon")
-      .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemon).onChange(setAndRedraw("speedDemon")));
-    if (plugin.settings.speedDemon) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Fire Sparks")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.speedDemonSparks).onChange(setAndRedraw("speedDemonSparks")));
-      if (plugin.settings.speedDemonSparks) {
-        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Quantity")
-          .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
-          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(plugin.settings.speedDemonSparkQuantity ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
-        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Trail")
-          .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
-          .addSlider((s) => s.setLimits(0, 30, 1).setValue(plugin.settings.speedDemonSparkTrail ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
-      }
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Sensitivity")
-        .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(plugin.settings.speedDemonSensitivity).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
-    }
-
-    new Setting(containerEl)
-      .setName("Torch Spotlight")
-      .addToggle((toggle) =>
-        toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
-          plugin.settings.torchEffect = value;
-          await plugin.saveSettings();
-          if (plugin.settings.enabled) {
-            value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
-          }
-          this.display();
+    this.renderSection(containerEl, "Presets", (body) => {
+      if (plugin._pendingPresetName === undefined) plugin._pendingPresetName = "";
+      new Setting(body)
+        .setName("Save current settings as preset")
+        .setDesc("Give your cursor a name, then click Save.")
+        .addText((text) => {
+          text.setPlaceholder("My cursor name");
+          text.setValue(plugin._pendingPresetName);
+          text.onChange((v) => { plugin._pendingPresetName = v; });
         })
-      );
+        .addButton((btn) => {
+          btn.setButtonText("Save").setCta();
+          btn.onClick(async () => {
+            const name = plugin._pendingPresetName.trim();
+            if (!name) return;
+            await plugin.saveUserPreset(name);
+            plugin._pendingPresetName = "";
+            this.display();
+          });
+        });
 
-    if (plugin.settings.torchEffect) {
-      containerEl.createEl("h4", { text: "Spotlight" });
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow")
-        .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
-          .setValue(plugin.settings.overlayFollowMode).onChange(set("overlayFollowMode")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Size")
-        .addSlider((s) => s.setLimits(100, 800, 10).setValue(plugin.settings.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Color")
-        .addColorPicker((cp) => cp.setValue(plugin.settings.overlayColor).onChange(set("overlayColor")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow Speed")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(plugin.settings.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
+      let importCode = "";
+      new Setting(body)
+        .setName("Import preset")
+        .setDesc("Paste a share code from someone else to add their preset.")
+        .addText((text) => {
+          text.setPlaceholder("Paste code here…");
+          text.onChange((v) => { importCode = v.trim(); });
+          text.inputEl.style.fontFamily = "var(--font-monospace)";
+          text.inputEl.style.fontSize = "var(--font-smaller)";
+          text.inputEl.style.width = "14em";
+        })
+        .addButton((btn) => {
+          btn.setButtonText("Import").onClick(async () => {
+            if (!importCode) return;
+            const imported = await plugin.importPreset(importCode);
+            if (imported) {
+              this.display();
+            } else {
+              btn.setButtonText("Invalid code");
+              setTimeout(() => btn.setButtonText("Import"), 2000);
+            }
+          });
+        });
 
-      containerEl.createEl("h4", { text: "Environment" });
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Darkness")
-        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(plugin.settings.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow Strength")
-        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(plugin.settings.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Flicker")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.overlayFlicker).onChange(set("overlayFlicker")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
-    }
+      const presets = plugin.getUserPresets();
+      const names = Object.keys(presets);
+
+      if (names.length === 0) {
+        const empty = body.createEl("p", {
+          text: "No saved presets yet. Configure your cursor below, then save it above.",
+        });
+        empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
+      } else {
+        for (const name of names) {
+          this.renderPresetRow(body, name, presets[name], {
+            onLoad: async () => { await plugin.loadUserPreset(name); plugin._pendingPresetName = name; this.display(); },
+            onEdit: async () => {
+              await plugin.loadUserPreset(name);
+              plugin._pendingPresetName = name;
+              this.display();
+              containerEl.scrollTop = 0;
+            },
+            onDelete: async () => { await plugin.deleteUserPreset(name); this.display(); },
+          });
+        }
+      }
+    });
+
+    this.renderSection(containerEl, "General", (body) => {
+      new Setting(body)
+        .setName("Hide Real Cursor")
+        .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
+        .addToggle((toggle) => toggle.setValue(plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
+    });
+
+    // Everything from "what does the cursor look like" through "what effects
+    // does it use" is identical in shape whether it's this global cursor or
+    // one Vim mode's own snapshot - see renderLookSettings, shared with
+    // renderModeControls below.
+    this.renderLookSettings(containerEl, {
+      get: (key) => plugin.settings[key],
+      set,
+      setAndRedraw,
+      renderCursorStyleSetting: (body) => {
+        new Setting(body)
+          .setName("Cursor Style")
+          .addDropdown((dropdown) =>
+            dropdown
+              .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
+              .setValue(plugin.settings.cursorStyle)
+              .onChange(async (value) => {
+                plugin.settings.cursorStyle = value;
+                await plugin.saveSettings();
+                plugin.enable();
+                this.display();
+              })
+          );
+      },
+      // Torch Spotlight owns a whole separate engine (torchEngineActive) that
+      // needs to be started/stopped immediately on toggle, rather than just
+      // having its setting saved - a Vim mode doesn't need this since its
+      // torch state is already picked up by the shared engine's per-frame
+      // torchPossible() scan across all modes.
+      renderTorchToggleSetting: (body) => {
+        new Setting(body)
+          .setName("Torch Spotlight")
+          .addToggle((toggle) =>
+            toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
+              plugin.settings.torchEffect = value;
+              await plugin.saveSettings();
+              if (plugin.settings.enabled) {
+                value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
+              }
+              this.display();
+            })
+          );
+      },
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -4425,153 +4506,23 @@ class CursorSmithSettingTab extends PluginSettingTab {
     const set = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); };
     const setR = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); this.display(); };
 
-    new Setting(containerEl)
-      .setName("Style")
-      .addDropdown((d) =>
-        d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
-          .setValue(target.cursorStyle).onChange(setR("cursorStyle"))
-      );
-
-    if (target.cursorStyle === "Line") {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Cursor Thickness").setDesc("How thick the Line cursor is, in pixels.")
-        .addSlider((s) => s.setLimits(1, 12, 1).setValue(target.caretWidthPx).setDynamicTooltip().onChange(set("caretWidthPx")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Serifs").setDesc("Adds classic I-beam serifs at the top and bottom of the line cursor.")
-        .addToggle((t) => t.setValue(target.lineSerifs).onChange(set("lineSerifs")));
-    }
-
-    new Setting(containerEl).setName("Cursor Color (Dark Theme)")
-      .addColorPicker((cp) => cp.setValue(target.colorDark).onChange(set("colorDark")));
-    new Setting(containerEl).setName("Cursor Color (Light Theme)")
-      .addColorPicker((cp) => cp.setValue(target.colorLight).onChange(set("colorLight")));
-    new Setting(containerEl).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
-      .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(target.cursorOpacity).setDynamicTooltip().onChange(set("cursorOpacity")));
-
-    if (target.cursorStyle === "Box") {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Show Letter Inside Cursor").setDesc("Shows the letter under the cursor inside the block, colors flipped.")
-        .addToggle((t) => t.setValue(target.showChar).onChange(set("showChar")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Hollow").setDesc("Draws only the outline of the box instead of a filled block.")
-        .addToggle((t) => t.setValue(target.boxHollow).onChange(setR("boxHollow")));
-      if (target.boxHollow) {
-        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Outline Width").setDesc("Thickness of the hollow box's outline, in pixels.")
-          .addSlider((s) => s.setLimits(1, 6, 1).setValue(target.boxHollowWidth).setDynamicTooltip().onChange(set("boxHollowWidth")));
-      }
-    }
-
-    containerEl.createEl("h5", { text: "Blinking" });
-    new Setting(containerEl).setName("Blinking").setDesc("Makes the cursor blink. Off keeps it fully lit.")
-      .addToggle((t) => t.setValue(target.blinkingEnabled).onChange(setR("blinkingEnabled")));
-    if (target.blinkingEnabled) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Speed")
-        .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(target.blinkSpeed).setDynamicTooltip().onChange(set("blinkSpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Balance")
-        .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(target.blinkOnOffBalance).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Don't Blink While Typing")
-        .addToggle((t) => t.setValue(target.smoothStopBlinking).onChange(set("smoothStopBlinking")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Blink Delay")
-        .addSlider((s) => s.setLimits(0, 2000, 50).setValue(target.blinkDelayMs ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
-    }
-
-    containerEl.createEl("h5", { text: "Smooth Movement" });
-    new Setting(containerEl).setName("Smooth Movement").setDesc("Glide to the new spot instead of jumping.")
-      .addToggle((t) => t.setValue(target.smoothEnabled).onChange(setR("smoothEnabled")));
-    if (target.smoothEnabled) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glide Amount")
-        .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(target.smoothness).setDynamicTooltip().onChange(set("smoothness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Catch-Up Speed")
-        .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(target.catchUpSpeed).setDynamicTooltip().onChange(set("catchUpSpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Max Catch-Up Speed")
-        .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(target.maxCatchUpSpeed).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Speed Up When Typing Fast")
-        .addToggle((t) => t.setValue(target.smoothAdaptive).onChange(set("smoothAdaptive")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Movement Delay")
-        .addSlider((s) => s.setLimits(0, 500, 10).setValue(target.moveDelayMs).setDynamicTooltip().onChange(set("moveDelayMs")));
-    }
-
-    containerEl.createEl("h5", { text: "Effects" });
-    new Setting(containerEl).setName("Popping Letters")
-      .addToggle((t) => t.setValue(target.popLetters).onChange(setR("popLetters")));
-    if (target.popLetters) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Rainbow")
-        .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
-        .addToggle((t) => t.setValue(target.popRainbow).onChange(set("popRainbow")));
-    }
-
-    new Setting(containerEl).setName("Pixel Trail")
-      .addToggle((t) => t.setValue(target.flameTrail).onChange(setR("flameTrail")));
-    if (target.flameTrail) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Backspace Disintegration")
-        .addToggle((t) => t.setValue(target.backspaceDisintegrate).onChange(set("backspaceDisintegrate")));
-    }
-
-    new Setting(containerEl).setName("Motion Smear")
-      .addToggle((t) => t.setValue(target.smear).onChange(setR("smear")));
-    if (target.smear) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Stiffness")
-        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(target.smearStiffness).setDynamicTooltip().onChange(set("smearStiffness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trailing Stiffness")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.smearTrailingStiffness).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Damping")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.smearDamping).setDynamicTooltip().onChange(set("smearDamping")));
-    }
-
-    new Setting(containerEl).setName("Energy Beam")
-      .addToggle((t) => t.setValue(target.energyEffect).onChange(setR("energyEffect")));
-    if (target.energyEffect) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Beam Speed")
-        .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(target.energySpeed).setDynamicTooltip().onChange(set("energySpeed")));
-    }
-
-    new Setting(containerEl).setName("CRT Effect")
-      .addToggle((t) => t.setValue(target.crtEffect).onChange(setR("crtEffect")));
-    if (target.crtEffect) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Length")
-        .addSlider((s) => s.setLimits(0, 30, 1).setValue(target.trailLength).setDynamicTooltip().onChange(set("trailLength")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Trail Fade Time")
-        .addSlider((s) => s.setLimits(50, 1500, 25).setValue(target.trailFadeMs).setDynamicTooltip().onChange(set("trailFadeMs")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow")
-        .addToggle((t) => t.setValue(target.glow).onChange(set("glow")));
-    }
-
-    new Setting(containerEl).setName("Speed Demon")
-      .addToggle((t) => t.setValue(target.speedDemon).onChange(setR("speedDemon")));
-    if (target.speedDemon) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Fire Sparks")
-        .addToggle((t) => t.setValue(target.speedDemonSparks).onChange(setR("speedDemonSparks")));
-      if (target.speedDemonSparks) {
-        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Quantity")
-          .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
-          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(target.speedDemonSparkQuantity ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
-        new Setting(containerEl).setClass("cursor-smith-indent-2").setName("Spark Trail")
-          .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
-          .addSlider((s) => s.setLimits(0, 30, 1).setValue(target.speedDemonSparkTrail ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
-      }
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Sensitivity")
-        .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(target.speedDemonSensitivity).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
-    }
-
-    new Setting(containerEl).setName("Torch Spotlight")
-      .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
-    if (target.torchEffect) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow")
-        .addDropdown((d) =>
-          d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
-            .setValue(target.overlayFollowMode).onChange(set("overlayFollowMode"))
-        );
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Size")
-        .addSlider((s) => s.setLimits(100, 800, 10).setValue(target.overlayRadius).setDynamicTooltip().onChange(set("overlayRadius")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Light Color")
-        .addColorPicker((cp) => cp.setValue(target.overlayColor).onChange(set("overlayColor")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Follow Speed")
-        .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(target.overlaySpeed).setDynamicTooltip().onChange(set("overlaySpeed")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Darkness")
-        .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(target.overlayDarkness).setDynamicTooltip().onChange(set("overlayDarkness")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Glow Strength")
-        .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(target.overlayIntensity).setDynamicTooltip().onChange(set("overlayIntensity")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Flicker")
-        .addToggle((t) => t.setValue(target.overlayFlicker).onChange(set("overlayFlicker")));
-      new Setting(containerEl).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
-        .addToggle((t) => t.setValue(target.overlaySpareSidebars).onChange(set("overlaySpareSidebars")));
-    }
+    this.renderLookSettings(containerEl, {
+      get: (key) => target[key],
+      set,
+      setAndRedraw: setR,
+      renderCursorStyleSetting: (body) => {
+        new Setting(body)
+          .setName("Cursor Style")
+          .addDropdown((d) =>
+            d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
+              .setValue(target.cursorStyle).onChange(setR("cursorStyle"))
+          );
+      },
+      renderTorchToggleSetting: (body) => {
+        new Setting(body).setName("Torch Spotlight")
+          .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
+      },
+    });
   }
 }
 /* nosourcemap */

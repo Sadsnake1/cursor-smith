@@ -1,3 +1,52 @@
+/* --- Settings panel: collapsible section groups --------------------------
+   Wraps each named group of settings (Presets, Appearance, Blinking, etc.)
+   in a native <details>/<summary>, so a 60+ setting panel can be collapsed
+   down to just the sections someone actually uses. Sections default open -
+   collapsibility is the point, not being hidden by default. */
+.cursor-smith-section {
+  margin-bottom: 0.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cursor-smith-section > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  padding: 0.2em 0;
+}
+
+.cursor-smith-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.cursor-smith-section > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-muted);
+  transition: transform 0.1s ease;
+}
+
+.cursor-smith-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.cursor-smith-section-title {
+  font-size: var(--font-ui-medium);
+  font-weight: 700;
+}
+
+.cursor-smith-subsection-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin: 0.9em 0 0.2em;
+}
+
 /* --- Settings panel: indent sub-options nested under a parent toggle
    (or style dropdown), so conditional groups - e.g. Torch Spotlight's
    Follow/Light Size/etc., or Box style's Hollow -> Outline Width - read
@@ -29,34 +78,43 @@
   z-index: 9999;
 }
 
-body.retro-box-cursor-hide-native {
-  caret-color: transparent !important;
+/* The class is doubled (`.foo.foo`) purely to raise this selector's
+   specificity above a plausible community theme or CSS snippet that sets
+   caret-color on the same or a more specific element - without reaching for
+   !important, which would make this impossible for a user to override in
+   turn (e.g. to combine this plugin with their own caret tweaks). */
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
+  caret-color: transparent;
 }
 
 /* CodeMirror 6 (Obsidian's editor) draws its own cursor as a DOM element
    rather than relying on the browser's native caret, so caret-color alone
    doesn't hide it - it has its own independent blink cycle and would
-   otherwise flash through whenever our custom cursor fades out. */
-body.retro-box-cursor-hide-native .cm-cursor,
-body.retro-box-cursor-hide-native .cm-cursor-primary,
-body.retro-box-cursor-hide-native .cm-cursor-secondary,
-body.retro-box-cursor-hide-native .cm-fat-cursor,
-body.retro-box-cursor-hide-native .cm-dropCursor {
-  display: none !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  border-color: transparent !important;
-  background-color: transparent !important;
+   otherwise flash through whenever our custom cursor fades out. The
+   ancestor class is doubled for the same specificity reason as above: CM6
+   themes style these cursor elements directly, so we need real specificity
+   headroom rather than relying on !important or stylesheet load order. */
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor,
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor-primary,
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor-secondary,
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-fat-cursor,
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-dropCursor {
+  display: none;
+  opacity: 0;
+  visibility: hidden;
+  border-color: transparent;
+  background-color: transparent;
 }
 
 /* Belt-and-braces: some CM themes set caret-color directly on .cm-content
-   or .cm-line. That's the same specificity as our body.<class> rule
-   (0,1,1 vs 0,1,0 - ours should already win), but if a theme's rule loads
-   after ours without !important, load order alone can flip the result.
-   Pinning it here removes that ordering risk entirely. */
-body.retro-box-cursor-hide-native .cm-content,
-body.retro-box-cursor-hide-native .cm-line {
-  caret-color: transparent !important;
+   or .cm-line. That used to tie in specificity with the rule above and
+   fall back to stylesheet load order (fixed here with !important); doubling
+   the ancestor class instead gives this selector more specificity than a
+   theme's plain `.cm-content`/`.cm-line` rule outright, so we no longer
+   depend on load order OR need !important to win the cascade. */
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-content,
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
+  caret-color: transparent;
 }
 
 /* --- Torch Spotlight Effect ---

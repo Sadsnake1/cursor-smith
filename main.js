@@ -819,13 +819,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
       this.lastMouseMove = Date.now();
+      // Wakes only the torch (which may be following the mouse) — moving the
+      // pointer must not spin the cursor canvas up to full rate.
+      this._wakeTorch();
     };
+    // Any of these means the picture may be about to change: snap the render
+    // loops out of idle so the very next frame reflects it.
+    const onActivity = () => this._markActivity();
     // Backspace/Delete flag: set on keydown, consumed by the next
     // commitMove() so the flame-pixel burst at the *old* caret position
     // knows it was caused by deletion (and can invert direction + color).
     // Timestamped so a stale flag from ~200ms ago doesn't wrongly colour a
     // burst caused by unrelated caret movement that arrived late.
     const onKeyDown = (e) => {
+      this._markActivity();
       if (e.key === "Backspace" || e.key === "Delete") {
         this._deletePending = performance.now();
       }
@@ -854,16 +861,32 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._lastWrapperRect = "";
       this._lastOverlayRect = "";
       this.resizeCanvas();
+      this._markActivity();
     };
     
     doc.addEventListener("mousemove", onMouseMove);
     doc.addEventListener("keydown", onKeyDown, true);
+    // Wake sources beyond typing: caret moves from clicks and selection
+    // changes, viewport shifts from scroll/wheel, and focus hops between
+    // fields. All capture-phase (or document-level) so nothing that
+    // stopPropagation()s can starve the render loops. Passive where
+    // applicable so they can't add scroll latency.
+    doc.addEventListener("selectionchange", onActivity);
+    doc.addEventListener("mousedown", onActivity, true);
+    doc.addEventListener("focusin", onActivity, true);
+    doc.addEventListener("wheel", onActivity, { capture: true, passive: true });
+    doc.addEventListener("scroll", onActivity, { capture: true, passive: true });
     const win = doc.defaultView;
     if (win) win.addEventListener("resize", onResize);
     
     this._cleanups.push(() => {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
+      doc.removeEventListener("selectionchange", onActivity);
+      doc.removeEventListener("mousedown", onActivity, true);
+      doc.removeEventListener("focusin", onActivity, true);
+      doc.removeEventListener("wheel", onActivity, { capture: true });
+      doc.removeEventListener("scroll", onActivity, { capture: true });
       if (win) win.removeEventListener("resize", onResize);
     });
   }
@@ -872,6 +895,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // userPresets lives inside this.settings so it survives every saveData
     // call automatically - no separate load/merge step needed anywhere.
     await this.saveData(this.settings);
+    // Sliders and pickers mutate mode objects in place, so the memoized
+    // per-mode merge must be rebuilt after every save.
+    this._effCache = null;
     // Everything below is cosmetic. Each step is isolated so a failure in one
     // (or in an engine that's currently torn down) can neither block the
     // others nor bubble up and abort whichever command called saveSettings.
@@ -1270,7 +1296,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!mode) return this.settings;
     const cfg = this.settings.vimModes && this.settings.vimModes[mode];
     if (!cfg) return this.settings;
-    return Object.assign({}, this.settings, cfg);
+    // Memoized: two render loops each merged a fresh ~60-key object EVERY
+    // frame, which is pure allocation/GC churn since the inputs only change
+    // on a mode switch or a settings edit. Keyed on identity of the inputs;
+    // saveSettings drops the cache so in-place edits (sliders mutate the
+    // mode object directly, then save) are picked up immediately.
+    const c = this._effCache;
+    if (c && c.mode === mode && c.base === this.settings && c.cfg === cfg) return c.obj;
+    const obj = Object.assign({}, this.settings, cfg);
+    this._effCache = { mode, base: this.settings, cfg, obj };
+    return obj;
   }
 
   // Thin passthrough kept so existing draw-path reads keep working. Because the
@@ -1392,6 +1427,62 @@ module.exports = class CursorSmithPlugin extends Plugin {
     } catch {
       /* a bad frame must not kill the interval */
     }
+  }
+
+  // =========================================================================
+  // Frame governor — power management for the render loops
+  // =========================================================================
+  // Both render loops used to run requestAnimationFrame unconditionally: the
+  // full DOM-read + clear + redraw pipeline executed at display refresh rate
+  // (120fps on ProMotion Macs) even while the cursor sat perfectly still.
+  // That measured ~20% CPU/GPU at idle on Apple Silicon. The governor gives
+  // each loop three gears:
+  //   hot  — continuous rAF (capped near 60fps on high-refresh displays),
+  //          while input is recent or any animation is genuinely in flight
+  //   warm — ~30fps, only while a blink fade is mid-transition
+  //   idle — ~10fps heartbeat that re-checks state and repaints ONLY if the
+  //          picture changed; with a static, non-fading cursor the canvas
+  //          isn't touched at all, so idle cost approaches zero
+  // Input events snap the loops back to hot instantly (the pending idle
+  // timeout is cancelled and a frame is requested immediately), so the
+  // scheduling can never add perceptible input latency.
+
+  // Called from input events. Timestamps the activity and wakes any dozing
+  // loop right now instead of letting it sleep out its timeout.
+  _markActivity() {
+    this._lastActivityT = performance.now();
+    if (this._canvasIdleT) {
+      window.clearTimeout(this._canvasIdleT);
+      this._canvasIdleT = 0;
+      if (this.canvasEngineActive && this._canvasTick) {
+        this.canvasRaf = requestAnimationFrame(this._canvasTick);
+      }
+    }
+    this._wakeTorch();
+  }
+
+  // Torch-only wake: mouse movement retargets the spotlight but shouldn't
+  // spin the cursor canvas up to full rate.
+  _wakeTorch() {
+    if (this._torchIdleT) {
+      window.clearTimeout(this._torchIdleT);
+      this._torchIdleT = 0;
+      if (this.torchEngineActive && this._torchTick) {
+        this.torchRaf = requestAnimationFrame(this._torchTick);
+      }
+    }
+  }
+
+  // isPresentationModeActive runs two querySelector-style probes; at 120fps in
+  // two loops that's ~500 DOM queries a second for a state that changes maybe
+  // twice per session. Cache it for 500ms — a half-second delay in noticing a
+  // presentation started/ended is invisible.
+  presentationActive() {
+    const now = performance.now();
+    if (now - (this._presCacheT || 0) < 500) return !!this._presCacheV;
+    this._presCacheT = now;
+    this._presCacheV = this.isPresentationModeActive();
+    return this._presCacheV;
   }
 
   // ---- Vim preset CRUD (independent of the regular cursor presets) ----
@@ -1764,6 +1855,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
       cancelAnimationFrame(this.canvasRaf);
       this.canvasRaf = 0;
     }
+    // The governor may be dozing on a timeout rather than an rAF.
+    if (this._canvasIdleT) {
+      window.clearTimeout(this._canvasIdleT);
+      this._canvasIdleT = 0;
+    }
+    this._canvasTick = null;
+    this._drawSig = null;
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
@@ -1795,6 +1893,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   disableTorchOverlay() {
     this.torchEngineActive = false;
+    if (this._torchIdleT) {
+      window.clearTimeout(this._torchIdleT);
+      this._torchIdleT = 0;
+    }
+    this._torchTick = null;
+    this._lastTorchPos = "";
     if (this.torchRaf) {
       cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
@@ -1827,8 +1931,35 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
 
+    // Schedule the next frame according to the gear the frame just decided
+    // on (this._canvasGear): hot = next vsync, warm/idle = doze on a timeout
+    // that _markActivity can cancel for instant wake.
+    const schedule = () => {
+      if (!this.canvasEngineActive) return;
+      const gear = this._canvasGear || "hot";
+      if (gear === "hot") {
+        this.canvasRaf = requestAnimationFrame(tick);
+        return;
+      }
+      this._canvasIdleT = window.setTimeout(() => {
+        this._canvasIdleT = 0;
+        if (this.canvasEngineActive) this.canvasRaf = requestAnimationFrame(tick);
+      }, gear === "warm" ? 33 : 100);
+    };
+
     const tick = () => {
       if (!this.canvasEngineActive) return;
+      // Hot-gear frame cap: on 120Hz ProMotion displays rAF fires every
+      // ~8ms; a cursor gains nothing above ~60fps, so skip alternate
+      // frames. The skipped wake-up is just a reschedule, costing ~nothing.
+      if ((this._canvasGear || "hot") === "hot") {
+        const n = performance.now();
+        if (n - (this._lastHotFrameT || 0) < 14) {
+          this.canvasRaf = requestAnimationFrame(tick);
+          return;
+        }
+        this._lastHotFrameT = n;
+      }
       // The whole frame is wrapped so a single bad frame (e.g. a transient
       // null during window refocus, a detached node mid-layout) can never
       // kill the rAF loop permanently - that's exactly the "cursor
@@ -1839,15 +1970,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // stays open underneath the presentation overlay and its CM view
         // can still report hasFocus, so without this guard the cursor keeps
         // blinking over the slides and keystrokes still reach the editor.
-        if (this.isPresentationModeActive()) {
-          // Clear whatever was on canvas from the previous frame and park.
-          if (this.ctx && this.canvas) {
+        if (this.presentationActive()) {
+          // Clear whatever was on canvas from the previous frame and park —
+          // at idle rate: nothing animates while a presentation runs.
+          if (this.ctx && this.canvas && !this._presCleared) {
             const win = this.canvas.ownerDocument.defaultView || window;
             this.ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
+            this._presCleared = true;
+            this._drawSig = null;
           }
-          this.canvasRaf = requestAnimationFrame(tick);
+          this._canvasGear = "idle";
+          schedule();
           return;
         }
+        this._presCleared = false;
 
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureCanvasForView(view);
@@ -1926,7 +2062,58 @@ module.exports = class CursorSmithPlugin extends Plugin {
             this.maybeSpawnSpeedDemonSparks();
           }
 
-          this.draw();
+          // ---- Gear decision + draw skip -------------------------------
+          const nowT = performance.now();
+          const eff = this.settings; // the effective (mode-merged) object
+          // Anything genuinely in motion demands continuous frames.
+          const animating =
+            !!this.animActive ||
+            (this.trail && this.trail.length > 0) ||
+            (this.particles && this.particles.length > 0) ||
+            this.heat > 0 ||
+            (this.smearQuad && nowT - this.smearQuadLastT < 1200) ||
+            (!!eff.energyEffect && !!this.lastActive);
+          const recentInput = nowT - (this._lastActivityT || 0) < 1200;
+          // Blink: the long hold phases need no frames at all; only the two
+          // short fades per cycle animate. Warm gear (30fps) covers a fade's
+          // ~300ms ease smoothly.
+          let blinkFading = false;
+          let blinkBucket = 1;
+          if (eff.blinkingEnabled && this.lastActive) {
+            const a = this.blinkAlpha(nowT);
+            blinkFading = a > 0.02 && a < 0.98;
+            blinkBucket = a >= 0.5 ? 1 : 0;
+          }
+          this._canvasGear =
+            animating || recentInput ? "hot" : blinkFading ? "warm" : "idle";
+
+          // In idle gear, skip the clear+redraw entirely when the rendered
+          // picture would be identical — the canvas simply keeps showing the
+          // last frame. This is what takes true idle to ~0% GPU. Any input
+          // (scroll, click, keys, theme toggle mid-session is caught by the
+          // theme flag below) changes the signature or the gear.
+          let doDraw = true;
+          if (this._canvasGear === "idle") {
+            const la = this.lastActive;
+            const isDark = this.canvas
+              ? this.canvas.ownerDocument.body.classList.contains("theme-dark")
+              : true;
+            const sec = this.secondaryCarets && this.secondaryCarets.length
+              ? this.secondaryCarets.map((c) => (c.x | 0) + ":" + (c.y | 0)).join(",")
+              : "";
+            const sig = [
+              _vimMode, blinkBucket, isDark,
+              la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," +
+                   Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
+              eff.cursorStyle, eff.colorDark, eff.colorLight, eff.caretWidthPx,
+              eff.cursorOpacity, eff.glow, eff.showChar, eff.boxHollow, sec,
+            ].join("|");
+            if (sig === this._drawSig) doDraw = false;
+            else this._drawSig = sig;
+          } else {
+            this._drawSig = null;
+          }
+          if (doDraw) this.draw();
         } finally {
           this.settings = _realSettings;
         }
@@ -1936,8 +2123,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
           console.error("[cursor-smith] canvas tick error (loop kept alive):", e);
         }
       }
-      this.canvasRaf = requestAnimationFrame(tick);
+      schedule();
     };
+    this._canvasTick = tick;
+    this._canvasGear = "hot";
     this.canvasRaf = requestAnimationFrame(tick);
   }
 
@@ -3283,8 +3472,23 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.x = this.tx = window.innerWidth / 2;
     this.y = this.ty = window.innerHeight / 2;
 
+    const schedule = () => {
+      if (!this.torchEngineActive) return;
+      if (this._torchGear === "hot") {
+        this.torchRaf = requestAnimationFrame(tick);
+        return;
+      }
+      // Parked or hidden: a 150ms heartbeat is plenty to notice the effect
+      // being re-enabled, a mode switch, or the pane moving.
+      this._torchIdleT = window.setTimeout(() => {
+        this._torchIdleT = 0;
+        if (this.torchEngineActive) this.torchRaf = requestAnimationFrame(tick);
+      }, 150);
+    };
+
     const tick = () => {
       if (!this.torchEngineActive) return;
+      this._torchGear = "idle";
       try {
         // Swap in the effective (per-mode when active) settings for the whole
         // frame so the spotlight's on/off state, color, size and follow speed
@@ -3294,7 +3498,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const _real = this.settings;
         this.settings = this.effectiveSettings(_mode);
         try {
-          if (this.isPresentationModeActive()) {
+          if (this.presentationActive()) {
             // Same presentation-mode guard as the canvas engine.
             if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
           } else if (!this.settings.torchEffect) {
@@ -3326,6 +3530,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
               this.x += (this.tx - this.x) * lerp;
               this.y += (this.ty - this.y) * lerp;
 
+              // Still chasing the target => keep animating at full rate.
+              // Settled => snap exactly onto the target (so the lerp can't
+              // asymptote forever) and let the loop park; mouse movement and
+              // caret activity wake it via _markActivity/_wakeTorch.
+              const settled =
+                Math.abs(this.tx - this.x) < 0.25 && Math.abs(this.ty - this.y) < 0.25;
+              if (!settled) this._torchGear = "hot";
+              else { this.x = this.tx; this.y = this.ty; }
+
               const r = this.getPaneRect(view);
               const usePane = r && this.settings.overlaySpareSidebars;
               // Even when not sparing the sidebars, the overlay must never
@@ -3345,8 +3558,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 this.overlay.style.height = height + "px";
               }
 
-              this.overlay.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
-              this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
+              // Dedupe the spotlight position write: setting a CSS custom
+              // property forces a style recalc even when the value hasn't
+              // changed, and this used to run every frame forever with a
+              // parked spotlight.
+              const posKey = (this.x - left).toFixed(1) + "," + (this.y - top).toFixed(1);
+              if (posKey !== this._lastTorchPos) {
+                this._lastTorchPos = posKey;
+                this.overlay.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
+                this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
+              }
 
               const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
               this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
@@ -3361,8 +3582,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
           console.error("[cursor-smith] torch tick error (loop kept alive):", e);
         }
       }
-      this.torchRaf = requestAnimationFrame(tick);
+      schedule();
     };
+    this._torchTick = tick;
+    this._torchGear = "hot";
     this.torchRaf = requestAnimationFrame(tick);
   }
 

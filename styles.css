@@ -118,16 +118,25 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
 }
 
 /* --- Torch Spotlight Effect ---
-   All of the torch overlay's CSS (positioning, gradient, blend mode, and
-   the flicker keyframes) now lives entirely in the dynamically-injected
-   stylesheet in main.js (injectStyles), since the overlay's colors,
-   radius, and flicker on/off state are all driven live from plugin
-   settings via CSS custom properties. Do NOT re-add a .torch-cursor-overlay
-   rule here: a version of this rule used to live in this file and, because
-   its selector (body:not(.torch-no-flicker) .torch-cursor-overlay) was
-   more specific than the one in main.js, it silently won the cascade and
-   flickered at a fixed 0.1s rate regardless of the user's "flicker"
-   setting. Keep all torch-cursor-overlay styling in main.js only. */
+   All of the torch overlay's CSS (positioning, gradient, blend mode) lives
+   entirely in the dynamically-injected stylesheet in main.js (injectStyles),
+   since the overlay's colors and radius are driven live from plugin settings
+   via CSS custom properties. Do NOT re-add a .torch-cursor-overlay rule here:
+   a version of this rule used to live in this file and, because its selector
+   was more specific than the one in main.js, it silently won the cascade and
+   overrode the settings-driven values. Keep all torch-cursor-overlay styling
+   in main.js only.
+
+   The candle-flicker keyframe animation that used to accompany this has been
+   removed outright. A CSS animation runs on the compositor, completely outside
+   main.js's requestAnimationFrame frame governor, so it held the display at
+   full refresh rate for as long as the torch was on no matter which gear the
+   render loops selected - and because the overlay uses mix-blend-mode:
+   multiply across the editor pane, each flicker frame forced a re-composite of
+   the blended layer against its backdrop instead of being a cheap opacity
+   change. Do not re-add an animation property on this element in either file.
+   If the effect is wanted again, drive --torch-intensity from the torch tick
+   so it stays under the governor. */
 
 
 /* Note: we used to force .titlebar/.status-bar to a very high z-index here

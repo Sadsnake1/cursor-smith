@@ -1,5 +1,17 @@
 const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 
+// Clear only the region the previous frame actually painted, instead of the
+// whole viewport-sized surface. See the damage-tracking notes above draw().
+// Flip to false to restore full-surface clears if you ever see ghost pixels.
+const DIRTY_RECT_CLEAR = true;
+
+// Frame interval for the energy shimmer when it is the only thing animating.
+// The gradient's pulse has roughly a 1.7s period at speed 1, so 33ms gives
+// ~50 samples per cycle (visually identical to 60fps). Raise this to trade
+// smoothness for GPU: 66 is ~25 samples/cycle, 100 is ~17 and will start to
+// show visible stepping in the travelling wave.
+const ENERGY_FRAME_MS = 33;
+
 const DEFAULT_SETTINGS = {
   enabled: true,
   cursorStyle: "Box", // "Line" | "Box" | "Underline"
@@ -653,7 +665,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.pending = null; 
     this.smearQuad = null;
     this.smearCenterPrev = null;
-    this.smearQuadLastT = 0;
+    this._smearMoving = false;
+    this._smearDtT = 0;
+    this.smearQuadLastMoveT = 0;
 
     this.animActive = null;
     this.lastMoveTime = 0;
@@ -835,20 +849,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
         opacity: 0 !important;
         display: none !important;
       }
-      /* Opacity-only flicker: no transform/scale here. Scaling a hard-clipped
-         fixed-size overlay shifts its edges by a pixel or two every frame,
-         which is invisible against a dark background but reads as a visible
-         flashing seam against a light one. This is the single source of
-         truth for the flicker animation - do not duplicate this rule in
-         styles.css, since a more specific selector there will silently win
-         the cascade and ignore the "flicker" setting entirely. */
-      @keyframes torch-candle-flicker {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.93; }
-      }
-      .torch-cursor-overlay:not(.torch-no-flicker) {
-        animation: torch-candle-flicker 0.9s infinite ease-in-out;
-      }
+      /* The candle-flicker keyframe animation was removed deliberately. A CSS
+         animation is driven by the compositor, entirely outside the rAF frame
+         governor below - so it pinned the display to full refresh rate forever
+         whenever the torch was on, no matter what gear the render loops chose.
+         It was also the worst possible element to animate: the overlay carries
+         mix-blend-mode: multiply over the whole editor pane, so every flicker
+         frame forced the blended layer to be recomposited against its backdrop
+         rather than being a cheap compositor-only opacity change. Do NOT
+         re-add an animation property on .torch-cursor-overlay, here or in
+         styles.css. If the effect is ever wanted again, drive it from the
+         torch tick by writing --torch-intensity, so that it is subject to the
+         frame governor and parks along with everything else. */
     `;
     doc.head.appendChild(styleEl);
   }
@@ -1756,7 +1768,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     o.style.setProperty("--torch-darkness", String(s.overlayDarkness));
     o.style.setProperty("--torch-intensity", String(s.overlayIntensity));
     o.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
-    o.classList.toggle("torch-no-flicker", !s.overlayFlicker);
   }
 
   ensureCanvasForView(view) {
@@ -1942,7 +1953,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.pending = null;
     this.smearQuad = null;
     this.smearCenterPrev = null;
-    this.smearQuadLastT = 0;
+    this._smearMoving = false;
+    this._smearDtT = 0;
+    this.smearQuadLastMoveT = 0;
     this.particles = [];
     this.flamePixels = [];
     this.secondaryCarets = [];
@@ -1966,7 +1979,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
-        doc.body.classList.remove("torch-cursor-active", "torch-no-flicker");
+        doc.body.classList.remove("torch-cursor-active");
         doc.querySelector(".torch-cursor-overlay")?.remove();
       }
     }
@@ -1986,10 +1999,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.pending = null;
     this.smearQuad = null;
     this.smearCenterPrev = null;
-    this.smearQuadLastT = 0;
+    this._smearMoving = false;
+    this._smearDtT = 0;
+    this.smearQuadLastMoveT = 0;
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
+    // Begin from a known-clean surface: the canvas survives enable/disable
+    // cycles, so assume nothing about what is currently painted on it.
+    this._dirty = null;
+    this._dirtyPrev = null;
+    this._dirtyFull = true;
 
     // Schedule the next frame according to the gear the frame just decided
     // on (this._canvasGear): hot = next vsync, warm/idle = doze on a timeout
@@ -2004,7 +2024,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._canvasIdleT = window.setTimeout(() => {
         this._canvasIdleT = 0;
         if (this.canvasEngineActive) this.canvasRaf = requestAnimationFrame(tick);
-      }, gear === "warm" ? 33 : 100);
+      }, gear === "warm" ? 33 : gear === "energy" ? ENERGY_FRAME_MS : 100);
     };
 
     const tick = () => {
@@ -2037,6 +2057,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
             const win = this.canvas.ownerDocument.defaultView || window;
             this.ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
             this._presCleared = true;
+            this._dirtyPrev = null;
             this._drawSig = null;
           }
           this._canvasGear = "idle";
@@ -2074,6 +2095,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
           const key = top + "," + left + "," + width + "," + height;
           if (key !== this._lastWrapperRect) {
             this._lastWrapperRect = key;
+            // The wrapper clips the canvas (overflow:hidden). Pixels painted
+            // earlier and then clipped out of view are still sitting in the
+            // buffer, so a wrapper that moves or grows can reveal stale
+            // content that damage tracking would never think to clear.
+            this._dirtyFull = true;
             this.canvasWrapper.style.top = top + "px";
             this.canvasWrapper.style.left = left + "px";
             this.canvasWrapper.style.width = width + "px";
@@ -2108,6 +2134,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // that only tracks the primary caret.
           this.secondaryCarets = this.secondaryCaretCoords(view);
           this.updateSmearQuad();
+          // Must run before the gear decision below, which reads trail.length.
+          this.pruneTrail();
 
           // Speed Demon: cool the cursor down every frame regardless of
           // whether the feature is enabled - if the user toggled it off
@@ -2127,12 +2155,30 @@ module.exports = class CursorSmithPlugin extends Plugin {
           const eff = this.settings; // the effective (mode-merged) object
           // Anything genuinely in motion demands continuous frames.
           const animating =
-            !!this.animActive ||
+            !!this._smoothMoving ||
+            !!this.pending ||
             (this.trail && this.trail.length > 0) ||
             (this.particles && this.particles.length > 0) ||
+            // flamePixels are aged inside draw(), so a skipped frame would
+            // freeze a burst mid-flight rather than letting it expire.
+            (this.flamePixels && this.flamePixels.length > 0) ||
             this.heat > 0 ||
-            (this.smearQuad && nowT - this.smearQuadLastT < 1200) ||
-            (!!eff.energyEffect && !!this.lastActive);
+            // Precise: the spring reports whether any corner is still off its
+            // target or carrying velocity. This used to be a 1200ms window
+            // after the last motion, which was a workaround for a timestamp
+            // that was being restamped every frame and so never expired. Now
+            // that the spring snaps exactly onto its targets when it settles,
+            // it cannot flap back and forth, so the grace period is dead
+            // weight - it just held the hot gear for an extra 1.2s after every
+            // smear finished.
+            !!this._smearMoving;
+          // The energy gradient is driven by wall clock, so it does have to
+          // keep repainting - but it is a slow shimmer (roughly a 1.7s period
+          // at speed 1), not motion. Repainting it at display rate is pure
+          // waste; ~30fps is 50 samples per cycle and looks identical. It
+          // therefore gets the warm gear rather than counting as `animating`,
+          // which would pin the loop at 60fps for as long as it's switched on.
+          const energyShimmer = !!eff.energyEffect && !!this.lastActive;
           const recentInput = nowT - (this._lastActivityT || 0) < 1200;
           // Blink: the long hold phases need no frames at all; only the two
           // short fades per cycle animate. Warm gear (30fps) covers a fade's
@@ -2145,15 +2191,25 @@ module.exports = class CursorSmithPlugin extends Plugin {
             blinkBucket = a >= 0.5 ? 1 : 0;
           }
           this._canvasGear =
-            animating || recentInput ? "hot" : blinkFading ? "warm" : "idle";
+            animating || recentInput ? "hot"
+              : blinkFading ? "warm"
+              : energyShimmer ? "energy"
+              : "idle";
 
-          // In idle gear, skip the clear+redraw entirely when the rendered
-          // picture would be identical — the canvas simply keeps showing the
-          // last frame. This is what takes true idle to ~0% GPU. Any input
-          // (scroll, click, keys, theme toggle mid-session is caught by the
-          // theme flag below) changes the signature or the gear.
+          // Skip the clear+redraw entirely when the rendered picture would be
+          // identical — the canvas simply keeps showing the last frame. This is
+          // what takes true idle to ~0% GPU.
+          //
+          // Gated on the static test rather than on the idle gear, because
+          // recentInput holds the HOT gear for 1200ms after every keystroke:
+          // without this, a settled cursor was still fully repainted ~72 times
+          // per keypress against an unchanged picture. The signature
+          // deliberately omits trail/particle/sub-pixel state, so it is only
+          // trustworthy while nothing is animating; blinkFading is excluded too
+          // since the two-state blinkBucket can't represent a mid-fade alpha.
+          const staticFrame = !animating && !blinkFading && !energyShimmer;
           let doDraw = true;
-          if (this._canvasGear === "idle") {
+          if (staticFrame) {
             const la = this.lastActive;
             const isDark = this.canvas
               ? this.canvas.ownerDocument.body.classList.contains("theme-dark")
@@ -2173,6 +2229,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
           } else {
             this._drawSig = null;
           }
+          // A pending full clear must not be skipped. _dirtyFull is set when
+          // the clip window moves, which can expose pixels painted earlier and
+          // clipped out of view - and it is only consumed inside draw(), so
+          // skipping the draw would strand the invalidation and leave the
+          // stale content on screen indefinitely.
+          if (this._dirtyFull) doDraw = true;
           if (doDraw) this.draw();
         } finally {
           this.settings = _realSettings;
@@ -2201,6 +2263,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.canvas.width = Math.max(1, Math.round(w * dpr));
     this.canvas.height = Math.max(1, Math.round(h * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Reassigning width/height blanks the backing store, so nothing from the
+    // previous frame survives and there is nothing left to clear.
+    this._dirty = null;
+    this._dirtyPrev = null;
+    this._dirtyFull = false;
   }
 
   caretCoords() {
@@ -2861,17 +2928,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
   updateSmoothCursor() {
     if (!this.lastActive) {
       this.animActive = null;
+      this._smoothMoving = false;
       this._smoothLastT = 0;
       return;
     }
 
     if (!this.settings.smoothEnabled) {
+      // Pinned straight to the target every frame: never "in motion" as far
+      // as the frame governor is concerned.
       this.animActive = { ...this.lastActive };
+      this._smoothMoving = false;
       return;
     }
 
     if (!this.animActive) {
       this.animActive = { ...this.lastActive };
+      this._smoothMoving = false;
     }
 
     const now = performance.now();
@@ -2937,15 +3009,23 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Snap when essentially arrived - avoids an endless sub-pixel tail that
     // keeps the canvas repainting and makes the blink-hold logic think the
     // cursor is still moving.
-    if (
+    //
+    // The result is published as _smoothMoving, which is what the frame
+    // governor reads. It must NOT test `!!this.animActive` instead: animActive
+    // is the interpolated cursor snapshot, not an in-flight flag, and it is
+    // non-null for as long as a caret exists at all. Testing its truthiness
+    // pinned `animating` (and therefore the hot gear) on permanently, which
+    // made the warm/idle gears and the whole draw-skip path below unreachable.
+    const arrived =
       Math.abs(this.lastActive.x - this.animActive.x) < 0.25 &&
-      Math.abs(this.lastActive.top - this.animActive.top) < 0.25
-    ) {
+      Math.abs(this.lastActive.top - this.animActive.top) < 0.25;
+    if (arrived) {
       this.animActive.x = this.lastActive.x;
       this.animActive.top = this.lastActive.top;
       this.animActive.w = this.lastActive.w;
       this.animActive.h = this.lastActive.h;
     }
+    this._smoothMoving = !arrived;
     
     this.animActive.textColor = this.lastActive.textColor;
     this.animActive.char = this.lastActive.char;
@@ -2987,9 +3067,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   updateSmearQuad() {
     const now = performance.now();
-    if (!this.smearQuadLastT) this.smearQuadLastT = now;
-    let dt = (now - this.smearQuadLastT) / 1000;
-    this.smearQuadLastT = now;
+    // Two separate clocks, deliberately. _smearDtT is the frame delta for the
+    // spring integrator and must advance every single call. smearQuadLastMoveT
+    // is the last time the quad was genuinely in motion, and is what the frame
+    // governor ages out against. These used to be one variable, which meant
+    // the governor's `now - smearQuadLastT < 1200` test was comparing now
+    // against a timestamp set microseconds earlier in the same frame - always
+    // true, so an enabled smear latched the hot gear on forever.
+    //
+    // Do not "fix" that by making the delta clock conditional: a stale delta
+    // clamps to 0.05, and the spring is explicit Euler that only stays stable
+    // while dt < 2/freq (~0.05 at the maximum stiffness of 40). The first
+    // frame after a wake would integrate right at the stability boundary and
+    // visibly jolt.
+    if (!this._smearDtT) this._smearDtT = now;
+    let dt = (now - this._smearDtT) / 1000;
+    this._smearDtT = now;
     dt = Math.min(dt, 0.05);
 
     const settings = this.settings;
@@ -2998,6 +3091,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!rect) {
       this.smearQuad = null;
       this.smearCenterPrev = null;
+      this._smearMoving = false;
       return;
     }
 
@@ -3014,6 +3108,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.smearQuad[key] = { x: targets[key].x, y: targets[key].y, vx: 0, vy: 0 };
       }
       this.smearCenterPrev = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+      this._smearMoving = false;
       return;
     }
 
@@ -3034,6 +3129,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const freqTrail = 2 + Math.max(0, Math.min(1, settings.smearTrailingStiffness)) * 38;
     const dampingRatio = 0.15 + Math.max(0, Math.min(1, settings.smearDamping)) * 1.15;
 
+    // Integrate on a fixed sub-step instead of the raw frame delta. This is
+    // semi-implicit Euler, stable only while dt < 2/freq; freq reaches 40, so
+    // the limit is dt = 0.05 - which is exactly the clamp above, and exactly
+    // what the 100ms idle gear delivers. That made the spring's behaviour
+    // depend on the gear while the gear depended on whether the spring was
+    // moving: a closed feedback loop that kicked a settled quad back into
+    // motion on every idle frame, flipping the gear thousands of times a
+    // minute and cycling the GPU up and down on a completely idle editor.
+    // A fixed sub-step makes the spring frame-rate independent, so it behaves
+    // identically in every gear and at every display refresh rate.
+    const MAX_STEP = 1 / 240;
+    const steps = Math.max(1, Math.min(16, Math.ceil(dt / MAX_STEP)));
+    const h = dt / steps;
+
+    let moving = false;
     for (const key in targets) {
       const c = this.smearQuad[key];
       const t = targets[key];
@@ -3046,16 +3156,44 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       const k = freq * freq;
       const damp = 2 * dampingRatio * freq;
-      const ax = k * (t.x - c.x) - damp * c.vx;
-      const ay = k * (t.y - c.y) - damp * c.vy;
-      c.vx += ax * dt;
-      c.vy += ay * dt;
-      c.x += c.vx * dt;
-      c.y += c.vy * dt;
+      for (let s = 0; s < steps; s++) {
+        const ax = k * (t.x - c.x) - damp * c.vx;
+        const ay = k * (t.y - c.y) - damp * c.vy;
+        c.vx += ax * h;
+        c.vy += ay * h;
+        c.x += c.vx * h;
+        c.y += c.vy * h;
+      }
 
       if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.vx) || !isFinite(c.vy)) {
         c.x = t.x;
         c.y = t.y;
+        c.vx = 0;
+        c.vy = 0;
+      }
+
+      // A corner still off its target, or still carrying velocity, means the
+      // quad is visibly deforming and the loop must keep drawing.
+      if (
+        Math.abs(c.x - t.x) > 0.5 || Math.abs(c.y - t.y) > 0.5 ||
+        Math.abs(c.vx) > 0.1 || Math.abs(c.vy) > 0.1
+      ) {
+        moving = true;
+      }
+    }
+
+    this._smearMoving = moving;
+    if (moving) {
+      this.smearQuadLastMoveT = now;
+    } else {      // Snap exactly onto the targets once settled, and kill the residual
+      // velocity. Without this the quad keeps a sub-threshold offset that the
+      // next long idle frame re-amplifies into visible motion - the other half
+      // of the oscillation described above. Mirrors what updateSmoothCursor
+      // does for the caret itself.
+      for (const key in targets) {
+        const c = this.smearQuad[key];
+        c.x = targets[key].x;
+        c.y = targets[key].y;
         c.vx = 0;
         c.vy = 0;
       }
@@ -3178,14 +3316,75 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5);
   }
 
+  // ---- Damage tracking ---------------------------------------------------
+  // The canvas spans the whole viewport at devicePixelRatio, so on a Retina
+  // display it is several million pixels - while the cursor and its effects
+  // touch a few thousand. Clearing the entire surface each frame was the
+  // dominant GPU cost as soon as anything forced continuous repaints (typing,
+  // or the energy shimmer): a full-surface clear plus a full-surface composite
+  // 30-60 times a second, to change a caret-sized region.
+  //
+  // So each primitive reports the box it painted and the next frame clears
+  // exactly the union of what the last one touched. Nothing is predicted in
+  // advance, so this cannot drift out of sync with the drawing code - but a
+  // primitive that paints WITHOUT calling _markDirty will leave ghost pixels
+  // behind. If you add an effect, mark its bounds, generously: over-reporting
+  // only costs fill rate, under-reporting corrupts the frame.
+  _markDirty(x, y, w, h) {
+    const d = this._dirty;
+    if (!d) {
+      this._dirty = { x0: x, y0: y, x1: x + w, y1: y + h };
+      return;
+    }
+    if (x < d.x0) d.x0 = x;
+    if (y < d.y0) d.y0 = y;
+    if (x + w > d.x1) d.x1 = x + w;
+    if (y + h > d.y1) d.y1 = y + h;
+  }
+
   draw() {
     const ctx = this.ctx;
     if (!ctx) return;
     const win = this.canvas.ownerDocument.defaultView || window;
-    ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
+    const vw = win.innerWidth;
+    const vh = win.innerHeight;
+
+    if (!DIRTY_RECT_CLEAR || this._dirtyFull) {
+      ctx.clearRect(0, 0, vw, vh);
+      this._dirtyFull = false;
+    } else if (this._dirtyPrev) {
+      const p = this._dirtyPrev;
+      ctx.clearRect(p.x, p.y, p.w, p.h);
+    }
+    // A null _dirtyPrev means last frame painted nothing, so the surface is
+    // already clean and needs no clear at all.
+    this._dirty = null;
 
     this.drawLettersParticles();
     this.drawFlamePixels();
+
+    // Cursor bounds are marked once here rather than threaded through every
+    // branch of drawRetroBox/drawGenericCaret. The box spans the interpolated
+    // caret, the entire smear quad (which overshoots well past the caret on a
+    // fast move) and any held character, padded for glow (shadowBlur maxes at
+    // 10), outline width and antialiasing.
+    const a = this.animActive;
+    if (a) {
+      let x0 = a.x, y0 = a.top;
+      let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
+      let y1 = a.top + (a.h || 0);
+      const q = this.smearQuad;
+      if (q) {
+        for (const k in q) {
+          if (q[k].x < x0) x0 = q[k].x;
+          if (q[k].y < y0) y0 = q[k].y;
+          if (q[k].x > x1) x1 = q[k].x;
+          if (q[k].y > y1) y1 = q[k].y;
+        }
+      }
+      const pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
+      this._markDirty(x0 - pad, y0 - pad, (x1 - x0) + pad * 2, (y1 - y0) + pad * 2);
+    }
 
     switch (this.styleFor("cursorStyle")) {
       case "Line":
@@ -3202,21 +3401,64 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Secondary carets sit on top of the main cursor's trail/particles but
     // don't participate in smear/glow - just plain dashed vertical lines.
     this.drawSecondaryCarets();
+
+    // Freeze this frame's union for the next frame to clear, clamped to the
+    // surface so an off-screen particle can't inflate the cleared region.
+    const d = this._dirty;
+    if (!d) {
+      this._dirtyPrev = null;
+      return;
+    }
+    const cx0 = Math.max(0, Math.floor(d.x0) - 2);
+    const cy0 = Math.max(0, Math.floor(d.y0) - 2);
+    const cx1 = Math.min(vw, Math.ceil(d.x1) + 2);
+    const cy1 = Math.min(vh, Math.ceil(d.y1) + 2);
+    this._dirtyPrev =
+      cx1 > cx0 && cy1 > cy0 ? { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 } : null;
   }
 
   renderWidth(active) {
     return active.w;
   }
 
+  // Age out expired trail points.
+  //
+  // This deliberately lives in the update phase, NOT inside draw(), and is
+  // deliberately NOT gated on crtEffect. It used to be the first two lines of
+  // forEachTrailPoint(), which is wrong twice over:
+  //
+  //   1. forEachTrailPoint() early-returns when crtEffect is off, but
+  //      pushTrail() runs from commitMove() on every caret move regardless of
+  //      that setting. With the trail effect disabled - the default - the
+  //      array filled to trailLength and was never pruned by age at all,
+  //      only evicted by newer entries. trail.length stayed pinned at 10
+  //      forever after the first ten keystrokes.
+  //   2. Even with crtEffect on, pruning inside draw() breaks the moment the
+  //      frame governor legitimately skips a draw.
+  //
+  // Either way the result was the same: `trail.length > 0` held `animating`
+  // true permanently, which latched the hot gear and defeated every other
+  // power fix in this file. Measured at a flat 60 draws/sec on a completely
+  // idle editor.
+  pruneTrail() {
+    if (!this.trail.length) return;
+    const now = performance.now();
+    const fade = Math.max(50, this.settings.trailFadeMs);
+    this.trail = this.trail.filter((p) => now - p.t < fade);
+  }
+
   forEachTrailPoint(cb) {
     if (!this.settings.crtEffect) return;
     const now = performance.now();
     const fade = Math.max(50, this.settings.trailFadeMs);
-    this.trail = this.trail.filter((p) => now - p.t < fade);
     for (const p of this.trail) {
       const age = (now - p.t) / fade;
       const alpha = Math.max(0, 1 - age) * 0.55;
-      if (alpha > 0.02) cb(p, alpha);
+      if (alpha > 0.02) {
+        // Padded for stroke width and the shadowBlur glow the CRT effect adds.
+        this._markDirty(p.x - 14, p.y - 14, p.w + 28, p.h + 28);
+        cb(p, alpha);
+      }
     }
   }
 
@@ -3365,6 +3607,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // 0.5-pixel offset so a 2px stroke lands on whole pixels rather than
       // straddling a boundary and antialiasing to a blurry 3px stripe.
       const x = Math.round(c.x) + 0.5;
+      this._markDirty(x - 3, c.top - 2, 6, (c.bottom - c.top) + 4);
       ctx.beginPath();
       ctx.moveTo(x, c.top);
       ctx.lineTo(x, c.bottom);
@@ -3387,6 +3630,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const curX = p.x + p.vx * elapsed;
       const curY = p.y + p.vy * elapsed + 0.5 * 320 * elapsed * elapsed; 
       const curRot = p.rotation * elapsed * 5;
+
+      // Rotated glyph drawn about its centre: fontSize in every direction
+      // bounds it comfortably, plus slack for the rotation and descenders.
+      const ext = (p.fontSize || 16) * 1.4;
+      this._markDirty(curX - ext, curY - ext, ext * 2, ext * 2);
 
       ctx.save();
       ctx.globalAlpha = Math.max(0, p.alpha);
@@ -3435,6 +3683,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const tailLen = trailAmt * (0.5 + Math.min(1, speed / 45) * 0.5);
         const tailX = curX - dirX * tailLen;
         const tailY = curY - dirY * tailLen;
+        const lw = Math.max(1, p.size * 0.85);
+        this._markDirty(
+          Math.min(curX, tailX) - lw, Math.min(curY, tailY) - lw,
+          Math.abs(tailX - curX) + lw * 2, Math.abs(tailY - curY) + lw * 2
+        );
         const grad = ctx.createLinearGradient(curX, curY, tailX, tailY);
         grad.addColorStop(0, `rgba(${p.r}, ${p.g}, ${p.b}, 0.9)`);
         grad.addColorStop(1, `rgba(${p.r}, ${p.g}, ${p.b}, 0)`);
@@ -3449,6 +3702,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       ctx.fillStyle = p.color;
       ctx.fillRect(curX, curY, p.size, p.size);
+      this._markDirty(curX - 1, curY - 1, (p.size || 1) + 2, (p.size || 1) + 2);
       ctx.restore();
 
       return true;
@@ -3617,7 +3871,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
               const sig = [
                 this.settings.overlayRadius, this.settings.overlayDarkness,
                 this.settings.overlayIntensity, this.settings.overlayColor,
-                this.settings.overlayFlicker,
               ].join("|");
               if (sig !== this._overlaySig) {
                 this._overlaySig = sig;
@@ -4131,8 +4384,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")));
         new Setting(body).setClass("cursor-smith-indent-1").setName("Glow Strength")
           .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Flicker")
-          .addToggle((toggle) => toggle.setValue(get("overlayFlicker")).onChange(set("overlayFlicker")));
         new Setting(body).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
           .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
       }
@@ -4526,8 +4777,4 @@ class CursorSmithSettingTab extends PluginSettingTab {
   }
 }
 /* nosourcemap */
-/* nosourcemap */
 
-/* nosourcemap */
-/* nosourcemap */
-/* nosourcemap */

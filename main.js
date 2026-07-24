@@ -43,6 +43,10 @@ const DEFAULT_SETTINGS = {
   flameTrail: true,        
   backspaceDisintegrate: false,  // Backspace/Delete → invert flame trail direction + colors
   lineSerifs: false,             // Line cursor: add horizontal serifs (I-beam look)
+  // Underline cursor thickness in px. 0 = auto: scale with the line height,
+  // which is what this style did before the slider existed, so an existing
+  // setup (and a fresh install) keeps exactly the look it had.
+  underlineWidthPx: 0,
   boxHollow: false,              // Box cursor: outline only, no fill
   boxHollowWidth: 2,             // Outline stroke width when boxHollow is on
 
@@ -64,6 +68,10 @@ const DEFAULT_SETTINGS = {
   blinkOnOffBalance: 0.5,
   blinkDelayMs: 0,       // ms of full-on hold after any move/keystroke before blinking resumes
   hideNativeCaret: true, 
+  // Drop the cursor entirely while Obsidian isn't the active OS window, the
+  // way virtually every other writing app does. Structural (like
+  // hideNativeCaret), so deliberately NOT a per-Vim-mode look key.
+  hideOnWindowBlur: true,
   showChar: true, 
   moveDelayMs: 0,        
   smear: true,           
@@ -122,7 +130,7 @@ const LOOK_KEYS = [
   "torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius",
   "overlayDarkness", "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed",
   "caretWidthPx", "popLetters", "popRainbow", "flameTrail", "backspaceDisintegrate",
-  "lineSerifs", "boxHollow", "boxHollowWidth",
+  "lineSerifs", "boxHollow", "boxHollowWidth", "underlineWidthPx",
   "speedDemon", "speedDemonSparks", "speedDemonSensitivity",
   "speedDemonSparkQuantity", "speedDemonSparkTrail",
   "cursorOpacity", "energyEffect", "energySpeed",
@@ -930,8 +938,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
     doc.addEventListener("focusin", onActivity, true);
     doc.addEventListener("wheel", onActivity, { capture: true, passive: true });
     doc.addEventListener("scroll", onActivity, { capture: true, passive: true });
+    // Window-level focus changes: with hideOnWindowBlur on, the picture
+    // changes the instant the window goes to or comes back from the
+    // background, so wake the loop instead of waiting out the idle heartbeat
+    // (which would leave the cursor on screen for up to 100ms after you
+    // alt-tab away, and missing for up to 100ms after you come back).
+    // Registered on the window, not the document: that's where Chromium fires
+    // an OS-level focus change. These only wake - windowFocused() re-reads the
+    // real state each frame, so a missed event can't desync anything.
+    const onWindowFocusChange = () => this._markActivity();
     const win = doc.defaultView;
-    if (win) win.addEventListener("resize", onResize);
+    if (win) {
+      win.addEventListener("resize", onResize);
+      win.addEventListener("focus", onWindowFocusChange);
+      win.addEventListener("blur", onWindowFocusChange);
+    }
     
     this._cleanups.push(() => {
       doc.removeEventListener("mousemove", onMouseMove);
@@ -941,7 +962,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
       doc.removeEventListener("focusin", onActivity, true);
       doc.removeEventListener("wheel", onActivity, { capture: true });
       doc.removeEventListener("scroll", onActivity, { capture: true });
-      if (win) win.removeEventListener("resize", onResize);
+      if (win) {
+        win.removeEventListener("resize", onResize);
+        win.removeEventListener("focus", onWindowFocusChange);
+        win.removeEventListener("blur", onWindowFocusChange);
+      }
     });
   }
 
@@ -1542,6 +1567,39 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return this._presCacheV;
   }
 
+  // True when the OS-level window that owns our canvas is the focused one.
+  //
+  // Every other writing app drops the caret the moment its window goes to the
+  // background, and so does Obsidian's own editor: CodeMirror removes
+  // .cm-focused on window blur and stops painting its cursor. Ours is drawn on
+  // an independent canvas that knows nothing about any of that, so without
+  // this check it sits there blinking away over a background window.
+  //
+  // Document.hasFocus() is the probe rather than a cached flag set from a blur
+  // listener, for two reasons: it answers per-document, so in a multi-window
+  // vault the popout you're actually typing in keeps its cursor while the
+  // others drop theirs; and it can't get stuck out of sync if a focus event is
+  // ever missed (a window opened/closed mid-transition, OS-level focus
+  // stealing). The focus/blur listeners in registerWindowEvents don't set
+  // state - they only wake the render loop so the change is picked up on the
+  // very next frame instead of up to 100ms later at the idle heartbeat.
+  //
+  // It's cheap: hasFocus() reads a flag on the frame, forcing no layout, so
+  // polling it once per frame costs nothing measurable.
+  windowFocused() {
+    if (!this.settings.hideOnWindowBlur) return true;
+    try {
+      const doc =
+        (this.canvas && this.canvas.ownerDocument) ||
+        (typeof activeDocument !== "undefined" && activeDocument) ||
+        document;
+      return doc.hasFocus();
+    } catch {
+      // Never let a focus probe kill a frame - assume focused.
+      return true;
+    }
+  }
+
   // ---- Vim preset CRUD (independent of the regular cursor presets) ----
 
   getVimPresets() {
@@ -2005,6 +2063,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
+    this._suspendCleared = false;
     // Begin from a known-clean surface: the canvas survives enable/disable
     // cycles, so assume nothing about what is currently painted on it.
     this._dirty = null;
@@ -2046,17 +2105,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // disappears until plugin reload" failure mode. We log the first
       // error to the console for debugging and keep ticking.
       try {
-        // Don't draw anything during a Slides presentation. The note editor
-        // stays open underneath the presentation overlay and its CM view
-        // can still report hasFocus, so without this guard the cursor keeps
-        // blinking over the slides and keystrokes still reach the editor.
-        if (this.presentationActive()) {
-          // Clear whatever was on canvas from the previous frame and park —
-          // at idle rate: nothing animates while a presentation runs.
-          if (this.ctx && this.canvas && !this._presCleared) {
+        // Two states suspend the cursor outright:
+        //
+        //   1. A Slides presentation. The note editor stays open underneath
+        //      the presentation overlay and its CM view can still report
+        //      hasFocus, so without this guard the cursor keeps blinking over
+        //      the slides and keystrokes still reach the editor.
+        //   2. The window isn't the focused OS window (see windowFocused()).
+        //
+        // Both are handled by parking rather than tearing the engine down:
+        // clear the surface once, then drop to the idle heartbeat. Resuming is
+        // then a single frame away, and the caret/smear state is left exactly
+        // as it was so coming back doesn't replay a move or snap the spring.
+        if (this.presentationActive() || !this.windowFocused()) {
+          if (this.ctx && this.canvas && !this._suspendCleared) {
             const win = this.canvas.ownerDocument.defaultView || window;
             this.ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
-            this._presCleared = true;
+            this._suspendCleared = true;
+            // The surface is blank, so there's nothing left for the next frame
+            // to clear; dropping the signature guarantees the first frame back
+            // actually repaints instead of matching a stale one and skipping.
             this._dirtyPrev = null;
             this._drawSig = null;
           }
@@ -2064,7 +2132,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
           schedule();
           return;
         }
-        this._presCleared = false;
+        this._suspendCleared = false;
 
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureCanvasForView(view);
@@ -2073,10 +2141,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
         if (this.canvasWrapper && this.canvas) {
           // Only clip to the editor pane while the note editor is the thing
           // actually focused. The moment focus moves anywhere else - file
-          // tree rename box, Command Palette, Settings, other modals - there's
-          // no reason to keep the canvas boxed inside the pane, and doing so
-          // is exactly what made the cursor invisible outside the editor.
-          const r = (view && view.hasFocus ? this.getPaneRect(view) : null) ||
+          // tree rename box, Command Palette, Settings, other modals - clip
+          // to whatever scroll container that field lives in instead, and
+          // only fall back to the viewport when it has none. Handing back the
+          // whole viewport unconditionally is what let a caret in a Settings
+          // text box paint outside the settings frame: see getCaretClipRect.
+          const r = (view && view.hasFocus
+            ? this.getPaneRect(view)
+            : this.getCaretClipRect(this.canvas.ownerDocument)) ||
             // Never 100vw/100vh here: a full-viewport layer over the
             // titlebar kills Electron's window-drag hit-testing on
             // Linux/Windows (drag regions compose in DOM order; z-index
@@ -2222,7 +2294,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
               la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," +
                    Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
               eff.cursorStyle, eff.colorDark, eff.colorLight, eff.caretWidthPx,
-              eff.cursorOpacity, eff.glow, eff.showChar, eff.boxHollow, sec,
+              // crtEffect gates glow, and boxHollowWidth/lineSerifs change the
+              // painted shape - all three were missing here, so toggling them
+              // on a settled cursor matched the previous signature and the
+              // frame was skipped: the change appeared to do nothing until the
+              // next keystroke woke the loop.
+              eff.cursorOpacity, eff.crtEffect, eff.glow, eff.showChar,
+              eff.boxHollow, eff.boxHollowWidth, eff.lineSerifs,
+              eff.underlineWidthPx, sec,
             ].join("|");
             if (sig === this._drawSig) doDraw = false;
             else this._drawSig = sig;
@@ -2706,6 +2785,50 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // fields, other plugins' modals, etc. There's no CodeMirror here, so we
   // don't have real glyph metrics; approximate them from the focused
   // element's own computed style instead.
+  // Stable opaque id for a DOM node, so a caret's location can be compared
+  // across frames without holding a reference that would keep a detached node
+  // alive (WeakMap - entries vanish with the node).
+  _nodeKey(node) {
+    if (!node) return "0";
+    if (!this._nodeIds) {
+      this._nodeIds = new WeakMap();
+      this._nodeIdSeq = 0;
+    }
+    let id = this._nodeIds.get(node);
+    if (id === undefined) {
+      id = ++this._nodeIdSeq;
+      this._nodeIds.set(node, id);
+    }
+    return String(id);
+  }
+
+  // "Where is the caret", for a field that has no CodeMirror document. Two
+  // frames reporting the same value mean the caret did not logically move, so
+  // any change in its screen coordinates was a scroll or a layout shift.
+  //
+  // Deliberately built from the caret's position WITHIN its field, never from
+  // its coordinates - coordinates are the very thing being tested against.
+  genericCaretPos(active, doc) {
+    try {
+      const el = this._nodeKey(active);
+      if (active.tagName === "TEXTAREA" || active.tagName === "INPUT") {
+        // Form fields keep their caret in selectionStart, outside the DOM
+        // Selection API entirely.
+        return el + ":" + (active.selectionStart ?? 0) + ":" + (active.selectionEnd ?? 0);
+      }
+      const win = (doc && doc.defaultView) || window;
+      const sel = win.getSelection();
+      if (sel && sel.focusNode) {
+        return el + ":" + this._nodeKey(sel.focusNode) + ":" + sel.focusOffset;
+      }
+      return el + ":0";
+    } catch {
+      // null keeps the old behaviour (every shift treated as a move) rather
+      // than risking a wrong match that would swallow a real caret move.
+      return null;
+    }
+  }
+
   genericCaretCoords() {
     try {
       // Follow the canvas's document rather than hardcoding the main
@@ -2765,7 +2888,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
         fontSize,
         fontFamily,
         focused: true,
-        pos: null,
+        // Logical identity of this caret, standing in for the document
+        // position CodeMirror provides and a plain input doesn't.
+        //
+        // This used to be hardcoded null, which failed the `caret.pos !== null`
+        // test in updateActivePoint and so disqualified every interface caret
+        // from the scroll-shift path. Scrolling a Settings pane moves the
+        // field on screen without moving the caret within it, but with no
+        // identity to compare, each scrolled pixel looked like a genuine caret
+        // move and went through commitMove() - pushing a trail point at every
+        // step, which is why scrolling smeared a trail up and down the panel.
+        // With a real identity, a pure scroll is recognised as one and the
+        // cursor is translated instantly instead (no trail, no smear wiggle).
+        pos: this.genericCaretPos(active, doc),
       };
     } catch {
       return null;
@@ -2903,6 +3038,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
           if (this.smearCenterPrev) {
             this.smearCenterPrev.x += dx;
             this.smearCenterPrev.y += dy;
+          }
+        }
+
+        // Carry the trail along too. It's an echo of where the caret just
+        // was in the text, so it belongs to the content and should scroll
+        // with it; left in place it detaches from the cursor and hangs in
+        // the old spot until it fades. (Particles and flame pixels are
+        // deliberately NOT shifted - those are thrown into the air and read
+        // correctly as staying put.)
+        if (this.trail.length) {
+          for (const p of this.trail) {
+            p.x += dx;
+            p.y += dy;
           }
         }
       }
@@ -3059,7 +3207,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const active = this.animActive;
     if (!active) return null;
     if (this.styleFor("cursorStyle") === "Underline") {
-      const uThickness = Math.max(2, Math.round(active.h * 0.15));
+      // Must use the same thickness the painter does. This is the rect the
+      // smear spring chases, and fillCursorShape draws the smear quad INSTEAD
+      // of the rect it's handed whenever smear is on - so a thickness computed
+      // independently here doesn't just desync the spring, it silently becomes
+      // the thickness that actually gets painted, and the slider stops doing
+      // anything at all with Motion Smear enabled.
+      const uThickness = this.underlineThickness(active.h);
       return { x: active.x, y: active.top + active.h - uThickness, w: active.actualCharWidth, h: uThickness };
     }
     return { x: active.x, y: active.top, w: this.renderWidth(active), h: active.h };
@@ -3519,6 +3673,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return grad;
   }
 
+  // Thickness of the Underline cursor's bar, in px.
+  //
+  // 0 (the default) means "auto": 15% of the line height, which is exactly
+  // what this style did before the setting existed - so an existing setup, and
+  // any Vim mode that never overrode the key, keeps the look it already had.
+  // Anything else is a literal pixel thickness, clamped to the line height so
+  // a large value on a small font degrades to a filled block rather than
+  // painting outside the line.
+  underlineThickness(lineHeight) {
+    const h = Math.max(1, Math.round(lineHeight || 0));
+    const px = this.settings.underlineWidthPx || 0;
+    if (px > 0) return Math.max(1, Math.min(Math.round(px), h));
+    return Math.max(2, Math.round(h * 0.15));
+  }
+
   drawGenericCaret(isUnderline = false) {
     const ctx = this.ctx;
     const settings = this.settings;
@@ -3530,7 +3699,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.forEachTrailPoint((p, alpha) => {
       ctx.fillStyle = hexToRgba(trailColor, alpha * opacity);
       if (isUnderline) {
-        const uThickness = Math.max(2, Math.round(p.h * 0.15));
+        const uThickness = this.underlineThickness(p.h);
         ctx.fillRect(p.x, p.y + p.h - uThickness, p.w, uThickness);
       } else {
         ctx.fillRect(p.x, p.y, p.w, p.h);
@@ -3549,7 +3718,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     let rx, ry, rw, rh;
     if (isUnderline) {
-      const uThickness = Math.max(2, Math.round(active.h * 0.15));
+      const uThickness = this.underlineThickness(active.h);
       rx = active.x;
       ry = active.top + active.h - uThickness;
       rw = active.actualCharWidth;
@@ -3740,17 +3909,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       ctx.save();
       if (settings.crtEffect && settings.glow) {
+        // Canvas draws a shape's shadow BEHIND that shape, so the halo of a
+        // solid box lands exactly where you want it - visible around the
+        // outside, hidden under the fill. Nothing extra is needed: just arm
+        // the shadow and paint the box normally, the same as the Line and
+        // Underline styles do.
+        //
+        // This used to "seed" the shadow with a ghost pre-fill at alpha 0.01
+        // and then set shadowBlur back to 0 before the real paint, which meant
+        // the box got no glow at all: a canvas shadow inherits the alpha of
+        // the shape casting it, so a 0.01-alpha ghost casts a 0.01-alpha
+        // shadow (invisible), and zeroing the blur afterwards disarmed the
+        // only paint that could have produced a visible one. Hollow boxes
+        // looked fine purely because they skipped that branch. Don't
+        // reintroduce a pre-fill pass here.
         ctx.shadowColor = color;
         ctx.shadowBlur = 10 * blinkAlpha;
-        if (!hollow) {
-          // Ghost pre-fill just to seed the shadow; solid box does this
-          // to get a soft halo, but a stroked outline already draws a
-          // shadow around the line itself so this step is unnecessary
-          // (and would add a second inner halo).
-          ctx.fillStyle = hexToRgba(color, 0.01);
-          this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
-          ctx.shadowBlur = 0;
-        }
       }
 
       const paintStyle = settings.energyEffect
@@ -4039,6 +4213,98 @@ module.exports = class CursorSmithPlugin extends Plugin {
     };
   }
 
+  // Clip rect for a caret that isn't in the note editor: the Settings tab's
+  // scroll frame, a modal body, the file tree, and so on. Returns the
+  // intersection of every clipping ancestor of the focused field, or null when
+  // it has none (then the caller falls back to the viewport, as before).
+  //
+  // The editor path clips the canvas to the pane so the cursor physically
+  // cannot paint outside it; this path had no equivalent and handed back the
+  // whole viewport, so a caret in a Settings text box was free to paint
+  // anywhere. It only showed up while scrolling, because getBoundingClientRect
+  // keeps reporting a position for an input that has scrolled out of its own
+  // scroll container - the DOM clips the element, the geometry doesn't - so
+  // the cursor was still drawn at that position: outside the settings frame,
+  // over the main window, and over the titlebar.
+  getCaretClipRect(doc) {
+    const active = doc && doc.activeElement;
+    if (!active || active === doc.body) return null;
+
+    // Resolving the chain costs a getComputedStyle per ancestor, so it's
+    // cached against the focused element - the chain only changes when focus
+    // does, but the RECTS have to be re-read every frame because scrolling is
+    // exactly what moves them.
+    if (this._clipChainFor !== active) {
+      this._clipChainFor = active;
+      this._clipChain = this._resolveClipChain(active);
+    }
+    const chain = this._clipChain;
+    if (!chain || !chain.length) return null;
+
+    const win = doc.defaultView || window;
+    const { top: chromeTop } = this._chromeInsets(doc);
+    let top = chromeTop, left = 0;
+    let bottom = win.innerHeight, right = win.innerWidth;
+
+    for (const el of chain) {
+      // Focus moved on and the old chain is stale (settings closed, modal
+      // torn down). Drop the cache and let the viewport fallback apply until
+      // the next frame resolves a fresh chain.
+      if (!el.isConnected) {
+        this._clipChainFor = null;
+        return null;
+      }
+      const b = el.getBoundingClientRect();
+      if (b.top > top) top = b.top;
+      if (b.left > left) left = b.left;
+      if (b.bottom < bottom) bottom = b.bottom;
+      if (b.right < right) right = b.right;
+    }
+
+    if (bottom <= top || right <= left) return null;
+    return { top, bottom, left, right, width: right - left, height: bottom - top };
+  }
+
+  // Every ancestor of `el` that actually clips it, nearest first. Walking
+  // stops short of <body>/<html>: those are covered by the viewport clamp in
+  // getCaretClipRect, and their rects can legitimately exceed the viewport.
+  //
+  // "Actually clips" is not the same as "has overflow" - CSS positioning lets
+  // an element escape its ancestors' overflow, and getting that wrong here
+  // means clipping a cursor away to nothing, which is a worse bug than the one
+  // this whole path exists to fix. So: a fixed-positioned element is clipped
+  // by nothing above it, and an absolutely-positioned one is only clipped by
+  // ancestors that are themselves positioned (its containing block and up).
+  // Popovers, suggestion dropdowns and tooltips all rely on exactly this.
+  _resolveClipChain(el) {
+    const chain = [];
+    try {
+      const doc = el.ownerDocument;
+      const win = doc.defaultView || window;
+      let curPos = win.getComputedStyle(el).position;
+      if (curPos === "fixed") return chain;
+
+      let node = el.parentElement;
+      let guard = 0;
+      while (node && node !== doc.body && node !== doc.documentElement && guard++ < 24) {
+        const st = win.getComputedStyle(node);
+        const positioned = st.position !== "static";
+        const clips = st.overflowX !== "visible" || st.overflowY !== "visible";
+        // An absolute box ignores clipping by anything that isn't at least
+        // its containing block.
+        if (clips && (curPos !== "absolute" || positioned)) chain.push(node);
+        if (positioned) {
+          if (st.position === "fixed") break;
+          curPos = st.position;
+        }
+        node = node.parentElement;
+      }
+    } catch {
+      return [];
+    }
+    return chain;
+  }
+
   getPaneRect(view) {
     if (!view) return null;
     const rootEl = view.dom.closest(".cm-editor") || view.dom.closest(".workspace-leaf");
@@ -4188,6 +4454,26 @@ class CursorSmithSettingTab extends PluginSettingTab {
     return details;
   }
 
+  // Container for a run of sub-options belonging to whatever setting sits
+  // directly above it (a toggle, or the Cursor Style dropdown).
+  //
+  // This is a wrapper element rather than a class stamped on each individual
+  // Setting, which is what it used to be. Two reasons:
+  //
+  //   1. One element means one guide line for the whole group, with a proper
+  //      start and end, instead of a stack of per-row line segments that only
+  //      *looked* continuous as long as no row had a margin.
+  //   2. It nests. The old scheme hardcoded a class per depth
+  //      (cursor-smith-indent-1 / -2) with hardcoded margins, so a third level
+  //      needed a third class; here, passing one group as another's parent
+  //      indents it by construction.
+  //
+  // Matches the sub-option styling in Word-Smith (.ws-settings-sub), so the
+  // two plugins' settings panels read the same way.
+  subGroup(containerEl) {
+    return containerEl.createDiv({ cls: "cursor-smith-sub" });
+  }
+
   // Small all-caps label used to split a section into sub-groups (e.g. Torch
   // Spotlight's "Spotlight" vs "Environment" controls) without opening a
   // whole new collapsible section for them.
@@ -4227,16 +4513,58 @@ class CursorSmithSettingTab extends PluginSettingTab {
     this.renderSection(containerEl, "Appearance", (body) => {
       renderCursorStyleSetting(body);
 
-      if (get("cursorStyle") === "Line") {
-        new Setting(body).setClass("cursor-smith-indent-1")
+      // Everything that applies to exactly one cursor style lives here, in a
+      // sub-group hanging directly off the dropdown that selects it, so the
+      // section reads as "Cursor Style, then the options for the style you
+      // picked". Box's options (Show Letter Inside Cursor, Hollow) used to sit
+      // below the colour pickers instead, which put three unrelated settings
+      // between a style and its own sub-options.
+      const style = get("cursorStyle");
+
+      if (style === "Line") {
+        const g = this.subGroup(body);
+        new Setting(g)
           .setName("Cursor Thickness")
           .setDesc("How thick the Line cursor is, in pixels.")
           .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(get("caretWidthPx")).setDynamicTooltip().onChange(set("caretWidthPx")));
 
-        new Setting(body).setClass("cursor-smith-indent-1")
+        new Setting(g)
           .setName("Serifs")
           .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
           .addToggle((toggle) => toggle.setValue(get("lineSerifs")).onChange(set("lineSerifs")));
+      }
+
+      if (style === "Underline") {
+        const g = this.subGroup(body);
+        new Setting(g)
+          .setName("Underline Thickness")
+          .setDesc("How thick the underline bar is, in pixels. 0 = automatic, which scales the bar with the line height so it stays in proportion at any font size.")
+          .addSlider((slider) => slider.setLimits(0, 12, 1).setValue(get("underlineWidthPx") ?? 0).setDynamicTooltip().onChange(set("underlineWidthPx")));
+      }
+
+      if (style === "Box") {
+        const g = this.subGroup(body);
+        new Setting(g)
+          .setName("Show Letter Inside Cursor")
+          .setDesc(get("boxHollow")
+            ? "Shows the letter under the cursor inside the block, with the colors flipped. Does nothing while Hollow is on — the real character already shows through the outline."
+            : "Shows the letter under the cursor inside the block, with the colors flipped.")
+          .addToggle((toggle) => toggle.setValue(get("showChar")).onChange(set("showChar")));
+
+        new Setting(g)
+          .setName("Hollow")
+          .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
+          .addToggle((toggle) => toggle.setValue(get("boxHollow")).onChange(setAndRedraw("boxHollow")));
+
+        if (get("boxHollow")) {
+          // Nested one level deeper: Outline Width is conditional on Hollow,
+          // which is itself a sub-option of the style.
+          const g2 = this.subGroup(g);
+          new Setting(g2)
+            .setName("Outline Width")
+            .setDesc("Thickness of the hollow box's outline, in pixels.")
+            .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(get("boxHollowWidth")).setDynamicTooltip().onChange(set("boxHollowWidth")));
+        }
       }
 
       new Setting(body).setName("Cursor Color (Dark Theme)")
@@ -4245,25 +4573,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .addColorPicker((cp) => cp.setValue(get("colorLight")).onChange(set("colorLight")));
       new Setting(body).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")));
-
-      if (get("cursorStyle") === "Box") {
-        new Setting(body).setClass("cursor-smith-indent-1")
-          .setName("Show Letter Inside Cursor")
-          .setDesc("Shows the letter under the cursor inside the block, with the colors flipped.")
-          .addToggle((toggle) => toggle.setValue(get("showChar")).onChange(set("showChar")));
-
-        new Setting(body).setClass("cursor-smith-indent-1")
-          .setName("Hollow")
-          .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
-          .addToggle((toggle) => toggle.setValue(get("boxHollow")).onChange(setAndRedraw("boxHollow")));
-
-        if (get("boxHollow")) {
-          new Setting(body).setClass("cursor-smith-indent-2")
-            .setName("Outline Width")
-            .setDesc("Thickness of the hollow box's outline, in pixels.")
-            .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(get("boxHollowWidth")).setDynamicTooltip().onChange(set("boxHollowWidth")));
-        }
-      }
     });
 
     this.renderSection(containerEl, "Blinking", (body) => {
@@ -4273,13 +4582,14 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .addToggle((toggle) => toggle.setValue(get("blinkingEnabled")).onChange(setAndRedraw("blinkingEnabled")));
 
       if (get("blinkingEnabled")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Blink Speed").setDesc("How fast the cursor blinks.")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Blink Speed").setDesc("How fast the cursor blinks.")
           .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(get("blinkSpeed")).setDynamicTooltip().onChange(set("blinkSpeed")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
+        new Setting(g).setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
           .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(get("blinkOnOffBalance")).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
+        new Setting(g).setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
           .addToggle((toggle) => toggle.setValue(get("smoothStopBlinking")).onChange(set("smoothStopBlinking")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
+        new Setting(g).setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
           .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
       }
     });
@@ -4291,15 +4601,16 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .addToggle((toggle) => toggle.setValue(get("smoothEnabled")).onChange(setAndRedraw("smoothEnabled")));
 
       if (get("smoothEnabled")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Glide Amount")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Glide Amount")
           .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(get("smoothness")).setDynamicTooltip().onChange(set("smoothness")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Catch-Up Speed")
+        new Setting(g).setName("Catch-Up Speed")
           .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(get("catchUpSpeed")).setDynamicTooltip().onChange(set("catchUpSpeed")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Max Catch-Up Speed")
+        new Setting(g).setName("Max Catch-Up Speed")
           .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Speed Up When Typing Fast")
+        new Setting(g).setName("Speed Up When Typing Fast")
           .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(set("smoothAdaptive")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Movement Delay")
+        new Setting(g).setName("Movement Delay")
           .addSlider((s) => s.setLimits(0, 500, 10).setValue(get("moveDelayMs")).setDynamicTooltip().onChange(set("moveDelayMs")));
       }
     });
@@ -4308,7 +4619,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
       new Setting(body).setName("Popping Letters")
         .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
       if (get("popLetters")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Rainbow")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Rainbow")
           .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
           .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(set("popRainbow")));
       }
@@ -4316,75 +4628,86 @@ class CursorSmithSettingTab extends PluginSettingTab {
       new Setting(body).setName("Pixel Trail")
         .addToggle((toggle) => toggle.setValue(get("flameTrail")).onChange(setAndRedraw("flameTrail")));
       if (get("flameTrail")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Backspace Disintegration")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Backspace Disintegration")
           .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
       }
 
       new Setting(body).setName("Motion Smear")
         .addToggle((toggle) => toggle.setValue(get("smear")).onChange(setAndRedraw("smear")));
       if (get("smear")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Stiffness")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Stiffness")
           .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearStiffness")).setDynamicTooltip().onChange(set("smearStiffness")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Trailing Stiffness")
+        new Setting(g).setName("Trailing Stiffness")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearTrailingStiffness")).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Damping")
+        new Setting(g).setName("Damping")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearDamping")).setDynamicTooltip().onChange(set("smearDamping")));
       }
 
       new Setting(body).setName("Energy Beam")
         .addToggle((toggle) => toggle.setValue(get("energyEffect")).onChange(setAndRedraw("energyEffect")));
       if (get("energyEffect")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Beam Speed")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Beam Speed")
           .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("energySpeed")).setDynamicTooltip().onChange(set("energySpeed")));
       }
 
       new Setting(body).setName("CRT Effect")
         .addToggle((toggle) => toggle.setValue(get("crtEffect")).onChange(setAndRedraw("crtEffect")));
       if (get("crtEffect")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Trail Length")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Trail Length")
           .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("trailLength")).setDynamicTooltip().onChange(set("trailLength")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Trail Fade Time")
+        new Setting(g).setName("Trail Fade Time")
           .addSlider((s) => s.setLimits(50, 1500, 25).setValue(get("trailFadeMs")).setDynamicTooltip().onChange(set("trailFadeMs")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Glow")
+        new Setting(g).setName("Glow")
+          .setDesc("Soft halo around the cursor, in its own color.")
           .addToggle((toggle) => toggle.setValue(get("glow")).onChange(set("glow")));
       }
 
       new Setting(body).setName("Speed Demon")
         .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(setAndRedraw("speedDemon")));
       if (get("speedDemon")) {
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Fire Sparks")
+        const g = this.subGroup(body);
+        new Setting(g).setName("Fire Sparks")
           .addToggle((toggle) => toggle.setValue(get("speedDemonSparks")).onChange(setAndRedraw("speedDemonSparks")));
         if (get("speedDemonSparks")) {
-          new Setting(body).setClass("cursor-smith-indent-2").setName("Spark Quantity")
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Spark Quantity")
             .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
             .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("speedDemonSparkQuantity") ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
-          new Setting(body).setClass("cursor-smith-indent-2").setName("Spark Trail")
+          new Setting(g2).setName("Spark Trail")
             .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
             .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
         }
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Sensitivity")
+        new Setting(g).setName("Sensitivity")
           .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
       }
 
       renderTorchToggleSetting(body);
       if (get("torchEffect")) {
-        this.renderSubheading(body, "Spotlight");
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Follow")
+        // One group for the whole spotlight, with the two subheadings inside
+        // it: Spotlight and Environment are labels within the torch's options,
+        // not siblings of the torch toggle itself.
+        const g = this.subGroup(body);
+        this.renderSubheading(g, "Spotlight");
+        new Setting(g).setName("Follow")
           .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
             .setValue(get("overlayFollowMode")).onChange(set("overlayFollowMode")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Light Size")
+        new Setting(g).setName("Light Size")
           .addSlider((s) => s.setLimits(100, 800, 10).setValue(get("overlayRadius")).setDynamicTooltip().onChange(set("overlayRadius")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Light Color")
+        new Setting(g).setName("Light Color")
           .addColorPicker((cp) => cp.setValue(get("overlayColor")).onChange(set("overlayColor")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Follow Speed")
+        new Setting(g).setName("Follow Speed")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlaySpeed")).setDynamicTooltip().onChange(set("overlaySpeed")));
 
-        this.renderSubheading(body, "Environment");
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Darkness")
+        this.renderSubheading(g, "Environment");
+        new Setting(g).setName("Darkness")
           .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Glow Strength")
+        new Setting(g).setName("Glow Strength")
           .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
-        new Setting(body).setClass("cursor-smith-indent-1").setName("Keep Sidebars Lit")
+        new Setting(g).setName("Keep Sidebars Lit")
           .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
       }
     });
@@ -4469,6 +4792,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .setName("Hide Real Cursor")
         .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
         .addToggle((toggle) => toggle.setValue(plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
+
+      new Setting(body)
+        .setName("Hide Cursor When Unfocused")
+        .setDesc("Hides the cursor while Obsidian isn't the active window, the way most writing apps do. It comes straight back when you return, in the same place.")
+        .addToggle((toggle) =>
+          toggle.setValue(plugin.settings.hideOnWindowBlur ?? true).onChange(set("hideOnWindowBlur")));
     });
 
     // Everything from "what does the cursor look like" through "what effects
@@ -4595,7 +4924,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       );
 
     if (plugin.settings.vimStatusBar) {
-      new Setting(containerEl).setClass("cursor-smith-indent-1")
+      new Setting(this.subGroup(containerEl))
         .setName("Color status bar text to match the cursor")
         .setDesc("Tints the mode name with that mode's cursor color — Normal shows in the Normal cursor's blue, Insert in its green, and so on. Off uses your theme's normal status bar color.")
         .addToggle((toggle) =>
@@ -4777,4 +5106,3 @@ class CursorSmithSettingTab extends PluginSettingTab {
   }
 }
 /* nosourcemap */
-

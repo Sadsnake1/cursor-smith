@@ -47,26 +47,48 @@
   margin: 0.9em 0 0.2em;
 }
 
+/* ...but not when it's what opens a group - the group's own top margin
+   already provides the gap. */
+.cursor-smith-sub > .cursor-smith-subsection-title:first-child {
+  margin-top: 0.2em;
+}
+
 /* --- Settings panel: indent sub-options nested under a parent toggle
    (or style dropdown), so conditional groups - e.g. Torch Spotlight's
    Follow/Light Size/etc., or Box style's Hollow -> Outline Width - read
-   as a visual hierarchy instead of a flat list of settings. Two levels
-   are used: level 1 for direct children of a toggle/dropdown, level 2
-   for a setting that's conditional on another indented setting (e.g.
-   Outline Width only appears once Hollow, itself indented, is on). */
-.cursor-smith-indent-1,
-.cursor-smith-indent-2 {
+   as a visual hierarchy instead of a flat list of settings.
+
+   This is a container that WRAPS a group of settings (see subGroup() in
+   main.js), not a class stamped onto each individual setting row, which is
+   what it used to be (.cursor-smith-indent-1 / -2). One element per group
+   means one guide line with a real start and end, rather than a stack of
+   per-row segments that only read as continuous while no row had a margin;
+   and because the indent comes from the wrapper, groups nest by nesting -
+   no hardcoded class and margin per depth level.
+
+   Geometry deliberately matches Word-Smith's .ws-settings-sub so the two
+   plugins' settings panels line up visually. */
+.cursor-smith-sub {
   border-left: 2px solid var(--background-modifier-border);
+  margin-left: 12px;
+  padding-left: 12px;
+  margin-top: 4px;
+  margin-bottom: 8px;
 }
 
-.cursor-smith-indent-1 {
-  margin-left: 16px;
-  padding-left: 14px;
+/* Obsidian gives every .setting-item a top border to separate it from the
+   previous row. At the top of a group that separator is redundant - the
+   group's own left rule and margin already mark the break - and it reads as
+   a stray line hanging off the corner. */
+.cursor-smith-sub > .setting-item:first-child {
+  border-top: none;
+  padding-top: 0.4em;
 }
 
-.cursor-smith-indent-2 {
-  margin-left: 32px;
-  padding-left: 14px;
+/* A nested group sits directly under its parent setting rather than a
+   sibling row, so it doesn't need the extra breathing room above. */
+.cursor-smith-sub > .cursor-smith-sub {
+  margin-top: 0;
 }
 
 /* --- Canvas Engine Styles (Box, Line, Underline) --- */

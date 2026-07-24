@@ -91,6 +91,18 @@
   margin-top: 0;
 }
 
+/* --- Settings panel: the Gradient feature's rows of color pickers --------
+   The gradient has one row of 2-4 pickers per theme (dark and light). Each
+   row's pickers are all added to a SINGLE Setting (see renderLookSettings in
+   main.js) so they lay out side by side in that row's control area rather
+   than each getting its own labelled row. Obsidian's .setting-item-control is
+   already a flex row, so all this needs to add is breathing room between the
+   swatches - without it they butt against each other and read as one wide
+   multi-colored control instead of N separate pickers. */
+.cursor-smith-color-row .setting-item-control {
+  gap: 6px;
+}
+
 /* --- Canvas Engine Styles (Box, Line, Underline) --- */
 .retro-box-cursor-canvas {
   position: fixed;

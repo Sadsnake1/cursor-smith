@@ -12,6 +12,60 @@ const DIRTY_RECT_CLEAR = true;
 // show visible stepping in the travelling wave.
 const ENERGY_FRAME_MS = 33;
 
+// Thunderstrike (Pixel Trail sub-option) tuning.
+//
+// How long one strike lives, in ms. Deliberately short: lightning is an event,
+// not an animation, and anything that outstays the keystroke turns pressing
+// Enter into a light show.
+const THUNDER_LIFE_MS = 280;
+// Widest the bolt may lean off vertical, in radians (~54 degrees). The brief is
+// "from up top", so it can come in at an angle but never sideways.
+const THUNDER_MAX_ANGLE = 0.95;
+// Shortest a bolt may be, in pixels. Without a floor, a strike landing on the
+// first visible line - where there is barely any pane above the caret to come
+// from - would be a stub a few pixels long.
+const THUNDER_MIN_REACH = 150;
+// Midpoint-displacement passes. Each one doubles the segment count, so 5 gives
+// 32 segments: enough to read as forked lightning, few enough to stay cheap.
+const THUNDER_PASSES = 5;
+// Most strikes allowed on screen at once. Holding Enter down would otherwise
+// stack a bolt per repeat and bury the editor.
+const THUNDER_MAX_LIVE = 3;
+// The colours a strike can be built from. Every bolt picks two or three of
+// these at random and ramps between them from the sky end down to the impact,
+// so no two strikes look alike. Deliberately NOT tied to the cursor colour:
+// lightning reads as its own light source, and a bolt in the same green as the
+// caret it lands on just looks like the caret grew a tail.
+const THUNDER_PALETTE = [
+  [110, 165, 255],  // blue
+  [175, 120, 255],  // purple
+  [255, 95, 115],   // red
+  [255, 216, 120],  // yellow
+  [255, 255, 255],  // white
+];
+// Colour steps along the bolt. The ramp is quantised into this many bands so a
+// frame costs a dozen fillStyle changes instead of one per block - at the finest
+// bolt size a strike is several hundred blocks, and re-deriving a colour string
+// for every one of them on every frame is most of the effect's cost for no
+// visible gain over a banded ramp.
+const THUNDER_BANDS = 14;
+
+// Frame interval for the torch's blink-sync pulse. The spotlight's radius only
+// moves during the blink's two short fades - the long holds either side are a
+// constant value - so this doesn't need display rate, and 33ms across a fade of
+// a few hundred ms is far more steps than a slow radius change can show.
+const TORCH_PULSE_FRAME_MS = 33;
+
+// Ceiling on how far Smooth Movement's adaptive catch-up is allowed to stiffen
+// the smear's leading corners. See updateSmearQuad.
+const SMEAR_LEAD_BOOST_CAP = 6;
+
+// Motion Smear / Tapered Trail: how far the smear quad has to be stretched, in
+// pixels, before the taper reaches its full configured strength. Roughly a
+// caret's height, so a one-character nudge stays square and only a real move
+// draws a point. Lower it and small movements start looking pinched.
+const TAPER_FULL_LAG = 14;
+
 const DEFAULT_SETTINGS = {
   enabled: true,
   cursorStyle: "Box", // "Line" | "Box" | "Underline"
@@ -20,6 +74,35 @@ const DEFAULT_SETTINGS = {
   // --- appearance color controls ---
   colorDark: "#39ff14", 
   colorLight: "#333333",
+
+  // --- gradient cursor color ---
+  // When on, the cursor body is painted with a 2-4 stop ramp instead of the
+  // flat per-theme colour above. Like colorDark/colorLight there is one ramp
+  // per theme, since a ramp that reads well on a dark background is usually
+  // washed out on a light one; gradientCount applies to both, so the two
+  // ramps always have the same number of stops.
+  //
+  // The stop colours are separate scalar keys rather than arrays on purpose:
+  // presets, Vim-mode snapshots and share codes all copy settings with a
+  // shallow Object.assign, so an array would be copied BY REFERENCE and
+  // editing one mode's gradient would silently rewrite every other mode's and
+  // every saved preset's. Every other key in this file is a scalar for the
+  // same reason - keep it that way.
+  //
+  // gradientCount picks how many of the four are actually used, so dropping
+  // from 4 to 2 and back doesn't lose the colours you had.
+  gradientEnabled: false,
+  gradientCount: 2,
+  gradientDark1: "#39ff14",
+  gradientDark2: "#00d4ff",
+  gradientDark3: "#b14aff",
+  gradientDark4: "#ff2e88",
+  // Light-theme defaults are deeper and less neon: the same job colorLight
+  // does for the flat colour, i.e. stay legible against a white page.
+  gradientLight1: "#1f8a3b",
+  gradientLight2: "#0077b6",
+  gradientLight3: "#7028c8",
+  gradientLight4: "#c2185b",
 
   // --- CRT effect (trail + glow) ---
   crtEffect: false,
@@ -34,6 +117,12 @@ const DEFAULT_SETTINGS = {
   overlayIntensity: 0.1,
   overlayColor: "#ff963c",
   overlayFlicker: false,
+  // Blink sync: the spotlight breathes with the caret's blink, contracting as
+  // the caret fades out and opening back up as it returns. Off by default -
+  // see the note in the torch tick, it is the one torch option that costs
+  // frames while nothing else is happening.
+  overlayBlinkSync: false,
+  overlayBlinkDepth: 0.25,   // 0.05..0.6; how far the light closes at the darkest point
   overlaySpeed: 0.22, // lerp factor: how fast the torch chases its target
 
   // --- global caret properties ---
@@ -41,6 +130,11 @@ const DEFAULT_SETTINGS = {
   popLetters: true,        
   popRainbow: false,       // cycle each popped letter through a rainbow of colors
   flameTrail: true,        
+  // Pixel Trail sub-option: pressing Enter calls down a bolt of pixelated
+  // lightning onto the caret's new position, from a random angle above it.
+  thunderstrike: false,
+  thunderstrikeSize: 2,    // px per block of the bolt; the effect's chunkiness
+  thunderstrikeStrength: 0.5,  // 0.1..1 overall visibility of the strike
   backspaceDisintegrate: false,  // Backspace/Delete → invert flame trail direction + colors
   lineSerifs: false,             // Line cursor: add horizontal serifs (I-beam look)
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
@@ -56,9 +150,34 @@ const DEFAULT_SETTINGS = {
   speedDemonSensitivity: 1,      // 0.5..2 multiplier on how fast heat builds
   speedDemonSparkQuantity: 1,    // 0..3 multiplier on how many sparks spawn per burst
   speedDemonSparkTrail: 0,       // 0..30px comet-tail trailing behind each spark; 0 = no trail
+
+  // --- Stardust: the cursor gives off a slow stream of drifting, fading
+  // pixels. A standalone effect (it used to hang off Pixel Trail), with its
+  // OWN particle pool - see this.stardust in the engine state and the gear
+  // notes in the canvas tick for why it must not share flamePixels.
+  //
+  // By default it emits only once the cursor has sat still for
+  // stardustDelayMs; stardustAlwaysOn drops that condition so it streams
+  // continuously, typing included.
+  stardustEnabled: false,
+  stardustAlwaysOn: false,
+  stardustDelayMs: 2000,   // how long the cursor must sit still before emitting
+  stardustRate: 1,         // 0.2..3 multiplier on how thickly it streams
+  // Orbit mode: motes circle the caret like fireflies instead of drifting
+  // upward, and they track the caret as it moves rather than being left behind.
+  stardustOrbit: false,
+  stardustOrbitRadius: 22, // px; the mean orbit, which each mote varies around
+
   cursorOpacity: 1,
   energyEffect: false,
   energySpeed: 1,
+  // Aurora: only meaningful with a gradient, where it warps and cross-mixes
+  // the ramp instead of scrolling it rigidly. See createEnergyGradient.
+  energyAurora: false,
+
+  // --- Bracket Tether: a faint line from the caret to its matching bracket ---
+  bracketTether: false,
+  bracketTetherStrength: 0.35,  // 0.1..1 opacity of the line
 
   // --- shared canvas engine settings ---
   trailLength: 10, 
@@ -66,7 +185,12 @@ const DEFAULT_SETTINGS = {
   blinkingEnabled: true,
   blinkSpeed: 1.2,       
   blinkOnOffBalance: 0.5,
-  blinkDelayMs: 0,       // ms of full-on hold after any move/keystroke before blinking resumes
+  blinkDelayMs: 0,
+  // Breathing: instead of fading out, the caret shrinks and swells on the blink
+  // cycle and never disappears. Same clock, same speed/balance/delay controls -
+  // only what the cycle drives is different.
+  blinkBreathing: false,
+  blinkBreathDepth: 0.2,   // 0.05..0.5; how far it shrinks at the bottom of the breath       // ms of full-on hold after any move/keystroke before blinking resumes
   hideNativeCaret: true, 
   // Drop the cursor entirely while Obsidian isn't the active OS window, the
   // way virtually every other writing app does. Structural (like
@@ -78,6 +202,15 @@ const DEFAULT_SETTINGS = {
   smearStiffness: 0.6,
   smearTrailingStiffness: 0.4,
   smearDamping: 0.8,
+  // Motion Smear sub-option. The smear is a quad whose corners lag behind the
+  // caret on a spring, which means a fast move drags a full-width rectangle
+  // along behind it. Taper narrows the *trailing* end of that quad toward the
+  // line of travel, so the smear reads as a comet tail with a point at the
+  // back instead. Purely a shape adjustment applied on top of the spring - the
+  // physics are untouched, so Stiffness/Trailing Stiffness/Damping all still do
+  // exactly what they did.
+  smearTaper: false,
+  smearTaperAmount: 0.7,   // 0..1; at 1 the tail closes to a point
 
   // --- smooth cursor global category ---
   smoothEnabled: false,
@@ -126,27 +259,100 @@ const VIM_MODE_LABELS = {
 // excluded. A per-mode config is a snapshot containing exactly these keys.
 const LOOK_KEYS = [
   "cursorStyle", "colorDark", "colorLight",
+  "gradientEnabled", "gradientCount",
+  "gradientDark1", "gradientDark2", "gradientDark3", "gradientDark4",
+  "gradientLight1", "gradientLight2", "gradientLight3", "gradientLight4",
   "crtEffect", "glow",
   "torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius",
   "overlayDarkness", "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed",
+  "overlayBlinkSync", "overlayBlinkDepth",
   "caretWidthPx", "popLetters", "popRainbow", "flameTrail", "backspaceDisintegrate",
+  "thunderstrike", "thunderstrikeSize", "thunderstrikeStrength",
+  "stardustEnabled", "stardustAlwaysOn", "stardustDelayMs", "stardustRate",
+  "stardustOrbit", "stardustOrbitRadius",
+  "bracketTether", "bracketTetherStrength",
   "lineSerifs", "boxHollow", "boxHollowWidth", "underlineWidthPx",
   "speedDemon", "speedDemonSparks", "speedDemonSensitivity",
   "speedDemonSparkQuantity", "speedDemonSparkTrail",
-  "cursorOpacity", "energyEffect", "energySpeed",
+  "cursorOpacity", "energyEffect", "energySpeed", "energyAurora",
   "trailLength", "trailFadeMs",
   "blinkingEnabled", "blinkSpeed", "blinkOnOffBalance", "blinkDelayMs",
+  "blinkBreathing", "blinkBreathDepth",
   "showChar", "moveDelayMs",
   "smear", "smearStiffness", "smearTrailingStiffness", "smearDamping",
+  "smearTaper", "smearTaperAmount",
   "smoothEnabled", "smoothStopBlinking", "smoothness", "catchUpSpeed",
   "maxCatchUpSpeed", "smoothAdaptive",
 ];
+
+// ---------------------------------------------------------------------------
+// Legacy key migration.
+//
+// 1.3.0 shipped a single theme-independent gradient (gradientColor1..4) and
+// called the stardust effect idleStardust. Both were renamed: the gradient
+// gained a per-theme pair, and stardust became a standalone effect with an
+// always-on option. Neither old name is in LOOK_KEYS any more, so anything
+// still carrying them - saved settings, a Vim-mode snapshot, a saved preset,
+// an imported share code - would have those values silently dropped by
+// pickLook() and snap back to the defaults.
+//
+// Returns a shallow copy with the old names folded into the new ones and
+// deleted. Safe to run on anything settings-shaped, including {}: it only
+// touches keys that are actually present, and never clobbers a new-style key
+// that already holds a value.
+// ---------------------------------------------------------------------------
+function migrateLegacyKeys(src) {
+  if (!src || typeof src !== "object") return src;
+  const o = Object.assign({}, src);
+  // The old single ramp becomes the dark-theme ramp; the light-theme one is
+  // left to backfill from the defaults. That's the closest a per-theme pair
+  // can get to the old behaviour of showing one ramp in both themes.
+  for (let i = 1; i <= 4; i++) {
+    const oldKey = "gradientColor" + i;
+    const newKey = "gradientDark" + i;
+    if (oldKey in o) {
+      if (o[newKey] === undefined) o[newKey] = o[oldKey];
+      delete o[oldKey];
+    }
+  }
+  if ("idleStardust" in o) {
+    if (o.stardustEnabled === undefined) o.stardustEnabled = o.idleStardust;
+    delete o.idleStardust;
+  }
+  return o;
+}
+
+// Bracket Tether: the pairs it will follow, and how far it will scan for a
+// match. The cap keeps a runaway scan (an unmatched brace in a large note)
+// bounded; 20k characters is far past anything a tether is readable across.
+const BRACKET_OPEN = { "(": ")", "[": "]", "{": "}" };
+const BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{" };
+const BRACKET_SCAN_LIMIT = 20000;
+
+// Quote-ish delimiters the tether will also pair up. Backtick is in here
+// because inline code spans are everywhere in Markdown and behave exactly like
+// a quoted run; drop it from this list if that's not wanted.
+const QUOTE_CHARS = ['"', "'", "`"];
+// Quotes, unlike brackets, aren't directional - the same character opens and
+// closes - so they're paired left-to-right across a single line rather than by
+// depth counting. That's also why they're line-scoped: pairing across lines
+// would join a stray apostrophe to one three paragraphs away.
+const QUOTE_LINE_SCAN = 4000;
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+// A quote wedged between two word characters is an apostrophe, not a
+// delimiter - "don't", "it's", "rock'n'roll". Skipping those is what stops the
+// tether pairing the apostrophe in "don't" with the one in "it's" and drawing
+// a line across the sentence between them.
+function isQuoteDelimiter(text, i) {
+  return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
+}
 
 // Copy only the look keys out of an arbitrary settings-shaped object.
 function pickLook(src) {
   const o = {};
   if (!src) return o;
-  for (const k of LOOK_KEYS) if (k in src) o[k] = src[k];
+  const from = migrateLegacyKeys(src);
+  for (const k of LOOK_KEYS) if (k in from) o[k] = from[k];
   return o;
 }
 
@@ -175,7 +381,7 @@ function vimModeSnapshot(modeKey, overrides) {
 // preset silently left newly-added settings at whatever value happened to
 // be set before the preset was loaded, rather than the preset's own look.
 function presetWithDefaults(preset) {
-  return Object.assign({}, pickLook(DEFAULT_SETTINGS), preset);
+  return Object.assign({}, pickLook(DEFAULT_SETTINGS), migrateLegacyKeys(preset));
 }
 
 // Clone a whole vimModes map (or preset) into fresh, complete snapshots so
@@ -508,6 +714,41 @@ function hexToRgb(hex) {
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
+// Lift a channel toward white by `f`. Used to keep the bolt's core brighter
+// than its halo without carrying two palettes around.
+function lighten(c, f) {
+  return Math.round(c + (255 - c) * f);
+}
+
+// The colour ramp for one strike: two or three palette entries, picked without
+// replacement and left in the order they came out, running from the sky end of
+// the bolt down to the impact. Rolled fresh per strike, so the same key gives a
+// blue-into-white bolt one time and a red-purple-yellow one the next.
+function thunderRamp() {
+  const pool = THUNDER_PALETTE.slice();
+  const n = 2 + (Math.random() < 0.55 ? 1 : 0);
+  const stops = [];
+  for (let i = 0; i < n; i++) {
+    stops.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  }
+  return stops;
+}
+
+// Sample a ramp at 0..1.
+function thunderColorAt(stops, t) {
+  if (stops.length === 1) return stops[0];
+  const p = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(p));
+  const f = p - i;
+  const a = stops[i];
+  const b = stops[i + 1];
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * f),
+    Math.round(a[1] + (b[1] - a[1]) * f),
+    Math.round(a[2] + (b[2] - a[2]) * f),
+  ];
+}
+
 function hexToRgbTuple(hex) {
   let h = (hex || "#ffffff").replace("#", "");
   if (h.length === 3) h = h.split("").map((c) => c + c).join("");
@@ -589,7 +830,7 @@ function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5) {
 
 module.exports = class CursorSmithPlugin extends Plugin {
   async onload() {
-    const saved = await this.loadData();
+    const saved = migrateLegacyKeys(await this.loadData());
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
     // Migrate: existing installs that already had Vim cursors on should land
@@ -668,10 +909,43 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.trail = []; 
     this.particles = []; 
     this.flamePixels = [];
+    this.thunderbolts = [];
+    // Stardust lives in its own pool rather than joining flamePixels,
+    // because the frame governor treats a non-empty flamePixels as "something
+    // is in motion" and latches the HOT (60fps) gear. Stardust is emitted
+    // precisely when the user is idle and can stay alive indefinitely, so
+    // sharing that pool would pin the display at full refresh rate for as long
+    // as the effect is switched on - the exact failure this file's power work
+    // exists to avoid. See the gear decision in the canvas tick: stardust asks
+    // for the WARM (30fps) gear instead, which is plenty for a slow drift.
+    this.stardust = [];
+    this._lastStardustT = 0;
+    // Bracket Tether: the rules to paint this frame (one per covered line),
+    // plus the cache key that lets the text scan behind them skip most frames.
+    this.bracketTether = null;
+    this._tetherKey = null;
+    this._tetherFrom = -1;
+    this._tetherTo = -1;
+    // Second cache, for the line-box measurement rather than the text scan:
+    // the rules themselves, the span they were measured for, and the two
+    // endpoint coordinates they were measured against (see tetherSegments).
+    this._tetherSegs = null;
+    this._tetherSegKey = null;
+    this._tetherAnchorA = null;
+    this._tetherAnchorB = null;
     this.secondaryCarets = []; // dashed 2px vertical lines for CM6 multi-cursor mode
     this.lastActive = null; 
     this.pending = null; 
     this.smearQuad = null;
+    // The corners actually painted: smearQuad itself, or a tapered copy of it.
+    // Kept apart from the quad because the quad is the spring's *state*, and a
+    // tapered corner fed back into it would spring toward the narrowed shape -
+    // the taper would fight the very lag it's drawn from.
+    this.smearShape = null;
+    this._taperBuf = null;
+    // Unit vector of the last real caret movement, held between frames so the
+    // tail keeps pointing the right way while the quad catches up after a stop.
+    this._smearDir = null;
     this.smearCenterPrev = null;
     this._smearMoving = false;
     this._smearDtT = 0;
@@ -680,6 +954,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
+    this._catchUpBoost = 1;
 
     // Speed Demon heat: 0..1, ramps on keystrokes, decays per frame in the
     // canvas tick. Kept separate from typingSpeedMod (which drives smooth-
@@ -712,6 +987,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Per-frame write-dedupe + chrome-inset cache (see _chromeInsets)
     this._lastWrapperRect = "";
     this._lastOverlayRect = "";
+    this._lastTorchRadius = -1;
     this._chromeCache = null;
     this._tickErrorLogged = false;
     this._torchErrorLogged = false;
@@ -897,6 +1173,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._markActivity();
       if (e.key === "Backspace" || e.key === "Delete") {
         this._deletePending = performance.now();
+      }
+      // Enter flag: same shape as the delete flag above, consumed by the next
+      // commitMove() so a Thunderstrike can be aimed at the caret's NEW line.
+      // Keyed off the keystroke rather than off "the caret moved down a line",
+      // because that also describes arrow keys, clicking, and wrapping - none
+      // of which should call down lightning.
+      if (e.key === "Enter") {
+        this._enterPending = performance.now();
       }
       // Speed Demon: any key that plausibly represents "the user is typing"
       // bumps heat. Filter out pure modifiers, navigation, function keys,
@@ -1417,6 +1701,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   onVimModeChanged() {
     this._overlaySig = "";
     this._lastOverlayRect = "";
+    this._lastTorchRadius = -1;
     // Repaint the status bar label on the same frame as the cursor, so the two
     // never disagree about which mode you're in.
     this.updateVimStatusBar();
@@ -1660,10 +1945,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   getActiveColor() {
-    const doc = this.canvas ? this.canvas.ownerDocument : document;
-    const isDark = doc.body.classList.contains("theme-dark");
-    // this.settings is the effective (per-mode when active) config during draw.
-    const baseColor = isDark ? this.settings.colorDark : this.settings.colorLight;
+    const baseColor = this.getBaseColor();
     if (!this.settings.speedDemon) return baseColor;
     return this.heatColor(this.heat, baseColor);
   }
@@ -1672,10 +1954,122 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // "cold" endpoint desaturates the user's chosen colour rather than
   // always starting from the same grey - a green-configured cursor cools
   // to a dim moss, an orange one cools to slate.
+  //
+  // This is also the single flat colour every effect that ISN'T the cursor
+  // body falls back to: the CRT glow halo, Pixel Trail particles, secondary
+  // carets, popping letters. With Gradient on, that colour is the ramp's first
+  // stop, so those effects stay in the same family as the cursor instead of
+  // going on painting themselves in a per-theme colour the cursor no longer
+  // uses anywhere.
   getBaseColor() {
+    if (this.settings.gradientEnabled) return this.gradientStops()[0];
+    return this.isDarkTheme() ? this.settings.colorDark : this.settings.colorLight;
+  }
+
+  // Which theme the cursor is being drawn against. Read off the document that
+  // actually owns the canvas, not the main one, so a popped-out window with a
+  // different theme still picks the right colours.
+  isDarkTheme() {
     const doc = this.canvas ? this.canvas.ownerDocument : document;
-    const isDark = doc.body.classList.contains("theme-dark");
-    return isDark ? this.settings.colorDark : this.settings.colorLight;
+    return doc.body.classList.contains("theme-dark");
+  }
+
+  // ---- Gradient cursor colour --------------------------------------------
+  // The active theme's gradient stops, in order, as hex strings. Always at
+  // least two entries, so callers can index [i] and [i+1] without guarding.
+  gradientStops() {
+    const s = this.settings;
+    const n = Math.max(2, Math.min(4, Math.round(s.gradientCount || 2)));
+    // One ramp per theme, same as colorDark/colorLight: a ramp tuned for a
+    // dark background usually washes out on a light one. gradientCount is
+    // shared, so both ramps always have the same number of stops.
+    const prefix = this.isDarkTheme() ? "gradientDark" : "gradientLight";
+    const out = [];
+    for (let i = 1; i <= n; i++) {
+      const key = prefix + i;
+      let hex = s[key] || DEFAULT_SETTINGS[key];
+      // Speed Demon drives the whole cursor along a cold → white-hot ramp as
+      // you type. Running every stop through it keeps a gradient cursor
+      // heating up like a flat one does, instead of sitting frozen at its
+      // configured colours while the rest of the effect reacts.
+      if (s.speedDemon && this.heat > 0) hex = this.heatColor(this.heat, hex);
+      out.push(hex);
+    }
+    return out;
+  }
+
+  // Colour at a position along the ramp (0 = first stop, 1 = last), as an
+  // [r, g, b] tuple. With Gradient off this is just the flat active colour at
+  // every position, so callers don't need to branch: Energy Beam samples this
+  // per gradient stop, and Stardust samples it at a random position so a
+  // gradient cursor sheds multi-coloured motes.
+  //
+  // `cyclic` treats the ramp as a loop (…→ last → first → last →…) instead of
+  // a line with two ends. That's what makes a *scrolling* ramp possible: slide
+  // a linear ramp along and the wrap from last stop back to first lands as a
+  // hard seam travelling through the cursor, where a cyclic one has no seam to
+  // show. Note it costs one segment: a cyclic 2-stop ramp is A→B→A, so the
+  // colour returned for a given pos differs between the two modes by design.
+  sampleRamp(pos, cyclic = false) {
+    if (!this.settings.gradientEnabled) {
+      return hexToRgbTuple(this.getActiveColor() || "#39ff14");
+    }
+    const stops = this.gradientStops();
+    const lerp = (a, b, f) => [
+      a[0] + (b[0] - a[0]) * f,
+      a[1] + (b[1] - a[1]) * f,
+      a[2] + (b[2] - a[2]) * f,
+    ];
+
+    if (cyclic) {
+      const wrapped = ((pos % 1) + 1) % 1;
+      const p = wrapped * stops.length;
+      const i = Math.floor(p) % stops.length;
+      const j = (i + 1) % stops.length;
+      return lerp(hexToRgbTuple(stops[i]), hexToRgbTuple(stops[j]), p - Math.floor(p));
+    }
+
+    const p = Math.max(0, Math.min(1, pos)) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(p));
+    return lerp(hexToRgbTuple(stops[i]), hexToRgbTuple(stops[i + 1]), p - i);
+  }
+
+  // A CanvasGradient spanning the given rect, running along the cursor's
+  // LONGER axis: top→bottom for a Line or Box, left→right for an Underline
+  // bar. A fixed axis would be wrong for half the styles - a vertical ramp
+  // squeezed into a 3px-tall underline is just a muddy average, and a
+  // horizontal one across a 2px-wide line cursor is the same in reverse.
+  createCursorGradient(x, y, w, h, alpha) {
+    const ctx = this.ctx;
+    const stops = this.gradientStops();
+    const horizontal = w > h;
+    const span = horizontal ? w : h;
+    // A zero-length gradient line paints nothing at all (per the canvas spec),
+    // which would silently blank the cursor rather than degrade. Fall back to
+    // the first stop as a flat fill.
+    if (!(span > 0)) return hexToRgba(stops[0], alpha);
+
+    const grad = horizontal
+      ? ctx.createLinearGradient(x, y, x + w, y)
+      : ctx.createLinearGradient(x, y, x, y + h);
+    for (let i = 0; i < stops.length; i++) {
+      const [r, g, b] = hexToRgbTuple(stops[i]);
+      grad.addColorStop(i / (stops.length - 1), `rgba(${r}, ${g}, ${b}, ${alpha})`);
+    }
+    return grad;
+  }
+
+  // The paint for one cursor-shaped fill or stroke: the gradient when Gradient
+  // is on, otherwise the flat rgba string the engine has always used. Callers
+  // pass the rect they are ACTUALLY about to paint (e.g. the underline bar,
+  // not the whole line box) so the ramp spans the visible shape.
+  //
+  // Note this deliberately knows nothing about Energy Beam: the body-fill call
+  // sites still pick createEnergyGradient over this one when the beam is on,
+  // which keeps the beam's existing behaviour of not painting CRT trail dots.
+  cursorPaint(x, y, w, h, color, alpha) {
+    if (!this.settings.gradientEnabled) return hexToRgba(color, alpha);
+    return this.createCursorGradient(x, y, w, h, alpha);
   }
 
   // Map heat (0..1) to an rgb() string along a cold → hot ramp:
@@ -1799,6 +2193,90 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
+  // ---- Stardust ----------------------------------------------------------
+  // Whether the effect is switched on AND currently emitting. Split out from
+  // maybeSpawnStardust() because the frame governor needs the same answer: an
+  // armed-but-not-yet-emitting cursor still has to be woken often enough to
+  // emit on time, or the first mote would wait out a 100ms idle heartbeat.
+  stardustArmed() {
+    const s = this.settings;
+    if (!s.stardustEnabled) return false;
+    if (!this.animActive) return false;
+    // Always On drops the idle condition entirely, so the cursor streams
+    // while you type as well. Note this keeps the render loop off the idle
+    // gear for as long as a caret exists - that's inherent to the option,
+    // not a leak.
+    if (s.stardustAlwaysOn) return true;
+    const idleFor = performance.now() - (this._lastActivityT || 0);
+    return idleFor >= Math.max(0, s.stardustDelayMs ?? 2000);
+  }
+
+  // Emit a slow stream of drifting motes from the caret while it sits idle.
+  //
+  // Rate-limited by wall clock rather than per frame: the governor runs this
+  // at ~30fps while stardust is alive but drops to ~10fps in the gaps, so a
+  // per-frame probability would quietly change density with the gear.
+  maybeSpawnStardust() {
+    if (!this.stardustArmed()) return;
+    // Hard ceiling on live motes. Each one is a fillRect plus a dirty-rect
+    // contribution, and unlike every other particle effect here this one has
+    // no natural end - it emits for as long as you leave the window alone.
+    if (this.stardust.length >= 60) return;
+
+    const now = performance.now();
+    const rate = Math.max(0.1, this.settings.stardustRate ?? 1);
+    // ~1 mote every 320ms at rate 1: a lazy drift rather than a fountain.
+    if (now - (this._lastStardustT || 0) < 320 / rate) return;
+    this._lastStardustT = now;
+
+    const active = this.animActive;
+    const anchorW = active.w || active.actualCharWidth || 8;
+    // Sample the ramp at a random position so a gradient cursor sheds motes in
+    // every one of its colours; with Gradient off this is the flat cursor
+    // colour at every position, so behaviour is unchanged.
+    const [sr, sg, sb] = this.sampleRamp(Math.random());
+    const vary = (c) => Math.max(0, Math.min(255, Math.round(c + (Math.random() - 0.5) * 50)));
+
+    // Orbit mode is captured per mote rather than read at draw time, so
+    // flipping the toggle lets the motes already in flight finish the way they
+    // started instead of every one of them snapping onto a circle at once.
+    const orbit = !!this.settings.stardustOrbit;
+    const meanRadius = Math.max(6, this.settings.stardustOrbitRadius ?? 22);
+
+    this.stardust.push({
+      // Spawn across the caret's width, biased to its upper half - the motes
+      // read as coming off the cursor rather than out of the line below it.
+      x: active.x + Math.random() * anchorW,
+      y: active.top + Math.random() * active.h * 0.6,
+      vy: -8 - Math.random() * 14,          // px/sec: slow upward drift
+      sway: 2 + Math.random() * 5,          // px of horizontal wander
+      swaySpeed: 0.6 + Math.random() * 0.9, // rad/sec of that wander
+      phase: Math.random() * Math.PI * 2,
+      twinkleSpeed: 2 + Math.random() * 3,
+      size: 1 + Math.random() * 1.5,
+      life: 2.2 + Math.random() * 2.2,      // seconds
+      color: `rgb(${vary(sr)}, ${vary(sg)}, ${vary(sb)})`,
+      start: now,
+
+      // --- orbit mode ---
+      orbit,
+      // Anchor, refreshed from the live caret every frame so the swarm follows
+      // the cursor. Seeded here so a mote outliving its caret keeps circling
+      // the last known spot instead of jumping to the origin.
+      ax: active.x + anchorW / 2,
+      ay: active.top + active.h / 2,
+      radius: meanRadius * (0.55 + Math.random() * 0.75),
+      // Random direction, and slower the wider the orbit, so the swarm doesn't
+      // look like a rigid disc rotating as one piece. Kept deliberately
+      // unhurried - a fast orbit reads as agitated rather than ambient.
+      angSpeed: (Math.random() < 0.5 ? -1 : 1) * (0.32 + Math.random() * 0.55) * (22 / meanRadius),
+      wobbleSpeed: 0.5 + Math.random() * 1.2,
+      // Flattened orbits read as perspective rather than as flat rings, and
+      // suit a caret that's taller than it is wide.
+      squash: 0.45 + Math.random() * 0.4,
+    });
+  }
+
   applyBodyClasses() {
     const engineActive = !!(this.canvasEngineActive || this.torchEngineActive);
     // During a presentation the canvas clears itself and the torch hides, so
@@ -1822,7 +2300,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!this.overlay) return;
     const s = this.settings;
     const o = this.overlay;
-    o.style.setProperty("--torch-radius", s.overlayRadius + "px");
+    // --torch-radius is deliberately NOT written here. With Blink Sync on it
+    // changes every frame, so the torch tick owns it outright and writes it on
+    // its own dedupe; a second writer here would stamp the un-pulsed value back
+    // over it whenever anything else about the overlay changed.
     o.style.setProperty("--torch-darkness", String(s.overlayDarkness));
     o.style.setProperty("--torch-intensity", String(s.overlayIntensity));
     o.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
@@ -1920,6 +2401,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.overlay.style.width = "0px";
       this.overlay.style.height = "0px";
       this._lastOverlayRect = "";
+      // A brand new element carries none of the old one's inline custom
+      // properties, so the radius cache has to be dropped with it or the tick
+      // would dedupe against a value this overlay was never given.
+      this._lastTorchRadius = -1;
       this.injectStyles(targetDoc);
       this.applyOverlayStyle();
       
@@ -2010,13 +2495,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.ctx = null;
     this.pending = null;
     this.smearQuad = null;
+    this.smearShape = null;
+    this._smearDir = null;
     this.smearCenterPrev = null;
     this._smearMoving = false;
     this._smearDtT = 0;
     this.smearQuadLastMoveT = 0;
     this.particles = [];
     this.flamePixels = [];
+    this.thunderbolts = [];
+    this.stardust = [];
     this.secondaryCarets = [];
+    this.bracketTether = null;
+    this._tetherKey = null;
+    this._tetherSegs = null;
+    this._tetherSegKey = null;
     this.animActive = null;
     this._formMirror?.remove();
     this._formMirror = null;
@@ -2030,6 +2523,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     this._torchTick = null;
     this._lastTorchPos = "";
+    this._lastTorchRadius = -1;
     if (this.torchRaf) {
       cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
@@ -2052,10 +2546,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.trail = [];
     this.particles = [];
     this.flamePixels = [];
+    this.thunderbolts = [];
+    this.stardust = [];
+    this._lastStardustT = 0;
     this.secondaryCarets = [];
+    this.bracketTether = null;
+    this._tetherKey = null;
+    this._tetherSegs = null;
+    this._tetherSegKey = null;
     this.lastActive = null;
     this.pending = null;
     this.smearQuad = null;
+    this.smearShape = null;
+    this._smearDir = null;
     this.smearCenterPrev = null;
     this._smearMoving = false;
     this._smearDtT = 0;
@@ -2063,6 +2566,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive = null;
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
+    this._catchUpBoost = 1;
     this._suspendCleared = false;
     // Begin from a known-clean surface: the canvas survives enable/disable
     // cycles, so assume nothing about what is currently painted on it.
@@ -2162,6 +2666,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // ChromeOS Crostini's virtualized one).
           const top = Math.round(r.top);
           const left = Math.round(r.left);
+          // Kept for Thunderstrike, which needs to know where the visible area
+          // starts so a bolt can be launched from just above it and appear to
+          // arrive from outside the pane.
+          this._clipTop = top;
           const width = Math.round(r.width);
           const height = Math.round(r.height);
           const key = top + "," + left + "," + width + "," + height;
@@ -2205,6 +2713,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // dashed line at each. Independent of the smoothing/smearing pipeline
           // that only tracks the primary caret.
           this.secondaryCarets = this.secondaryCaretCoords(view);
+          // Cheap when off, and internally cached on (caret pos, doc length)
+          // so the text scan doesn't rerun every frame while the caret sits
+          // still.
+          this.bracketTether = this.settings.bracketTether
+            ? this.bracketTetherCoords(view)
+            : null;
           this.updateSmearQuad();
           // Must run before the gear decision below, which reads trail.length.
           this.pruneTrail();
@@ -2221,6 +2735,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
           if (this.settings.speedDemon && this.settings.speedDemonSparks && this.animActive) {
             this.maybeSpawnSpeedDemonSparks();
           }
+          // Self-guarding (checks its own toggles and the idle window), and
+          // must run before the gear decision below, which reads stardust
+          // length to decide whether this frame may be skipped.
+          this.maybeSpawnStardust();
 
           // ---- Gear decision + draw skip -------------------------------
           const nowT = performance.now();
@@ -2234,6 +2752,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
             // flamePixels are aged inside draw(), so a skipped frame would
             // freeze a burst mid-flight rather than letting it expire.
             (this.flamePixels && this.flamePixels.length > 0) ||
+            // Same reasoning: a bolt is aged and expired inside its draw call,
+            // so a skipped frame would leave one frozen on screen.
+            (this.thunderbolts && this.thunderbolts.length > 0) ||
             this.heat > 0 ||
             // Precise: the spring reports whether any corner is still off its
             // target or carrying velocity. This used to be a 1200ms window
@@ -2258,13 +2779,31 @@ module.exports = class CursorSmithPlugin extends Plugin {
           let blinkFading = false;
           let blinkBucket = 1;
           if (eff.blinkingEnabled && this.lastActive) {
-            const a = this.blinkAlpha(nowT);
+            // The phase, not the alpha: with Breathing on the alpha is pinned
+            // at 1 while the caret is still visibly changing size, so keying
+            // the gear off alpha would park the loop mid-breath.
+            const a = this.blinkPhase(nowT);
             blinkFading = a > 0.02 && a < 0.98;
             blinkBucket = a >= 0.5 ? 1 : 0;
           }
+          // Stardust deliberately does NOT count as `animating`. In its
+          // default mode it runs *because* nothing is happening, so treating
+          // live motes as motion would pin the hot gear (60fps) for as long as
+          // the user leaves the window alone - the exact opposite of what
+          // idling should cost. A slow upward drift is perfectly smooth at the
+          // warm gear's 30fps, so it asks for that instead. (With Always On
+          // the effect never stands down, so the loop simply never reaches the
+          // idle gear while a caret exists; that is the option's stated cost,
+          // and it still must not escalate to hot.)
+          //
+          // `armed` rather than just "motes alive" keeps the loop warm through
+          // the gaps between emissions too; at the 100ms idle heartbeat the
+          // spawn cadence would visibly stutter.
+          const stardustLive = this.stardust.length > 0;
+          const stardustActive = stardustLive || this.stardustArmed();
           this._canvasGear =
             animating || recentInput ? "hot"
-              : blinkFading ? "warm"
+              : blinkFading || stardustActive ? "warm"
               : energyShimmer ? "energy"
               : "idle";
 
@@ -2279,7 +2818,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // deliberately omits trail/particle/sub-pixel state, so it is only
           // trustworthy while nothing is animating; blinkFading is excluded too
           // since the two-state blinkBucket can't represent a mid-fade alpha.
-          const staticFrame = !animating && !blinkFading && !energyShimmer;
+          // stardustLive (not stardustActive): armed-with-no-motes paints
+          // nothing new, so those frames can still be skipped as static.
+          const staticFrame = !animating && !blinkFading && !energyShimmer && !stardustLive;
           let doDraw = true;
           if (staticFrame) {
             const la = this.lastActive;
@@ -2288,6 +2829,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
               : true;
             const sec = this.secondaryCarets && this.secondaryCarets.length
               ? this.secondaryCarets.map((c) => (c.x | 0) + ":" + (c.y | 0)).join(",")
+              : "";
+            // The tether moves without the caret moving (scrolling, or an edit
+            // that shifts the match), so it needs its own term here or a
+            // settled frame would keep showing a stale line.
+            const bt = this.bracketTether && this.bracketTether.length
+              ? this.bracketTether
+                  .map((s) => (s.x1 | 0) + ":" + (s.y1 | 0) + ":" + (s.x2 | 0) + ":" + (s.y2 | 0))
+                  .join(",")
               : "";
             const sig = [
               _vimMode, blinkBucket, isDark,
@@ -2301,7 +2850,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
               // next keystroke woke the loop.
               eff.cursorOpacity, eff.crtEffect, eff.glow, eff.showChar,
               eff.boxHollow, eff.boxHollowWidth, eff.lineSerifs,
-              eff.underlineWidthPx, sec,
+              eff.underlineWidthPx, sec, bt, eff.bracketTetherStrength,
+              // Breathing changes the painted size during a hold, where
+              // blinkBucket alone can't tell the two states apart: switching it
+              // on while the caret sat in the dark half of the cycle matched
+              // the previous signature exactly, so the frame was skipped and
+              // the option appeared to do nothing until the next fade.
+              eff.blinkBreathing, eff.blinkBreathDepth,
+              // Same reasoning as the line above: every one of these changes
+              // the painted pixels, so leaving them out would make editing a
+              // gradient on a settled cursor appear to do nothing until the
+              // next keystroke woke the loop.
+              eff.gradientEnabled, eff.gradientCount,
+              eff.gradientDark1, eff.gradientDark2,
+              eff.gradientDark3, eff.gradientDark4,
+              eff.gradientLight1, eff.gradientLight2,
+              eff.gradientLight3, eff.gradientLight4,
             ].join("|");
             if (sig === this._drawSig) doDraw = false;
             else this._drawSig = sig;
@@ -3035,6 +3599,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
             this.smearQuad[key].x += dx;
             this.smearQuad[key].y += dy;
           }
+          // The tapered copy is rebuilt from the quad every frame, but a draw
+          // can land between this shift and the next rebuild - so shift it too,
+          // or the smear jumps back to its pre-scroll place for one frame.
+          // Only when it IS a copy: untapered it's the same object, already
+          // shifted by the loop above.
+          if (this.smearShape && this.smearShape !== this.smearQuad) {
+            for (const key in this.smearShape) {
+              this.smearShape[key].x += dx;
+              this.smearShape[key].y += dy;
+            }
+          }
           if (this.smearCenterPrev) {
             this.smearCenterPrev.x += dx;
             this.smearCenterPrev.y += dy;
@@ -3078,6 +3653,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.animActive = null;
       this._smoothMoving = false;
       this._smoothLastT = 0;
+      this._catchUpBoost = 1;
       return;
     }
 
@@ -3086,6 +3662,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // as the frame governor is concerned.
       this.animActive = { ...this.lastActive };
       this._smoothMoving = false;
+      this._catchUpBoost = 1;
       return;
     }
 
@@ -3147,6 +3724,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // typing so the cursor keeps pace with key repeat.
     const RATE_SCALE = 40;
     const rate = Math.max(0.5, targetSpeed * (1 - this.settings.smoothness) * RATE_SCALE * typingBoost);
+    // How much faster than the configured Catch-Up Speed this frame is actually
+    // running - the adaptive ramp and the backlog drain combined. Published
+    // because Motion Smear's spring sits downstream of this lerp and has to be
+    // told to speed up with it; see the note in updateSmearQuad.
+    this._catchUpBoost = (targetSpeed / Math.max(0.01, this.settings.catchUpSpeed)) * typingBoost;
     const lerpFactor = 1 - Math.exp(-rate * dt);
 
     this.animActive.x += (this.lastActive.x - this.animActive.x) * lerpFactor;
@@ -3197,7 +3779,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
         now - this._deletePending < 250;
       this.spawnFlamePixels(this.lastActive, disintegrate);
       this._deletePending = 0;
+      // Same 250ms window as the delete flag. Note the bolt is aimed at
+      // `caret`, the position being moved TO, not at lastActive: the strike
+      // drives the cursor down to the new line, so it has to land there.
+      if (this._enterPending && now - this._enterPending < 250) {
+        this.spawnThunderbolt(caret);
+      }
     }
+    // Cleared unconditionally, outside the lastActive branch: a stale flag left
+    // by a move that didn't spawn anything would fire a bolt on whatever caret
+    // move happened to come next.
+    this._enterPending = 0;
     this.lastActive = caret;
     this.pending = null;
     this.lastMoveTime = performance.now(); 
@@ -3244,6 +3836,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     if (!rect) {
       this.smearQuad = null;
+      this.smearShape = null;
       this.smearCenterPrev = null;
       this._smearMoving = false;
       return;
@@ -3262,6 +3855,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.smearQuad[key] = { x: targets[key].x, y: targets[key].y, vx: 0, vy: 0 };
       }
       this.smearCenterPrev = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+      this.smearShape = this.smearQuad;
       this._smearMoving = false;
       return;
     }
@@ -3276,10 +3870,34 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (dirLen > 0.01) {
       dirX /= dirLen;
       dirY /= dirLen;
+      // Held past the frame it was measured on: once the caret stops, the quad
+      // spends several more frames catching up, and the tail has to keep
+      // pointing back the way it came while it does.
+      this._smearDir = { x: dirX, y: dirY };
     }
     this.smearCenterPrev = center;
 
-    const freqLead = 2 + Math.max(0, Math.min(1, settings.smearStiffness)) * 38;
+    // Motion Smear sits DOWNSTREAM of Smooth Movement: this spring chases
+    // getActiveRect(), which is built from animActive - itself still catching up
+    // to the real caret. The two lags ADD, so with both effects on the painted
+    // cursor trails further behind than the Smooth Movement sliders alone
+    // suggest, and Max Catch-Up Speed looked broken: it was only ever speeding
+    // up the first of the two stages, while the second stayed as slow as it had
+    // always been. Carrying the same boost through fixes that.
+    //
+    // Only the LEADING corners get it. The smear you see is the gap between the
+    // leading and trailing edges, so boosting both would fix the lag by
+    // deleting the effect; boosting just the front means the cursor keeps up
+    // AND smears harder, which is the right answer for both.
+    //
+    // Capped: the boost can reach ~13x on extreme slider combinations, and past
+    // about 6x the leading edge is already arriving within a frame or two - the
+    // rest buys nothing and only eats into the explicit integrator's stability
+    // margin (stable while h < 2/freq, and h is held at or under 1/240 below).
+    const leadBoost = settings.smoothEnabled
+      ? Math.max(1, Math.min(SMEAR_LEAD_BOOST_CAP, this._catchUpBoost || 1))
+      : 1;
+    const freqLead = (2 + Math.max(0, Math.min(1, settings.smearStiffness)) * 38) * leadBoost;
     const freqTrail = 2 + Math.max(0, Math.min(1, settings.smearTrailingStiffness)) * 38;
     const dampingRatio = 0.15 + Math.max(0, Math.min(1, settings.smearDamping)) * 1.15;
 
@@ -3337,6 +3955,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
 
     this._smearMoving = moving;
+    this.applySmearTaper(targets, center);
     if (moving) {
       this.smearQuadLastMoveT = now;
     } else {      // Snap exactly onto the targets once settled, and kill the residual
@@ -3352,6 +3971,84 @@ module.exports = class CursorSmithPlugin extends Plugin {
         c.vy = 0;
       }
     }
+  }
+
+  // Derive the corners to PAINT from the corners the spring is holding.
+  //
+  // With Tapered Trail off this is just the quad itself, passed straight
+  // through by reference - no copy, no work. With it on, the trailing end is
+  // pulled in toward the line of travel so the smear comes to a point behind
+  // the caret instead of dragging a full-width rectangle.
+  //
+  // The result is deliberately NOT written back into smearQuad. That object is
+  // the spring's state, integrated forward from its own previous position: a
+  // tapered corner stored there would become the position the next frame
+  // springs from, so the corners would chase the narrowed shape and the taper
+  // would eat the very lag it is drawn from. Derived fresh each frame and
+  // thrown away.
+  applySmearTaper(targets, center) {
+    const q = this.smearQuad;
+    const amount = Math.max(0, Math.min(1, this.settings.smearTaperAmount ?? 0.7));
+    const dir = this._smearDir;
+    if (!q || !this.settings.smearTaper || amount <= 0 || !dir) {
+      this.smearShape = q;
+      return;
+    }
+
+    // How far each corner is lagging behind where it belongs. Corners at the
+    // back of the move lag most and the ones at the front barely at all, which
+    // is exactly the weighting a taper wants - the tail narrows, the leading
+    // edge keeps its full width - so there's no need to work out which corner
+    // is which, or to special-case diagonal movement.
+    let maxLag = 0;
+    const lag = {};
+    for (const k in targets) {
+      const l = Math.hypot(q[k].x - targets[k].x, q[k].y - targets[k].y);
+      lag[k] = l;
+      if (l > maxLag) maxLag = l;
+    }
+
+    // Scale the whole effect by how far the quad is actually stretched, not
+    // just by the ratio between its corners. The ratio alone is ~1 for the
+    // laggiest corner no matter how small the lag is, so a caret creeping one
+    // character sideways would wear the same sharp point as one flung across
+    // the page - and a resting cursor would sit there permanently misshapen.
+    const reach = Math.min(1, maxLag / TAPER_FULL_LAG);
+    if (reach <= 0.001) {
+      this.smearShape = q;
+      return;
+    }
+
+    // One reused buffer rather than four fresh objects per frame: this runs on
+    // every frame of every move, and the corners are read and discarded within
+    // the same frame.
+    if (!this._taperBuf) {
+      this._taperBuf = { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } };
+    }
+    const out = this._taperBuf;
+
+    for (const k in targets) {
+      const c = q[k];
+      const ox = c.x - center.x;
+      const oy = c.y - center.y;
+      // The part of the corner's offset that runs ACROSS the direction of
+      // travel. Pulling it to zero puts the corner on the line of travel, so
+      // pulling both trailing corners to zero closes that end to a point.
+      const along = ox * dir.x + oy * dir.y;
+      const px = ox - along * dir.x;
+      const py = oy - along * dir.y;
+      const w = (lag[k] / maxLag) * reach * amount;
+      out[k].x = c.x - px * w;
+      out[k].y = c.y - py * w;
+    }
+    this.smearShape = out;
+  }
+
+  // The four corners to paint the cursor through, or null when Motion Smear is
+  // off and callers should use the plain caret rect instead.
+  smearCorners() {
+    if (!this.settings.smear) return null;
+    return this.smearShape || this.smearQuad;
   }
 
   pushTrail(point) {
@@ -3454,7 +4151,307 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
-  blinkAlpha(now) {
+  // ---- Thunderstrike -----------------------------------------------------
+  // A bolt of pixelated lightning that drops out of the top of the pane onto
+  // the caret's new position when Enter is pressed.
+  //
+  // The whole bolt - its path, its forks, the grid cells it occupies and its
+  // flicker pattern - is generated ONCE here and then only faded by the
+  // draw call. Regenerating the jitter per frame is the obvious way to write
+  // this and it looks wrong: the channel boils rather than holds, and at 60fps
+  // the noise aliases into a shimmer instead of reading as one discharge.
+  spawnThunderbolt(target) {
+    if (!this.settings.flameTrail || !this.settings.thunderstrike) return;
+    if (!target) return;
+
+    // Oldest first, so holding Enter down rolls the strikes forward rather
+    // than refusing new ones once the cap is hit.
+    while (this.thunderbolts.length >= THUNDER_MAX_LIVE) this.thunderbolts.shift();
+
+    const w = target.w || target.actualCharWidth || 8;
+    const tx = target.x + w / 2;
+    const ty = target.top;
+
+    // Where it comes from: straight up, leaned over by a random angle. The
+    // reach is measured against the top of the visible pane plus a margin, so
+    // the bolt always starts above the clip window and appears to arrive from
+    // outside it instead of switching on in mid-air partway down the page.
+    const angle = (Math.random() - 0.5) * 2 * THUNDER_MAX_ANGLE;
+    const clipTop = this._clipTop ?? 0;
+    // Note the division by cos: `rise` is how far the bolt must climb to clear
+    // the top of the pane, and a leaning bolt has to be LONGER to climb the
+    // same height. Without it, the further a strike leaned the lower it
+    // started, and steep ones switched on in mid-air halfway down the page.
+    const rise = Math.max(THUNDER_MIN_REACH, (ty - clipTop) + 80);
+    const reach = rise / Math.max(0.35, Math.cos(angle));
+    const ox = tx + Math.sin(angle) * reach;
+    const oy = ty - Math.cos(angle) * reach;
+
+    const cell = Math.max(1, Math.round(this.settings.thunderstrikeSize ?? 2));
+    // Jitter scaled to the bolt's own length: a short strike near the top of
+    // the pane and a long one from the bottom should have the same character,
+    // not the same absolute wobble.
+    const jitter = reach * 0.09;
+
+    const seen = new Set();
+    const main = this.boltPath(ox, oy, tx, ty, jitter);
+    // Each block carries how far along the strike it sits, 0 at the sky end and
+    // 1 at the caret. That's what the colour ramp is sampled against below.
+    let cells = this.pixelateBolt(main, cell, seen, 0, 1);
+
+    // Forks. Taken from a point in the upper half of the channel and thrown
+    // outward and down, dying in mid-air - a fork that also lands would read
+    // as a second strike on nothing.
+    const forks = (Math.random() < 0.75 ? 1 : 0) + (Math.random() < 0.2 ? 1 : 0);
+    for (let f = 0; f < forks; f++) {
+      const ft = 0.15 + Math.random() * 0.4;
+      const at = main[Math.floor(main.length * ft)];
+      if (!at) continue;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      // Clamped hard against vertical. Unclamped, a fork thrown off an already
+      // steeply-leaning bolt could end up past horizontal and crawl back UP the
+      // page - which stops reading as lightning immediately.
+      const spread = Math.max(-1.1, Math.min(1.1, angle + side * (0.45 + Math.random() * 0.55)));
+      const len = reach * (0.15 + Math.random() * 0.18);
+      const fx = at.x + Math.sin(spread) * len;
+      const fy = at.y + Math.cos(spread) * len;
+      // The fork picks the ramp up where it branched off and carries on through
+      // it, so it reads as part of the same discharge rather than as a second
+      // bolt that happens to start in the same colour.
+      cells = cells.concat(this.pixelateBolt(
+        this.boltPath(at.x, at.y, fx, fy, len * 0.16), cell, seen, ft, Math.min(1, ft + 0.3)));
+    }
+
+    // Everything above the pane is painted into a wrapper that clips it away, so
+    // those blocks cost fill calls and damage area for pixels nobody can see -
+    // and on a long lean that is most of the bolt. Dropped here instead, which
+    // also keeps the damage box below tight around the part that shows.
+    cells = cells.filter((c) => c.y >= clipTop - cell);
+    if (!cells.length) return;
+
+    // Two or three palette colours in a random order, ramped from the sky end
+    // down to the impact. Sorted into bands so the draw call can set a fill
+    // colour once per band rather than once per block.
+    const ramp = thunderRamp();
+    const bands = [];
+    for (let i = 0; i < THUNDER_BANDS; i++) {
+      const [br, bg, bb] = thunderColorAt(ramp, i / (THUNDER_BANDS - 1));
+      // Core and halo are the same hue at different lightnesses: the channel
+      // itself is drawn lifted toward white so it reads as light rather than as
+      // a coloured line, with the halo carrying the colour proper. Both are
+      // worked out here, once, instead of per frame.
+      bands.push({
+        r: br, g: bg, b: bb,
+        cr: lighten(br, 0.45), cg: lighten(bg, 0.45), cb: lighten(bb, 0.45),
+        cells: [],
+      });
+    }
+    for (const c of cells) {
+      const i = Math.max(0, Math.min(THUNDER_BANDS - 1, Math.round(c.t * (THUNDER_BANDS - 1))));
+      bands[i].cells.push(c);
+    }
+    // A short bolt or a narrow ramp leaves most bands empty; skipping them
+    // spares the draw loop a pile of no-op fillStyle writes.
+    const usedBands = bands.filter((x) => x.cells.length > 0);
+    const [er, eg, eb] = thunderColorAt(ramp, 1);
+
+    // Bounds are fixed for the bolt's whole life, so the damage box is worked
+    // out once here rather than by walking every cell on every frame.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of cells) {
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+
+    this.thunderbolts.push({
+      bands: usedBands, cell, tx, ty,
+      minX, minY, maxX, maxY,
+      // The impact flash is sized off the caret, not off the block size: at the
+      // finest setting a flash a few blocks wide would be invisible, and the
+      // strike has to be seen to land.
+      flash: Math.max(cell * 2, (target.h || 16) * 0.4),
+      er, eg, eb,
+      // Real lightning is several discharges down the same channel, so the
+      // bolt steps between discrete brightness levels instead of fading
+      // smoothly. Rolled at spawn, because a per-frame random would beat
+      // against the frame rate and turn a strobe into mush. The first step is
+      // forced to full: the moment of the strike is the brightest. The floor is
+      // high (0.6 rather than near-zero) so the strobe reads as a shimmer down
+      // the channel rather than as the bolt switching on and off.
+      flicker: Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0.6 + Math.random() * 0.4)),
+      start: performance.now(),
+    });
+
+    // A few sparks off the impact, thrown into the existing pixel pool so they
+    // age, fade and get cleaned up by the same code as every other particle.
+    // Kept sparse on purpose - the bolt is the effect, and a fountain of debris
+    // underneath it is what tipped the whole thing from a strike into a firework.
+    const sparks = 3 + Math.floor(Math.random() * 3);
+    const sparkColor = `rgb(${lighten(er, 0.45)}, ${lighten(eg, 0.45)}, ${lighten(eb, 0.45)})`;
+    for (let i = 0; i < sparks; i++) {
+      const dir = (Math.random() - 0.5) * Math.PI;
+      const speed = 30 + Math.random() * 45;
+      this.flamePixels.push({
+        x: tx + (Math.random() - 0.5) * w,
+        y: ty + Math.random() * (target.h || 16) * 0.4,
+        vx: Math.sin(dir) * speed,
+        vy: -Math.abs(Math.cos(dir)) * speed * 0.8,
+        size: Math.max(1, cell * (0.5 + Math.random() * 0.5)),
+        color: sparkColor,
+        alpha: 1,
+        start: performance.now(),
+      });
+    }
+  }
+
+  // Fractal midpoint displacement: start with the straight line from the sky to
+  // the caret, then repeatedly split every segment and shove the new midpoint
+  // sideways by a shrinking random amount. Displacement is across the segment
+  // rather than in a fixed axis, so the jaggedness looks the same whatever
+  // angle the bolt comes in at.
+  boltPath(x0, y0, x1, y1, jitter) {
+    let pts = [{ x: x0, y: y0 }, { x: x1, y: y1 }];
+    let amp = jitter;
+    for (let pass = 0; pass < THUNDER_PASSES; pass++) {
+      const next = [pts[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const off = (Math.random() - 0.5) * 2 * amp;
+        next.push({ x: (a.x + b.x) / 2 + (-dy / len) * off, y: (a.y + b.y) / 2 + (dx / len) * off });
+        next.push(b);
+      }
+      pts = next;
+      // Halve-ish per pass: finer splits get finer wobble, which is what makes
+      // the result read as one crooked channel rather than as noise.
+      amp *= 0.55;
+    }
+    return pts;
+  }
+
+  // Stamp a polyline onto a fixed grid so the bolt is built from aligned blocks
+  // instead of a smooth stroke - the same chunky look as the rest of the
+  // plugin's pixel work, and the reason this is a Pixel Trail sub-option.
+  //
+  // Deduped, and that matters: a near-horizontal run lands in the same cell
+  // dozens of times, and every restamp of a semi-transparent block compounds
+  // into a bright blob exactly where the bolt should be at its thinnest.
+  //
+  // `seen` is passed in by the caller and shared between the trunk and its
+  // forks: a fork that crosses back over the channel it came from would
+  // otherwise restamp those cells, and every overlapping block compounds in the
+  // halo pass into a bright knot right where the two should simply meet.
+  // Each block also records `t`, its position along the ramp: t0 at the start of
+  // this path and t1 at the end. The trunk spans the whole ramp; a fork spans
+  // only the part of it from where the fork branched off.
+  pixelateBolt(pts, cell, seen, t0, t1) {
+    const out = [];
+    const segs = pts.length - 1;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      // Sub-cell stepping: at exactly one step per cell width a diagonal run
+      // skips cells and the channel comes out dotted.
+      const steps = Math.max(1, Math.ceil(dist / (cell * 0.7)));
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const gx = Math.round((a.x + (b.x - a.x) * t) / cell) * cell;
+        const gy = Math.round((a.y + (b.y - a.y) * t) / cell) * cell;
+        const key = gx + "," + gy;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Position along the path by segment index, not by distance: the
+        // segments are near enough equal length after midpoint displacement,
+        // and measuring true arc length would mean a second pass over the
+        // whole path for a difference nobody can see in a 14-band ramp.
+        out.push({ x: gx, y: gy, t: t0 + ((i - 1 + t) / segs) * (t1 - t0) });
+      }
+    }
+    return out;
+  }
+
+  drawThunderbolts() {
+    if (!this.thunderbolts.length) return;
+    const ctx = this.ctx;
+    const now = performance.now();
+    const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
+    const strength = Math.max(0.1, Math.min(1, this.settings.thunderstrikeStrength ?? 0.5));
+    const halo = !!this.settings.glow;
+
+    this.thunderbolts = this.thunderbolts.filter((b) => {
+      const t = (now - b.start) / THUNDER_LIFE_MS;
+      if (t >= 1) return false;
+
+      // Full brightness through the strike itself, then a decay - times the
+      // strobe rolled at spawn, and the user's Strength.
+      const fade = t < 0.12 ? 1 : 1 - (t - 0.12) / 0.88;
+      const step = Math.min(b.flicker.length - 1, Math.floor(t * b.flicker.length));
+      const alpha = Math.max(0, fade * b.flicker[step] * opacity * strength);
+      // Still alive, just in a dark phase of the strobe - keep it in the list.
+      if (alpha <= 0.02) return true;
+
+      const cell = b.cell;
+      ctx.save();
+
+      // Two passes over the bands rather than one pass doing halo-then-core per
+      // band: the halo of a band further down the bolt would otherwise wash
+      // over the core of the band above it, and the ramp would come out muddy
+      // exactly where two colours meet.
+      //
+      // The halo is oversized dim blocks rather than shadowBlur: a real blur on
+      // several hundred rects is the single most expensive thing this file
+      // could do per frame, and at this size it isn't distinguishable from the
+      // cheap version.
+      if (halo) {
+        const pad = Math.max(1, cell * 0.75);
+        for (const band of b.bands) {
+          ctx.fillStyle = `rgba(${band.r}, ${band.g}, ${band.b}, ${alpha * 0.16})`;
+          for (const c of band.cells) ctx.fillRect(c.x - pad, c.y - pad, cell + pad * 2, cell + pad * 2);
+        }
+      }
+      for (const band of b.bands) {
+        ctx.fillStyle = `rgba(${band.cr}, ${band.cg}, ${band.cb}, ${alpha})`;
+        for (const c of band.cells) ctx.fillRect(c.x, c.y, cell, cell);
+      }
+
+      // The hit: a block flaring at the caret and shrinking away over the first
+      // part of the strike, so the bolt visibly lands instead of just stopping.
+      const flash = 1 - Math.min(1, t / 0.4);
+      if (flash > 0) {
+        const size = b.flash * (0.5 + flash);
+        ctx.fillStyle = `rgba(${lighten(b.er, 0.45)}, ${lighten(b.eg, 0.45)}, ${lighten(b.eb, 0.45)}, ${alpha * flash * 0.4})`;
+        ctx.fillRect(b.tx - size / 2, b.ty - size / 2, size, size);
+      }
+      ctx.restore();
+
+      // One box for the whole bolt: the cells are a thin diagonal thread, but
+      // marking each one separately would mean hundreds of damage rects per
+      // frame to clear a region the cursor's own box already nearly covers.
+      const pad = Math.max(8, cell * 3) + b.flash;
+      this._markDirty(
+        b.minX - pad, b.minY - pad,
+        (b.maxX - b.minX) + cell + pad * 2,
+        (b.maxY - b.minY) + cell + pad * 2,
+      );
+      return true;
+    });
+  }
+
+  // The raw blink cycle: 1 while the caret is "on", 0 while it's "off", eased
+  // through the two transitions, and pinned at 1 during the post-move hold.
+  //
+  // This is the SHAPE of the blink, separate from what is done with it. Plain
+  // blinking fades opacity by it; Breathing scales the caret by it and leaves
+  // opacity alone; the torch's Blink Sync follows it whichever of those is on.
+  // Splitting the two apart is what lets Breathing stop the caret vanishing
+  // without also stopping everything else that keys off the blink.
+  blinkPhase(now) {
     if (!this.settings.blinkingEnabled) return 1;
     // Build the effective hold window from two independent sources:
     //   • smoothStopBlinking (existing): 450 ms hold, only active when smooth
@@ -3468,6 +4465,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (delayMs > holdMs) holdMs = delayMs;
     if (holdMs > 0 && now - this.lastMoveTime < holdMs) return 1;
     return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5);
+  }
+
+  // What the blink does to opacity. Breathing swaps the fade out for a size
+  // change, so the caret keeps full opacity throughout - never disappearing is
+  // the entire point of that option.
+  blinkAlpha(now) {
+    if (this.settings.blinkBreathing) return 1;
+    return this.blinkPhase(now);
+  }
+
+  // What the blink does to size: 1 at the top of the cycle, shrinking to
+  // (1 - depth) at the bottom. Never exceeds 1, deliberately - the damage box
+  // in draw() is measured from the caret's true rect, so a caret that breathed
+  // OUT past its own bounds would leave uncleared pixels behind its widest
+  // frame. Shrinking from the true size is also what keeps it from shouldering
+  // into the glyphs on either side.
+  breathScale(now) {
+    if (!this.settings.blinkingEnabled || !this.settings.blinkBreathing) return 1;
+    const depth = Math.max(0, Math.min(0.9, this.settings.blinkBreathDepth ?? 0.2));
+    return 1 - depth * (1 - this.blinkPhase(now));
   }
 
   // ---- Damage tracking ---------------------------------------------------
@@ -3515,7 +4532,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._dirty = null;
 
     this.drawLettersParticles();
+    // Underneath everything else: it's a background guide, and the cursor and
+    // its motes should read as sitting on top of it.
+    this.drawBracketTether();
+    // Behind the flame pixels and the cursor: motes are ambient background,
+    // and a mote crossing the caret shouldn't paint over it.
+    this.drawStardust();
     this.drawFlamePixels();
+    // Behind the cursor, like every other effect here: the bolt lands ON the
+    // caret, and the caret should be the thing you see it hit.
+    this.drawThunderbolts();
 
     // Cursor bounds are marked once here rather than threaded through every
     // branch of drawRetroBox/drawGenericCaret. The box spans the interpolated
@@ -3527,6 +4553,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
       let x0 = a.x, y0 = a.top;
       let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
       let y1 = a.top + (a.h || 0);
+      // The raw quad, not the tapered shape: tapering only ever pulls corners
+      // inward, so the quad's bounds still cover whatever gets painted.
       const q = this.smearQuad;
       if (q) {
         for (const k in q) {
@@ -3540,6 +4568,27 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._markDirty(x0 - pad, y0 - pad, (x1 - x0) + pad * 2, (y1 - y0) + pad * 2);
     }
 
+    // Breathing is applied as a transform around the whole cursor draw rather
+    // than by shrinking the rect each painter is handed. Two reasons: with
+    // Motion Smear on, fillCursorShape ignores that rect entirely and draws the
+    // spring's quad instead, so a shrunken rect would silently do nothing; and
+    // scaling here catches the glow, the outline and the held character in one
+    // go, so the caret breathes as one object instead of coming apart.
+    //
+    // Note it does NOT touch getActiveRect(), which is what the smear spring
+    // chases. Breathing the spring's target would mean the spring never
+    // settles, and `_smearMoving` would hold the hot gear for as long as the
+    // caret blinked.
+    const breath = a ? this.breathScale(performance.now()) : 1;
+    const breathing = breath < 0.999;
+    if (breathing) {
+      const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+      const cy = a.top + (a.h || 0) / 2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(breath, breath);
+      ctx.translate(-cx, -cy);
+    }
     switch (this.styleFor("cursorStyle")) {
       case "Line":
         this.drawGenericCaret(false);
@@ -3551,6 +4600,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.drawRetroBox();
         break;
     }
+    if (breathing) ctx.restore();
 
     // Secondary carets sit on top of the main cursor's trail/particles but
     // don't participate in smear/glow - just plain dashed vertical lines.
@@ -3617,7 +4667,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   fillCursorShape(ctx, rx, ry, rw, rh) {
-    const q = this.settings.smear ? this.smearQuad : null;
+    const q = this.smearCorners();
     const corners = q || {
       tl: { x: rx, y: ry },
       tr: { x: rx + rw, y: ry },
@@ -3639,30 +4689,77 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const speed = this.settings.energySpeed ?? 1;
     const t = (performance.now() / 1000) * speed;
     const base = hexToRgbTuple(baseColor);
+    const rampOn = !!this.settings.gradientEnabled;
+    const aurora = rampOn && !!this.settings.energyAurora;
 
     const grad = ctx.createLinearGradient(x + w / 2, y + h, x + w / 2, y);
-    const stops = 6;
+    // A scrolling multi-colour ramp needs more stops than a single-hue beam:
+    // every stop is a linear segment, and 6 of them across a 4-colour cycle
+    // renders as visible facets rather than a smooth flow. Aurora warps the
+    // sample position on top of that, so it needs finer steps again or the
+    // warp itself shows up as kinks.
+    const stops = aurora ? 20 : rampOn ? 12 : 6;
     for (let i = 0; i <= stops; i++) {
       const pos = i / stops;
       const pulse = 0.5 + 0.5 * Math.sin((pos - t * 0.6) * Math.PI * 2);
 
-      let r = base[0], g = base[1], b = base[2];
+      // With Gradient on the beam becomes an *animated* gradient: the ramp
+      // itself scrolls along the cursor (sampled cyclically, so there's no
+      // seam where it wraps) and the beam's brightness wave rides on top of
+      // it. With Gradient off this is unchanged - one base colour, pulse only.
+      let bs;
+      if (aurora) {
+        // Aurora: instead of sliding the ramp rigidly, warp where each point
+        // samples it using three sine waves at unrelated frequencies and
+        // speeds. Because they never line up into a repeating pattern, the
+        // colours stretch and compress against each other and appear to swirl
+        // rather than march past.
+        const warp =
+          Math.sin(pos * 3.1 + t * 0.85) * 0.26 +
+          Math.sin(pos * 5.7 - t * 0.55) * 0.14 +
+          Math.sin(pos * 1.3 + t * 1.25) * 0.20;
+        const near = this.sampleRamp(pos - t * 0.3 + warp, true);
+        // A second, slower read from a different part of the ramp, cross-faded
+        // into the first. This is what actually *mixes* the colours - the warp
+        // alone only rearranges them, so two stops far apart on the ramp would
+        // never meet.
+        const far = this.sampleRamp(pos * 0.45 + t * 0.17 + 0.37, true);
+        const mix = (0.5 + 0.5 * Math.sin(pos * 2.3 + t * 0.7)) * 0.6;
+        bs = [
+          near[0] + (far[0] - near[0]) * mix,
+          near[1] + (far[1] - near[1]) * mix,
+          near[2] + (far[2] - near[2]) * mix,
+        ];
+      } else {
+        bs = rampOn ? this.sampleRamp(pos - t * 0.35, true) : base;
+      }
+      let r = bs[0], g = bs[1], b = bs[2];
+      // Aurora is carried by its colours, so the beam's hard bright/dark pulse
+      // is eased off here - at full strength it repeatedly flattens the mix to
+      // near-white and near-black and the swirl stops being legible.
+      const punch = aurora ? 0.45 : 1;
       if (pulse > 0.5) {
-        const k = (pulse - 0.5) * 2;
+        const k = (pulse - 0.5) * 2 * punch;
         r += (255 - r) * k * 0.55;
         g += (255 - g) * k * 0.55;
         b += (255 - b) * k * 0.55;
       } else {
-        const k = (0.5 - pulse) * 2;
+        const k = (0.5 - pulse) * 2 * punch;
         r -= r * k * 0.45;
         g -= g * k * 0.45;
         b -= b * k * 0.45;
       }
 
-      const shift = 14;
-      r += Math.sin(t * 0.7 + pos * 6) * shift;
-      g += Math.sin(t * 0.7 + pos * 6 + 2.1) * shift;
-      b += Math.sin(t * 0.7 + pos * 6 + 4.2) * shift;
+      // Per-channel hue drift. This is what gives the single-colour beam its
+      // iridescence, but it actively fights a gradient - the user picked those
+      // colours exactly, and ±14 per channel visibly muddies them - so with a
+      // ramp on, the scroll above supplies the motion instead.
+      if (!rampOn) {
+        const shift = 14;
+        r += Math.sin(t * 0.7 + pos * 6) * shift;
+        g += Math.sin(t * 0.7 + pos * 6 + 2.1) * shift;
+        b += Math.sin(t * 0.7 + pos * 6 + 4.2) * shift;
+      }
 
       r = Math.max(0, Math.min(255, Math.round(r)));
       g = Math.max(0, Math.min(255, Math.round(g)));
@@ -3697,11 +4794,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
 
     this.forEachTrailPoint((p, alpha) => {
-      ctx.fillStyle = hexToRgba(trailColor, alpha * opacity);
       if (isUnderline) {
         const uThickness = this.underlineThickness(p.h);
-        ctx.fillRect(p.x, p.y + p.h - uThickness, p.w, uThickness);
+        const ty = p.y + p.h - uThickness;
+        // Build the paint from the bar's own rect, not the full line box:
+        // a ramp spanning the whole line height would show only the sliver
+        // of itself that happens to fall across the bar.
+        ctx.fillStyle = this.cursorPaint(p.x, ty, p.w, uThickness, trailColor, alpha * opacity);
+        ctx.fillRect(p.x, ty, p.w, uThickness);
       } else {
+        ctx.fillStyle = this.cursorPaint(p.x, p.y, p.w, p.h, trailColor, alpha * opacity);
         ctx.fillRect(p.x, p.y, p.w, p.h);
       }
     });
@@ -3732,7 +4834,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     ctx.fillStyle = settings.energyEffect
       ? this.createEnergyGradient(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
-      : hexToRgba(color, 0.9 * blinkAlpha * opacity);
+      : this.cursorPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity);
     this.fillCursorShape(ctx, rx, ry, rw, rh);
 
     // Line + serifs = classic I-beam. Only for the Line style (underline
@@ -3878,6 +4980,491 @@ module.exports = class CursorSmithPlugin extends Plugin {
     });
   }
 
+  // Age and paint the idle motes.
+  //
+  // All motion is derived from `elapsed` rather than integrated per frame, the
+  // same way flame pixels work, which matters more here than anywhere else in
+  // the file: stardust is the one effect that routinely runs at the WARM gear
+  // (~30fps) and lives for seconds, so a per-frame step would visibly change
+  // both drift speed and lifetime with the gear.
+  drawStardust() {
+    if (!this.stardust.length) return;
+    const now = performance.now();
+    const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
+
+    this.stardust = this.stardust.filter((p) => {
+      const elapsed = (now - p.start) / 1000;
+      if (elapsed > p.life) return false;
+
+      const t = elapsed / p.life;
+      // Fade in over the first fifth, then out across the rest, so motes
+      // materialise out of nothing instead of popping in at the caret.
+      const envelope = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8;
+      // Slow per-mote brightness wobble: what makes a drifting dot read as a
+      // star rather than a speck of dust.
+      const twinkle = 0.72 + 0.28 * Math.sin(elapsed * p.twinkleSpeed + p.phase);
+      const alpha = Math.max(0, envelope * twinkle * opacity);
+      if (alpha <= 0.01) return true;
+
+      if (p.orbit) {
+        // Track the live caret so the swarm follows the cursor around; keep
+        // the last anchor when there's no caret this frame (mid-blur, or a
+        // mote outliving its caret) rather than collapsing to the origin.
+        const anchor = this.animActive;
+        if (anchor) {
+          p.ax = anchor.x + (anchor.w || anchor.actualCharWidth || 8) / 2;
+          p.ay = anchor.top + anchor.h / 2;
+        }
+        const ang = p.phase + elapsed * p.angSpeed;
+        // Breathe the radius slightly so the ring doesn't read as a rigid wheel.
+        const r = p.radius * (1 + Math.sin(elapsed * p.wobbleSpeed + p.phase) * 0.15);
+        return this.paintMote(p, p.ax + Math.cos(ang) * r, p.ay + Math.sin(ang) * r * p.squash, alpha);
+      }
+
+      const curX = p.x + Math.sin(elapsed * p.swaySpeed + p.phase) * p.sway;
+      const curY = p.y + p.vy * elapsed;
+
+      return this.paintMote(p, curX, curY, alpha);
+    });
+  }
+
+  // Shared tail of drawStardust for both motion modes: paint one mote and
+  // report the pixels it touched.
+  paintMote(p, x, y, alpha) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(x, y, p.size, p.size);
+    ctx.restore();
+    this._markDirty(x - 1, y - 1, p.size + 2, p.size + 2);
+    return true;
+  }
+
+  // ---- Bracket Tether ----------------------------------------------------
+  // Find the position of the bracket matching the one at `at`, or -1.
+  //
+  // This is a plain depth count over the raw text, not a syntax-aware match:
+  // CodeMirror's own bracket matching lives in @codemirror/language, which
+  // isn't reachable from a plugin without bundling it. The practical
+  // difference is that a bracket inside a string or comment still counts, so
+  // the tether can occasionally point somewhere a compiler wouldn't. For a
+  // decorative guide in a Markdown editor that's an acceptable trade; it is
+  // NOT a good enough basis for anything that edits text.
+  matchingBracketPos(doc, at, ch) {
+    const open = BRACKET_OPEN[ch] ? ch : BRACKET_CLOSE[ch];
+    if (!open) return -1;
+    const close = BRACKET_OPEN[open];
+    const forward = ch === open;
+    const len = doc.length;
+
+    // Read one slice and index into it rather than calling sliceString per
+    // character - the same scan done a character at a time is thousands of
+    // rope walks per frame.
+    if (forward) {
+      const end = Math.min(len, at + BRACKET_SCAN_LIMIT);
+      const text = doc.sliceString(at, end);
+      let depth = 0;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === open) depth++;
+        else if (c === close) { if (--depth === 0) return at + i; }
+      }
+    } else {
+      const start = Math.max(0, at - BRACKET_SCAN_LIMIT + 1);
+      const text = doc.sliceString(start, at + 1);
+      let depth = 0;
+      for (let i = text.length - 1; i >= 0; i--) {
+        const c = text[i];
+        if (c === close) depth++;
+        else if (c === open) { if (--depth === 0) return start + i; }
+      }
+    }
+    return -1;
+  }
+
+  // The text of the line containing `pos`, plus that line's start offset.
+  // Capped rather than using doc.lineAt so this works on any doc-like object
+  // exposing length/sliceString, and so a pathological single-line file can't
+  // turn one frame into a megabyte read.
+  lineBoundsAt(doc, pos) {
+    const from = Math.max(0, pos - QUOTE_LINE_SCAN);
+    const to = Math.min(doc.length, pos + QUOTE_LINE_SCAN);
+    const chunk = doc.sliceString(from, to);
+    const rel = pos - from;
+    const s = rel <= 0 ? 0 : chunk.lastIndexOf("\n", rel - 1) + 1;
+    let e = chunk.indexOf("\n", rel);
+    if (e < 0) e = chunk.length;
+    return { start: from + s, text: chunk.slice(s, e) };
+  }
+
+  // The innermost quoted run on this line that contains (or touches) the
+  // caret. Pairs are taken left to right - 1st with 2nd, 3rd with 4th - among
+  // the quotes that qualify as delimiters.
+  quoteSpanAt(doc, pos) {
+    const { start, text } = this.lineBoundsAt(doc, pos);
+    const rel = pos - start;
+    let best = null;
+    for (const q of QUOTE_CHARS) {
+      const marks = [];
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] === q && isQuoteDelimiter(text, i)) marks.push(i);
+      }
+      for (let i = 0; i + 1 < marks.length; i += 2) {
+        const a = marks[i];
+        const b = marks[i + 1];
+        // Inclusive of both edges: the caret counts as "in" the run whether
+        // it's inside it or parked just outside either quote.
+        if (rel < a || rel > b + 1) continue;
+        if (!best || a > best.from) best = { from: start + a, to: start + b };
+      }
+    }
+    return best;
+  }
+
+  // The innermost bracket pair the caret sits *inside*, for when it isn't
+  // touching a bracket at all. Walks back looking for an opener that hasn't
+  // already been closed, tracking each bracket type separately so an unrelated
+  // `]` in the middle of a `(...)` doesn't derail the count.
+  enclosingBracketSpan(doc, pos) {
+    const start = Math.max(0, pos - BRACKET_SCAN_LIMIT);
+    const text = doc.sliceString(start, pos);
+    const depth = { ")": 0, "]": 0, "}": 0 };
+    for (let i = text.length - 1; i >= 0; i--) {
+      const c = text[i];
+      if (BRACKET_CLOSE[c]) { depth[c]++; continue; }
+      const closer = BRACKET_OPEN[c];
+      if (!closer) continue;
+      if (depth[closer] > 0) { depth[closer]--; continue; }
+      const from = start + i;
+      const to = this.matchingBracketPos(doc, from, c);
+      return to >= 0 ? { from, to } : null;
+    }
+    return null;
+  }
+
+  // What the tether should join, as { from, to } document offsets with
+  // from <= to, or null.
+  //
+  // Order matters: a bracket the caret is actually touching wins over anything
+  // it merely sits inside, because that's the one you just typed or arrowed
+  // onto. Failing that, the innermost enclosing run wins - whichever of the
+  // quote or bracket candidates opens closest to the caret.
+  tetherSpan(doc, pos) {
+    const len = doc.length;
+    const adjacent = [];
+    if (pos > 0) adjacent.push(pos - 1);
+    if (pos < len) adjacent.push(pos);
+    for (const at of adjacent) {
+      const ch = doc.sliceString(at, at + 1);
+      if (!BRACKET_OPEN[ch] && !BRACKET_CLOSE[ch]) continue;
+      const m = this.matchingBracketPos(doc, at, ch);
+      if (m >= 0) return { from: Math.min(at, m), to: Math.max(at, m) };
+    }
+
+    const q = this.quoteSpanAt(doc, pos);
+    const b = this.enclosingBracketSpan(doc, pos);
+    if (q && b) return q.from > b.from ? q : b;
+    return q || b || null;
+  }
+
+  // The tether for this frame, as an array of horizontal rules ordered top to
+  // bottom - one per line the pair covers - in viewport pixels (the canvas is
+  // fixed at 0,0, so viewport coords ARE canvas coords, the same assumption
+  // cmCaretCoords and secondaryCaretCoords make). Returns null when there's
+  // nothing to draw.
+  bracketTetherCoords(view) {
+    if (!view || !view.hasFocus) return null;
+    try {
+      const state = view.state;
+      const main = state.selection.main;
+      // Only for a collapsed caret: over a selection the line would fight the
+      // selection highlight and there's no single "the caret is here" point.
+      if (!main.empty) return null;
+
+      const doc = state.doc;
+      const pos = main.head;
+      const len = doc.length;
+
+      // The scan is the expensive part and depends only on where the caret is
+      // in what text, so cache it across frames. Coordinates still resolve
+      // every frame, since scrolling moves them without moving the caret.
+      const key = pos + ":" + len;
+      let from, to;
+      if (this._tetherKey === key) {
+        from = this._tetherFrom;
+        to = this._tetherTo;
+      } else {
+        const span = this.tetherSpan(doc, pos);
+        from = span ? span.from : -1;
+        to = span ? span.to : -1;
+        this._tetherKey = key;
+        this._tetherFrom = from;
+        this._tetherTo = to;
+      }
+      if (from < 0 || to < 0) return null;
+
+      const a = view.coordsAtPos(from, 1) || view.coordsAtPos(from, -1);
+      const b = view.coordsAtPos(to, 1) || view.coordsAtPos(to, -1);
+      if (!a || !b) return null;
+
+      // Same out-of-view guard the other caret readers use: CodeMirror will
+      // happily return a clamped coordinate for a position scrolled off the
+      // pane, which would stake the tether to the pane edge instead of to the
+      // bracket. Drop the tether rather than draw a line to a lie.
+      const paneRect = this.getPaneRect(view);
+      if (paneRect) {
+        const margin = 1;
+        for (const c of [a, b]) {
+          const cBottom = c.bottom ?? c.top;
+          if (cBottom < paneRect.top - margin || c.top > paneRect.bottom + margin) return null;
+        }
+      }
+
+      const segs = this.tetherSegments(view, from, to, a, b);
+      return segs && segs.length ? segs : null;
+    } catch {
+      // A bad frame shouldn't kill the tick loop.
+      return null;
+    }
+  }
+
+  // The tether as one or more horizontal rules, ordered top to bottom, each
+  // { x1, y1, x2, y2 } in viewport pixels.
+  //
+  // A pair that fits on one line is a single rule from the opener to the
+  // closer. A pair that does NOT - because the text is long enough to soft-wrap
+  // or because it genuinely spans several lines - used to be that same single
+  // rule, which meant one long diagonal drawn from the opening bracket down and
+  // across to the closing one: it sloped through the middle of everything in
+  // between, struck out text it had nothing to say about, and gave no sense of
+  // what the pair actually contained. So a multi-line span is now measured
+  // per line instead, and each covered line gets its own level rule beneath
+  // just the part of that line the pair spans - the whole span underlined,
+  // rather than a chord cut across it.
+  //
+  // `a` and `b` are the already-resolved coordinates of the two brackets.
+  tetherSegments(view, from, to, a, b) {
+    // The rules run *under* the text rather than through it, so each sits just
+    // below its line box. The closing end gets a glyph width added so the span
+    // covers that character instead of stopping at its left edge.
+    const drop = 1.5;
+    const glyph = Math.max(3, (b.bottom - b.top) * 0.42);
+    const flat = [{
+      x1: a.left,
+      y1: a.bottom + drop,
+      x2: b.left + glyph,
+      y2: b.bottom + drop,
+    }];
+    // Both brackets on the same line box: the two endpoints already describe
+    // the whole rule, and none of the measuring below is needed.
+    if (Math.abs(a.bottom - b.bottom) < 1) return flat;
+
+    // Measuring line boxes means walking the DOM, which is far too expensive to
+    // repeat on every frame for a span that hasn't moved. Scrolling translates
+    // the whole span by a single delta, so a previous measurement can just be
+    // shifted - and the two endpoints, which are resolved every frame anyway,
+    // are the check that one translation really does explain the new layout.
+    // If they disagree, something reflowed underneath us (a wrap point moved, a
+    // fold opened, the pane resized) and the span is measured again.
+    const key = from + ":" + to + ":" + view.state.doc.length;
+    const cached = this._tetherSegs;
+    if (cached && this._tetherSegKey === key && this._tetherAnchorA && this._tetherAnchorB) {
+      const dx = a.left - this._tetherAnchorA.x;
+      const dy = a.bottom - this._tetherAnchorA.y;
+      if (Math.abs((b.left - this._tetherAnchorB.x) - dx) < 0.5 &&
+          Math.abs((b.bottom - this._tetherAnchorB.y) - dy) < 0.5) {
+        if (dx === 0 && dy === 0) return cached;
+        return cached.map((s) => ({ x1: s.x1 + dx, y1: s.y1 + dy, x2: s.x2 + dx, y2: s.y2 + dy }));
+      }
+    }
+
+    // `to + 1` so the closing bracket's own glyph is inside the measured range,
+    // which is what the `glyph` fudge above stands in for on the single-line
+    // path.
+    const rects = this.rangeLineRects(view, from, Math.min(view.state.doc.length, to + 1));
+    const segs = rects.length >= 2
+      ? rects.map((r) => ({ x1: r.left, y1: r.bottom + drop, x2: r.right, y2: r.bottom + drop }))
+      : flat;
+
+    this._tetherSegKey = key;
+    this._tetherSegs = segs;
+    this._tetherAnchorA = { x: a.left, y: a.bottom };
+    this._tetherAnchorB = { x: b.left, y: b.bottom };
+    return segs;
+  }
+
+  // The line boxes a document range occupies, as { left, right, bottom } in
+  // viewport pixels, one entry per line, top to bottom.
+  //
+  // Measured through a DOM Range rather than through coordsAtPos because only
+  // the DOM knows where a soft-wrapped line actually breaks: getClientRects
+  // hands back one rect per line box, so a span that wraps comes back already
+  // split at its wrap points, with proportional glyph widths and bidi runs
+  // accounted for. CodeMirror can only answer "where is offset N", which would
+  // find the hard line breaks and miss every soft one - i.e. exactly the case
+  // this is here for.
+  //
+  // One Range per logical line, rather than one Range for the whole span, on
+  // purpose: a Range that FULLY contains a .cm-line element also reports that
+  // element's own border box, which is the full width of the editor, so every
+  // middle line would measure as a full-width rule running way past the end of
+  // its text. Keeping each Range strictly inside one line means only the text
+  // within it is ever measured.
+  rangeLineRects(view, from, to) {
+    const doc = view.state.doc;
+    const out = [];
+    if (to <= from) return out;
+    const first = doc.lineAt(from);
+    const last = doc.lineAt(to);
+    // A pair spanning more than a screenful can't be usefully underlined and
+    // isn't worth the measuring; the caller falls back to the single rule.
+    if (last.number - first.number > 300) return out;
+    const ownerDoc = view.dom.ownerDocument;
+
+    for (let n = first.number; n <= last.number; n++) {
+      const line = doc.line(n);
+      const s = Math.max(from, line.from);
+      const e = Math.min(to, line.to);
+      // Blank line, or a line the span only touches at a break: nothing under
+      // which to draw anything.
+      if (e <= s) continue;
+
+      let rects;
+      try {
+        const ds = view.domAtPos(s);
+        const de = view.domAtPos(e);
+        if (!ds || !de || !ds.node || !de.node) continue;
+        const range = ownerDoc.createRange();
+        range.setStart(ds.node, ds.offset);
+        range.setEnd(de.node, de.offset);
+        rects = range.getClientRects();
+      } catch {
+        // A line scrolled out of the rendered viewport, or hidden behind a fold
+        // or a widget, has no DOM to measure. Skipping it beats abandoning the
+        // whole tether.
+        continue;
+      }
+
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (!r || r.width < 0.5 || r.height < 0.5) continue;
+        // Styled runs inside one line box - a bold stretch, a link, a search
+        // highlight - each report their own rect. Fold everything sharing a
+        // baseline into a single span so the line gets one continuous rule
+        // instead of a dashed row of fragments.
+        let merged = false;
+        for (const o of out) {
+          if (Math.abs(o.bottom - r.bottom) < 1.5) {
+            o.left = Math.min(o.left, r.left);
+            o.right = Math.max(o.right, r.right);
+            merged = true;
+            break;
+          }
+        }
+        if (!merged) out.push({ left: r.left, right: r.right, bottom: r.bottom });
+      }
+    }
+
+    out.sort((p, q) => p.bottom - q.bottom || p.left - q.left);
+    return out;
+  }
+
+  // Stroke for one rule of the tether, where that rule covers t0..t1 (as
+  // fractions) of the whole run.
+  //
+  // With the gradient on, the ramp is spread across the entire span rather than
+  // restarted on each line: the canvas gradient is anchored at the virtual
+  // points where fractions 0 and 1 would land on this rule's own axis, so
+  // consecutive lines pick up consecutive slices of one ramp and the tether
+  // still reads as a single object, the way it does with the cursor.
+  tetherStroke(ctx, s, t0, t1, alpha) {
+    if (!this.settings.gradientEnabled) return hexToRgba(this.getActiveColor(), alpha);
+    const span = Math.max(1e-4, t1 - t0);
+    const ux = (s.x2 - s.x1) / span;
+    const uy = (s.y2 - s.y1) / span;
+    const g = ctx.createLinearGradient(
+      s.x1 - ux * t0, s.y1 - uy * t0,
+      s.x1 + ux * (1 - t0), s.y1 + uy * (1 - t0),
+    );
+    const stops = this.gradientStops();
+    for (let i = 0; i < stops.length; i++) {
+      const [r, gg, b] = hexToRgbTuple(stops[i]);
+      g.addColorStop(stops.length > 1 ? i / (stops.length - 1) : 0, `rgba(${r}, ${gg}, ${b}, ${alpha})`);
+    }
+    return g;
+  }
+
+  drawBracketTether() {
+    const segs = this.bracketTether;
+    if (!segs || !segs.length) return;
+    const ctx = this.ctx;
+    const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
+    const strength = Math.max(0, Math.min(1, this.settings.bracketTetherStrength ?? 0.35));
+    const alpha = strength * opacity;
+    if (alpha <= 0.01) return;
+
+    // Total length of the run, so the gradient can be spread across every rule
+    // as one ramp (see tetherStroke) instead of restarting on each line.
+    const lens = [];
+    let total = 0;
+    for (const s of segs) {
+      const l = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+      lens.push(l);
+      total += l;
+    }
+    // Caret sitting right on its own match (an empty pair): nothing to underline.
+    if (total < 2) return;
+
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+
+    // Short ticks turning up toward the text, at the opening bracket and at the
+    // closing one only - NOT at the end of every rule. They mark where the pair
+    // begins and ends, so putting them on each line's edge would claim a
+    // boundary at every wrap point, which is precisely the thing the reader
+    // should be able to ignore.
+    const tick = 4;
+    const last = segs.length - 1;
+    let run = 0;
+
+    for (let i = 0; i <= last; i++) {
+      const s = segs[i];
+      const len = lens[i];
+      if (len < 0.5) continue;
+      ctx.strokeStyle = this.tetherStroke(ctx, s, run / total, (run + len) / total, alpha);
+      run += len;
+
+      ctx.beginPath();
+      ctx.moveTo(s.x1, s.y1);
+      ctx.lineTo(s.x2, s.y2);
+      if (i === 0) {
+        ctx.moveTo(s.x1, s.y1);
+        ctx.lineTo(s.x1, s.y1 - tick);
+      }
+      if (i === last) {
+        ctx.moveTo(s.x2, s.y2);
+        ctx.lineTo(s.x2, s.y2 - tick);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Damage covers every rule plus the ticks standing above them. One box over
+    // the lot rather than one per line: the rules are stacked a line apart, so
+    // per-line boxes would cover nearly the same area for more bookkeeping.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of segs) {
+      minX = Math.min(minX, s.x1, s.x2);
+      maxX = Math.max(maxX, s.x1, s.x2);
+      minY = Math.min(minY, s.y1, s.y2);
+      maxY = Math.max(maxY, s.y1, s.y2);
+    }
+    const pad = tick + 4;
+    this._markDirty(minX - pad, minY - pad, (maxX - minX) + pad * 2, (maxY - minY) + pad * 2);
+  }
+
   drawRetroBox() {
     const ctx = this.ctx;
     const settings = this.settings;
@@ -3889,7 +5476,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     this.forEachTrailPoint((p, alpha) => {
       if (hollow) {
-        ctx.strokeStyle = hexToRgba(color, alpha * opacity);
+        ctx.strokeStyle = this.cursorPaint(p.x, p.y, p.w, p.h, color, alpha * opacity);
         ctx.lineWidth = strokeW;
         // Inset by half the stroke so the outline lands inside the same
         // footprint the filled trail dot would occupy (canvas strokes
@@ -3897,7 +5484,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const inset = strokeW / 2;
         ctx.strokeRect(p.x + inset, p.y + inset, Math.max(0, p.w - strokeW), Math.max(0, p.h - strokeW));
       } else {
-        ctx.fillStyle = hexToRgba(color, alpha * opacity);
+        ctx.fillStyle = this.cursorPaint(p.x, p.y, p.w, p.h, color, alpha * opacity);
         ctx.fillRect(p.x, p.y, p.w, p.h);
       }
     });
@@ -3929,13 +5516,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       const paintStyle = settings.energyEffect
         ? this.createEnergyGradient(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity)
-        : hexToRgba(color, 0.9 * blinkAlpha * opacity);
+        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity);
 
       if (hollow) {
         // Stroke the smear quad so the outline deforms with movement the
         // same way a filled box would. Reuses fillCursorShape's corner
         // logic inline (we need stroke here, not fill).
-        const q = settings.smear ? this.smearQuad : null;
+        const q = this.smearCorners();
         const corners = q || {
           tl: { x: active.x, y: active.top },
           tr: { x: active.x + renderW, y: active.top },
@@ -4006,11 +5593,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
         return;
       }
       // Parked or hidden: a 150ms heartbeat is plenty to notice the effect
-      // being re-enabled, a mode switch, or the pane moving.
+      // being re-enabled, a mode switch, or the pane moving. Blink Sync asks
+      // for a middle cadence instead - fast enough to render the blink's fades
+      // smoothly, slow enough not to be the hot gear.
+      const delay = this._torchGear === "pulse" ? TORCH_PULSE_FRAME_MS : 150;
       this._torchIdleT = window.setTimeout(() => {
         this._torchIdleT = 0;
         if (this.torchEngineActive) this.torchRaf = requestAnimationFrame(tick);
-      }, 150);
+      }, delay);
     };
 
     const tick = () => {
@@ -4084,6 +5674,56 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 this.overlay.style.height = height + "px";
               }
 
+              // Resolved up here rather than at the point of use, because the
+              // pulse below has to stand down while the overlay is hidden: a
+              // hidden overlay has nothing to breathe, and the settings window
+              // is itself a modal - so without this, opening the panel to turn
+              // Blink Sync on would leave the torch pulsing away behind it for
+              // as long as the panel stayed open.
+              const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
+
+              // Blink Sync: the spotlight breathes with the caret, opening to
+              // full size while the caret is lit and closing as it fades out.
+              //
+              // Driven from this tick, never from a CSS animation - see the
+              // long note in injectStyles about the candle flicker that used to
+              // live there. blinkPhase() rather than blinkAlphaAt() on purpose:
+              // it already accounts for the post-move hold, so the light holds
+              // steady for exactly as long as the caret does after you type,
+              // instead of breathing out of step with it - and it's the phase
+              // rather than the alpha so the light still follows a caret that
+              // is Breathing instead of fading.
+              const pulse = !hideForModal &&
+                !!this.settings.overlayBlinkSync && !!this.settings.blinkingEnabled;
+              let radius = this.settings.overlayRadius;
+              if (pulse) {
+                // Allowed all the way to 1, which is the setting that makes the
+                // torch go out completely while the caret is blinked off: the
+                // light closes to nothing rather than merely narrowing.
+                const depth = Math.max(0, Math.min(1, this.settings.overlayBlinkDepth ?? 0.25));
+                radius *= 1 - depth * (1 - this.blinkPhase(performance.now()));
+                // Not the hot gear: see TORCH_PULSE_FRAME_MS. Only claimed if
+                // nothing above already asked for hot - a spotlight still
+                // chasing the caret outranks this.
+                if (this._torchGear === "idle") this._torchGear = "pulse";
+              }
+              // Rounded to whole pixels and written only on a real change. This
+              // is what makes the pulse affordable: the blink spends most of its
+              // cycle in a hold, where the rounded radius doesn't move and no
+              // style is touched at all, so only the two fades per cycle
+              // actually repaint the blended overlay.
+              // Floored at 1px rather than allowed to reach 0. A zero-radius
+              // radial-gradient is degenerate and engines disagree about which
+              // stop wins - and if the FIRST one did, "the light goes out"
+              // would render as the warm colour washed across the whole pane,
+              // the exact opposite of the intent. A 1px circle is well-defined
+              // and, against a pane-sized dark field, invisible.
+              const rKey = Math.max(1, Math.round(radius));
+              if (rKey !== this._lastTorchRadius) {
+                this._lastTorchRadius = rKey;
+                this.overlay.style.setProperty("--torch-radius", rKey + "px");
+              }
+
               // Dedupe the spotlight position write: setting a CSS custom
               // property forces a style recalc even when the value hasn't
               // changed, and this used to run every frame forever with a
@@ -4095,7 +5735,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
               }
 
-              const hideForModal = this.settings.overlaySpareSidebars && this.modalOpen;
               this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
             }
           }
@@ -4375,6 +6014,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     // --- Enable Plugin: always on top ---
     new Setting(containerEl)
       .setName("Enable Plugin")
+      .setDesc("Turns the custom cursor off entirely and hands you back Obsidian's own caret. Everything below is remembered while it is off.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.enabled)
@@ -4567,10 +6207,49 @@ class CursorSmithSettingTab extends PluginSettingTab {
         }
       }
 
-      new Setting(body).setName("Cursor Color (Dark Theme)")
-        .addColorPicker((cp) => cp.setValue(get("colorDark")).onChange(set("colorDark")));
-      new Setting(body).setName("Cursor Color (Light Theme)")
-        .addColorPicker((cp) => cp.setValue(get("colorLight")).onChange(set("colorLight")));
+      new Setting(body).setName("Gradient")
+        .setDesc("Paints the cursor with a blend of several colors instead of one flat color. Replaces the per-theme cursor colors, so the same gradient is used in light and dark themes.")
+        .addToggle((toggle) => toggle.setValue(!!get("gradientEnabled")).onChange(setAndRedraw("gradientEnabled")));
+
+      if (get("gradientEnabled")) {
+        const g = this.subGroup(body);
+        new Setting(g).setName("Number of Colors")
+          .setDesc("How many colors the blend runs through, from 2 to 4.")
+          .addDropdown((d) => d.addOptions({ 2: "2", 3: "3", 4: "4" })
+            .setValue(String(get("gradientCount") ?? 2))
+            // Dropdown values are strings; store a number so the engine's
+            // clamping arithmetic doesn't have to care where the value came
+            // from. Redraws the panel to add or remove color pickers.
+            .onChange((v) => setAndRedraw("gradientCount")(Number(v))));
+
+        // Each theme gets its own row of pickers, mirroring the flat
+        // Dark/Light colour pair this replaces. All of a row's pickers hang
+        // off ONE Setting, so they land side by side in that row's control
+        // area (Obsidian lays it out as a flex row) rather than stacking into
+        // one labelled row each.
+        const count = Math.max(2, Math.min(4, Number(get("gradientCount")) || 2));
+        const colorRow = (label, prefix, desc) => {
+          const row = new Setting(g).setName(label).setDesc(desc);
+          row.settingEl.addClass("cursor-smith-color-row");
+          for (let i = 1; i <= count; i++) {
+            const key = prefix + i;
+            row.addColorPicker((cp) =>
+              cp.setValue(get(key) || DEFAULT_SETTINGS[key]).onChange(set(key)));
+          }
+        };
+        colorRow("Colors (Dark Theme)", "gradientDark",
+          "In order from the top of the cursor to the bottom — or left to right for the Underline style.");
+        colorRow("Colors (Light Theme)", "gradientLight",
+          "The same ramp for light themes, where neon colors tend to wash out.");
+      } else {
+        new Setting(body).setName("Cursor Color (Dark Theme)")
+          .setDesc("The cursor color used while a dark theme is active.")
+          .addColorPicker((cp) => cp.setValue(get("colorDark")).onChange(set("colorDark")));
+        new Setting(body).setName("Cursor Color (Light Theme)")
+          .setDesc("The cursor color used while a light theme is active. Kept separate because neon colors that look right on a dark background wash out on a white page.")
+          .addColorPicker((cp) => cp.setValue(get("colorLight")).onChange(set("colorLight")));
+      }
+
       new Setting(body).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")));
     });
@@ -4591,6 +6270,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addToggle((toggle) => toggle.setValue(get("smoothStopBlinking")).onChange(set("smoothStopBlinking")));
         new Setting(g).setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
           .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
+        new Setting(g).setName("Breathing").setDesc("The cursor shrinks and swells on the blink cycle instead of fading out, so it never disappears.")
+          .addToggle((toggle) => toggle.setValue(!!get("blinkBreathing")).onChange(setAndRedraw("blinkBreathing")));
+        if (get("blinkBreathing")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Breath Depth").setDesc("How far the cursor shrinks at the bottom of the breath.")
+            .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkBreathDepth") ?? 0.2).setDynamicTooltip().onChange(set("blinkBreathDepth")));
+        }
       }
     });
 
@@ -4603,20 +6289,32 @@ class CursorSmithSettingTab extends PluginSettingTab {
       if (get("smoothEnabled")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Glide Amount")
+          .setDesc("How much the cursor eases as it travels. Higher stretches the glide out; lower snaps it into place.")
           .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(get("smoothness")).setDynamicTooltip().onChange(set("smoothness")));
         new Setting(g).setName("Catch-Up Speed")
+          .setDesc("How quickly the cursor chases the real caret. Higher arrives sooner.")
           .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(get("catchUpSpeed")).setDynamicTooltip().onChange(set("catchUpSpeed")));
-        new Setting(g).setName("Max Catch-Up Speed")
-          .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+        // Max Catch-Up Speed is meaningless on its own - it is only ever read
+        // inside the adaptive branch - so it hangs off that toggle rather than
+        // sitting beside it as a live-looking slider that does nothing.
         new Setting(g).setName("Speed Up When Typing Fast")
-          .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(set("smoothAdaptive")));
+          .setDesc("Lets the cursor run above Catch-Up Speed during sustained typing or key repeat so it doesn't fall behind, then eases back down once you stop.")
+          .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(setAndRedraw("smoothAdaptive")));
+        if (get("smoothAdaptive")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Max Catch-Up Speed")
+            .setDesc("The fastest the speed-up is allowed to get. Also carries through to Motion Smear, so the cursor keeps up whether or not it is smearing.")
+            .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+        }
         new Setting(g).setName("Movement Delay")
+          .setDesc("How long (in ms) the cursor waits before setting off after the caret. 0 follows immediately.")
           .addSlider((s) => s.setLimits(0, 500, 10).setValue(get("moveDelayMs")).setDynamicTooltip().onChange(set("moveDelayMs")));
       }
     });
 
     this.renderSection(containerEl, "Effects", (body) => {
       new Setting(body).setName("Popping Letters")
+        .setDesc("Each character you type springs out of the cursor and tumbles away as it fades.")
         .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
       if (get("popLetters")) {
         const g = this.subGroup(body);
@@ -4626,40 +6324,121 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Pixel Trail")
+        .setDesc("Scatters a small puff of colored pixels wherever the cursor has just been.")
         .addToggle((toggle) => toggle.setValue(get("flameTrail")).onChange(setAndRedraw("flameTrail")));
       if (get("flameTrail")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Backspace Disintegration")
+          .setDesc("Deleting throws a heavier burst outward in inverted colors, so text comes apart rather than just vanishing.")
           .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
+        new Setting(g).setName("Thunderstrike")
+          .setDesc("Pressing Enter calls down a bolt of pixelated lightning onto the cursor's new line, from a random angle above.")
+          .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(setAndRedraw("thunderstrike")));
+        if (get("thunderstrike")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Bolt Size")
+            .setDesc("How fine the lightning is, in pixels per block. Lower is a thinner, more delicate strike.")
+            .addSlider((s) => s.setLimits(1, 5, 1).setValue(get("thunderstrikeSize") ?? 2).setDynamicTooltip().onChange(set("thunderstrikeSize")));
+          new Setting(g2).setName("Strength")
+            .setDesc("How brightly the strike shows. Each bolt takes its colours at random from blue, purple, red, yellow and white.")
+            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("thunderstrikeStrength") ?? 0.5).setDynamicTooltip().onChange(set("thunderstrikeStrength")));
+        }
+      }
+
+      new Setting(body).setName("Stardust")
+        .setDesc("The cursor gives off a slow stream of floating pixels that drift upward and fade. Waits until you stop typing unless Always On is set.")
+        .addToggle((toggle) => toggle.setValue(!!get("stardustEnabled")).onChange(setAndRedraw("stardustEnabled")));
+      if (get("stardustEnabled")) {
+        const g = this.subGroup(body);
+        new Setting(g).setName("Always On")
+          .setDesc("Streams continuously instead of waiting for the cursor to sit still — including while you type.")
+          .addToggle((toggle) => toggle.setValue(!!get("stardustAlwaysOn")).onChange(setAndRedraw("stardustAlwaysOn")));
+        // The delay is what Always On overrides, so hide it rather than leave
+        // a live-looking slider that no longer does anything.
+        if (!get("stardustAlwaysOn")) {
+          new Setting(g).setName("Idle Delay")
+            .setDesc("How long (in ms) the cursor must sit still before the stardust starts.")
+            .addSlider((s) => s.setLimits(500, 8000, 250).setValue(get("stardustDelayMs") ?? 2000).setDynamicTooltip().onChange(set("stardustDelayMs")));
+        }
+        new Setting(g).setName("Density")
+          .setDesc("How thickly the stardust streams off the cursor.")
+          .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("stardustRate") ?? 1).setDynamicTooltip().onChange(set("stardustRate")));
+
+        new Setting(g).setName("Orbit")
+          .setDesc("Motes circle the cursor like fireflies instead of drifting upward, and follow it as it moves.")
+          .addToggle((toggle) => toggle.setValue(!!get("stardustOrbit")).onChange(setAndRedraw("stardustOrbit")));
+        if (get("stardustOrbit")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Orbit Radius")
+            .setDesc("How wide the motes circle, in pixels. Each mote varies around this.")
+            .addSlider((s) => s.setLimits(10, 60, 2).setValue(get("stardustOrbitRadius") ?? 22).setDynamicTooltip().onChange(set("stardustOrbitRadius")));
+        }
+      }
+
+      new Setting(body).setName("Bracket Tether")
+        .setDesc("Underlines the span between matching brackets or quotes — whether the cursor is next to one or somewhere inside the pair.")
+        .addToggle((toggle) => toggle.setValue(!!get("bracketTether")).onChange(setAndRedraw("bracketTether")));
+      if (get("bracketTether")) {
+        const g = this.subGroup(body);
+        new Setting(g).setName("Strength")
+          .setDesc("How visible the line is.")
+          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("bracketTetherStrength") ?? 0.35).setDynamicTooltip().onChange(set("bracketTetherStrength")));
       }
 
       new Setting(body).setName("Motion Smear")
+        .setDesc("The cursor's corners lag behind on springs, so it stretches as it moves and snaps back once it arrives.")
         .addToggle((toggle) => toggle.setValue(get("smear")).onChange(setAndRedraw("smear")));
       if (get("smear")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Stiffness")
+          .setDesc("How hard the leading edge is pulled toward the new position. Higher gets there faster and stretches less.")
           .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearStiffness")).setDynamicTooltip().onChange(set("smearStiffness")));
         new Setting(g).setName("Trailing Stiffness")
+          .setDesc("The same for the edge left behind. Lower is what makes the smear long — it is the gap between the two that you see.")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearTrailingStiffness")).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
         new Setting(g).setName("Damping")
+          .setDesc("How much the springs resist overshooting. Low values let the cursor wobble past and settle back; high values stop it dead.")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearDamping")).setDynamicTooltip().onChange(set("smearDamping")));
+        new Setting(g).setName("Tapered Trail")
+          .setDesc("Narrows the smear to a point behind the cursor, so a fast move reads as a comet tail instead of a dragged rectangle.")
+          .addToggle((toggle) => toggle.setValue(!!get("smearTaper")).onChange(setAndRedraw("smearTaper")));
+        if (get("smearTaper")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Taper Amount")
+            .setDesc("How sharply the tail closes. At 1 it comes to a full point; lower just narrows it.")
+            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearTaperAmount") ?? 0.7).setDynamicTooltip().onChange(set("smearTaperAmount")));
+        }
       }
 
       new Setting(body).setName("Energy Beam")
+        .setDesc(get("gradientEnabled")
+          ? "Scrolls your gradient along the cursor, with a brightness pulse riding over it."
+          : "Runs a shimmering pulse of light along the cursor.")
         .addToggle((toggle) => toggle.setValue(get("energyEffect")).onChange(setAndRedraw("energyEffect")));
       if (get("energyEffect")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Beam Speed")
+          .setDesc("How fast the pulse travels along the cursor.")
           .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("energySpeed")).setDynamicTooltip().onChange(set("energySpeed")));
+        // Aurora has nothing to work with without a ramp - it warps and
+        // cross-mixes gradient colors - so it only appears once Gradient is on.
+        if (get("gradientEnabled")) {
+          new Setting(g).setName("Aurora")
+            .setDesc("Swirls and mixes your gradient colors inside the cursor instead of scrolling them past.")
+            .addToggle((toggle) => toggle.setValue(!!get("energyAurora")).onChange(set("energyAurora")));
+        }
       }
 
       new Setting(body).setName("CRT Effect")
+        .setDesc("Old-monitor phosphor look: the cursor leaves fading ghosts of itself behind as it moves.")
         .addToggle((toggle) => toggle.setValue(get("crtEffect")).onChange(setAndRedraw("crtEffect")));
       if (get("crtEffect")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Trail Length")
+          .setDesc("How many ghosts are kept behind the cursor. 0 leaves none.")
           .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("trailLength")).setDynamicTooltip().onChange(set("trailLength")));
         new Setting(g).setName("Trail Fade Time")
+          .setDesc("How long (in ms) each ghost takes to fade out.")
           .addSlider((s) => s.setLimits(50, 1500, 25).setValue(get("trailFadeMs")).setDynamicTooltip().onChange(set("trailFadeMs")));
         new Setting(g).setName("Glow")
           .setDesc("Soft halo around the cursor, in its own color.")
@@ -4667,10 +6446,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Speed Demon")
+        .setDesc("The cursor heats up as you type — dull and grey when idle, through your own color to orange, red and finally white-hot — then cools back down over a few seconds of quiet.")
         .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(setAndRedraw("speedDemon")));
       if (get("speedDemon")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Fire Sparks")
+          .setDesc("Throws embers off the top of the cursor once it is hot enough, faster the hotter it gets.")
           .addToggle((toggle) => toggle.setValue(get("speedDemonSparks")).onChange(setAndRedraw("speedDemonSparks")));
         if (get("speedDemonSparks")) {
           const g2 = this.subGroup(g);
@@ -4682,6 +6463,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
             .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
         }
         new Setting(g).setName("Sensitivity")
+          .setDesc("How fast typing heats the cursor up. Higher reaches white-hot in fewer keystrokes.")
           .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
       }
 
@@ -4693,21 +6475,42 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         this.renderSubheading(g, "Spotlight");
         new Setting(g).setName("Follow")
+          .setDesc("What the light tracks. Auto follows the mouse while you are moving it and hands back to the text cursor shortly after you stop.")
           .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
             .setValue(get("overlayFollowMode")).onChange(set("overlayFollowMode")));
         new Setting(g).setName("Light Size")
+          .setDesc("How far the lit circle reaches, in pixels.")
           .addSlider((s) => s.setLimits(100, 800, 10).setValue(get("overlayRadius")).setDynamicTooltip().onChange(set("overlayRadius")));
+        // Only offered when there's a blink to sync to - with blinking off the
+        // toggle would be a switch that does nothing, and the reason why would
+        // be in a different section of the panel.
+        if (get("blinkingEnabled")) {
+          new Setting(g).setName("Sync With Blink")
+            .setDesc("The light closes in as the cursor blinks out and opens back up as it returns. Keeps the spotlight redrawing while the cursor blinks, so it costs a little more than the other options here.")
+            .addToggle((toggle) => toggle.setValue(!!get("overlayBlinkSync")).onChange(setAndRedraw("overlayBlinkSync")));
+          if (get("overlayBlinkSync")) {
+            const g2 = this.subGroup(g);
+            new Setting(g2).setName("Pulse Depth")
+              .setDesc("How far the light closes at the darkest point, as a share of Light Size. At 1 the torch goes out entirely while the cursor is blinked off.")
+              .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayBlinkDepth") ?? 0.25).setDynamicTooltip().onChange(set("overlayBlinkDepth")));
+          }
+        }
         new Setting(g).setName("Light Color")
+          .setDesc("The color of the light at its center. Independent of the cursor color.")
           .addColorPicker((cp) => cp.setValue(get("overlayColor")).onChange(set("overlayColor")));
         new Setting(g).setName("Follow Speed")
+          .setDesc("How quickly the light catches up when the cursor moves. Lower drifts after it; higher sticks to it.")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlaySpeed")).setDynamicTooltip().onChange(set("overlaySpeed")));
 
         this.renderSubheading(g, "Environment");
         new Setting(g).setName("Darkness")
+          .setDesc("How far everything outside the light is dimmed.")
           .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")));
         new Setting(g).setName("Glow Strength")
+          .setDesc("How strongly the light tints what it falls on. 0 lights the area without coloring it.")
           .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
         new Setting(g).setName("Keep Sidebars Lit")
+          .setDesc("Dims only the note you are editing, leaving the sidebars, tabs and ribbon at normal brightness. Also lifts the shading while a dialog is open.")
           .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
       }
     });
@@ -4811,6 +6614,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       renderCursorStyleSetting: (body) => {
         new Setting(body)
           .setName("Cursor Style")
+          .setDesc("The shape of the cursor itself. Each style has its own options below.")
           .addDropdown((dropdown) =>
             dropdown
               .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
@@ -4831,6 +6635,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       renderTorchToggleSetting: (body) => {
         new Setting(body)
           .setName("Torch Spotlight")
+          .setDesc("Darkens everything except a pool of light around the cursor, so only the part of the note you are working on stays lit.")
           .addToggle((toggle) =>
             toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
               plugin.settings.torchEffect = value;
@@ -5093,6 +6898,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       renderCursorStyleSetting: (body) => {
         new Setting(body)
           .setName("Cursor Style")
+          .setDesc("The shape of the cursor itself. Each style has its own options below.")
           .addDropdown((d) =>
             d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
               .setValue(target.cursorStyle).onChange(setR("cursorStyle"))
@@ -5100,6 +6906,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       },
       renderTorchToggleSetting: (body) => {
         new Setting(body).setName("Torch Spotlight")
+          .setDesc("Darkens everything except a pool of light around the cursor, so only the part of the note you are working on stays lit.")
           .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
       },
     });

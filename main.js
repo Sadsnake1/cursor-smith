@@ -136,6 +136,17 @@ const DEFAULT_SETTINGS = {
   // rather than the flat cursor colour.
   crtNeon: false,
   crtNeonGradient: false,
+  // Signal Glitch: on a JUMP (a click or a motion command that lands far from
+  // where the caret was - not ordinary typing or arrowing), the cursor briefly
+  // breaks up like a mistracked video signal: the box tears into horizontal
+  // slices that slip sideways, the corners warp, and the RGB channels separate.
+  // Deliberately jump-only. Firing on every keystroke would strobe the whole
+  // editor while typing, which is both unreadable and an accessibility problem;
+  // a jump is rare enough that a ~200ms burst reads as punctuation.
+  crtGlitch: false,
+  crtGlitchStrength: 1,     // 0.2..2.5; slice displacement + corner warp scale
+  crtGlitchAberration: 1,   // 0..3; RGB channel-split distance scale
+  crtGlitchMs: 220,         // 60..600; how long one burst lasts
 
   // --- torch spotlight effect (can run alongside any cursor style) ---
   torchEffect: false,
@@ -229,6 +240,11 @@ const DEFAULT_SETTINGS = {
   // Aurora: only meaningful with a gradient, where it warps and cross-mixes
   // the ramp instead of scrolling it rigidly. See createEnergyGradient.
   energyAurora: false,
+  // How hard Aurora bends. Above ~0.05 the beam stops being a vertical
+  // gradient and is painted as a true 2D field (see auroraPattern), which is
+  // what lets the bands actually curve across the cursor instead of only
+  // sliding up and down it. 0 keeps the old strictly-vertical look.
+  energyAuroraWaviness: 1,  // 0..2
 
   // --- Bracket Tether: a faint line from the caret to its matching bracket ---
   bracketTether: false,
@@ -348,6 +364,13 @@ const LOOK_KEYS = [
   "smearTaper", "smearTaperAmount",
   "smoothEnabled", "smoothStopBlinking", "smoothness", "catchUpSpeed",
   "maxCatchUpSpeed", "smoothAdaptive",
+  // APPEND-ONLY BELOW THIS LINE. A share code stores each field as its INDEX
+  // into this array, so inserting or reordering anything above silently
+  // reinterprets every code already in the wild. Appending is safe: older
+  // codes just don't mention these indices and fall back to defaults, and
+  // codeToPreset already skips indices it doesn't recognise.
+  "crtGlitch", "crtGlitchStrength", "crtGlitchAberration", "crtGlitchMs",
+  "energyAuroraWaviness",
 ];
 
 // ---------------------------------------------------------------------------
@@ -962,6 +985,19 @@ function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
 
+// Deterministic 0..1 hash of three small integers, used to drive the Signal
+// Glitch. Math.random() is deliberately NOT used: the glitch re-rolls its
+// slice offsets on a time bucket rather than per frame, so the SAME roll has
+// to be reproducible for every frame inside one bucket. With Math.random()
+// each frame would draw a different arrangement and the effect would smear
+// into noise instead of stepping between a few distinct broken states, which
+// is what actually reads as a mistracked signal.
+function glitchNoise(a, b, c) {
+  let n = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(c | 0, 2246822519)) >>> 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177) >>> 0;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+
 // Returns true only for elements that actually host a blinking text caret.
 // contentEditable and <textarea> always qualify. For <input> we filter by
 // type: text/search/url/tel/email/password/number are text fields; checkbox,
@@ -1088,6 +1124,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.particles = []; 
     this.flamePixels = [];
     this.thunderbolts = [];
+    // Signal Glitch: at most ONE burst is ever live (a second jump during a
+    // burst restarts it rather than stacking), so this is a single nullable
+    // record instead of a pool.
+    this.glitch = null;
     // Stardust lives in its own pool rather than joining flamePixels,
     // because the frame governor treats a non-empty flamePixels as "something
     // is in motion" and latches the HOT (60fps) gear. Stardust is emitted
@@ -1167,6 +1207,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._lastOverlayRect = "";
     this._lastTorchRadius = -1;
     this._chromeCache = null;
+    // Per-caret computed-style/metric cache for cmCaretCoords (see there).
+    this._caretStyleCache = null;
     this._tickErrorLogged = false;
     this._torchErrorLogged = false;
 
@@ -1433,6 +1475,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   async saveSettings() {
+    // Guard against persisting a transient Vim-mode snapshot. The render loops
+    // temporarily reassign this.settings to the effective (mode-merged) config
+    // for the duration of a frame and restore it in a finally. That span is
+    // fully synchronous today, so this can't fire mid-swap - but it's a
+    // latent footgun: the day anything synchronous inside that span reaches
+    // saveSettings (a dispatched DOM event handler, a future await), it would
+    // write the mode snapshot to disk AS the global config, silently
+    // corrupting settings in a way that's near-impossible to reproduce. Fail
+    // loud and abort instead of persisting the wrong object.
+    if (this._settingsSwapped) {
+      console.error("[cursor-smith] saveSettings() called while settings were swapped for a Vim mode - aborting to avoid persisting a mode snapshot as global config.");
+      return;
+    }
     // userPresets lives inside this.settings so it survives every saveData
     // call automatically - no separate load/merge step needed anywhere.
     await this.saveData(this.settings);
@@ -2335,7 +2390,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const count = Math.round(baseCount * qty);
     const heatCol = this.heatColor(Math.min(1, this.heat + 0.1), this.getBaseColor());
     const [hr, hg, hb] = hexToRgbTuple(heatCol);
-
     for (let i = 0; i < count; i++) {
       // Spawn along the top edge of the cursor - embers rising off a
       // white-hot surface. A little jitter on x/y keeps them from looking
@@ -2682,6 +2736,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.particles = [];
     this.flamePixels = [];
     this.thunderbolts = [];
+    this.glitch = null;
     this.stardust = [];
     this.secondaryCarets = [];
     this.bracketTether = null;
@@ -2725,6 +2780,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.particles = [];
     this.flamePixels = [];
     this.thunderbolts = [];
+    this.glitch = null;
     this.stardust = [];
     this._lastStardustT = 0;
     this.secondaryCarets = [];
@@ -2895,6 +2951,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         }
         const _realSettings = this.settings;
         this.settings = this.effectiveSettings(_vimMode);
+        this._settingsSwapped = true;
         try {
           this.updateActivePoint();
           this.updateSmoothCursor();
@@ -2944,6 +3001,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
             // Same reasoning: a bolt is aged and expired inside its draw call,
             // so a skipped frame would leave one frozen on screen.
             (this.thunderbolts && this.thunderbolts.length > 0) ||
+            // A Signal Glitch burst is a ~200ms wall-clock animation, so it
+            // needs continuous frames for its whole life. Tested inline rather
+            // than via glitchState() because that RETIRES an expired burst as a
+            // side effect, and the gear decision must stay a pure read - the
+            // draw call below is what should do the retiring.
+            (!!this.glitch && (nowT - this.glitch.start) < this.glitch.dur) ||
             this.heat > 0 ||
             // Precise: the spring reports whether any corner is still off its
             // target or carrying velocity. This used to be a 1200ms window
@@ -3071,6 +3134,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
           if (doDraw) this.draw();
         } finally {
           this.settings = _realSettings;
+          this._settingsSwapped = false;
         }
       } catch (e) {
         if (!this._tickErrorLogged) {
@@ -3101,6 +3165,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._dirty = null;
     this._dirtyPrev = null;
     this._dirtyFull = false;
+    // A resize usually rides along with a zoom, DPR, or theme change, any of
+    // which can move the caret's font metrics without moving pos - so drop the
+    // cached style read rather than wait out its TTL.
+    this._caretStyleCache = null;
   }
 
   caretCoords() {
@@ -3171,60 +3239,96 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const char = rawChar && rawChar !== "\n" ? rawChar : "";
 
       const win = doc.defaultView || window;
-      const contentStyle = win.getComputedStyle(view.contentDOM);
 
-      // Find the actual DOM element rendering the character at the caret
-      // (not just "the first .cm-line in the document"), so headings,
-      // inline code, and any other differently-sized text report their own
-      // real font metrics instead of the editor's base font-size/family.
-      const sampleX = Math.min(c.left + 2, doc.documentElement.clientWidth - 1);
-      const sampleY = (c.top + c.bottom) / 2;
-      const elAtCaret = doc.elementFromPoint ? doc.elementFromPoint(sampleX, sampleY) : null;
-      const lineEl = (elAtCaret && elAtCaret.closest && elAtCaret.closest(".cm-line")) ||
-        view.contentDOM.querySelector(".cm-line");
-      const charStyle = elAtCaret && lineEl && lineEl.contains(elAtCaret)
-        ? win.getComputedStyle(elAtCaret)
-        : (lineEl ? win.getComputedStyle(lineEl) : contentStyle);
-// ... existing code ...
-      const textColor = charStyle.color || contentStyle.color || "#ffffff";
+      // --- Cached style + metric reads -----------------------------------
+      // getComputedStyle (up to 3x) and elementFromPoint (which forces a
+      // layout + hit-test) are the most expensive things in this per-frame
+      // function, and the canvas measureText for the glyph width is next.
+      // Their inputs only change when the caret moves to a different document
+      // position, the document is edited, or the theme/font changes - none of
+      // which happen on the frames where a caret merely sits and blinks.
+      //
+      // Cache the RESOLVED scalars, NOT the live CSSStyleDeclaration (reading
+      // a property off that re-flushes style, defeating the point). Key on
+      // (doc identity, pos, assoc): in CM6 a pure selection move reuses the
+      // same Text object, so the key holds across scrolling and blinking,
+      // while any edit swaps the Text object and busts it. A short TTL
+      // backstops theme / font-size changes that touch none of those keys.
+      const assocKey = main.assoc || 0;
+      const nowMs = performance.now();
+      let sc = this._caretStyleCache;
+      if (!(sc && sc.doc === view.state.doc && sc.pos === pos &&
+            sc.assoc === assocKey && (nowMs - sc.t) < 250)) {
+        const contentStyle = win.getComputedStyle(view.contentDOM);
 
-      // Extract exact font metrics
-      const fontSize = parseFloat(charStyle.fontSize) || parseFloat(contentStyle.fontSize) || 14;
-      const fontFamily = charStyle.fontFamily || contentStyle.fontFamily || "monospace";
-      const fontWeight = charStyle.fontWeight || contentStyle.fontWeight || "normal";
-      const fontStyleCss = charStyle.fontStyle || contentStyle.fontStyle || "normal";
-      
-      // Grab letter-spacing (getComputedStyle resolves this to 'px' even if set in 'em')
-      const letterSpacingStr = charStyle.letterSpacing || contentStyle.letterSpacing;
-      let letterSpacing = 0;
-      if (letterSpacingStr && letterSpacingStr.endsWith('px')) {
-        letterSpacing = parseFloat(letterSpacingStr) || 0;
-      }
+        // Find the actual DOM element rendering the character at the caret
+        // (not just "the first .cm-line in the document"), so headings,
+        // inline code, and any other differently-sized text report their own
+        // real font metrics instead of the editor's base font-size/family.
+        const sampleX = Math.min(c.left + 2, doc.documentElement.clientWidth - 1);
+        const sampleY = (c.top + c.bottom) / 2;
+        const elAtCaret = doc.elementFromPoint ? doc.elementFromPoint(sampleX, sampleY) : null;
+        const lineEl = (elAtCaret && elAtCaret.closest && elAtCaret.closest(".cm-line")) ||
+          view.contentDOM.querySelector(".cm-line");
+        const charStyle = elAtCaret && lineEl && lineEl.contains(elAtCaret)
+          ? win.getComputedStyle(elAtCaret)
+          : (lineEl ? win.getComputedStyle(lineEl) : contentStyle);
 
-      // Width: canvas measurement primary (accurate for proportional fonts,
-      // respects letter-spacing), coordsAtPos delta as fallback only when
-      // there's no character to measure (end of text, blank line).
-      // Note: coordsAtPos(pos+1) at end-of-line returns the start of the
-      // NEXT line, making the delta garbage - so it must be the fallback,
-      // not the primary source. The canvas measurement handles end-of-line
-      // correctly because it measures the actual glyph, not a position delta.
-      let charWidth = view.defaultCharacterWidth || 8;
-      if (char) {
-        const measuredW = this.measureCharWidth(char, fontFamily, fontSize, fontWeight, fontStyleCss);
-        if (measuredW) {
-          charWidth = measuredW + letterSpacing;
-        } else {
-          try {
-            const nextCoords = view.coordsAtPos(pos + 1, -1) || view.coordsAtPos(pos + 1, 1);
-            if (nextCoords) {
-              const measured = nextCoords.left - c.left;
-              if (measured > 0.5 && measured < charWidth * 6) charWidth = measured;
+        const _textColor = charStyle.color || contentStyle.color || "#ffffff";
+
+        // Extract exact font metrics
+        const _fontSize = parseFloat(charStyle.fontSize) || parseFloat(contentStyle.fontSize) || 14;
+        const _fontFamily = charStyle.fontFamily || contentStyle.fontFamily || "monospace";
+        const _fontWeight = charStyle.fontWeight || contentStyle.fontWeight || "normal";
+        const _fontStyleCss = charStyle.fontStyle || contentStyle.fontStyle || "normal";
+
+        // getComputedStyle resolves letter-spacing to 'px' even if set in 'em'.
+        const letterSpacingStr = charStyle.letterSpacing || contentStyle.letterSpacing;
+        let _letterSpacing = 0;
+        if (letterSpacingStr && letterSpacingStr.endsWith("px")) {
+          _letterSpacing = parseFloat(letterSpacingStr) || 0;
+        }
+
+        const _lineHeightStr = charStyle.lineHeight || contentStyle.lineHeight || "";
+
+        // Width: canvas measurement primary (accurate for proportional fonts,
+        // respects letter-spacing), coordsAtPos delta as fallback only when
+        // there's no character to measure (end of text, blank line).
+        // Note: coordsAtPos(pos+1) at end-of-line returns the start of the
+        // NEXT line, making the delta garbage - so it must be the fallback,
+        // not the primary source. The canvas measurement handles end-of-line
+        // correctly because it measures the actual glyph, not a position delta.
+        let _charWidth = view.defaultCharacterWidth || 8;
+        if (char) {
+          const measuredW = this.measureCharWidth(char, _fontFamily, _fontSize, _fontWeight, _fontStyleCss);
+          if (measuredW) {
+            _charWidth = measuredW + _letterSpacing;
+          } else {
+            try {
+              const nextCoords = view.coordsAtPos(pos + 1, -1) || view.coordsAtPos(pos + 1, 1);
+              if (nextCoords) {
+                const measured = nextCoords.left - c.left;
+                if (measured > 0.5 && measured < _charWidth * 6) _charWidth = measured;
+              }
+            } catch {
+              /* fall back to defaultCharacterWidth */
             }
-          } catch {
-            /* fall back to defaultCharacterWidth */
           }
         }
+
+        sc = this._caretStyleCache = {
+          doc: view.state.doc, pos, assoc: assocKey, t: nowMs,
+          textColor: _textColor, fontSize: _fontSize, fontFamily: _fontFamily,
+          fontWeight: _fontWeight, fontStyle: _fontStyleCss,
+          letterSpacing: _letterSpacing, lineHeightStr: _lineHeightStr,
+          charWidth: _charWidth,
+        };
       }
+
+      const {
+        textColor, fontSize, fontFamily, fontWeight, fontStyle: fontStyleCss,
+        letterSpacing, lineHeightStr, charWidth,
+      } = sc;
 
       let finalWidth = charWidth;
       if (this.styleFor("cursorStyle") === "Line") {
@@ -3232,12 +3336,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
       }
 
       // Height: match the browser's native selection highlight box by
-      // reading CSS line-height. contentStyle (the CM editor) is the
-      // reliable source; charStyle from elementFromPoint can land on a
-      // decoration or embed with an unrelated line-height, so prefer
-      // contentStyle when charStyle gives something wildly different.
+      // reading CSS line-height (resolved once, from the cache above). The
+      // char element's line-height is preferred, falling back to the CM
+      // editor's; when neither is a usable value we keep the coordsAtPos
+      // span (c.bottom - c.top) as the floor.
       let h = Math.max(4, c.bottom - c.top);
-      const rawLineHeight = charStyle.lineHeight || contentStyle.lineHeight;
+      const rawLineHeight = lineHeightStr;
       if (rawLineHeight && rawLineHeight.endsWith('px')) {
         h = parseFloat(rawLineHeight);
       } else if (rawLineHeight && !isNaN(parseFloat(rawLineHeight)) && rawLineHeight !== "normal") {
@@ -3260,6 +3364,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
         textColor,
         fontSize,
         fontFamily,
+        fontWeight,
+        fontStyle: fontStyleCss,
+        // Carried so the glyph drawn inside a Box cursor can be centered on
+        // the true glyph advance (charWidth minus this) rather than on the
+        // letter-spacing-padded cell, which would push it right by half the
+        // spacing on any theme that sets letter-spacing.
+        letterSpacing,
         focused: view.hasFocus || (inTable && activeIsEditable),
         pos,
         // Needed by updateActivePoint: an assoc flip at a wrap boundary is a
@@ -3641,6 +3752,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
         textColor: style.color || "#ffffff",
         fontSize,
         fontFamily,
+        fontWeight: style.fontWeight || "normal",
+        fontStyle: style.fontStyle || "normal",
+        // Generic inputs don't fold letter-spacing into the box width, so the
+        // glyph is centered on its own advance directly.
+        letterSpacing: 0,
         focused: true,
         // Logical identity of this caret, standing in for the document
         // position CodeMirror provides and a plain input doesn't.
@@ -3668,15 +3784,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // matter: a bold glyph is meaningfully wider than its regular counterpart,
   // and measuring without them left the box visibly too narrow on bold or
   // italic text.
+  // Build a canvas ctx.font string from resolved CSS font values. This lives
+  // in ONE place on purpose: the character-in-box drift bug came from
+  // drawRetroBox building this string WITHOUT weight/style while
+  // measureCharWidth built it WITH them - so the box was sized for a
+  // bold/italic glyph and a regular upright one was drawn inside it. Every
+  // site that measures OR draws a glyph must route through here so the two can
+  // never diverge again.
+  fontString(fontSize, fontFamily, fontWeight, fontStyle) {
+    const w = fontWeight && fontWeight !== "normal" ? fontWeight + " " : "";
+    const s = fontStyle && fontStyle !== "normal" ? fontStyle + " " : "";
+    return `${s}${w}${fontSize}px ${fontFamily}`;
+  }
+
   measureCharWidth(char, fontFamily, fontSize, fontWeight, fontStyle) {
     try {
       if (!this._measureCtx) {
         const canvas = (this.canvas?.ownerDocument ?? document).createElement("canvas");
         this._measureCtx = canvas.getContext("2d");
       }
-      const weight = fontWeight && fontWeight !== "normal" ? fontWeight + " " : "";
-      const style = fontStyle && fontStyle !== "normal" ? fontStyle + " " : "";
-      this._measureCtx.font = `${style}${weight}${fontSize}px ${fontFamily}`;
+      this._measureCtx.font = this.fontString(fontSize, fontFamily, fontWeight, fontStyle);
       const w = this._measureCtx.measureText(char).width;
       return w > 0 ? w : null;
     } catch {
@@ -3953,6 +4080,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive.actualCharWidth = this.lastActive.actualCharWidth;
     this.animActive.fontFamily = this.lastActive.fontFamily;
     this.animActive.fontSize = this.lastActive.fontSize;
+    // Weight/style/letter-spacing must refresh here alongside the other look
+    // fields: animActive is created once (by spread) and then reused across a
+    // whole smooth glide, so without this a box gliding from regular text onto
+    // a bold heading would keep drawing the glyph in the OLD weight until the
+    // glide ended - the same slimmer/fatter mismatch we just fixed, only
+    // intermittent and motion-triggered.
+    this.animActive.fontWeight = this.lastActive.fontWeight;
+    this.animActive.fontStyle = this.lastActive.fontStyle;
+    this.animActive.letterSpacing = this.lastActive.letterSpacing;
   }
 
   commitMove(caret) {
@@ -3979,6 +4115,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.spawnJumpTrail(this.lastActive, caret);
       }
       this._deletePending = 0;
+      // Signal Glitch fires on the same "is this a jump?" test the trail uses,
+      // so the two features agree on what counts as a leap. Deliberately NOT
+      // gated on `disintegrate`: a Backspace that happens to jump the caret
+      // across a wrap is still a jump visually. Placed before the thunderbolt
+      // so an Enter-driven strike and a glitch can coexist on the same move.
+      if (this.settings.crtEffect && this.settings.crtGlitch) {
+        this.spawnGlitch(this.lastActive, caret);
+      }
       // Same 250ms window as the delete flag. Note the bolt is aimed at
       // `caret`, the position being moved TO, not at lastActive: the strike
       // drives the cursor down to the new line, so it has to land there.
@@ -4453,6 +4597,160 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // for Trail On Jump. `from`/`to` are caret snapshots (the old and new
   // positions). Does nothing for a short move - that's just typing, which the
   // per-commit puff in spawnFlamePixels already handles.
+  // Arm a Signal Glitch burst, if this move was far enough to count as a jump.
+  //
+  // Jump-only is a deliberate design constraint, not a limitation: a glitch on
+  // every keystroke would strobe the caret continuously while typing, which is
+  // unreadable and a genuine photosensitivity concern. A jump (click, search
+  // result, Vim motion, fold toggle) is rare enough that a ~200ms break-up
+  // reads as punctuation on the movement instead of ambient noise.
+  spawnGlitch(from, to) {
+    if (!from || !to) return;
+    const dist = Math.hypot(to.x - from.x, to.top - from.top);
+    // Same threshold the jump trail uses, so "what is a jump" has one answer.
+    if (dist < JUMP_TRAIL_MIN_DIST) return;
+
+    const dur = Math.max(60, Math.min(600, this.settings.crtGlitchMs ?? 220));
+    // Longer leaps break up harder, but with a ceiling: without the clamp a
+    // click from the top to the bottom of a long note produced slices thrown
+    // most of a pane's width away, which stops reading as a cursor at all.
+    const reach = Math.min(2.2, 0.7 + dist / 420);
+
+    // A second jump mid-burst REPLACES the current one rather than stacking or
+    // being ignored: rapid clicking should re-break the cursor each time, and
+    // a fresh seed makes each burst a visibly different arrangement.
+    this.glitch = {
+      start: performance.now(),
+      dur,
+      reach,
+      seed: (Math.random() * 0x7fffffff) | 0,
+    };
+  }
+
+  // Resolve the live glitch into per-frame drawing parameters, or null when no
+  // burst is running. Also retires an expired burst, which is what lets the
+  // frame governor drop back out of the hot gear.
+  glitchState(now) {
+    const g = this.glitch;
+    if (!g) return null;
+    const p = (now - g.start) / g.dur;
+    if (p >= 1 || p < 0) {
+      this.glitch = null;
+      return null;
+    }
+
+    // Envelope: hard on at the start, decaying to nothing. Squared so most of
+    // the violence happens in the first third and the tail settles quickly -
+    // a linear decay reads as the cursor slowly reassembling, which looks
+    // like a transition rather than a fault.
+    const env = (1 - p) * (1 - p);
+
+    // Re-roll on a ~45ms bucket rather than per frame. A glitch that changes
+    // every frame at 60fps averages out into a blur; stepping through ~5
+    // discrete states across a 220ms burst is what reads as a broken signal.
+    const bucket = Math.floor((now - g.start) / 45);
+
+    const strength = Math.max(0, Math.min(2.5, this.settings.crtGlitchStrength ?? 1));
+    const aberr = Math.max(0, Math.min(3, this.settings.crtGlitchAberration ?? 1));
+
+    return {
+      seed: g.seed,
+      bucket,
+      env,
+      // Peak sideways throw of a slice, in px.
+      amp: 14 * strength * g.reach * env,
+      // RGB channel separation, in px. Kept smaller than amp: past a few px
+      // the fringes stop reading as chromatic aberration and start reading as
+      // three separate coloured cursors.
+      ab: 3.2 * aberr * env,
+      strength,
+    };
+  }
+
+  // Paint one axis-aligned cursor rect as a broken-up signal.
+  //
+  // Three things combine here, which is what keeps it from looking like a
+  // simple shake:
+  //   1. The rect is cut into horizontal slices that slip sideways by
+  //      different amounts, so the FORM tears rather than translating.
+  //   2. Each slice is independently squashed/stretched horizontally, so
+  //      edges stop lining up and the outline warps.
+  //   3. Each slice is drawn three times - once per RGB channel, offset - and
+  //      composited additively, so overlapping areas sum back to the original
+  //      colour while the edges fringe hard red and cyan.
+  //
+  // The smear quad is intentionally ignored while glitching: a spring-deformed
+  // quad sliced and channel-split at the same time is visual mud, and the
+  // glitch is brief enough that dropping the smear for its duration reads as
+  // part of the effect.
+  paintGlitchRect(ctx, x, y, w, h, baseColor, alpha, gs) {
+    const rgb = hexToRgbTuple(baseColor) || [255, 255, 255];
+    const R = Math.round(rgb[0]), G = Math.round(rgb[1]), B = Math.round(rgb[2]);
+
+    // Slice count scales with height so a tall line doesn't get chunky bands
+    // and a short one doesn't get sub-pixel ones.
+    const slices = Math.max(3, Math.min(12, Math.round(h / 3)));
+    const sh = h / slices;
+
+    ctx.save();
+    // Additive so the three channel passes reconstruct the base colour where
+    // they overlap instead of the last one painted winning.
+    ctx.globalCompositeOperation = "lighter";
+
+    for (let i = 0; i < slices; i++) {
+      const n1 = glitchNoise(gs.seed, i, gs.bucket);
+      const n2 = glitchNoise(gs.seed + 101, i, gs.bucket);
+      const n3 = glitchNoise(gs.seed + 977, i, gs.bucket);
+
+      // Dropout: some slices vanish entirely. This is the single strongest
+      // "broken signal" cue - without it the cursor stays a solid object that
+      // is merely wobbling.
+      if (n3 < 0.13 * gs.env) continue;
+
+      // Sideways throw. Cubed around zero so most slices barely move and the
+      // occasional one is flung far, which is what makes it read as a tear
+      // instead of a uniform vibration.
+      const d = (n1 - 0.5) * 2;
+      const dx = d * d * d * gs.amp;
+
+      // Horizontal squash/stretch per slice: warps the outline.
+      const wScale = 1 + (n2 - 0.5) * 0.55 * gs.strength * gs.env;
+      const sw = Math.max(1, w * wScale);
+      const sx = x + dx - (sw - w) / 2;
+      const sy = y + i * sh;
+      // Overdraw each slice by a hair vertically so rounding between slices
+      // can't leave a transparent seam across the cursor.
+      const drawH = sh + 0.5;
+
+      if (gs.ab > 0.05) {
+        ctx.fillStyle = `rgba(${R}, 0, 0, ${alpha})`;
+        ctx.fillRect(sx - gs.ab, sy, sw, drawH);
+        ctx.fillStyle = `rgba(0, ${G}, 0, ${alpha})`;
+        ctx.fillRect(sx, sy, sw, drawH);
+        ctx.fillStyle = `rgba(0, 0, ${B}, ${alpha})`;
+        ctx.fillRect(sx + gs.ab, sy, sw, drawH);
+      } else {
+        // Aberration dialled to zero: one pass, so the slices keep the exact
+        // cursor colour rather than an additively-reconstructed approximation.
+        ctx.globalCompositeOperation = "source-over";
+        ctx.fillStyle = `rgba(${R}, ${G}, ${B}, ${alpha})`;
+        ctx.fillRect(sx, sy, sw, drawH);
+        ctx.globalCompositeOperation = "lighter";
+      }
+    }
+
+    // A hot white scanline across the break, on some buckets only. Cheap, and
+    // it sells the "signal" reading more than any amount of extra displacement.
+    if (glitchNoise(gs.seed + 5501, 0, gs.bucket) < 0.55) {
+      const ly = y + glitchNoise(gs.seed + 31, 1, gs.bucket) * h;
+      const lw = w * (1.2 + glitchNoise(gs.seed + 77, 2, gs.bucket) * 1.6);
+      ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.55 * gs.env})`;
+      ctx.fillRect(x - (lw - w) / 2, ly, lw, Math.max(1, h * 0.06));
+    }
+
+    ctx.restore();
+  }
+
   spawnJumpTrail(from, to) {
     if (!this.settings.flameTrail || !from || !to) return;
     const density = Math.max(0, this.settings.flameTrailDensity ?? 1);
@@ -4933,7 +5231,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
           if (src[k].y > y1) y1 = src[k].y;
         }
       }
-      const pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
+      let pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
+      // A Signal Glitch throws slices far outside the caret box, and anything
+      // painted outside the damage rect is never cleared - it would leave
+      // permanent debris on the canvas. Widen the rect to cover the worst-case
+      // throw for the current settings rather than the average one: the
+      // envelope decays, so a rect sized for "typical" would under-report on
+      // exactly the first and most violent frames.
+      if (this.glitch) {
+        const st = Math.max(0, Math.min(2.5, this.settings.crtGlitchStrength ?? 1));
+        const abr = Math.max(0, Math.min(3, this.settings.crtGlitchAberration ?? 1));
+        // 14 * strength * reach(<=2.2) is the slice throw; the width stretch
+        // adds up to ~28% of the caret width per side; then the channel split.
+        pad += 14 * st * 2.2 + 3.2 * abr + (this.animActive?.w || 0) * 0.3 + 4;
+      }
       this._markDirty(x0 - pad, y0 - pad, (x1 - x0) + pad * 2, (y1 - y0) + pad * 2);
     }
 
@@ -5118,6 +5429,189 @@ module.exports = class CursorSmithPlugin extends Plugin {
     ctx.fill();
   }
 
+  // Chooses how the Energy Beam paints the cursor.
+  //
+  // Aurora with any waviness becomes a genuine 2D field (auroraPattern); every
+  // other case keeps the original linear gradient. Both return something usable
+  // directly as a fillStyle/strokeStyle, so callers don't care which they got.
+  energyPaint(x, y, w, h, baseColor, alpha) {
+    const rampOn = !!this.settings.gradientEnabled;
+    const wav = this.settings.energyAuroraWaviness ?? 1;
+    if (rampOn && this.settings.energyAurora && wav > 0.05) {
+      const pat = this.auroraPattern(x, y, w, h, alpha, wav);
+      if (pat) return pat;
+      // else fall through to the gradient - auroraPattern self-disables on a
+      // degenerate rect, an oversized one, or any canvas API failure.
+    }
+    return this.createEnergyGradient(x, y, w, h, baseColor, alpha);
+  }
+
+  // Aurora as a 2D pattern rather than a vertical gradient.
+  //
+  // Why this exists: createLinearGradient can only vary colour along ONE axis.
+  // However hard the old code warped its sample position, every colour band was
+  // still a perfectly horizontal line spanning the cursor - the bands could
+  // slide up and down but could never bend, which is why Aurora read as
+  // "scrolling stripes" rather than anything wavy. Getting curtains that
+  // actually ripple sideways requires colour to be a function of x AND y, and
+  // the only way to hand canvas an arbitrary 2D field as a fillStyle is to
+  // rasterise it into an offscreen bitmap and wrap that in a pattern.
+  //
+  // Returns null (caller falls back to the gradient) rather than throwing on
+  // anything unexpected, matching the defensive style used elsewhere here.
+  auroraPattern(x, y, w, h, alpha, wav) {
+    try {
+      const ctx = this.ctx;
+      if (!ctx) return null;
+
+      // The pattern must cover the smear quad, not just the caret box: during a
+      // smear the filled shape overshoots the box, and a "no-repeat" pattern
+      // paints nothing outside its own bitmap - the overshooting part of the
+      // cursor would come out fully transparent. Union the two and pad by a
+      // pixel so the edges of the shape are inside the bitmap, never on its
+      // boundary.
+      let x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+      const q = this.smearCorners();
+      if (q) {
+        for (const k of ["tl", "tr", "br", "bl"]) {
+          const c = q[k];
+          if (!c) continue;
+          if (c.x < x0) x0 = c.x;
+          if (c.y < y0) y0 = c.y;
+          if (c.x > x1) x1 = c.x;
+          if (c.y > y1) y1 = c.y;
+        }
+      }
+      x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
+
+      const rw = x1 - x0, rh = y1 - y0;
+      if (!(rw > 0.5) || !(rh > 0.5)) return null;
+
+      const dpr = (this.canvas?.ownerDocument?.defaultView || window).devicePixelRatio || 1;
+      const pw = Math.max(1, Math.round(rw * dpr));
+      const ph = Math.max(1, Math.round(rh * dpr));
+      // Hard ceiling on rasterisation cost. A caret-sized rect is ~1-3k pixels
+      // even at dpr 2; anything past this is a runaway (a smear mid-teleport
+      // across a huge window) and is not worth a per-pixel loop on the hot
+      // path, so it takes the cheap gradient for those frames instead.
+      if (pw * ph > 60000) return null;
+
+      // Offscreen surface + pixel buffer are reused across frames and only
+      // reallocated when the size actually changes. Allocating a fresh
+      // ImageData every frame would hand the GC a multi-kilobyte buffer 30
+      // times a second for no reason.
+      let ac = this._auroraCanvas;
+      if (!ac || ac.width !== pw || ac.height !== ph) {
+        const docRef = this.canvas?.ownerDocument ?? document;
+        ac = this._auroraCanvas = docRef.createElement("canvas");
+        ac.width = pw;
+        ac.height = ph;
+        this._auroraCtx = ac.getContext("2d");
+        this._auroraImg = null;
+      }
+      const actx = this._auroraCtx;
+      if (!actx) return null;
+      let img = this._auroraImg;
+      if (!img || img.width !== pw || img.height !== ph) {
+        img = this._auroraImg = actx.createImageData(pw, ph);
+      }
+      const data = img.data;
+
+      const speed = this.settings.energySpeed ?? 1;
+      const t = (performance.now() / 1000) * speed;
+
+      // Quantise the ramp once per frame into a lookup table. sampleRamp
+      // allocates a fresh array per call, so calling it per pixel would mean
+      // thousands of short-lived arrays every frame; 96 entries is far finer
+      // than the eye resolves across a caret and costs 96 calls instead.
+      const LUT = 96;
+      let lut = this._auroraLut;
+      if (!lut || lut.length !== LUT * 3) lut = this._auroraLut = new Float32Array(LUT * 3);
+      for (let i = 0; i < LUT; i++) {
+        const s = this.sampleRamp(i / LUT, true);
+        lut[i * 3] = s[0];
+        lut[i * 3 + 1] = s[1];
+        lut[i * 3 + 2] = s[2];
+      }
+
+      const a255 = Math.max(0, Math.min(255, Math.round(alpha * 255)));
+      const invW = 1 / pw, invH = 1 / ph;
+
+      for (let py = 0; py < ph; py++) {
+        const v = py * invH;
+        for (let px = 0; px < pw; px++) {
+          const u = px * invW;
+
+          // Domain warp. Each term mixes u and v, which is the whole point:
+          // a term in v alone reproduces the old flat horizontal banding, and
+          // it's the cross terms that let a band bend as it crosses the
+          // cursor. Three incommensurate frequencies so the pattern never
+          // settles into a visible repeat.
+          const warp =
+            Math.sin(v * 4.1 + t * 0.90 + u * 2.3) * 0.20 +
+            Math.sin(v * 7.3 - t * 0.60 + u * 3.7) * 0.11 +
+            Math.sin(u * 5.2 + t * 1.10 - v * 1.9) * 0.15;
+
+          // Base coordinate drifts along the cursor; the warp bends it.
+          let s = v - t * 0.30 + warp * wav;
+
+          // Second, slower read from a different stretch of the ramp, cross
+          // faded in. The warp only rearranges colours - without this, two
+          // stops far apart on the ramp never meet and never blend.
+          const mix = (0.5 + 0.5 * Math.sin(u * 2.1 + v * 2.3 + t * 0.7)) * 0.55;
+          let s2 = (v * 0.45 + u * 0.25) + t * 0.17 + 0.37;
+
+          // Index the LUT cyclically (positive modulo: s can go negative).
+          let i1 = ((Math.floor(s * LUT) % LUT) + LUT) % LUT;
+          let i2 = ((Math.floor(s2 * LUT) % LUT) + LUT) % LUT;
+          i1 *= 3; i2 *= 3;
+
+          let r = lut[i1] + (lut[i2] - lut[i1]) * mix;
+          let g = lut[i1 + 1] + (lut[i2 + 1] - lut[i1 + 1]) * mix;
+          let b = lut[i1 + 2] + (lut[i2 + 2] - lut[i1 + 2]) * mix;
+
+          // Brightness wave, kept gentle for the same reason the gradient path
+          // eases it: at full strength it repeatedly flattens the mix toward
+          // white and black and the swirl stops being legible.
+          const pulse = 0.5 + 0.5 * Math.sin((v - t * 0.6) * Math.PI * 2 + u * 1.4);
+          if (pulse > 0.5) {
+            const k = (pulse - 0.5) * 2 * 0.45;
+            r += (255 - r) * k * 0.55;
+            g += (255 - g) * k * 0.55;
+            b += (255 - b) * k * 0.55;
+          } else {
+            const k = (0.5 - pulse) * 2 * 0.45;
+            r -= r * k * 0.45;
+            g -= g * k * 0.45;
+            b -= b * k * 0.45;
+          }
+
+          const o = (py * pw + px) * 4;
+          data[o] = r < 0 ? 0 : r > 255 ? 255 : r;
+          data[o + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+          data[o + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+          data[o + 3] = a255;
+        }
+      }
+
+      actx.putImageData(img, 0, 0);
+      const pat = ctx.createPattern(ac, "no-repeat");
+      if (!pat) return null;
+      // Map the bitmap's pixel space onto user space: one bitmap pixel is
+      // 1/dpr user units, and its origin sits at the padded rect's corner.
+      // Without this the pattern would anchor at the canvas origin and the
+      // cursor would show whatever slice of the field happened to be there.
+      if (typeof pat.setTransform === "function" && typeof DOMMatrix === "function") {
+        pat.setTransform(new DOMMatrix().translateSelf(x0, y0).scaleSelf(1 / dpr, 1 / dpr));
+      } else {
+        return null; // no way to position it correctly; use the gradient
+      }
+      return pat;
+    } catch {
+      return null;
+    }
+  }
+
   createEnergyGradient(x, y, w, h, baseColor, alpha) {
     const ctx = this.ctx;
     const speed = this.settings.energySpeed ?? 1;
@@ -5281,10 +5775,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
       rh = active.h;
     }
 
-    ctx.fillStyle = settings.energyEffect
-      ? this.createEnergyGradient(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
-      : this.cursorPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity);
-    this.fillCursorShape(ctx, rx, ry, rw, rh);
+    // Signal Glitch replaces the caret body for the length of a burst. For a
+    // Line caret the slices are only a couple of px wide, so the channel split
+    // does most of the visible work here; for Underline the bar is wide and it
+    // is the slicing that dominates. Both go through the same routine as the
+    // Box style so the effect is recognisably the same feature everywhere.
+    const gsGen = settings.crtEffect && settings.crtGlitch
+      ? this.glitchState(now) : null;
+    if (gsGen) {
+      this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity, gsGen);
+    } else {
+      ctx.fillStyle = settings.energyEffect
+        ? this.energyPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
+        : this.cursorPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity);
+      this.fillCursorShape(ctx, rx, ry, rw, rh);
+    }
 
     // Line + serifs = classic I-beam. Only for the Line style (underline
     // wouldn't make visual sense with serifs). Serifs are axis-aligned
@@ -5292,7 +5797,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // rather than a cursor cap. Serif span follows the actual char width
     // under the caret so it matches the text; falls back to a multiple of
     // the stem on empty lines.
-    if (!isUnderline && settings.lineSerifs) {
+    if (!isUnderline && settings.lineSerifs && !gsGen) {
       const stem = rw;
       const serifThickness = Math.max(1, Math.round(stem * 0.9));
       const charW = active.actualCharWidth;
@@ -6017,11 +6522,25 @@ module.exports = class CursorSmithPlugin extends Plugin {
         ctx.shadowBlur = 10 * blinkAlpha;
       }
 
-      const paintStyle = settings.energyEffect
-        ? this.createEnergyGradient(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity)
-        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity);
+      // Signal Glitch takes over the body of the cursor entirely while a burst
+      // is live - it replaces the fill/stroke rather than layering on top,
+      // because the whole point is that the cursor's own form comes apart. The
+      // glow armed above still applies, so the break-up keeps its halo.
+      // Resolved before paintStyle so a burst skips the (possibly expensive,
+      // e.g. Aurora's per-pixel raster) beam paint it's about to discard.
+      const gsBox = settings.crtEffect && settings.crtGlitch
+        ? this.glitchState(now) : null;
 
-      if (hollow) {
+      const paintStyle = gsBox ? null : (settings.energyEffect
+        ? this.energyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity)
+        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity));
+
+      if (gsBox) {
+        this.paintGlitchRect(
+          ctx, active.x, active.top, renderW, active.h,
+          color, 0.9 * blinkAlpha * opacity, gsBox,
+        );
+      } else if (hollow) {
         // Stroke the smear quad so the outline deforms with movement the
         // same way a filled box would. Reuses fillCursorShape's corner
         // logic inline (we need stroke here, not fill).
@@ -6051,13 +6570,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // Character-inside-box only makes sense when the box is filled
       // (invert-color glyph on a solid background). On a hollow outline
       // the real character is already visible through the middle, so
-      // drawing an inverted glyph on top would duplicate it.
+      // drawing an inverted glyph on top would duplicate it. It is also
+      // suppressed mid-glitch: the box it is supposed to sit inside has been
+      // torn into displaced slices, so a crisp centred glyph floating over the
+      // wreckage reads as a rendering bug rather than part of the effect.
       const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
-      if (!hollow && settings.showChar && displayChar) {
+      if (!hollow && !gsBox && settings.showChar && displayChar) {
         ctx.save();
         ctx.globalAlpha = Math.min(1, 0.3 + blinkAlpha * 0.7);
         ctx.fillStyle = invertColor(active.textColor);
-        ctx.font = `${active.fontSize}px ${active.fontFamily}`;
+        // Route through the same builder measureCharWidth uses, so the glyph
+        // is drawn in the SAME weight/style the box was sized for. Building
+        // this string without weight/style here (while the width was measured
+        // WITH them) is exactly what made the character sit slimmer/fatter and
+        // off-baseline over bold, italic, and heading text.
+        ctx.font = this.fontString(active.fontSize, active.fontFamily, active.fontWeight, active.fontStyle);
 
         // Canvas's "middle" baseline centers a glyph within its own font
         // em-box (roughly ascent/descent of the font itself), but active.h
@@ -6076,9 +6603,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const leading = active.h - glyphBoxHeight;
         const baselineY = active.top + ascent + leading / 2;
 
+        // Center on the glyph's own advance, not renderW: for a Box cursor
+        // renderW is charWidth, which INCLUDES letter-spacing, so centering on
+        // it would shift the glyph right by half the spacing (the browser puts
+        // spacing after the glyph, not around it). Subtracting letterSpacing
+        // back out lines our glyph up with where the real one renders. Zero
+        // letter-spacing (the common case) makes this identical to before.
+        const glyphAdvance = Math.max(1, (active.actualCharWidth ?? renderW) - (active.letterSpacing || 0));
         ctx.textAlign = "center";
         ctx.textBaseline = "alphabetic";
-        ctx.fillText(displayChar, active.x + renderW / 2, baselineY);
+        ctx.fillText(displayChar, active.x + glyphAdvance / 2, baselineY);
         ctx.restore();
       }
     }
@@ -6117,6 +6651,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const _mode = this.currentVimMode();
         const _real = this.settings;
         this.settings = this.effectiveSettings(_mode);
+        this._settingsSwapped = true;
         try {
           if (this.presentationActive()) {
             // Same presentation-mode guard as the canvas engine.
@@ -6306,6 +6841,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
           }
         } finally {
           this.settings = _real;
+          this._settingsSwapped = false;
         }
       } catch (e) {
         if (!this._torchErrorLogged) {
@@ -7041,7 +7577,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
         if (get("gradientEnabled")) {
           new Setting(g).setName("Aurora")
             .setDesc("Swirls and mixes your gradient colors inside the cursor instead of scrolling them past.")
-            .addToggle((toggle) => toggle.setValue(!!get("energyAurora")).onChange(set("energyAurora")));
+            .addToggle((toggle) => toggle.setValue(!!get("energyAurora")).onChange(setAndRedraw("energyAurora")));
+          if (get("energyAurora")) {
+            const g2 = this.subGroup(g);
+            new Setting(g2).setName("Waviness")
+              .setDesc("How hard the bands bend. At 0 they stay flat and just slide along the cursor; turned up they curve and ripple across it.")
+              .addSlider((s) => s.setLimits(0, 2, 0.05).setValue(get("energyAuroraWaviness") ?? 1).setDynamicTooltip().onChange(set("energyAuroraWaviness")));
+          }
         }
       }
 
@@ -7069,6 +7611,21 @@ class CursorSmithSettingTab extends PluginSettingTab {
               .setDesc("Run the cursor's gradient along the neon streak, from the newest ghost to the oldest, instead of the one cursor color.")
               .addToggle((toggle) => toggle.setValue(!!get("crtNeonGradient")).onChange(set("crtNeonGradient")));
           }
+        }
+        new Setting(g).setName("Signal Glitch")
+          .setDesc("When the cursor jumps somewhere far away — a click, a search result, a Vim motion — it briefly breaks up like a mistracked video signal: torn into slipping slices with the color channels pulled apart. Only fires on jumps, never while you type.")
+          .addToggle((toggle) => toggle.setValue(!!get("crtGlitch")).onChange(setAndRedraw("crtGlitch")));
+        if (get("crtGlitch")) {
+          const g3 = this.subGroup(g);
+          new Setting(g3).setName("Break-Up")
+            .setDesc("How far the slices are thrown and how much the cursor's shape warps.")
+            .addSlider((s) => s.setLimits(0.2, 2.5, 0.1).setValue(get("crtGlitchStrength") ?? 1).setDynamicTooltip().onChange(set("crtGlitchStrength")));
+          new Setting(g3).setName("Color Split")
+            .setDesc("How far the red, green and blue channels separate. 0 keeps the cursor's own color and only tears the shape.")
+            .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("crtGlitchAberration") ?? 1).setDynamicTooltip().onChange(set("crtGlitchAberration")));
+          new Setting(g3).setName("Duration")
+            .setDesc("How long each burst lasts, in milliseconds.")
+            .addSlider((s) => s.setLimits(60, 600, 10).setValue(get("crtGlitchMs") ?? 220).setDynamicTooltip().onChange(set("crtGlitchMs")));
         }
       }
 

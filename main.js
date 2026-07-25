@@ -60,11 +60,32 @@ const TORCH_PULSE_FRAME_MS = 33;
 // the smear's leading corners. See updateSmearQuad.
 const SMEAR_LEAD_BOOST_CAP = 6;
 
-// Motion Smear / Tapered Trail: how far the smear quad has to be stretched, in
-// pixels, before the taper reaches its full configured strength. Roughly a
-// caret's height, so a one-character nudge stays square and only a real move
-// draws a point. Lower it and small movements start looking pinched.
-const TAPER_FULL_LAG = 14;
+// Motion Smear / Tapered Trail: the band of smear-quad stretch, in pixels, over
+// which the taper ramps from off to full.
+//
+// Below TAPER_MIN_LAG the taper is exactly zero, above TAPER_FULL_LAG it's at
+// full configured strength, and it ramps linearly between. The floor is the
+// important part: ordinary typing keeps the quad stretched by only a handful of
+// pixels (roughly one glyph width, sustained), and a pointed comet-tail on
+// every keystroke makes text jittery to read. Tapered Trail is really wanted
+// for JUMPS - clicking across a line, paging, big arrow motions - which stretch
+// the quad far more, so the floor sits above the typing range and the effect
+// only shows up once the caret actually leaps. Raise the floor to require an
+// even bigger jump; drop it toward zero to go back to tapering everything.
+const TAPER_MIN_LAG = 26;
+const TAPER_FULL_LAG = 90;
+
+// Pixel Trail / Trail On Jump. A move counts as a "jump" (rather than ordinary
+// typing/arrowing) once the caret travels more than this many pixels in one
+// commit - comfortably above a few glyphs so held arrow keys don't trip it.
+const JUMP_TRAIL_MIN_DIST = 40;
+// One puff of pixels is dropped every this-many pixels along the jump path.
+// Tighter spacing looks denser but costs more particles; this is a balance that
+// reads as continuous without flooding the pool.
+const JUMP_TRAIL_STEP = 18;
+// Hard ceiling on puffs per jump, so a click from the top of a huge document to
+// the bottom can't spawn thousands of particles in a single commit.
+const JUMP_TRAIL_MAX_PUFFS = 40;
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -107,6 +128,14 @@ const DEFAULT_SETTINGS = {
   // --- CRT effect (trail + glow) ---
   crtEffect: false,
   glow: true, 
+  // Neon Trail: render the CRT ghosts as a glowing neon TUBE - a hot white core
+  // inside a saturated streak (drawNeonGhost) - instead of plain fading boxes.
+  // The ghost is the caret's own footprint, so the tail matches the cursor's
+  // width and full height rather than ballooning into a wide ribbon. Sub-option
+  // crtNeonGradient colours the streak from the cursor's gradient (head→tail)
+  // rather than the flat cursor colour.
+  crtNeon: false,
+  crtNeonGradient: false,
 
   // --- torch spotlight effect (can run alongside any cursor style) ---
   torchEffect: false,
@@ -130,6 +159,32 @@ const DEFAULT_SETTINGS = {
   popLetters: true,        
   popRainbow: false,       // cycle each popped letter through a rainbow of colors
   flameTrail: true,        
+  // Pixel Trail sub-options.
+  // Density multiplies how many pixels each move sheds; at 0 the trail emits
+  // nothing, which is how you turn the pixels off while keeping the other
+  // sub-effects (thunderstrike, disintegration) available.
+  flameTrailDensity: 1,       // 0..3 multiplier on the per-move particle count
+  flameTrailLifeMs: 400,      // 100..2000 how long each pixel lives before it's gone
+  // Gravity: a steady pull on every trail pixel, angle in degrees clockwise
+  // from "down" (0 = straight down, 90 = right, 180 = up, 270 = left) and a
+  // strength in px/s². 0 strength leaves the original sideways drift untouched.
+  flameTrailGravity: 0,       // 0..1 strength (scaled to a px/s² range on use)
+  flameTrailGravityAngle: 0,  // degrees; 0 = down
+  // On a jump (click, page, big arrow move) the caret leaps in one step, so the
+  // trail - which normally builds up from a puff per keystroke - would leave
+  // just a single puff at the origin and nothing along the way. With this on, a
+  // jump lays a line of puffs down the path it skipped, so a leap leaves a
+  // proper streak instead of a lone smudge.
+  flameTrailOnJump: false,
+  // When the cursor's Gradient is on, colour each trail pixel from a random
+  // point along that gradient (with a little per-pixel nuance) instead of all
+  // pixels sharing the flat cursor colour. Applies to the jump trail and the
+  // backspace-disintegration burst too. No effect when Gradient is off.
+  flameTrailGradientColors: false,
+  // Base size of each trail pixel in px. Each pixel still varies a little around
+  // this, so it's a scale on the whole burst rather than a fixed dimension. The
+  // default matches the size the trail used before this was configurable.
+  flameTrailPixelSize: 4,
   // Pixel Trail sub-option: pressing Enter calls down a bolt of pixelated
   // lightning onto the caret's new position, from a random angle above it.
   thunderstrike: false,
@@ -186,6 +241,12 @@ const DEFAULT_SETTINGS = {
   blinkSpeed: 1.2,       
   blinkOnOffBalance: 0.5,
   blinkDelayMs: 0,
+  // How much of each blink cycle is spent fading, per side, as a fraction of
+  // the period. Low values snap on and off (the old "mechanical" feel); high
+  // values stretch the fade so the caret eases gently in and out. At the top of
+  // the range the holds vanish entirely and the blink becomes one continuous,
+  // breathing-like fade. 0.15 is the original look.
+  blinkFade: 0.15,       // 0.05..0.5
   // Breathing: instead of fading out, the caret shrinks and swells on the blink
   // cycle and never disappears. Same clock, same speed/balance/delay controls -
   // only what the cycle drives is different.
@@ -262,11 +323,15 @@ const LOOK_KEYS = [
   "gradientEnabled", "gradientCount",
   "gradientDark1", "gradientDark2", "gradientDark3", "gradientDark4",
   "gradientLight1", "gradientLight2", "gradientLight3", "gradientLight4",
-  "crtEffect", "glow",
+  "crtEffect", "glow", "crtNeon", "crtNeonGradient",
   "torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius",
   "overlayDarkness", "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed",
   "overlayBlinkSync", "overlayBlinkDepth",
   "caretWidthPx", "popLetters", "popRainbow", "flameTrail", "backspaceDisintegrate",
+  "flameTrailDensity", "flameTrailLifeMs",
+  "flameTrailGravity", "flameTrailGravityAngle",
+  "flameTrailOnJump",
+  "flameTrailGradientColors", "flameTrailPixelSize",
   "thunderstrike", "thunderstrikeSize", "thunderstrikeStrength",
   "stardustEnabled", "stardustAlwaysOn", "stardustDelayMs", "stardustRate",
   "stardustOrbit", "stardustOrbitRadius",
@@ -276,7 +341,7 @@ const LOOK_KEYS = [
   "speedDemonSparkQuantity", "speedDemonSparkTrail",
   "cursorOpacity", "energyEffect", "energySpeed", "energyAurora",
   "trailLength", "trailFadeMs",
-  "blinkingEnabled", "blinkSpeed", "blinkOnOffBalance", "blinkDelayMs",
+  "blinkingEnabled", "blinkSpeed", "blinkOnOffBalance", "blinkDelayMs", "blinkFade",
   "blinkBreathing", "blinkBreathDepth",
   "showChar", "moveDelayMs",
   "smear", "smearStiffness", "smearTrailingStiffness", "smearDamping",
@@ -325,8 +390,12 @@ function migrateLegacyKeys(src) {
 // Bracket Tether: the pairs it will follow, and how far it will scan for a
 // match. The cap keeps a runaway scan (an unmatched brace in a large note)
 // bounded; 20k characters is far past anything a tether is readable across.
-const BRACKET_OPEN = { "(": ")", "[": "]", "{": "}" };
-const BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{" };
+// Angle brackets are included so HTML tags, autolinks <https://…> and literal
+// <> pair up too. They are depth-matched like the others, so a `<` used as a
+// less-than sign (or a `>` blockquote marker) can occasionally pair with a
+// stray partner; that's an accepted cost of a decorative guide.
+const BRACKET_OPEN = { "(": ")", "[": "]", "{": "}", "<": ">" };
+const BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{", ">": "<" };
 const BRACKET_SCAN_LIMIT = 20000;
 
 // Quote-ish delimiters the tether will also pair up. Backtick is in here
@@ -337,12 +406,20 @@ const QUOTE_CHARS = ['"', "'", "`"];
 // closes - so they're paired left-to-right across a single line rather than by
 // depth counting. That's also why they're line-scoped: pairing across lines
 // would join a stray apostrophe to one three paragraphs away.
+//
+// Curly (typographic) quotes are the exception: “ ‘ open and ” ’ close, like
+// brackets do, so they are matched directionally instead of by left-to-right
+// pairing (see quoteSpanAt). They still get the apostrophe guard, because ’ is
+// also the correct character for a typographic apostrophe - "don’t" - and must
+// not be read as a closing quote when it sits between two letters.
+const CURLY_QUOTE_OPEN = { "\u201C": "\u201D", "\u2018": "\u2019" };  // “ → ”, ‘ → ’
+const CURLY_QUOTE_CLOSE = { "\u201D": "\u201C", "\u2019": "\u2018" };
 const QUOTE_LINE_SCAN = 4000;
 const WORD_CHAR = /[\p{L}\p{N}_]/u;
 // A quote wedged between two word characters is an apostrophe, not a
-// delimiter - "don't", "it's", "rock'n'roll". Skipping those is what stops the
-// tether pairing the apostrophe in "don't" with the one in "it's" and drawing
-// a line across the sentence between them.
+// delimiter - "don't", "it's", "rock'n'roll", "don’t". Skipping those is what
+// stops the tether pairing the apostrophe in "don't" with the one in "it's" and
+// drawing a line across the sentence between them.
 function isQuoteDelimiter(text, i) {
   return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
 }
@@ -661,18 +738,116 @@ const DEFAULT_VIM_PRESETS = {
 
 // ---------------------------------------------------------------------------
 // Preset share-code codec
-// A share code is the preset snapshot JSON encoded as base64url (no padding).
-// The preset name is embedded inside the JSON so the recipient gets both the
-// name and the settings in a single string.
+//
+// The recipient already has LOOK_KEYS, in the same order, and DEFAULT_SETTINGS.
+// So a share code doesn't need to carry key NAMES or unchanged VALUES at all -
+// only the name, plus the fields that actually differ from the defaults, each
+// as a position in LOOK_KEYS. That is the whole reason these codes shrank from
+// ~2.3k characters to a line or two: the old format spelled out all 77 keys and
+// their values as JSON, then base64'd the lot.
+//
+// Format (version "1"):
+//   1|<name>|<i><type><value>~<i><type><value>~...
+//   • name is percent-encoded so a "|" or "~" in it can't split the code.
+//   • each field is an index into LOOK_KEYS, a one-char type tag, then the value:
+//       b0 / b1   boolean            (bracketTether at index 40 off/on)
+//       n<num>    number             ("n0.35", "n180")
+//       c<hex>    colour, # dropped  ("c39ff14")
+//       s<enc>    string, %-encoded  (cursorStyle, overlayFollowMode)
+//   • only fields differing from DEFAULT_SETTINGS are emitted; on decode,
+//     everything else falls back to the default via presetWithDefaults.
+//
+// Old codes (raw base64url JSON) are still accepted - codeToPreset sniffs the
+// "1|" prefix and routes anything else to the legacy decoder, so nobody's saved
+// codes stop working.
 // ---------------------------------------------------------------------------
+const SHARE_VERSION = "1";
+
+function shareEncodeValue(v) {
+  if (typeof v === "boolean") return "b" + (v ? "1" : "0");
+  if (typeof v === "number") return "n" + shareNum(v);
+  if (typeof v === "string") {
+    // A colour is "#" followed by 3/6 hex digits; store it tag-free without the
+    // "#" since that's the common case and by far the bulkiest.
+    if (/^#[0-9a-fA-F]{3,6}$/.test(v)) return "c" + v.slice(1);
+    return "s" + encodeURIComponent(v);
+  }
+  // Anything exotic (shouldn't occur for look keys) round-trips as JSON.
+  return "j" + encodeURIComponent(JSON.stringify(v));
+}
+
+// Trim a number to its shortest exact decimal string: integers lose the ".0",
+// and float noise like 0.35000000000000003 is rounded to a sane precision
+// before being stringified so it doesn't bloat the code.
+function shareNum(n) {
+  if (Number.isInteger(n)) return String(n);
+  const r = Math.round(n * 1e6) / 1e6;
+  return String(r);
+}
+
+function shareDecodeValue(tag, raw) {
+  switch (tag) {
+    case "b": return raw === "1";
+    case "n": return Number(raw);
+    case "c": return "#" + raw;
+    case "s": return decodeURIComponent(raw);
+    case "j": try { return JSON.parse(decodeURIComponent(raw)); } catch { return undefined; }
+    default:  return undefined;
+  }
+}
+
 function presetToCode(name, snap) {
-  const payload = JSON.stringify(Object.assign({ __name: name }, snap));
-  // btoa works on latin-1; encodeURIComponent + unescape widens to UTF-8.
-  return btoa(unescape(encodeURIComponent(payload)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const defaults = pickLook(DEFAULT_SETTINGS);
+  const look = pickLook(snap);
+  const fields = [];
+  for (let i = 0; i < LOOK_KEYS.length; i++) {
+    const k = LOOK_KEYS[i];
+    if (!(k in look)) continue;
+    const v = look[k];
+    // Skip anything equal to the default - the recipient fills it back in.
+    // Numbers compared loosely so 0.5 and "0.5" (from an old code round-trip)
+    // don't both get emitted; everything else by strict identity.
+    if (v === defaults[k]) continue;
+    if (typeof v === "number" && typeof defaults[k] === "number" &&
+        shareNum(v) === shareNum(defaults[k])) continue;
+    fields.push(i + shareEncodeValue(v));
+  }
+  return [SHARE_VERSION, encodeURIComponent(name || ""), fields.join("~")].join("|");
 }
 
 function codeToPreset(code) {
+  const trimmed = (code || "").trim();
+  // Legacy: anything that isn't the new versioned format is tried as the old
+  // base64url-JSON blob, so previously shared codes keep importing.
+  if (trimmed.slice(0, 2) !== SHARE_VERSION + "|") return legacyCodeToPreset(trimmed);
+  try {
+    const parts = trimmed.split("|");
+    // parts[0] is the version, already matched. Extra "|" only appears if the
+    // name field held a literal one, which encodeURIComponent prevents - so a
+    // fixed 3-way split is safe.
+    const name = decodeURIComponent(parts[1] || "") || "Imported preset";
+    const body = parts.slice(2).join("|");
+    const snap = {};
+    if (body) {
+      for (const field of body.split("~")) {
+        if (!field) continue;
+        // Leading digits are the LOOK_KEYS index; the next char is the type tag.
+        const m = /^(\d+)(.)([\s\S]*)$/.exec(field);
+        if (!m) continue;
+        const key = LOOK_KEYS[Number(m[1])];
+        if (!key) continue; // index from a newer version we don't know: skip it
+        const val = shareDecodeValue(m[2], m[3]);
+        if (val !== undefined) snap[key] = val;
+      }
+    }
+    return { name, snap };
+  } catch {
+    return null;
+  }
+}
+
+// The pre-v1 decoder: base64url of the snapshot JSON with the name under __name.
+function legacyCodeToPreset(code) {
   try {
     const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
     const json = decodeURIComponent(escape(atob(b64)));
@@ -808,11 +983,14 @@ function isTextCaretHost(el) {
   return false;
 }
 
-function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5) {
+function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5, fade = 0.15) {
   if (speed <= 0) return 1;
   const period = 2500 / speed; 
   const phase = (nowMs % period) / period; 
-  const fade = 0.15; 
+  // Fraction of the period spent fading, per side. Clamped below 0.5 so the two
+  // fades never overrun the cycle; at exactly 0.5 the holds are gone and the
+  // blink is one continuous ease down-and-up (a gentle "breathing" fade).
+  fade = Math.max(0.02, Math.min(0.5, fade ?? 0.15));
   const balance = Math.max(0.1, Math.min(0.9, onOffBalance));
   const hold = 1 - fade * 2; 
   const onHold = hold * balance;
@@ -2084,12 +2262,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const h = Math.max(0, Math.min(1, heat));
     const [br, bg, bb] = hexToRgbTuple(baseHex);
     // Cold endpoint: 30% saturation-preserving desaturation toward mid-grey,
-    // then dim to ~55% brightness. Uses luma (Rec. 601 coefficients) so
+    // then dim to ~72% brightness. Uses luma (Rec. 601 coefficients) so
     // the grey we blend toward matches the perceived brightness of the
     // base colour instead of muddying dark colours.
     const luma = 0.299 * br + 0.587 * bg + 0.114 * bb;
     const desatMix = 0.7;                      // higher = greyer
-    const dim = 0.55;
+    const dim = 0.72;
     const coldR = ((1 - desatMix) * br + desatMix * luma) * dim;
     const coldG = ((1 - desatMix) * bg + desatMix * luma) * dim;
     const coldB = ((1 - desatMix) * bb + desatMix * luma) * dim;
@@ -2671,7 +2849,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // arrive from outside the pane.
           this._clipTop = top;
           const width = Math.round(r.width);
-          const height = Math.round(r.height);
+          let height = Math.round(r.height);
+          // Keep the cursor canvas above the status bar. The editor pane's rect
+          // can extend under a floating status bar, and while scrolling the
+          // pane briefly reaches the window edge, so clamp the clip to the
+          // status bar's top. No-op for an in-flow status bar (the pane already
+          // stops above it) and on platforms with no status bar (inset is 0).
+          const { bottomInset } = this._chromeInsets(this.canvas.ownerDocument);
+          if (bottomInset > 0) {
+            const win = this.canvas.ownerDocument.defaultView || window;
+            const maxBottom = win.innerHeight - bottomInset;
+            if (top + height > maxBottom) height = Math.max(0, maxBottom - top);
+          }
           const key = top + "," + left + "," + width + "," + height;
           if (key !== this._lastWrapperRect) {
             this._lastWrapperRect = key;
@@ -2849,6 +3038,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
               // frame was skipped: the change appeared to do nothing until the
               // next keystroke woke the loop.
               eff.cursorOpacity, eff.crtEffect, eff.glow, eff.showChar,
+              eff.crtNeon, eff.crtNeonGradient,
               eff.boxHollow, eff.boxHollowWidth, eff.lineSerifs,
               eff.underlineWidthPx, sec, bt, eff.bracketTetherStrength,
               // Breathing changes the painted size during a hold, where
@@ -3766,7 +3956,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   commitMove(caret) {
-    this.pushTrail(this.lastActive);
+    // Record the position being left, and - if this move is a jump - the ghosts
+    // bridging it to the destination, so the CRT/neon trail is continuous across
+    // the leap the same commit it happens rather than one move later.
+    this.pushTrail(this.lastActive, caret);
     if (this.lastActive) {
       // Consume a pending Backspace/Delete keystroke if it happened
       // recently enough to plausibly be the cause of this caret move.
@@ -3778,6 +3971,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this._deletePending &&
         now - this._deletePending < 250;
       this.spawnFlamePixels(this.lastActive, disintegrate);
+      // Trail On Jump: if this move was a genuine leap (not typing/arrowing) and
+      // wasn't a deletion burst, lay puffs along the path the caret skipped so a
+      // jump leaves a streak rather than a lone puff at the origin. Uses `caret`
+      // (destination) and `lastActive` (origin) to span the gap.
+      if (this.settings.flameTrailOnJump && !disintegrate) {
+        this.spawnJumpTrail(this.lastActive, caret);
+      }
       this._deletePending = 0;
       // Same 250ms window as the delete flag. Note the bolt is aimed at
       // `caret`, the position being moved TO, not at lastActive: the strike
@@ -4008,12 +4208,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (l > maxLag) maxLag = l;
     }
 
-    // Scale the whole effect by how far the quad is actually stretched, not
-    // just by the ratio between its corners. The ratio alone is ~1 for the
-    // laggiest corner no matter how small the lag is, so a caret creeping one
-    // character sideways would wear the same sharp point as one flung across
-    // the page - and a resting cursor would sit there permanently misshapen.
-    const reach = Math.min(1, maxLag / TAPER_FULL_LAG);
+    // Ramp the whole effect across the [MIN_LAG, FULL_LAG] band, zero below the
+    // floor. The ratio between corners alone is ~1 for the laggiest corner no
+    // matter how small the lag is, so without this a caret creeping one glyph
+    // sideways would wear the same sharp point as one flung across the page -
+    // and a resting cursor would sit there permanently misshapen. The floor is
+    // what keeps the taper off during ordinary typing (see TAPER_MIN_LAG).
+    const reach = Math.max(0, Math.min(1, (maxLag - TAPER_MIN_LAG) / (TAPER_FULL_LAG - TAPER_MIN_LAG)));
     if (reach <= 0.001) {
       this.smearShape = q;
       return;
@@ -4051,10 +4252,52 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return this.smearShape || this.smearQuad;
   }
 
-  pushTrail(point) {
+  // Record `point` (the position being left) as a CRT trail ghost. If `dest` is
+  // given and the move from point→dest is a jump, also lay intermediate ghosts
+  // along that path so the trail is a continuous streak across the leap instead
+  // of two dots with a gap. `dest` itself is NOT recorded here - it becomes the
+  // live caret and gets its own ghost on the next move - only the bridge between
+  // them is filled.
+  pushTrail(point, dest = null) {
     if (!point) return;
-    this.trail.push({ x: point.x, y: point.top, w: point.w, h: point.h, t: performance.now() });
+    const now = performance.now();
     const max = Math.max(0, Math.round(this.settings.trailLength));
+
+    this.trail.push({ x: point.x, y: point.top, w: point.w, h: point.h, t: now });
+
+    // Bridge a jump with a streak of intermediate ghosts. Neon only: the neon
+    // tail is meant to read as the cursor zipping across the gap, but on the
+    // plain CRT effect that same bridge just smears a line of ghost boxes from
+    // the old spot to the click, which isn't wanted. Plain CRT still leaves its
+    // normal fading ghost at the origin (pushed above) - only the across-the-gap
+    // streak is dropped. Also gated on room in the trail.
+    if (dest && this.settings.crtEffect && this.settings.crtNeon && max > 1) {
+      const dx = dest.x - point.x;
+      const dy = dest.top - point.top;
+      const dist = Math.hypot(dx, dy);
+      if (dist >= JUMP_TRAIL_MIN_DIST) {
+        // One ghost every JUMP_TRAIL_STEP px, capped so a top-to-bottom click in
+        // a huge document can't flood the trail, and never more than the trail
+        // can hold so the bridge doesn't instantly evict itself.
+        const steps = Math.min(
+          JUMP_TRAIL_MAX_PUFFS, max, Math.floor(dist / JUMP_TRAIL_STEP)
+        );
+        for (let i = 1; i <= steps; i++) {
+          const s = i / (steps + 1);
+          // Timestamps fan slightly forward from `now` toward the destination so
+          // ghosts nearer the landing read as freshest - the streak fades from
+          // the origin (oldest) to where the caret now sits (newest), giving it
+          // a direction rather than a uniform smear.
+          this.trail.push({
+            x: point.x + dx * s,
+            y: point.top + dy * s,
+            w: dest.w, h: dest.h,
+            t: now + s * 10,
+          });
+        }
+      }
+    }
+
     while (this.trail.length > max) this.trail.shift();
   }
 
@@ -4086,14 +4329,58 @@ module.exports = class CursorSmithPlugin extends Plugin {
     });
   }
 
+  // The colour for one trail pixel, as an "rgb(...)" string.
+  //
+  // Normally every pixel in a burst is a small random nudge off the flat cursor
+  // colour. When Gradient Colours is on AND a gradient is active, each pixel
+  // instead samples a RANDOM point along the cursor's gradient, so a burst comes
+  // out multi-hued - the same trick Stardust uses via sampleRamp - and then gets
+  // the same small nudge on top for grain. `disintegrate` inverts the result so
+  // the deletion burst keeps its "wrong colour" look whichever mode is on.
+  //
+  // `baseRGB` is the pre-computed [r,g,b] of the flat path (already inverted for
+  // disintegrate by the caller), passed in so the common case doesn't re-parse
+  // the hex for every pixel.
+  flamePixelColor(baseRGB, disintegrate) {
+    let r, g, b;
+    if (this.settings.flameTrailGradientColors && this.settings.gradientEnabled) {
+      [r, g, b] = this.sampleRamp(Math.random());
+      if (disintegrate) { r = 255 - r; g = 255 - g; b = 255 - b; }
+    } else {
+      [r, g, b] = baseRGB;
+    }
+    // A little per-pixel nuance so even same-stop pixels aren't identical.
+    const varR = Math.max(0, Math.min(255, Math.round(r + (Math.random() - 0.5) * 70)));
+    const varG = Math.max(0, Math.min(255, Math.round(g + (Math.random() - 0.5) * 70)));
+    const varB = Math.max(0, Math.min(255, Math.round(b + (Math.random() - 0.5) * 70)));
+    return `rgb(${varR}, ${varG}, ${varB})`;
+  }
+
   spawnFlamePixels(anchor, disintegrate = false) {
     if (!this.settings.flameTrail) return;
-    
+
+    // Density scales the whole burst. At 0 the trail emits nothing - the way to
+    // hide the pixels while keeping Thunderstrike and Disintegration usable.
+    // Disintegration is exempt from a 0 density: pressing Backspace is an
+    // explicit request for the burst, not the ambient trail, so it still fires
+    // (at the normal amount) even with the trail turned down to nothing.
+    const density = Math.max(0, this.settings.flameTrailDensity ?? 1);
+    if (density <= 0 && !disintegrate) return;
+
     // Disintegration bursts get a few more particles and a stronger scatter
     // so deletion feels heavier than a normal cursor move.
-    const count = disintegrate
+    const baseCount = disintegrate
       ? Math.floor(10 + Math.random() * 8)
       : Math.floor(6 + Math.random() * 6);
+    // Disintegration keeps its own weight; only the ambient trail is scaled.
+    const count = disintegrate ? baseCount : Math.round(baseCount * density);
+    if (count <= 0) return;
+
+    // Lifetime in seconds, read once for the whole burst. drawFlamePixels ages
+    // each particle against its own stored life, so the pool can hold particles
+    // of different lifetimes at once (e.g. a long trail plus short spark debris).
+    const lifeSec = Math.max(0.05, (this.settings.flameTrailLifeMs ?? 400) / 1000);
+
     let baseHex = this.getActiveColor() || "#39ff14";
     let h = baseHex.replace("#", "");
     if (h.length === 3) h = h.split("").map(c => c + c).join("");
@@ -4106,6 +4393,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (disintegrate) {
       r = 255 - r; g = 255 - g; b = 255 - b;
     }
+    // The flat-path base for flamePixelColor; ignored when Gradient Colours
+    // samples the ramp instead.
+    const baseRGB = [r, g, b];
+    // Pixel size, scaled from the setting. The 0.65 + rand·0.7 spread keeps the
+    // same variation the trail always had (default base 4 → ~2.6-5.4px, the
+    // original 2.5 + rand·3 range) while letting the slider grow or shrink it.
+    const pxBase = Math.max(1, this.settings.flameTrailPixelSize ?? 4);
 
     // Anchor centre - disintegration particles fly *outward from* this
     // point (with an extra outward bias on their velocity), while normal
@@ -4117,9 +4411,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     for (let i = 0; i < count; i++) {
       const pX = anchor.x + Math.random() * anchorW;
       const pY = anchor.top + Math.random() * anchor.h;
-      const varR = Math.max(0, Math.min(255, r + Math.floor((Math.random() - 0.5) * 70)));
-      const varG = Math.max(0, Math.min(255, g + Math.floor((Math.random() - 0.5) * 70)));
-      const varB = Math.max(0, Math.min(255, b + Math.floor((Math.random() - 0.5) * 70)));
+      const color = this.flamePixelColor(baseRGB, disintegrate);
 
       let vx, vy;
       if (disintegrate) {
@@ -4143,11 +4435,81 @@ module.exports = class CursorSmithPlugin extends Plugin {
         y: pY,
         vx,
         vy,
-        size: 2.5 + Math.random() * 3,
-        color: `rgb(${varR}, ${varG}, ${varB})`,
+        size: pxBase * (0.65 + Math.random() * 0.7),
+        color,
         alpha: 1,
-        start: performance.now()
+        start: performance.now(),
+        // Per-particle lifetime (drawFlamePixels reads this instead of a
+        // hardcoded constant), plus a marker so the gravity physics applies
+        // ONLY to Pixel Trail particles and leaves Speed Demon sparks and
+        // Thunderstrike debris - which share this pool - moving as before.
+        life: lifeSec,
+        trail: true,
       });
+    }
+  }
+
+  // Lay a line of small pixel puffs along the path between two caret positions,
+  // for Trail On Jump. `from`/`to` are caret snapshots (the old and new
+  // positions). Does nothing for a short move - that's just typing, which the
+  // per-commit puff in spawnFlamePixels already handles.
+  spawnJumpTrail(from, to) {
+    if (!this.settings.flameTrail || !from || !to) return;
+    const density = Math.max(0, this.settings.flameTrailDensity ?? 1);
+    if (density <= 0) return;
+
+    const fw = from.w || from.actualCharWidth || 8;
+    const tw = to.w || to.actualCharWidth || 8;
+    const x0 = from.x + fw / 2, y0 = from.top + (from.h || 16) / 2;
+    const x1 = to.x + tw / 2, y1 = to.top + (to.h || 16) / 2;
+    const dist = Math.hypot(x1 - x0, y1 - y0);
+    if (dist < JUMP_TRAIL_MIN_DIST) return;
+
+    // Number of intermediate puffs, spaced every JUMP_TRAIL_STEP px and capped.
+    // The endpoints are skipped: the origin already got its puff from the normal
+    // spawn, and the destination is where the caret now sits (no trail there).
+    const puffs = Math.min(JUMP_TRAIL_MAX_PUFFS, Math.floor(dist / JUMP_TRAIL_STEP));
+    if (puffs <= 0) return;
+
+    let baseHex = this.getActiveColor() || "#39ff14";
+    let h = baseHex.replace("#", "");
+    if (h.length === 3) h = h.split("").map(c => c + c).join("");
+    const int = parseInt(h, 16);
+    const baseRGB = [(int >> 16) & 255, (int >> 8) & 255, int & 255];
+    const lifeSec = Math.max(0.05, (this.settings.flameTrailLifeMs ?? 400) / 1000);
+    const now = performance.now();
+
+    // A couple of pixels per waypoint scaled by density - enough to read as a
+    // streak without turning a long jump into a firehose even before the cap.
+    const perPuff = Math.max(1, Math.round(2 * Math.min(1.5, density)));
+    const lineH = ((from.h || 16) + (to.h || 16)) / 2;
+    // Slightly smaller than the resting trail (× 0.8), as it was before this was
+    // configurable, but scaling off the same slider.
+    const pxBase = Math.max(1, this.settings.flameTrailPixelSize ?? 4) * 0.8;
+
+    for (let i = 1; i <= puffs; i++) {
+      const s = i / (puffs + 1);
+      const px = x0 + (x1 - x0) * s;
+      const py = y0 + (y1 - y0) * s;
+      for (let j = 0; j < perPuff; j++) {
+        // A jump trail is never a deletion burst, so disintegrate is false: it
+        // samples the gradient (when on) at full, un-inverted hue.
+        const color = this.flamePixelColor(baseRGB, false);
+        this.flamePixels.push({
+          x: px + (Math.random() - 0.5) * 6,
+          y: py + (Math.random() - 0.5) * lineH * 0.7,
+          // Gentle sideways drift, same as a resting trail puff - the streak
+          // should sit where the caret passed, not fly off on its own.
+          vx: (Math.random() - 0.5) * 14,
+          vy: 0,
+          size: pxBase * (0.65 + Math.random() * 0.7),
+          color,
+          alpha: 1,
+          start: now,
+          life: lifeSec,
+          trail: true,
+        });
+      }
     }
   }
 
@@ -4464,7 +4826,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const delayMs = Math.max(0, this.settings.blinkDelayMs ?? 0);
     if (delayMs > holdMs) holdMs = delayMs;
     if (holdMs > 0 && now - this.lastMoveTime < holdMs) return 1;
-    return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5);
+    return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5, this.settings.blinkFade ?? 0.15);
   }
 
   // What the blink does to opacity. Breathing swaps the fade out for a size
@@ -4553,15 +4915,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
       let x0 = a.x, y0 = a.top;
       let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
       let y1 = a.top + (a.h || 0);
-      // The raw quad, not the tapered shape: tapering only ever pulls corners
-      // inward, so the quad's bounds still cover whatever gets painted.
-      const q = this.smearQuad;
-      if (q) {
-        for (const k in q) {
-          if (q[k].x < x0) x0 = q[k].x;
-          if (q[k].y < y0) y0 = q[k].y;
-          if (q[k].x > x1) x1 = q[k].x;
-          if (q[k].y > y1) y1 = q[k].y;
+      // Bound BOTH the raw spring quad and the tapered shape actually painted.
+      // The taper usually pulls corners inward, but it works by preserving each
+      // corner's distance ALONG the travel line while pulling it toward that
+      // line - and on a fast diagonal jump that can nudge a corner slightly
+      // PAST the raw quad's axis-aligned bounds (shrinking one axis grows the
+      // other). Marking only the raw quad then under-reports by a sliver, which
+      // never gets cleared: the tapered-tail artifact. smearShape is usually
+      // the same object as smearQuad (taper off or below threshold), so the
+      // second pass is a cheap no-op then.
+      for (const src of [this.smearQuad, this.smearShape]) {
+        if (!src) continue;
+        for (const k in src) {
+          if (src[k].x < x0) x0 = src[k].x;
+          if (src[k].y < y0) y0 = src[k].y;
+          if (src[k].x > x1) x1 = src[k].x;
+          if (src[k].y > y1) y1 = src[k].y;
         }
       }
       const pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
@@ -4660,9 +5029,74 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const alpha = Math.max(0, 1 - age) * 0.55;
       if (alpha > 0.02) {
         // Padded for stroke width and the shadowBlur glow the CRT effect adds.
-        this._markDirty(p.x - 14, p.y - 14, p.w + 28, p.h + 28);
-        cb(p, alpha);
+        // Neon spills a wider glow, so pad more when it's on. The neon ghost is
+        // now just the caret's own footprint (see drawNeonGhost), so no extra
+        // horizontal allowance is needed beyond the glow pad.
+        const pad = this.settings.crtNeon ? 22 : 14;
+        this._markDirty(p.x - pad, p.y - pad, p.w + pad * 2, p.h + pad * 2);
+        // `age` (0 = freshest ghost, 1 = about to vanish) is passed so the neon
+        // gradient can run the ramp ALONG the trail rather than within each dot.
+        cb(p, alpha, Math.max(0, Math.min(1, age)));
       }
+    }
+  }
+
+  // The fill/stroke style and glow for one CRT trail ghost. Pulled out so the
+  // Line/Underline and Box renderers paint the trail identically.
+  //
+  // Plain CRT: the flat (or per-dot gradient) cursor colour at the ghost's fade
+  // alpha, no extra glow beyond the cursor's own. Neon: the colour is pushed
+  // toward full saturation and a bright core, a real shadowBlur halo is armed on
+  // the context, and - when crtNeonGradient is on with a gradient active - the
+  // hue is sampled from the ramp by the ghost's position along the trail, so the
+  // streak runs through the whole gradient from head to tail.
+  //
+  // Returns the style string; arming the glow is a side effect on ctx, so the
+  // caller must ctx.save()/restore() around a run of trail points.
+  trailPaint(ctx, p, alpha, age, flatColor) {
+    if (!this.settings.crtNeon) {
+      ctx.shadowBlur = 0;
+      return this.cursorPaint(p.x, p.y, p.w, p.h, flatColor, alpha);
+    }
+
+    // Neon colour. When the gradient sub-option is on, sample the ramp by
+    // trail position (freshest ghost near the head of the ramp); otherwise lift
+    // the flat colour toward its own saturated, bright version.
+    let r, g, b;
+    if (this.settings.crtNeonGradient && this.settings.gradientEnabled) {
+      [r, g, b] = this.sampleRamp(1 - age);
+    } else {
+      [r, g, b] = hexToRgbTuple(flatColor || "#39ff14");
+    }
+    // Push toward a neon look: pull each channel a little toward white for a hot
+    // core while keeping the hue, so it reads as luminous tube-glow rather than
+    // a flat swatch.
+    const nr = Math.round(r + (255 - r) * 0.35);
+    const ng = Math.round(g + (255 - g) * 0.35);
+    const nb = Math.round(b + (255 - b) * 0.35);
+    // The halo carries the pure hue (not the whitened core) so the glow around
+    // each ghost is saturated colour, the way real neon spills.
+    ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${Math.min(1, alpha * 2)})`;
+    ctx.shadowBlur = 12;
+    // Slightly boosted alpha so the streak holds up under the glow.
+    return `rgba(${nr}, ${ng}, ${nb}, ${Math.min(1, alpha * 1.3)})`;
+  }
+
+  // Paint one neon trail ghost as a lit tube rather than a flat coloured bar:
+  // the saturated fill + halo from trailPaint, then a thin near-white core
+  // stripe down its centre so it reads as a glowing filament with coloured
+  // spill - the thing that actually makes it look like neon. The core is
+  // skipped once the ghost is too narrow to have an inside (e.g. a Line cursor,
+  // which is basically all core already).
+  drawNeonGhost(ctx, r, alpha, age, color) {
+    ctx.fillStyle = this.trailPaint(ctx, r, alpha, age, color);
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    if (r.w >= 3) {
+      const coreW = Math.max(1, r.w * 0.34);
+      // Uses the hue trailPaint already armed as the shadow, so the white core
+      // casts a coloured glow - a hot filament inside a coloured tube.
+      ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1, alpha * 1.6)})`;
+      ctx.fillRect(r.x + (r.w - coreW) / 2, r.y, coreW, r.h);
     }
   }
 
@@ -4793,20 +5227,35 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const trailColor = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
 
-    this.forEachTrailPoint((p, alpha) => {
-      if (isUnderline) {
+    ctx.save();
+    this.forEachTrailPoint((p, alpha, age) => {
+      if (settings.crtNeon) {
+        // Neon draws the caret's OWN footprint as a glowing tube: the same
+        // width as the live cursor (a thin stem for Line, the bar for
+        // Underline, the char box for Box) and the full caret height. No
+        // reshaping - the tail matches the cursor instead of ballooning into a
+        // height-wide ribbon.
+        if (isUnderline) {
+          const uThickness = this.underlineThickness(p.h);
+          const ty = p.y + p.h - uThickness;
+          this.drawNeonGhost(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * opacity, age, trailColor);
+        } else {
+          this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * opacity, age, trailColor);
+        }
+      } else if (isUnderline) {
         const uThickness = this.underlineThickness(p.h);
         const ty = p.y + p.h - uThickness;
         // Build the paint from the bar's own rect, not the full line box:
         // a ramp spanning the whole line height would show only the sliver
         // of itself that happens to fall across the bar.
-        ctx.fillStyle = this.cursorPaint(p.x, ty, p.w, uThickness, trailColor, alpha * opacity);
+        ctx.fillStyle = this.trailPaint(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * opacity, age, trailColor);
         ctx.fillRect(p.x, ty, p.w, uThickness);
       } else {
-        ctx.fillStyle = this.cursorPaint(p.x, p.y, p.w, p.h, trailColor, alpha * opacity);
+        ctx.fillStyle = this.trailPaint(ctx, p, alpha * opacity, age, trailColor);
         ctx.fillRect(p.x, p.y, p.w, p.h);
       }
     });
+    ctx.restore();
 
     if (!active) return;
     const blinkAlpha = this.blinkAlpha(now);
@@ -4930,15 +5379,40 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // same pool but are untouched by the setting.
     const trailAmt = Math.max(0, this.styleFor("speedDemonSparkTrail") || 0);
 
-    this.flamePixels = this.flamePixels.filter(p => {
-      const elapsed = (now - p.start) / 1000;
-      if (elapsed > 0.4) return false;
+    // Gravity vector, resolved once for the frame. Angle is degrees clockwise
+    // from straight-down, so 0 → (0, +1). Strength 0..1 maps onto a px/s² range
+    // that's gentle at the low end and a real yank at the top. Applied as a
+    // closed-form ½·g·t² displacement below, which keeps particle motion
+    // identical at any refresh rate - the same reason the base motion is
+    // elapsed-derived rather than integrated.
+    const gStrength = Math.max(0, Math.min(1, this.settings.flameTrailGravity ?? 0));
+    let gx = 0, gy = 0;
+    if (gStrength > 0) {
+      const mag = gStrength * 900; // px/s² at full strength
+      const rad = ((this.settings.flameTrailGravityAngle ?? 0) * Math.PI) / 180;
+      gx = Math.sin(rad) * mag;
+      gy = Math.cos(rad) * mag;
+    }
 
-      const t = elapsed / 0.4;
+    this.flamePixels = this.flamePixels.filter(p => {
+      // Per-particle lifetime: Pixel Trail pixels carry their own `life`;
+      // sparks and debris that never set one fall back to the original 0.4s.
+      const life = p.life || 0.4;
+      const elapsed = (now - p.start) / 1000;
+      if (elapsed > life) return false;
+
+      const t = elapsed / life;
       p.alpha = 1 - Math.pow(t, 2);
 
-      const curX = p.x + p.vx * elapsed;
-      const curY = p.y + p.vy * elapsed;
+      // Closed-form path: initial drift plus the gravity displacement, which
+      // keeps particle motion identical at any refresh rate. Gravity is a Pixel
+      // Trail sub-option, so it only pulls on trail particles - Speed Demon
+      // sparks and Thunderstrike debris share this pool but must keep their
+      // original ballistic motion.
+      const pgx = p.trail ? gx : 0;
+      const pgy = p.trail ? gy : 0;
+      const curX = p.x + p.vx * elapsed + pgx * 0.5 * elapsed * elapsed;
+      const curY = p.y + p.vy * elapsed + pgy * 0.5 * elapsed * elapsed;
 
       ctx.save();
       ctx.globalAlpha = Math.max(0, p.alpha);
@@ -5099,24 +5573,43 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   // The innermost quoted run on this line that contains (or touches) the
-  // caret. Pairs are taken left to right - 1st with 2nd, 3rd with 4th - among
-  // the quotes that qualify as delimiters.
+  // caret. Straight quotes are taken left to right - 1st with 2nd, 3rd with
+  // 4th - among the quotes that qualify as delimiters. Curly quotes are
+  // directional, so an opener is matched to its own nearest closer instead.
   quoteSpanAt(doc, pos) {
     const { start, text } = this.lineBoundsAt(doc, pos);
     const rel = pos - start;
     let best = null;
+    const consider = (a, b) => {
+      // Inclusive of both edges: the caret counts as "in" the run whether it's
+      // inside it or parked just outside either quote.
+      if (rel < a || rel > b + 1) return;
+      if (!best || a > best.from) best = { from: start + a, to: start + b };
+    };
+
+    // Straight quotes: symmetric, paired left-to-right.
     for (const q of QUOTE_CHARS) {
       const marks = [];
       for (let i = 0; i < text.length; i++) {
         if (text[i] === q && isQuoteDelimiter(text, i)) marks.push(i);
       }
-      for (let i = 0; i + 1 < marks.length; i += 2) {
-        const a = marks[i];
-        const b = marks[i + 1];
-        // Inclusive of both edges: the caret counts as "in" the run whether
-        // it's inside it or parked just outside either quote.
-        if (rel < a || rel > b + 1) continue;
-        if (!best || a > best.from) best = { from: start + a, to: start + b };
+      for (let i = 0; i + 1 < marks.length; i += 2) consider(marks[i], marks[i + 1]);
+    }
+
+    // Curly quotes: directional, so scan for an opener and take the nearest
+    // matching closer after it. Nesting of the same pair (“ … “ … ” … ”) is
+    // rare enough in prose that a simple depth count per opener type is plenty.
+    for (const openCh in CURLY_QUOTE_OPEN) {
+      const closeCh = CURLY_QUOTE_OPEN[openCh];
+      for (let i = 0; i < text.length; i++) {
+        if (text[i] !== openCh) continue;
+        let depth = 1;
+        for (let j = i + 1; j < text.length; j++) {
+          if (text[j] === openCh) depth++;
+          else if (text[j] === closeCh && isQuoteDelimiter(text, j)) {
+            if (--depth === 0) { consider(i, j); break; }
+          }
+        }
       }
     }
     return best;
@@ -5129,7 +5622,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   enclosingBracketSpan(doc, pos) {
     const start = Math.max(0, pos - BRACKET_SCAN_LIMIT);
     const text = doc.sliceString(start, pos);
-    const depth = { ")": 0, "]": 0, "}": 0 };
+    // One counter per closer, built from the pair table so every bracket type
+    // (including angle brackets) is tracked without hardcoding the list here.
+    const depth = {};
+    for (const closer in BRACKET_CLOSE) depth[closer] = 0;
     for (let i = text.length - 1; i >= 0; i--) {
       const c = text[i];
       if (BRACKET_CLOSE[c]) { depth[c]++; continue; }
@@ -5474,9 +5970,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const hollow = this.styleFor("boxHollow");
     const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
 
-    this.forEachTrailPoint((p, alpha) => {
-      if (hollow) {
-        ctx.strokeStyle = this.cursorPaint(p.x, p.y, p.w, p.h, color, alpha * opacity);
+    ctx.save();
+    this.forEachTrailPoint((p, alpha, age) => {
+      if (settings.crtNeon) {
+        // Neon draws the box's own footprint as a glowing tube - the same
+        // width and height as the live box cursor, filled even when the box is
+        // hollow (a hollow outline of a glowing tail just reads as noise).
+        this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * opacity, age, color);
+      } else if (hollow) {
+        ctx.strokeStyle = this.trailPaint(ctx, p, alpha * opacity, age, color);
         ctx.lineWidth = strokeW;
         // Inset by half the stroke so the outline lands inside the same
         // footprint the filled trail dot would occupy (canvas strokes
@@ -5484,10 +5986,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const inset = strokeW / 2;
         ctx.strokeRect(p.x + inset, p.y + inset, Math.max(0, p.w - strokeW), Math.max(0, p.h - strokeW));
       } else {
-        ctx.fillStyle = this.cursorPaint(p.x, p.y, p.w, p.h, color, alpha * opacity);
+        ctx.fillStyle = this.trailPaint(ctx, p, alpha * opacity, age, color);
         ctx.fillRect(p.x, p.y, p.w, p.h);
       }
     });
+    ctx.restore();
 
     const active = this.animActive;
     if (active) {
@@ -5623,6 +6126,63 @@ module.exports = class CursorSmithPlugin extends Plugin {
             // hide it. Don't disable the engine: another mode may want it, and
             // switching back should be instant.
             if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
+          } else if (
+            !this.windowFocused() &&
+            this.settings.overlayBlinkSync && this.settings.blinkingEnabled
+          ) {
+            // Window is not the focused OS window, so the canvas engine has
+            // already parked and taken the cursor off screen (see its own tick).
+            // With Blink Sync on, the light is meant to track the cursor's
+            // visibility - and right now the cursor is showing nothing - so the
+            // light should show nothing too, rather than sitting there fully lit
+            // over an empty pane pointing at a caret that isn't drawn.
+            //
+            // Scoped to Blink Sync deliberately: a plain torch with no blink
+            // coupling is an ambient reading light, and dousing that on every
+            // alt-tab would be its own annoyance. This is the one mode whose
+            // whole premise is "the light follows whether the cursor is shown".
+            //
+            // Closed rather than hidden: with hideOnWindowBlur off the caret
+            // itself stays visible on blur, and yanking the whole overlay would
+            // pop the darkness off in one frame.
+            //
+            // All the way shut, NOT to the pulse's floor. Mid-blink the light
+            // only dips to (1 - depth) because the caret is back in a fraction
+            // of a second; on blur it's gone until you return, so "the cursor
+            // isn't shown, don't light up" means fully out, whatever the depth.
+            //
+            // Ramped shut over frames rather than written straight to the floor:
+            // the overlay's only CSS transition is on opacity, not on the radius
+            // (the pulse's smoothness comes entirely from the tick writing a new
+            // radius each frame), so a single 1px write would SNAP the darkness
+            // in. Easing it here keeps the loop in the "pulse" gear until it
+            // arrives, which is the one gear that runs while nothing else does -
+            // hence the ~5% cost note on Blink Sync in the first place. The 1px
+            // floor (not 0) is the same degenerate-gradient guard the pulse
+            // uses. On refocus the normal branch takes over and eases it open
+            // the same way.
+            const view = this.app.workspace.activeEditor?.editor?.cm;
+            this.ensureTorchOverlayForView(view);
+            if (this.overlay) {
+              this.overlay.classList.remove("torch-cursor-hidden");
+              const from = this._lastTorchRadius > 0 ? this._lastTorchRadius : this.settings.overlayRadius;
+              // Geometric approach to 1px: at ~28%/frame a 300px light closes
+              // in roughly a dozen pulse-cadence frames (~0.5s), quick enough to
+              // read as a response to leaving rather than a slow fade. The last
+              // couple of pixels are snapped to the 1px floor rather than chased
+              // geometrically - rounding has a fixed point at 2px, and without
+              // the snap the loop would sit in the pulse gear forever rewriting
+              // an unchanged value instead of parking at the idle heartbeat.
+              const stepped = Math.round(from - (from - 1) * 0.28);
+              const next = stepped <= 2 ? 1 : stepped;
+              if (next !== this._lastTorchRadius) {
+                this._lastTorchRadius = next;
+                this.overlay.style.setProperty("--torch-radius", next + "px");
+                // Still closing: hold the pulse cadence. Once it lands on 1px
+                // the gear stays "idle" and the loop drops to the heartbeat.
+                if (next > 1) this._torchGear = "pulse";
+              }
+            }
           } else {
             const view = this.app.workspace.activeEditor?.editor?.cm;
             this.ensureTorchOverlayForView(view);
@@ -5656,7 +6216,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
               else { this.x = this.tx; this.y = this.ty; }
 
               const r = this.getPaneRect(view);
-              const usePane = r && this.settings.overlaySpareSidebars;
+              // Sparing the sidebars means dimming only the editor pane, which
+              // only makes sense when the sidebars are side-by-side panes. On
+              // mobile they're sliding drawers over the content, so clipping to
+              // the pane just leaves the shading inconsistent - fall back to the
+              // full-viewport dim there regardless of the toggle.
+              const isMobile = this.overlay.ownerDocument.body.classList.contains("is-mobile");
+              const usePane = r && this.settings.overlaySpareSidebars && !isMobile;
               // Even when not sparing the sidebars, the overlay must never
               // cover the titlebar - getFullViewportRect clamps around it.
               const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
@@ -5820,7 +6386,27 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // the torch overlay short before the status bar, leaving the bottom of
     // the note unilluminated. The original file had no bottom clamp here.
 
-    this._chromeCache = { doc, t: now, top, bottomInset: 0 };
+    // Bottom inset: the height a visibly-rendered status bar occupies at the
+    // window's bottom edge. This is deliberately NOT applied to the torch
+    // overlay (z-9990) - that renders beneath the status bar and is meant to
+    // reach the window bottom, which is the illumination regression the note
+    // above is about. It is applied only to the cursor CANVAS (z-9999), which
+    // would otherwise paint over the status bar (worst while scrolling, when
+    // the pane's own bottom briefly reaches the window edge). An
+    // invisible-but-in-flow status bar is skipped, same as the top clamp.
+    let bottomInset = 0;
+    const statusBar = doc.querySelector(".status-bar");
+    if (statusBar && this._isVisiblyRendered(statusBar)) {
+      const sb = statusBar.getBoundingClientRect();
+      const win = doc.defaultView || window;
+      // Only when it's actually parked at the window's bottom edge, so a
+      // mispositioned or stale-rect bar can't pull the clip up over content.
+      if (sb.height > 0 && sb.bottom >= win.innerHeight - 1) {
+        bottomInset = Math.max(0, win.innerHeight - sb.top);
+      }
+    }
+
+    this._chromeCache = { doc, t: now, top, bottomInset };
     return this._chromeCache;
   }
 
@@ -6266,6 +6852,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(get("blinkSpeed")).setDynamicTooltip().onChange(set("blinkSpeed")));
         new Setting(g).setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
           .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(get("blinkOnOffBalance")).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
+        new Setting(g).setName("Fade Smoothness").setDesc("How gradually the cursor fades in and out. Low is a snappy on/off; higher stretches the fade so it eases gently, up to one continuous breathing-like fade at the top of the range. 0.15 is the original feel.")
+          .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkFade") ?? 0.15).setDynamicTooltip().onChange(set("blinkFade")));
         new Setting(g).setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
           .addToggle((toggle) => toggle.setValue(get("smoothStopBlinking")).onChange(set("smoothStopBlinking")));
         new Setting(g).setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
@@ -6328,6 +6916,34 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .addToggle((toggle) => toggle.setValue(get("flameTrail")).onChange(setAndRedraw("flameTrail")));
       if (get("flameTrail")) {
         const g = this.subGroup(body);
+        new Setting(g).setName("Density")
+          .setDesc("How many pixels the trail sheds as you move. Slide to 0 to hide the pixels entirely while keeping Disintegration and Thunderstrike.")
+          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("flameTrailDensity") ?? 1).setDynamicTooltip().onChange(set("flameTrailDensity")));
+        new Setting(g).setName("Trail On Jump")
+          .setDesc("When the cursor jumps (a click or a big move) lay pixels along the whole path, so a leap leaves a streak instead of a single puff at the start.")
+          .addToggle((toggle) => toggle.setValue(!!get("flameTrailOnJump")).onChange(set("flameTrailOnJump")));
+        new Setting(g).setName("Pixel Lifetime")
+          .setDesc("How long each pixel lasts before it fades out, in milliseconds.")
+          .addSlider((s) => s.setLimits(100, 2000, 50).setValue(get("flameTrailLifeMs") ?? 400).setDynamicTooltip().onChange(set("flameTrailLifeMs")));
+        new Setting(g).setName("Pixel Size")
+          .setDesc("How big each pixel is. Each still varies a little around this.")
+          .addSlider((s) => s.setLimits(1, 12, 0.5).setValue(get("flameTrailPixelSize") ?? 4).setDynamicTooltip().onChange(set("flameTrailPixelSize")));
+        // Only meaningful with a gradient to sample - offered only when Gradient
+        // is on, so it isn't a switch that visibly does nothing.
+        if (get("gradientEnabled")) {
+          new Setting(g).setName("Gradient Colors")
+            .setDesc("Colors each pixel from a random point along the cursor's gradient, with slight variation, instead of the one cursor color. Applies to the jump trail and backspace burst too.")
+            .addToggle((toggle) => toggle.setValue(!!get("flameTrailGradientColors")).onChange(set("flameTrailGradientColors")));
+        }
+        new Setting(g).setName("Gravity")
+          .setDesc("A steady pull on the pixels. 0 leaves them drifting sideways as before; higher drags them off in the direction below.")
+          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("flameTrailGravity") ?? 0).setDynamicTooltip().onChange(setAndRedraw("flameTrailGravity")));
+        if ((get("flameTrailGravity") ?? 0) > 0) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Gravity Direction")
+            .setDesc("Which way the pull goes, in degrees. 0 is down, 90 right, 180 up, 270 left.")
+            .addSlider((s) => s.setLimits(0, 359, 5).setValue(get("flameTrailGravityAngle") ?? 0).setDynamicTooltip().onChange(set("flameTrailGravityAngle")));
+        }
         new Setting(g).setName("Backspace Disintegration")
           .setDesc("Deleting throws a heavier burst outward in inverted colors, so text comes apart rather than just vanishing.")
           .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
@@ -6376,7 +6992,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Bracket Tether")
-        .setDesc("Underlines the span between matching brackets or quotes — whether the cursor is next to one or somewhere inside the pair.")
+        .setDesc("Underlines the span between matching brackets or quotes — straight or curly — whether the cursor is next to one or somewhere inside the pair.")
         .addToggle((toggle) => toggle.setValue(!!get("bracketTether")).onChange(setAndRedraw("bracketTether")));
       if (get("bracketTether")) {
         const g = this.subGroup(body);
@@ -6443,6 +7059,17 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g).setName("Glow")
           .setDesc("Soft halo around the cursor, in its own color.")
           .addToggle((toggle) => toggle.setValue(get("glow")).onChange(set("glow")));
+        new Setting(g).setName("Neon Trail")
+          .setDesc("Render the ghosts as a glowing neon tube — a hot white core inside a saturated streak — instead of plain fading boxes. The tail matches the cursor's own width and full height.")
+          .addToggle((toggle) => toggle.setValue(!!get("crtNeon")).onChange(setAndRedraw("crtNeon")));
+        if (get("crtNeon")) {
+          const g2 = this.subGroup(g);
+          if (get("gradientEnabled")) {
+            new Setting(g2).setName("Gradient Trail")
+              .setDesc("Run the cursor's gradient along the neon streak, from the newest ghost to the oldest, instead of the one cursor color.")
+              .addToggle((toggle) => toggle.setValue(!!get("crtNeonGradient")).onChange(set("crtNeonGradient")));
+          }
+        }
       }
 
       new Setting(body).setName("Speed Demon")
@@ -6510,7 +7137,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc("How strongly the light tints what it falls on. 0 lights the area without coloring it.")
           .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
         new Setting(g).setName("Keep Sidebars Lit")
-          .setDesc("Dims only the note you are editing, leaving the sidebars, tabs and ribbon at normal brightness. Also lifts the shading while a dialog is open.")
+          .setDesc("Dims only the note you are editing, leaving the sidebars, tabs and ribbon at normal brightness. Also lifts the shading while a dialog is open. Desktop only — on mobile, where the sidebars are drawers rather than side panes, the whole screen dims.")
           .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
       }
     });

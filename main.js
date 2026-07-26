@@ -12,7 +12,7 @@ const DIRTY_RECT_CLEAR = true;
 // show visible stepping in the travelling wave.
 const ENERGY_FRAME_MS = 33;
 
-// Thunderstrike (Pixel Trail sub-option) tuning.
+// Thunderstrike (Pop Effects sub-option) tuning.
 //
 // How long one strike lives, in ms. Deliberately short: lightning is an event,
 // not an animation, and anything that outstays the keystroke turns pressing
@@ -50,6 +50,40 @@ const THUNDER_PALETTE = [
 // visible gain over a banded ramp.
 const THUNDER_BANDS = 14;
 
+// Fireworks (Pop Effects sub-option) tuning.
+//
+// A shell climbs out of the caret, bursts above it, and the sparks fall. Split
+// into two timings because they are two different events: the climb should be
+// quick enough to still feel attached to the keystroke that launched it, while
+// the fall wants long enough to actually read as falling.
+const FIREWORK_RISE_MS = 260;
+const FIREWORK_FALL_MS = 620;
+// How far above the caret a shell bursts, as a multiple of the line height,
+// plus the random spread around it. Measured in line heights rather than
+// pixels so the effect keeps its proportions at any font size.
+const FIREWORK_RISE_LINES = 3.4;
+const FIREWORK_RISE_JITTER = 1.2;
+// Sideways lean of the climb, in px. A shell that goes up perfectly straight
+// every time reads as mechanical.
+const FIREWORK_DRIFT = 26;
+// Downward pull on the sparks, px/s². Applied closed-form (½·g·t²) like the
+// Pixel Trail's gravity, so the arcs are identical at any refresh rate.
+const FIREWORK_GRAVITY = 420;
+// Grid the whole effect snaps to, in px - this is what makes it pixel art
+// rather than a smooth particle spray. Small, because the fireworks sit in
+// running text and a coarse grid turns them into confetti.
+const FIREWORK_CELL = 3;
+// "Subtle" is the brief, so the whole effect is painted through this ceiling.
+// Raising it is the single knob that makes fireworks loud.
+const FIREWORK_ALPHA = 0.55;
+// Most shells allowed in flight at once, across all keystrokes. Holding Space
+// down would otherwise stack a burst per repeat and fill the pane.
+const FIREWORK_MAX_LIVE = 6;
+// Floor on the gap between launches. The live cap alone still lets key-repeat
+// spawn (and immediately evict) a shell every few ms, which costs the work of
+// a full burst to show a flicker.
+const FIREWORK_MIN_GAP_MS = 70;
+
 // Frame interval for the torch's blink-sync pulse. The spotlight's radius only
 // moves during the blink's two short fades - the long holds either side are a
 // constant value - so this doesn't need display rate, and 33ms across a fade of
@@ -86,6 +120,14 @@ const JUMP_TRAIL_STEP = 18;
 // Hard ceiling on puffs per jump, so a click from the top of a huge document to
 // the bottom can't spawn thousands of particles in a single commit.
 const JUMP_TRAIL_MAX_PUFFS = 40;
+
+// Alpha the cursor paints at while cursorTranslucent is on. Near-solid on
+// purpose: with the layer in multiply/screen the see-through quality comes
+// almost entirely from the BLEND, not from the alpha, and dropping the alpha
+// much below this starts washing the cursor out on busy text instead of
+// making it read as ink. Multiplies with cursorOpacity rather than replacing
+// it, so the global slider keeps working the same way everywhere.
+const TRANSLUCENT_ALPHA = 0.95;
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -167,8 +209,28 @@ const DEFAULT_SETTINGS = {
 
   // --- global caret properties ---
   caretWidthPx: 2,         
+  // --- Pop Effects ---------------------------------------------------------
+  // One group for everything the caret throws off in response to a keystroke.
+  // popEffects is the master gate; the three effects under it are independent
+  // of each other and all share popRainbow's colour sweep.
+  //
+  // popLetters used to BE the top-level toggle (and Thunderstrike used to hang
+  // off Pixel Trail), so anything saved before this grouping existed has no
+  // popEffects key at all - see migrateLegacyKeys for how the gate is
+  // synthesised from the old shape.
+  popEffects: true,
   popLetters: true,        
-  popRainbow: false,       // cycle each popped letter through a rainbow of colors
+  // Rainbow drives all three pop effects, not just the letters: one running
+  // hue is advanced by whichever of them fires, so a burst of typing sweeps
+  // the whole group around the wheel together instead of each effect keeping
+  // its own private phase.
+  popRainbow: false,
+  // Pixelated shells that climb out of the caret on Space and Enter and burst
+  // above it. Quantity scales the burst in both directions at once - how many
+  // shells go up per keystroke AND how many sparks each one throws - so one
+  // slider covers "a lone spark" through to "a proper volley".
+  fireworks: false,
+  fireworksQuantity: 1,    // 0.2..3
   flameTrail: true,        
   // Pixel Trail sub-options.
   // Density multiplies how many pixels each move sheds; at 0 the trail emits
@@ -212,8 +274,12 @@ const DEFAULT_SETTINGS = {
                            // fed and burns out; 0 = burns forever
   hotHeadFlat: false,      // true = fire in the cursor's own color, no heat gradient
 
-  // Pixel Trail sub-option: pressing Enter calls down a bolt of pixelated
+  // Pop Effects sub-option: pressing Enter calls down a bolt of pixelated
   // lightning onto the caret's new position, from a random angle above it.
+  // This used to hang off Pixel Trail and was gated on it; it is now
+  // independent, so a bolt can strike with the trail switched off. Its impact
+  // sparks are still thrown into the trail's particle pool, which is only a
+  // shared pool and carries no dependency on the trail being enabled.
   thunderstrike: false,
   thunderstrikeSize: 2,    // px per block of the bolt; the effect's chunkiness
   thunderstrikeStrength: 0.5,  // 0.1..1 overall visibility of the strike
@@ -225,6 +291,23 @@ const DEFAULT_SETTINGS = {
   underlineWidthPx: 0,
   boxHollow: false,              // Box cursor: outline only, no fill
   boxHollowWidth: 2,             // Outline stroke width when boxHollow is on
+
+  // --- Translucency --------------------------------------------------------
+  // One toggle, no dials. The cursor stops covering the text it sits on and
+  // starts reading as ink laid over it: the canvas layer is blended into the
+  // page (multiply on light themes, screen on dark ones - see
+  // applyCanvasBlend) and painted at TRANSLUCENT_ALPHA instead of full.
+  //
+  // Applies to every style, and is a LOOK key, so a Vim mode can turn it on
+  // for one mode and off for another.
+  //
+  // Note the blend is a property of the whole canvas layer, not of the caret
+  // shape, so it necessarily takes the trail and every canvas effect
+  // (flames, stardust, sparks, the bracket tether) with it. That is the
+  // intended reading - the entire cursor becomes ink on the page rather than
+  // a sticker over it - but it does mean this toggle changes more than the
+  // caret body alone.
+  cursorTranslucent: false,
 
   // --- Speed Demon: cursor heats up with typing speed ---
   speedDemon: false,
@@ -391,6 +474,20 @@ const LOOK_KEYS = [
   // codeToPreset already skips indices it doesn't recognise.
   "crtGlitch", "crtGlitchStrength", "crtGlitchAberration", "crtGlitchMs",
   "energyAuroraWaviness",
+  // Reuses the index the (never-released) boxTranslucent gate held: same
+  // boolean, same meaning, wider scope. The three dials that sat after it -
+  // boxTranslucency, boxTranslucentMode, boxLens - are gone, and dropping
+  // them shifts nothing, since they were the last entries in the array.
+  // codeToPreset already skips indices it doesn't recognise, so a code
+  // written while they existed still imports; it just ignores those fields.
+  "cursorTranslucent",
+  // Pop Effects. popLetters and popRainbow keep their original indices above -
+  // regrouping them in the panel is a UI change and must not move them here,
+  // or every share code in the wild would reinterpret those two slots. The new
+  // group gate and the Fireworks pair are appended instead, so an older code
+  // simply doesn't mention them and migrateLegacyKeys synthesises popEffects
+  // from the popLetters value the code does carry.
+  "popEffects", "fireworks", "fireworksQuantity",
 ];
 
 // ---------------------------------------------------------------------------
@@ -426,6 +523,43 @@ function migrateLegacyKeys(src) {
   if ("idleStardust" in o) {
     if (o.stardustEnabled === undefined) o.stardustEnabled = o.idleStardust;
     delete o.idleStardust;
+  }
+  // Translucency shipped for a moment as a Box-only toggle with three dials
+  // hanging off it, then became one toggle for every style. The gate carries
+  // over as-is; the dials are dropped rather than mapped, since the values
+  // they held (an arbitrary alpha, a blend mode, a lens strength) no longer
+  // have anywhere to go.
+  if ("boxTranslucent" in o) {
+    if (o.cursorTranslucent === undefined) o.cursorTranslucent = o.boxTranslucent;
+    delete o.boxTranslucent;
+  }
+  delete o.boxTranslucency;
+  delete o.boxTranslucentMode;
+  delete o.boxLens;
+  // Pop Effects. "Popping Letters" was itself the top-level toggle and
+  // Thunderstrike was a sub-option of Pixel Trail; both are now sub-options of
+  // a Pop Effects group with its own gate. Nothing saved before that grouping
+  // carries the gate, so it has to be inferred - without this, every returning
+  // user's popping letters and lightning silently switch off on upgrade.
+  //
+  // Guarded on one of the old keys actually being present, NOT just on the
+  // gate being absent: this function also runs over sparse objects (an empty
+  // Vim-mode entry, a partial preset) that are meant to inherit everything
+  // they don't mention, and unconditionally writing popEffects into those
+  // would override the defaults they're supposed to fall through to.
+  if (!("popEffects" in o) && ("popLetters" in o || "thunderstrike" in o)) {
+    // Thunderstrike was unreachable with Pixel Trail off - the toggle was
+    // hidden and spawnThunderbolt refused to fire - so a stale `true` sitting
+    // behind a disabled trail was inert, and the user never saw lightning.
+    // Decoupling the two would bring it to life on upgrade for someone who
+    // never asked for it, so that combination is settled here instead: it
+    // doesn't count toward the gate, and the stale flag is cleared outright.
+    // `flameTrail !== false` rather than a truthiness test because absent
+    // means "inherits the default", and that default is on.
+    const trailWasOn = o.flameTrail !== false;
+    const boltWasLive = !!o.thunderstrike && trailWasOn;
+    if (o.thunderstrike && !trailWasOn) o.thunderstrike = false;
+    o.popEffects = !!o.popLetters || boltWasLive;
   }
   return o;
 }
@@ -839,9 +973,11 @@ function shareDecodeValue(tag, raw) {
   }
 }
 
-function presetToCode(name, snap) {
-  const defaults = pickLook(DEFAULT_SETTINGS);
-  const look = pickLook(snap);
+// One look snapshot's worth of fields: every LOOK_KEY that differs from the
+// defaults, as "<index><tag><value>", joined by "~". Split out of
+// presetToCode so the Vim format below can reuse it per mode rather than
+// reimplementing the delta rules and drifting from them.
+function shareFields(look, defaults) {
   const fields = [];
   for (let i = 0; i < LOOK_KEYS.length; i++) {
     const k = LOOK_KEYS[i];
@@ -855,13 +991,41 @@ function presetToCode(name, snap) {
         shareNum(v) === shareNum(defaults[k])) continue;
     fields.push(i + shareEncodeValue(v));
   }
-  return [SHARE_VERSION, encodeURIComponent(name || ""), fields.join("~")].join("|");
+  return fields.join("~");
+}
+
+// Inverse of shareFields. Always returns an object, never null: an empty body
+// legitimately means "identical to the defaults", which is not the same thing
+// as a body being absent (see codeToVimPreset).
+function shareParseFields(body) {
+  const snap = {};
+  if (!body) return snap;
+  for (const field of body.split("~")) {
+    if (!field) continue;
+    // Leading digits are the LOOK_KEYS index; the next char is the type tag.
+    const m = /^(\d+)(.)([\s\S]*)$/.exec(field);
+    if (!m) continue;
+    const key = LOOK_KEYS[Number(m[1])];
+    if (!key) continue; // index from a newer version we don't know: skip it
+    const val = shareDecodeValue(m[2], m[3]);
+    if (val !== undefined) snap[key] = val;
+  }
+  return snap;
+}
+
+function presetToCode(name, snap) {
+  const defaults = pickLook(DEFAULT_SETTINGS);
+  const body = shareFields(pickLook(snap), defaults);
+  return [SHARE_VERSION, encodeURIComponent(name || ""), body].join("|");
 }
 
 function codeToPreset(code) {
   const trimmed = (code || "").trim();
   // Legacy: anything that isn't the new versioned format is tried as the old
-  // base64url-JSON blob, so previously shared codes keep importing.
+  // base64url-JSON blob, so previously shared codes keep importing. A Vim code
+  // ("2|...") is not a regular preset and falls in here too, where the legacy
+  // decoder rejects it - which is the intended answer, since a five-mode
+  // snapshot has no meaning as a single cursor look.
   if (trimmed.slice(0, 2) !== SHARE_VERSION + "|") return legacyCodeToPreset(trimmed);
   try {
     const parts = trimmed.split("|");
@@ -869,21 +1033,67 @@ function codeToPreset(code) {
     // name field held a literal one, which encodeURIComponent prevents - so a
     // fixed 3-way split is safe.
     const name = decodeURIComponent(parts[1] || "") || "Imported preset";
-    const body = parts.slice(2).join("|");
-    const snap = {};
-    if (body) {
-      for (const field of body.split("~")) {
-        if (!field) continue;
-        // Leading digits are the LOOK_KEYS index; the next char is the type tag.
-        const m = /^(\d+)(.)([\s\S]*)$/.exec(field);
-        if (!m) continue;
-        const key = LOOK_KEYS[Number(m[1])];
-        if (!key) continue; // index from a newer version we don't know: skip it
-        const val = shareDecodeValue(m[2], m[3]);
-        if (val !== undefined) snap[key] = val;
-      }
-    }
-    return { name, snap };
+    return { name, snap: shareParseFields(parts.slice(2).join("|")) };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Vim share codes.
+//
+// A Vim preset is FIVE look snapshots, one per mode, so it cannot go through
+// presetToCode: that encodes the LOOK_KEYS found at the top level of the
+// object it's handed, and the top level of a Vim preset holds mode names, not
+// look keys. Handing one over produced a code with an empty body - every Vim
+// preset encoded to "1|<name>|", carrying nothing but its name, and importing
+// one silently rebuilt the built-in starter looks (cloneVimModes falls back to
+// VIM_MODE_STARTERS for any mode the snapshot doesn't describe, and it didn't
+// describe any of them). That's what this format exists to fix.
+//
+// Layout: version "2", the name, then one field-body per mode in
+// VIM_MODE_KEYS order, all "|"-separated:
+//
+//   2|<name>|<normal>|<insert>|<visual>|<replace>|<command>
+//
+// Each body is exactly what shareFields emits for a regular preset, so a mode
+// costs nothing for every key it leaves at the default. "|" is safe as the
+// separator because the name is %-encoded and a field body only ever contains
+// digits, a tag char, "~", and %-encoded values.
+//
+// An EMPTY body and a MISSING one mean different things, deliberately: empty
+// says "this mode is exactly the defaults", missing (a shorter code, e.g. one
+// written before a mode existed) leaves that mode to fall back to its starter
+// look. Conflating the two is how a mode that was deliberately left at the
+// defaults would come back wearing the starter's colours.
+// ---------------------------------------------------------------------------
+const SHARE_VERSION_VIM = "2";
+
+function vimPresetToCode(name, modes) {
+  const defaults = pickLook(DEFAULT_SETTINGS);
+  // Expand through vimModeSnapshot first so a partial or hand-edited preset
+  // encodes what it would actually LOAD as, rather than emitting a mode's
+  // absence and leaving the recipient to resolve it differently.
+  const bodies = VIM_MODE_KEYS.map((m) =>
+    shareFields(pickLook(vimModeSnapshot(m, modes && modes[m])), defaults));
+  return [SHARE_VERSION_VIM, encodeURIComponent(name || ""), ...bodies].join("|");
+}
+
+// Returns { name, modes } - modes being a sparse map of mode key to look
+// overrides, ready for cloneVimModes - or null if this isn't a Vim code.
+function codeToVimPreset(code) {
+  const trimmed = (code || "").trim();
+  if (trimmed.slice(0, 2) !== SHARE_VERSION_VIM + "|") return null;
+  try {
+    const parts = trimmed.split("|");
+    const name = decodeURIComponent(parts[1] || "") || "Imported Vim preset";
+    const modes = {};
+    VIM_MODE_KEYS.forEach((m, i) => {
+      const body = parts[2 + i];
+      if (body === undefined) return; // absent: let the starter fill it in
+      modes[m] = migrateLegacyKeys(shareParseFields(body));
+    });
+    return { name, modes };
   } catch {
     return null;
   }
@@ -942,7 +1152,21 @@ function lighten(c, f) {
 // replacement and left in the order they came out, running from the sky end of
 // the bolt down to the impact. Rolled fresh per strike, so the same key gives a
 // blue-into-white bolt one time and a red-purple-yellow one the next.
-function thunderRamp() {
+//
+// With Pop Effects' Rainbow on, `hue` is the strike's slot in the shared sweep
+// and the palette is bypassed entirely: the ramp is built from that hue and
+// two neighbours instead, climbing in lightness toward the impact so the bolt
+// still reads as light rather than as a coloured line. The neighbours are
+// close together on purpose - a bolt spanning half the colour wheel stops
+// looking like one discharge.
+function thunderRamp(hue = null) {
+  if (typeof hue === "number") {
+    return [
+      hslToRgbTuple(hue, 0.85, 0.62),
+      hslToRgbTuple(hue + 18, 0.8, 0.72),
+      hslToRgbTuple(hue + 36, 0.7, 0.85),
+    ];
+  }
   const pool = THUNDER_PALETTE.slice();
   const n = 2 + (Math.random() < 0.55 ? 1 : 0);
   const stops = [];
@@ -976,7 +1200,11 @@ function hexToRgbTuple(hex) {
 
 // Converts an HSL color (h in degrees, s/l in 0..1) to an "rgb(r, g, b)"
 // string, matching the format the particle system already uses for colors.
-function hslToRgbString(h, s, l) {
+// The tuple form is the real implementation: Rainbow now feeds three separate
+// effects (popped letters, Thunderstrike's colour ramp, Fireworks' sparks) and
+// two of them need [r,g,b] to interpolate or nudge before anything is painted,
+// so building a string first and re-parsing it would be pure waste.
+function hslToRgbTuple(h, s, l) {
   const hue = ((h % 360) + 360) % 360;
   const c = (1 - Math.abs(2 * l - 1)) * s;
   const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
@@ -988,9 +1216,14 @@ function hslToRgbString(h, s, l) {
   else if (hue < 240) { r1 = 0; g1 = x; b1 = c; }
   else if (hue < 300) { r1 = x; g1 = 0; b1 = c; }
   else { r1 = c; g1 = 0; b1 = x; }
-  const r = Math.round((r1 + m) * 255);
-  const g = Math.round((g1 + m) * 255);
-  const b = Math.round((b1 + m) * 255);
+  return [
+    Math.round((r1 + m) * 255),
+    Math.round((g1 + m) * 255),
+    Math.round((b1 + m) * 255),
+  ];
+}
+function hslToRgbString(h, s, l) {
+  const [r, g, b] = hslToRgbTuple(h, s, l);
   return `rgb(${r}, ${g}, ${b})`;
 }
 
@@ -1340,6 +1573,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._hotPrev = null;
     this._hotVel = { x: 0, y: 0 };
     this.thunderbolts = [];
+    // Fireworks. Its own pool rather than flamePixels, for the same reason
+    // thunderbolts have one: a shell is a two-phase animation (climb, then
+    // burst) whose sparks don't exist yet when it launches, so it can't be
+    // expressed as a bag of independent particles that each paint themselves.
+    this.fireworks = [];
+    this._lastFireworkT = 0;
     // Signal Glitch: at most ONE burst is ever live (a second jump during a
     // burst restarts it rather than stacking), so this is a single nullable
     // record instead of a pool.
@@ -1397,9 +1636,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.heat = 0;
     this._lastSparkT = 0;
 
-    // Popping Letters rainbow: a running hue that advances with each popped
-    // letter (rather than picking randomly) so consecutive letters step
-    // smoothly around the color wheel instead of jumping around.
+    // Pop Effects rainbow: a running hue that advances each time any of the
+    // three effects fires (rather than picking randomly) so consecutive pops
+    // step smoothly around the color wheel instead of jumping around.
+    //
+    // Deliberately ONE hue shared by letters, bolts and fireworks rather than
+    // three counters: pressing Space mid-word should continue the sweep the
+    // letters either side of it are on, not start a second, unrelated one that
+    // happens to be running at the same time.
     this._popRainbowHue = 0;
 
     this.overlay = null;
@@ -1420,6 +1664,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     // Per-frame write-dedupe + chrome-inset cache (see _chromeInsets)
     this._lastWrapperRect = "";
+    this._canvasBlend = "";   // last mix-blend-mode written (see applyCanvasBlend)
     this._lastOverlayRect = "";
     this._lastTorchRadius = -1;
     this._chromeCache = null;
@@ -1617,6 +1862,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // of which should call down lightning.
       if (e.key === "Enter") {
         this._enterPending = performance.now();
+      }
+      // Fireworks flag: same shape again, but fired by Space as well as Enter.
+      // Kept as its own flag rather than widening _enterPending, because the
+      // two effects want different keys and folding them together would call
+      // down lightning on every space bar press.
+      //
+      // "Spacebar" is the legacy key name older Electron/IME paths still
+      // report; both are accepted here for the same reason Speed Demon below
+      // accepts both.
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        this._popKeyPending = performance.now();
       }
       // Speed Demon: any key that plausibly represents "the user is working"
       // bumps heat. Two classes, because they don't deserve the same weight:
@@ -2402,10 +2658,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   // Returns the name it was saved under, or null if the code was invalid.
+  //
+  // Only accepts Vim codes ("2|..."). A regular preset code describes one
+  // cursor, not five, so there's no honest way to expand it into a Vim preset -
+  // better to report it as the wrong kind of code than to silently paint all
+  // five modes the same and let someone wonder why their Insert cursor looks
+  // like their Normal one.
   async importVimPreset(code) {
-    const result = codeToPreset(code.trim());
+    const result = codeToVimPreset(code.trim());
     if (!result) return null;
-    this.getVimPresets()[result.name] = cloneVimModes(result.snap);
+    this.getVimPresets()[result.name] = cloneVimModes(result.modes);
     this.settings.vimActivePreset = result.name;
     await this.saveSettings();
     return result.name;
@@ -3166,6 +3428,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.canvasWrapper.style.width = "0px";
       this.canvasWrapper.style.height = "0px";
       this._lastWrapperRect = "";
+      // A fresh wrapper carries no mix-blend-mode, so the value cached from
+      // the old one would suppress the write that puts it back - which is
+      // exactly what happens when a pop-out window moves the canvas to another
+      // document while Translucent is on. See applyCanvasBlend.
+      this._canvasBlend = "";
       // Append inside .app-container rather than directly on body.
       // Obsidian's app.css has: body.is-frameless > .app-container ~ * { app-region: no-drag }
       // which targets every direct-body-child sibling of .app-container —
@@ -3327,6 +3594,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.flameEmbers = [];
     this.hotBurns = [];
     this.thunderbolts = [];
+    this.fireworks = [];
     this.glitch = null;
     this.stardust = [];
     this.secondaryCarets = [];
@@ -3373,6 +3641,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.flameEmbers = [];
     this.hotBurns = [];
     this.thunderbolts = [];
+    this.fireworks = [];
+    // Zeroed with the pool: a stamp left over from before the engine was last
+    // torn down would swallow the first launch after it comes back.
+    this._lastFireworkT = 0;
     this.glitch = null;
     this.stardust = [];
     this._lastStardustT = 0;
@@ -3611,6 +3883,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
             // Same reasoning: a bolt is aged and expired inside its draw call,
             // so a skipped frame would leave one frozen on screen.
             (this.thunderbolts && this.thunderbolts.length > 0) ||
+            // And again for a firework. Note this covers a shell still sitting
+            // out its stagger delay, which paints nothing yet but must not be
+            // allowed to drop the loop into the idle heartbeat - the volley
+            // would land in lumps a tenth of a second apart.
+            (this.fireworks && this.fireworks.length > 0) ||
             // A Signal Glitch burst is a ~200ms wall-clock animation, so it
             // needs continuous frames for its whole life. Tested inline rather
             // than via glitchState() because that RETIRES an expired burst as a
@@ -3713,6 +3990,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
               eff.cursorOpacity, eff.crtEffect, eff.glow, eff.showChar,
               eff.crtNeon, eff.crtNeonGradient,
               eff.boxHollow, eff.boxHollowWidth, eff.lineSerifs,
+              // Same reason again: it changes the painted pixels of a settled
+              // cursor, so without it here the frame is skipped and the toggle
+              // does nothing visible until the next keystroke wakes the loop.
+              eff.cursorTranslucent,
               eff.underlineWidthPx, sec, bt, eff.bracketTetherStrength,
               // Breathing changes the painted size during a hold, where
               // blinkBucket alone can't tell the two states apart: switching it
@@ -4539,7 +4820,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ) {
         const justTyped = view.state.doc.sliceString(newCaret.pos - 1, newCaret.pos);
         if (justTyped && justTyped !== "\n") {
-          if (this.settings.popLetters) {
+          // Both gates, in the same shape Thunderstrike and Fireworks use:
+          // the group's master toggle, then the effect's own.
+          if (this.settings.popEffects && this.settings.popLetters) {
             this.spawnLetterParticle(justTyped, this.lastActive);
           }
           return justTyped;
@@ -4833,11 +5116,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (this._enterPending && now - this._enterPending < 250) {
         this.spawnThunderbolt(caret);
       }
+      // Same 250ms window and the same choice of anchor: the shells climb out
+      // of the caret you can see, which after a Space or an Enter is the
+      // position being moved TO.
+      if (this._popKeyPending && now - this._popKeyPending < 250) {
+        this.spawnFireworks(caret);
+      }
     }
     // Cleared unconditionally, outside the lastActive branch: a stale flag left
     // by a move that didn't spawn anything would fire a bolt on whatever caret
     // move happened to come next.
     this._enterPending = 0;
+    this._popKeyPending = 0;
     this.lastActive = caret;
     this.pending = null;
     this.lastMoveTime = performance.now(); 
@@ -5152,14 +5442,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
   spawnLetterParticle(char, anchor) {
     if (!char.trim()) return;
 
-    // Rainbow suboption: step a running hue forward per letter (instead of
-    // the normal single cursor color) so a fast typing burst reads as a
-    // smooth sweep around the color wheel rather than a flat color or a
-    // jittery random one.
+    // Rainbow suboption: step the group's running hue forward per letter
+    // (instead of the normal single cursor color) so a fast typing burst reads
+    // as a smooth sweep around the color wheel rather than a flat color or a
+    // jittery random one. The hue is shared with Thunderstrike and Fireworks,
+    // so a bolt or a burst landing mid-word continues the same sweep.
     let color = this.getActiveColor() || anchor.textColor;
     if (this.styleFor("popRainbow")) {
-      color = hslToRgbString(this._popRainbowHue, 0.85, 0.6);
-      this._popRainbowHue = (this._popRainbowHue + 33) % 360;
+      color = hslToRgbString(this.nextRainbowHue(), 0.85, 0.6);
     }
 
     this.particles.push({
@@ -5208,7 +5498,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!this.settings.flameTrail) return;
 
     // Density scales the whole burst. At 0 the trail emits nothing - the way to
-    // hide the pixels while keeping Thunderstrike and Disintegration usable.
+    // hide the pixels while keeping Disintegration usable. (Thunderstrike used
+    // to be listed here too; it is a Pop Effects option now and no longer
+    // passes through this function at all.)
     // Disintegration is exempt from a 0 density: pressing Backspace is an
     // explicit request for the burst, not the ambient trail, so it still fires
     // (at the normal amount) even with the trail turned down to nothing.
@@ -5515,6 +5807,245 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
+  // ---- Pop Effects: shared colour --------------------------------------
+  // Hand out the next hue in the group's rainbow sweep and advance it.
+  //
+  // Every pop effect draws from this ONE counter, which is the whole point of
+  // Rainbow being a group-level option rather than a per-effect one: letters,
+  // bolts and fireworks fired in the same burst of typing come out as
+  // consecutive steps of a single sweep instead of three sweeps at unrelated
+  // phases that happen to share a palette.
+  //
+  // 33° is coprime-ish with 360 (they share only 3), so the sweep takes ~120
+  // pops to repeat a hue rather than cycling visibly every handful of keys.
+  nextRainbowHue(step = 33) {
+    const hue = this._popRainbowHue;
+    this._popRainbowHue = (hue + step) % 360;
+    return hue;
+  }
+
+  // One firework spark's colour, as an [r,g,b] tuple.
+  //
+  // Precedence is Rainbow, then Gradient, then the flat cursor colour, and it
+  // is resolved by the CALLER passing (or not passing) a base: `base` is
+  // non-null only when Rainbow is on, in which case every spark in the burst
+  // varies around that one hue. With Rainbow off this samples a random point
+  // along the gradient per spark, which is what gives a burst the cursor's own
+  // colours - and sampleRamp already collapses to the flat cursor colour when
+  // no gradient is set, so the no-gradient case needs no branch of its own.
+  //
+  // The nudge afterwards is what "slight variations" means: enough that no two
+  // sparks in a burst are the same pixel colour, small enough that the burst
+  // still reads as the gradient (or the hue) it came from.
+  fireworkSparkRGB(base) {
+    const [r, g, b] = base || this.sampleRamp(Math.random());
+    return [
+      Math.max(0, Math.min(255, Math.round(r + (Math.random() - 0.5) * 76))),
+      Math.max(0, Math.min(255, Math.round(g + (Math.random() - 0.5) * 76))),
+      Math.max(0, Math.min(255, Math.round(b + (Math.random() - 0.5) * 76))),
+    ];
+  }
+
+  // ---- Fireworks ---------------------------------------------------------
+  // Space or Enter sends one or more pixelated shells climbing out of the
+  // caret; each bursts above it and the sparks arc back down under gravity.
+  //
+  // Like the thunderbolt, a whole firework is generated ONCE here - launch
+  // point, apex, every spark's angle, speed, size and colour - and the draw
+  // call only advances it along a closed-form path. Rolling any of that per
+  // frame would make the spray boil instead of fly, and would tie the shape of
+  // the effect to the frame rate the governor happened to pick.
+  spawnFireworks(target) {
+    if (!this.settings.popEffects || !this.settings.fireworks) return;
+    if (!target) return;
+
+    // Key repeat can deliver Space far faster than a burst can be seen. The
+    // live cap below would still bound the work, but only by throwing away
+    // shells a frame or two after launching them - so the gap is enforced
+    // first, before any of the generation cost is paid.
+    const now = performance.now();
+    if (now - this._lastFireworkT < FIREWORK_MIN_GAP_MS) return;
+    this._lastFireworkT = now;
+
+    // One slider, two jobs: how many shells go up, and how much each throws.
+    // Kept deliberately blunt at the low end - the shell count rounds to 1 for
+    // anything up to 1.5 - so the bottom of the range is a single modest pop
+    // rather than a thin volley.
+    const q = Math.max(0.2, Math.min(3, this.settings.fireworksQuantity ?? 1));
+    const shells = Math.max(1, Math.min(3, Math.round(q)));
+    const sparkCount = Math.max(4, Math.round(12 * q));
+
+    const lh = target.h || 16;
+    const w = target.w || target.actualCharWidth || 8;
+    const x0 = target.x + w / 2;
+    const y0 = target.top;
+    const clipTop = this._clipTop ?? 0;
+    const fallSec = FIREWORK_FALL_MS / 1000;
+
+    // Resolved once per keystroke, not per shell: a volley from one Space is
+    // one event and should share a hue, rather than stepping the sweep three
+    // times in a single keypress and coming out as a rainbow in miniature.
+    const base = this.styleFor("popRainbow")
+      ? hslToRgbTuple(this.nextRainbowHue(), 0.85, 0.62)
+      : null;
+
+    for (let i = 0; i < shells; i++) {
+      // Oldest first, so a held key rolls the volley forward rather than
+      // refusing new shells once the cap is reached.
+      while (this.fireworks.length >= FIREWORK_MAX_LIVE) this.fireworks.shift();
+
+      const rise = lh * (FIREWORK_RISE_LINES + (Math.random() - 0.5) * 2 * FIREWORK_RISE_JITTER);
+      // Two clamps, in this order:
+      //   • pull the apex down to just inside the top of the pane, so a burst
+      //     isn't spent entirely behind the clip on a caret near the top;
+      //   • then force it back above the caret regardless, because the first
+      //     clamp can otherwise push the apex BELOW the launch point on the
+      //     first visible line and the shell would sink instead of climb.
+      // On that first line the burst does end up partly clipped. That's the
+      // graceful failure: a low pop at the top of the pane, not an upside-down
+      // one or nothing at all.
+      const bx = x0 + (Math.random() - 0.5) * 2 * FIREWORK_DRIFT;
+      const by = Math.min(
+        y0 - lh * 0.9,
+        Math.max(y0 - rise, clipTop + lh * 0.5),
+      );
+
+      const sparks = [];
+      let maxReach = 0;
+      for (let s = 0; s < sparkCount; s++) {
+        // Full circle rather than a dome: the sparks are what fall, and a
+        // burst that only ever throws upward reads as a fountain.
+        const ang = Math.random() * Math.PI * 2;
+        // Speed scales with the line height so the burst keeps its proportions
+        // relative to the text at any font size, rather than being a fixed
+        // pixel radius that swamps small type and vanishes in large.
+        const speed = lh * (3.4 + Math.random() * 6.2);
+        const [r, g, b] = this.fireworkSparkRGB(base);
+        // A few sparks at double size carry the burst; the rest are single
+        // grid cells. All of it stays on the grid - that is what keeps this
+        // pixel art rather than a particle spray.
+        const size = FIREWORK_CELL * (Math.random() < 0.22 ? 2 : 1);
+        sparks.push({ ang, speed, r, g, b, size });
+        if (speed > maxReach) maxReach = speed;
+      }
+
+      // Bounds for the damage box, worked out once for the firework's whole
+      // life rather than by walking the sparks every frame. Covers the climb,
+      // the widest the spray can get, and the full gravity drop.
+      const spread = maxReach * fallSec;
+      const drop = 0.5 * FIREWORK_GRAVITY * fallSec * fallSec;
+
+      this.fireworks.push({
+        x0, y0, bx, by,
+        sparks,
+        riseMs: FIREWORK_RISE_MS * (0.85 + Math.random() * 0.3),
+        fallMs: FIREWORK_FALL_MS,
+        // Stagger, so a volley goes up as a volley instead of as one lump.
+        // Shell 0 is always immediate: the first pop has to land on the
+        // keystroke that caused it or the whole effect feels laggy.
+        delay: i === 0 ? 0 : i * (70 + Math.random() * 60),
+        flash: Math.max(FIREWORK_CELL * 2, lh * 0.32),
+        minX: Math.min(x0, bx - spread),
+        maxX: Math.max(x0, bx + spread),
+        minY: by - spread,
+        maxY: Math.max(y0, by + spread + drop),
+        start: now,
+      });
+    }
+  }
+
+  drawFireworks() {
+    if (!this.fireworks.length) return;
+    const ctx = this.ctx;
+    const now = performance.now();
+    const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
+    const cell = FIREWORK_CELL;
+    // Snap to the grid the effect is built on. Done at paint time rather than
+    // at spawn because the positions themselves are continuous - it's the
+    // painted blocks that must line up, and quantising the maths instead would
+    // make the arcs step sideways as well as visually.
+    const snap = (v) => Math.round(v / cell) * cell;
+    const fallSec = FIREWORK_FALL_MS / 1000;
+
+    this.fireworks = this.fireworks.filter((fw) => {
+      const age = now - fw.start;
+      // Still on the pad: staggered shells in a volley haven't launched yet.
+      if (age < fw.delay) return true;
+      const t = age - fw.delay;
+      if (t >= fw.riseMs + fw.fallMs) return false;
+
+      ctx.save();
+
+      if (t < fw.riseMs) {
+        // ---- Climb. Eased so the shell decelerates into its apex, which is
+        // what sells it as something thrown rather than something sliding.
+        const p = t / fw.riseMs;
+        const e = 1 - (1 - p) * (1 - p);
+        const cx = snap(fw.x0 + (fw.bx - fw.x0) * e);
+        const cy = snap(fw.y0 + (fw.by - fw.y0) * e);
+        // Fades in over the first fifth of the climb so the shell doesn't
+        // appear as a hard block sitting on the caret the instant a key lands.
+        const a = FIREWORK_ALPHA * opacity * Math.min(1, p * 5);
+        // A short tail of two blocks behind it, dimming with distance. Drawn
+        // back along the actual line of travel, so a leaning shell trails at
+        // its own angle rather than straight down.
+        const dx = (fw.bx - fw.x0) / (fw.riseMs || 1);
+        const dy = (fw.by - fw.y0) / (fw.riseMs || 1);
+        const len = Math.hypot(dx, dy) || 1;
+        for (let k = 2; k >= 1; k--) {
+          ctx.fillStyle = `rgba(255, 255, 255, ${a * (0.18 / k)})`;
+          ctx.fillRect(
+            snap(cx - (dx / len) * cell * 2 * k),
+            snap(cy - (dy / len) * cell * 2 * k),
+            cell, cell,
+          );
+        }
+        ctx.fillStyle = `rgba(255, 245, 220, ${a})`;
+        ctx.fillRect(cx, cy, cell, cell);
+      } else {
+        // ---- Burst. Closed-form ballistics per spark, so the arcs are
+        // identical whichever gear the frame governor is running in.
+        const u = (t - fw.riseMs) / fw.fallMs;
+        const el = u * fallSec;
+        const drop = 0.5 * FIREWORK_GRAVITY * el * el;
+        // Squared-ish falloff: bright for the first moment of the burst, then
+        // away quickly. A linear fade leaves the sparks hanging in the text
+        // long enough to be read as debris.
+        const a = FIREWORK_ALPHA * opacity * Math.max(0, 1 - u * u);
+        if (a > 0.01) {
+          for (const s of fw.sparks) {
+            const sx = snap(fw.bx + Math.cos(s.ang) * s.speed * el);
+            const sy = snap(fw.by + Math.sin(s.ang) * s.speed * el + drop);
+            ctx.fillStyle = `rgba(${s.r}, ${s.g}, ${s.b}, ${a})`;
+            ctx.fillRect(sx, sy, s.size, s.size);
+          }
+        }
+        // The detonation itself: a block flaring at the apex for the first
+        // moment, so the burst reads as an event rather than as sparks that
+        // were always there and merely became visible.
+        const flash = 1 - Math.min(1, u / 0.18);
+        if (flash > 0) {
+          const size = fw.flash * (0.4 + flash);
+          ctx.fillStyle = `rgba(255, 252, 240, ${FIREWORK_ALPHA * opacity * flash * 0.5})`;
+          ctx.fillRect(snap(fw.bx - size / 2), snap(fw.by - size / 2), size, size);
+        }
+      }
+
+      ctx.restore();
+
+      // One box for the whole firework, like the thunderbolt: the sparks are
+      // scattered points, and marking each one would mean dozens of damage
+      // rects per frame to clear a region a single box already covers.
+      const pad = cell * 3 + fw.flash;
+      this._markDirty(
+        fw.minX - pad, fw.minY - pad,
+        (fw.maxX - fw.minX) + pad * 2,
+        (fw.maxY - fw.minY) + pad * 2,
+      );
+      return true;
+    });
+  }
+
   // ---- Thunderstrike -----------------------------------------------------
   // A bolt of pixelated lightning that drops out of the top of the pane onto
   // the caret's new position when Enter is pressed.
@@ -5525,7 +6056,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // this and it looks wrong: the channel boils rather than holds, and at 60fps
   // the noise aliases into a shimmer instead of reading as one discharge.
   spawnThunderbolt(target) {
-    if (!this.settings.flameTrail || !this.settings.thunderstrike) return;
+    // Gated on the Pop Effects group, not on Pixel Trail. The bolt shares the
+    // trail's particle pool for its impact sparks, but nothing about it needs
+    // the trail to be switched on - and it never did; the old dependency was
+    // an accident of where the toggle happened to sit in the panel.
+    if (!this.settings.popEffects || !this.settings.thunderstrike) return;
     if (!target) return;
 
     // Oldest first, so holding Enter down rolls the strikes forward rather
@@ -5594,9 +6129,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!cells.length) return;
 
     // Two or three palette colours in a random order, ramped from the sky end
-    // down to the impact. Sorted into bands so the draw call can set a fill
-    // colour once per band rather than once per block.
-    const ramp = thunderRamp();
+    // down to the impact - or, with Rainbow on, the strike's slot in the sweep
+    // the whole Pop Effects group shares. Sorted into bands so the draw call
+    // can set a fill colour once per band rather than once per block.
+    //
+    // The hue is taken at spawn and baked into the bands, like everything else
+    // about the bolt: reading it in the draw call would re-roll the colour on
+    // every frame of the strike's life.
+    const ramp = thunderRamp(this.styleFor("popRainbow") ? this.nextRainbowHue() : null);
     const bands = [];
     for (let i = 0; i < THUNDER_BANDS; i++) {
       const [br, bg, bb] = thunderColorAt(ramp, i / (THUNDER_BANDS - 1));
@@ -5909,6 +6449,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Behind the cursor, like every other effect here: the bolt lands ON the
     // caret, and the caret should be the thing you see it hit.
     this.drawThunderbolts();
+    // Behind the cursor for the same reason, and after the bolt: a shell
+    // launched by the same Enter that called down lightning should climb out
+    // in front of it rather than being swallowed by the strike.
+    this.drawFireworks();
 
     // Cursor bounds are marked once here rather than threaded through every
     // branch of drawRetroBox/drawGenericCaret. The box spans the interpolated
@@ -5976,6 +6520,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
       ctx.scale(breath, breath);
       ctx.translate(-cx, -cy);
     }
+    // Before the dispatch, not inside the Box branch: this both sets the
+    // blend for a highlighter-translucent box AND clears it for every other
+    // style, and the other styles don't call drawRetroBox.
+    this.applyCanvasBlend();
     switch (this.styleFor("cursorStyle")) {
       case "Line":
         this.drawGenericCaret(false);
@@ -6427,6 +6975,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const now = performance.now();
     const trailColor = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
+    // Same single alpha term the Box style uses (see drawRetroBox): the blend
+    // that does the visible work is layer-level, in applyCanvasBlend, and this
+    // just takes the paint fractionally off full so the caret sits in the text
+    // rather than on it. Applied to the trail as well as the live caret, so
+    // the two never drift apart.
+    const bodyOpacity = this.styleFor("cursorTranslucent")
+      ? opacity * TRANSLUCENT_ALPHA
+      : opacity;
 
     ctx.save();
     this.forEachTrailPoint((p, alpha, age) => {
@@ -6439,9 +6995,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
         if (isUnderline) {
           const uThickness = this.underlineThickness(p.h);
           const ty = p.y + p.h - uThickness;
-          this.drawNeonGhost(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * opacity, age, trailColor);
+          this.drawNeonGhost(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * bodyOpacity, age, trailColor);
         } else {
-          this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * opacity, age, trailColor);
+          this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * bodyOpacity, age, trailColor);
         }
       } else if (isUnderline) {
         const uThickness = this.underlineThickness(p.h);
@@ -6449,10 +7005,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // Build the paint from the bar's own rect, not the full line box:
         // a ramp spanning the whole line height would show only the sliver
         // of itself that happens to fall across the bar.
-        ctx.fillStyle = this.trailPaint(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * opacity, age, trailColor);
+        ctx.fillStyle = this.trailPaint(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * bodyOpacity, age, trailColor);
         ctx.fillRect(p.x, ty, p.w, uThickness);
       } else {
-        ctx.fillStyle = this.trailPaint(ctx, p, alpha * opacity, age, trailColor);
+        ctx.fillStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, trailColor);
         ctx.fillRect(p.x, p.y, p.w, p.h);
       }
     });
@@ -6490,11 +7046,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const gsGen = settings.crtEffect && settings.crtGlitch
       ? this.glitchState(now) : null;
     if (gsGen) {
-      this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity, gsGen);
+      this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity, gsGen);
     } else {
       ctx.fillStyle = settings.energyEffect
-        ? this.energyPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity)
-        : this.cursorPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * opacity);
+        ? this.energyPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity)
+        : this.cursorPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
       this.fillCursorShape(ctx, rx, ry, rw, rh);
     }
 
@@ -7400,6 +7956,46 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._markDirty(minX - pad, minY - pad, (maxX - minX) + pad * 2, (maxY - minY) + pad * 2);
   }
 
+  // Puts the canvas layer into (or back out of) a blend mode, which is what
+  // cursorTranslucent actually is.
+  //
+  // This CANNOT be done with ctx.globalCompositeOperation. The cursor canvas
+  // is its own layer stacked over the editor, so a canvas-level "multiply"
+  // blends against what this canvas has already painted this frame - nothing,
+  // it was just cleared - not against the text underneath. Real backdrop
+  // blending has to come from CSS.
+  //
+  // And it has to go on the WRAPPER, not the canvas. The wrapper is
+  // position:fixed with a z-index, which makes it a stacking context, and a
+  // stacking context confines its descendants' blending to itself: a
+  // mix-blend-mode on the canvas inside would blend against the wrapper's own
+  // empty background and produce no visible change at all. On the wrapper the
+  // blend applies to the whole group against its parent's content - i.e. the
+  // editor. (Which also means an `isolation: isolate` anywhere between the
+  // wrapper and .app-container would silently turn this feature off. Don't
+  // add one, in either file.)
+  //
+  // Multiply darkens and screen lightens, so which of the two reads as ink on
+  // the page depends on what's behind it: multiply on a light theme, screen
+  // on a dark one. Picking by theme keeps the cursor legible in both instead
+  // of sinking into the background in one of them.
+  //
+  // Called from the draw dispatch, before the per-style branch, so it runs on
+  // every frame regardless of style - including the frames that have to CLEAR
+  // it. Writes only on change: a blend-mode style write forces the compositor
+  // to re-evaluate the layer, so doing it per frame would cost real work to
+  // set the value it already had.
+  applyCanvasBlend() {
+    const el = this.canvasWrapper;
+    if (!el) return;
+    const want = this.styleFor("cursorTranslucent")
+      ? (this.isDarkTheme() ? "screen" : "multiply")
+      : "normal";
+    if (this._canvasBlend === want) return;
+    this._canvasBlend = want;
+    el.style.mixBlendMode = want;
+  }
+
   drawRetroBox() {
     const ctx = this.ctx;
     const settings = this.settings;
@@ -7409,15 +8005,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const hollow = this.styleFor("boxHollow");
     const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
 
+    // Translucency is a flat multiplier on the alpha, applied everywhere this
+    // style builds one - body, hollow outline, neon ghost and trail alike - so
+    // the caret can't come apart from the tail it's dragging. The blend that
+    // does the real work is layer-level; see applyCanvasBlend.
+    const translucent = !!this.styleFor("cursorTranslucent");
+    const bodyOpacity = translucent ? opacity * TRANSLUCENT_ALPHA : opacity;
+
     ctx.save();
     this.forEachTrailPoint((p, alpha, age) => {
       if (settings.crtNeon) {
         // Neon draws the box's own footprint as a glowing tube - the same
         // width and height as the live box cursor, filled even when the box is
         // hollow (a hollow outline of a glowing tail just reads as noise).
-        this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * opacity, age, color);
+        this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * bodyOpacity, age, color);
       } else if (hollow) {
-        ctx.strokeStyle = this.trailPaint(ctx, p, alpha * opacity, age, color);
+        ctx.strokeStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, color);
         ctx.lineWidth = strokeW;
         // Inset by half the stroke so the outline lands inside the same
         // footprint the filled trail dot would occupy (canvas strokes
@@ -7425,7 +8028,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const inset = strokeW / 2;
         ctx.strokeRect(p.x + inset, p.y + inset, Math.max(0, p.w - strokeW), Math.max(0, p.h - strokeW));
       } else {
-        ctx.fillStyle = this.trailPaint(ctx, p, alpha * opacity, age, color);
+        ctx.fillStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, color);
         ctx.fillRect(p.x, p.y, p.w, p.h);
       }
     });
@@ -7466,13 +8069,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
         ? this.glitchState(now) : null;
 
       const paintStyle = gsBox ? null : (settings.energyEffect
-        ? this.energyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity)
-        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * opacity));
+        ? this.energyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity)
+        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity));
 
       if (gsBox) {
         this.paintGlitchRect(
           ctx, active.x, active.top, renderW, active.h,
-          color, 0.9 * blinkAlpha * opacity, gsBox,
+          color, 0.9 * blinkAlpha * bodyOpacity, gsBox,
         );
       } else if (hollow) {
         // Stroke the smear quad so the outline deforms with movement the
@@ -7508,8 +8111,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // suppressed mid-glitch: the box it is supposed to sit inside has been
       // torn into displaced slices, so a crisp centred glyph floating over the
       // wreckage reads as a rendering bug rather than part of the effect.
+      //
+      // Translucency suppresses it for the same reason hollow does, plus a
+      // colour one. The real character shows through a translucent box, so an
+      // inverted copy on top is a doubling artifact - and worse, the
+      // inversion is calibrated against a SOLID fill: with the layer in
+      // multiply/screen the inverted glyph is exactly the wrong polarity for
+      // the blend (a dark glyph screened over a dark theme, a light one
+      // multiplied over a light theme), so it would mostly disappear anyway.
       const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
-      if (!hollow && !gsBox && settings.showChar && displayChar) {
+      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar) {
         ctx.save();
         ctx.globalAlpha = Math.min(1, 0.3 + blinkAlpha * 0.7);
         ctx.fillStyle = invertColor(active.textColor);
@@ -8081,6 +8692,30 @@ class CursorSmithSettingTab extends PluginSettingTab {
           })
       );
 
+    // --- General options: structural, so they sit above the CUA/Vim switch.
+    //
+    // Neither is a "look": neither is in LOOK_KEYS, so neither is part of a
+    // preset or of a per-Vim-mode snapshot - they apply to whatever cursor is
+    // on screen. They used to live in a "General" section inside the CUA
+    // panel, which had the side effect that in Vim mode there was no way to
+    // reach Hide Real Cursor at all. Rendered here, in display(), they're in
+    // one place for both panels.
+    const setGlobal = (key) => async (v) => {
+      this.plugin.settings[key] = v;
+      await this.plugin.saveSettings();
+    };
+
+    new Setting(containerEl)
+      .setName("Hide Real Cursor")
+      .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(setGlobal("hideNativeCaret")));
+
+    new Setting(containerEl)
+      .setName("Hide Cursor When Unfocused")
+      .setDesc("Hides the cursor while Obsidian isn't the active window, the way most writing apps do. It comes straight back when you return, in the same place.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.hideOnWindowBlur ?? true).onChange(setGlobal("hideOnWindowBlur")));
+
     // --- CUA/Normal vs Vim mode switch ---
     this.renderModeSwitch(containerEl);
 
@@ -8242,8 +8877,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g)
           .setName("Show Letter Inside Cursor")
-          .setDesc(get("boxHollow")
-            ? "Shows the letter under the cursor inside the block, with the colors flipped. Does nothing while Hollow is on — the real character already shows through the outline."
+          .setDesc(get("boxHollow") || get("cursorTranslucent")
+            ? `Shows the letter under the cursor inside the block, with the colors flipped. Does nothing while ${get("boxHollow") ? "Hollow" : "Translucent"} is on — the real character already shows through.`
             : "Shows the letter under the cursor inside the block, with the colors flipped.")
           .addToggle((toggle) => toggle.setValue(get("showChar")).onChange(set("showChar")));
 
@@ -8308,6 +8943,10 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")));
+
+      new Setting(body).setName("Translucent")
+        .setDesc("Blends the cursor into the page instead of painting it on top, so text under a Box stays readable and the cursor reads as ink rather than a sticker. Works with every style. Note it blends the trail and any effects along with the cursor — and while it's on, Show Letter Inside Cursor does nothing, since the real character shows through.")
+        .addToggle((toggle) => toggle.setValue(!!get("cursorTranslucent")).onChange(setAndRedraw("cursorTranslucent")));
     });
 
     this.renderSection(containerEl, "Blinking", (body) => {
@@ -8371,14 +9010,60 @@ class CursorSmithSettingTab extends PluginSettingTab {
     });
 
     this.renderSection(containerEl, "Effects", (body) => {
-      new Setting(body).setName("Popping Letters")
-        .setDesc("Each character you type springs out of the cursor and tumbles away as it fades.")
-        .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
-      if (get("popLetters")) {
+      // Pop Effects: one group for everything the cursor throws off in
+      // response to a keystroke. Rainbow sits directly under the group toggle,
+      // above the three effects, because it recolours all of them - a modifier
+      // nested under any one of them would read as belonging to that one.
+      new Setting(body).setName("Pop Effects")
+        .setDesc("Things the cursor throws off as you type — letters, lightning and fireworks.")
+        .addToggle((toggle) => toggle.setValue(!!get("popEffects")).onChange(setAndRedraw("popEffects")));
+      if (get("popEffects")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Rainbow")
-          .setDesc("Colors each popping letter a different color, sweeping around the rainbow as you type.")
-          .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(set("popRainbow")));
+          .setDesc("Sweeps every pop effect around the color wheel as you type, instead of using the cursor's own colors. Overrides Gradient where the two would disagree.")
+          // Redraws rather than just saving: this toggle now changes what the
+          // Thunderstrike and Fireworks rows below say about where their
+          // colors come from, and those descriptions are built at render time.
+          .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(setAndRedraw("popRainbow")));
+
+        new Setting(g).setName("Popping Letters")
+          .setDesc("Each character you type springs out of the cursor and tumbles away as it fades.")
+          .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
+
+        new Setting(g).setName("Thunderstrike")
+          .setDesc("Pressing Enter calls down a bolt of pixelated lightning onto the cursor's new line, from a random angle above.")
+          .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(setAndRedraw("thunderstrike")));
+        if (get("thunderstrike")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Bolt Size")
+            .setDesc("How fine the lightning is, in pixels per block. Lower is a thinner, more delicate strike.")
+            .addSlider((s) => s.setLimits(1, 5, 1).setValue(get("thunderstrikeSize") ?? 2).setDynamicTooltip().onChange(set("thunderstrikeSize")));
+          new Setting(g2).setName("Strength")
+            .setDesc(get("popRainbow")
+              ? "How brightly the strike shows. Rainbow is on, so each bolt takes the next color in the sweep."
+              : "How brightly the strike shows. Each bolt takes its colours at random from blue, purple, red, yellow and white.")
+            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("thunderstrikeStrength") ?? 0.5).setDynamicTooltip().onChange(set("thunderstrikeStrength")));
+        }
+
+        new Setting(g).setName("Fireworks")
+          .setDesc("Space and Enter send pixelated shells climbing out of the cursor to burst above it.")
+          .addToggle((toggle) => toggle.setValue(!!get("fireworks")).onChange(setAndRedraw("fireworks")));
+        if (get("fireworks")) {
+          const g2 = this.subGroup(g);
+          // The colour source isn't configurable - it follows Rainbow, then
+          // Gradient, then the cursor colour - so it's described rather than
+          // offered, and the description says which of those is currently in
+          // play instead of listing rules that may not apply.
+          new Setting(g2).setName("Quantity")
+            .setDesc(
+              (get("popRainbow")
+                ? "How many shells go up per keypress and how much each throws. Rainbow is on, so each volley takes the next color in the sweep."
+                : get("gradientEnabled")
+                  ? "How many shells go up per keypress and how much each throws. Sparks are drawn from the cursor's gradient, with slight variation."
+                  : "How many shells go up per keypress and how much each throws.")
+            )
+            .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("fireworksQuantity") ?? 1).setDynamicTooltip().onChange(set("fireworksQuantity")));
+        }
       }
 
       new Setting(body).setName("Pixel Trail")
@@ -8387,7 +9072,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       if (get("flameTrail")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Density")
-          .setDesc("How many pixels the trail sheds as you move. Slide to 0 to hide the pixels entirely while keeping Disintegration and Thunderstrike.")
+          .setDesc("How many pixels the trail sheds as you move. Slide to 0 to hide the pixels entirely while keeping Backspace Disintegration.")
           .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("flameTrailDensity") ?? 1).setDynamicTooltip().onChange(set("flameTrailDensity")));
         new Setting(g).setName("Trail On Jump")
           .setDesc("When the cursor jumps (a click or a big move) lay pixels along the whole path, so a leap leaves a streak instead of a single puff at the start.")
@@ -8417,18 +9102,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g).setName("Backspace Disintegration")
           .setDesc("Deleting throws a heavier burst outward in inverted colors, so text comes apart rather than just vanishing.")
           .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
-        new Setting(g).setName("Thunderstrike")
-          .setDesc("Pressing Enter calls down a bolt of pixelated lightning onto the cursor's new line, from a random angle above.")
-          .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(setAndRedraw("thunderstrike")));
-        if (get("thunderstrike")) {
-          const g2 = this.subGroup(g);
-          new Setting(g2).setName("Bolt Size")
-            .setDesc("How fine the lightning is, in pixels per block. Lower is a thinner, more delicate strike.")
-            .addSlider((s) => s.setLimits(1, 5, 1).setValue(get("thunderstrikeSize") ?? 2).setDynamicTooltip().onChange(set("thunderstrikeSize")));
-          new Setting(g2).setName("Strength")
-            .setDesc("How brightly the strike shows. Each bolt takes its colours at random from blue, purple, red, yellow and white.")
-            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("thunderstrikeStrength") ?? 0.5).setDynamicTooltip().onChange(set("thunderstrikeStrength")));
-        }
       }
 
       new Setting(body).setName("Stardust")
@@ -8712,7 +9385,10 @@ class CursorSmithSettingTab extends PluginSettingTab {
             if (imported) {
               this.display();
             } else {
-              btn.setButtonText("Invalid code");
+              // The two code kinds are one character apart at a glance, so say
+              // which mistake was made rather than a flat "invalid".
+              btn.setButtonText(importCode.startsWith(SHARE_VERSION_VIM + "|")
+                ? "That's a Vim code" : "Invalid code");
               setTimeout(() => btn.setButtonText("Import"), 2000);
             }
           });
@@ -8742,18 +9418,10 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
     });
 
-    this.renderSection(containerEl, "General", (body) => {
-      new Setting(body)
-        .setName("Hide Real Cursor")
-        .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
-        .addToggle((toggle) => toggle.setValue(plugin.settings.hideNativeCaret).onChange(set("hideNativeCaret")));
-
-      new Setting(body)
-        .setName("Hide Cursor When Unfocused")
-        .setDesc("Hides the cursor while Obsidian isn't the active window, the way most writing apps do. It comes straight back when you return, in the same place.")
-        .addToggle((toggle) =>
-          toggle.setValue(plugin.settings.hideOnWindowBlur ?? true).onChange(set("hideOnWindowBlur")));
-    });
+    // Note: "General" (Hide Real Cursor / Hide Cursor When Unfocused) used to
+    // be a section here. Both are structural rather than look settings, and
+    // both were unreachable from the Vim panel while they lived in this one,
+    // so they now render once in display() above the CUA/Vim switch.
 
     // Everything from "what does the cursor look like" through "what effects
     // does it use" is identical in shape whether it's this global cursor or
@@ -8804,9 +9472,15 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
   // -------------------------------------------------------------------------
   // Shared preset-row UI (name, share code pill, Copy, Load, Edit, Delete).
+  //
+  // `code` is a caller option because the two preset kinds serialise
+  // differently: a regular preset is one look (presetToCode), a Vim preset is
+  // five (vimPresetToCode). This row used to build the code itself with
+  // presetToCode, which is correct for one caller and silently produced an
+  // empty, contentless code for the other.
   // -------------------------------------------------------------------------
-  renderPresetRow(containerEl, name, snap, { onLoad, onEdit, onDelete }) {
-    const code = presetToCode(name, snap);
+  renderPresetRow(containerEl, name, snap, { onLoad, onEdit, onDelete, code }) {
+    if (code === undefined) code = presetToCode(name, snap);
     const setting = new Setting(containerEl).setName(name);
 
     const codeEl = setting.controlEl.createEl("code", { text: code });
@@ -8927,7 +9601,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     let importVimCode = "";
     new Setting(containerEl)
       .setName("Import Vim preset")
-      .setDesc("Paste a share code from someone else to add their Vim preset.")
+      .setDesc("Paste a Vim share code from someone else to add their Vim preset — all five mode cursors at once. Regular preset codes go in the CUA/Normal panel instead.")
       .addText((text) => {
         text.setPlaceholder("Paste code here…");
         text.onChange((v) => { importVimCode = v.trim(); });
@@ -8942,7 +9616,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           if (imported) {
             this.display();
           } else {
-            btn.setButtonText("Invalid code");
+            btn.setButtonText(importVimCode.startsWith(SHARE_VERSION + "|")
+              ? "That's a regular code" : "Invalid code");
             setTimeout(() => btn.setButtonText("Import"), 2000);
           }
         });
@@ -8959,6 +9634,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     } else {
       for (const name of names) {
         const setting = this.renderPresetRow(containerEl, name, presets[name], {
+          code: vimPresetToCode(name, presets[name]),
           onLoad: async () => {
             await plugin.loadVimPreset(name);
             plugin._pendingVimPresetName = name;

@@ -112,6 +112,22 @@
   z-index: 9999;
 }
 
+/* The Translucent option works by putting a mix-blend-mode on the canvas
+   WRAPPER (the div this canvas sits in), set from main.js - see
+   applyCanvasBlend there for why it has to be the wrapper and not the canvas
+   itself. Two things would quietly break it, neither of which looks like a
+   bug at the point you'd write it:
+
+     • `isolation: isolate` on anything between the wrapper and
+       .app-container. Isolation stops the blend reaching the editor, so the
+       option silently does nothing at all.
+     • a mix-blend-mode declared on .retro-box-cursor-canvas here. The
+       wrapper is a stacking context, so a blend on the canvas inside it
+       composites against the wrapper's empty background - no visible effect,
+       and it costs a blend pass every frame to achieve nothing.
+
+   Keep blend-mode handling for this layer in main.js only. */
+
 /* The class is doubled (`.foo.foo`) purely to raise this selector's
    specificity above a plausible community theme or CSS snippet that sets
    caret-color on the same or a more specific element - without reaching for

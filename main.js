@@ -196,6 +196,22 @@ const DEFAULT_SETTINGS = {
   // this, so it's a scale on the whole burst rather than a fixed dimension. The
   // default matches the size the trail used before this was configurable.
   flameTrailPixelSize: 4,
+  // Hot-head: a standalone effect that sets the text you're working on alight.
+  // Particles are points binned into a pixel grid and drawn big and solid while
+  // fresh, shrinking to specks as they age - see drawHotHead.
+  hotHead: false,
+  hotHeadQuantity: 1,      // 0..3 multiplier on how much fire is emitted
+  hotHeadSpread: 4,        // 0..14 characters of surrounding text set alight, and
+                           // how long a patch of text keeps burning after the
+                           // caret has moved off it
+  hotHeadTrail: 6,         // 0..30 extra fire laid along the path just travelled
+  hotHeadFade: 620,        // 200..1600ms lifetime of a single fire particle
+  hotHeadHeight: 0.55,     // 0.15..1.5 how high the flames climb
+  hotHeadOpacity: 1,       // 0.1..1 overall opacity of the fire
+  hotHeadIdleMs: 1500,     // 0..6000ms of stillness before the fire stops being
+                           // fed and burns out; 0 = burns forever
+  hotHeadFlat: false,      // true = fire in the cursor's own color, no heat gradient
+
   // Pixel Trail sub-option: pressing Enter calls down a bolt of pixelated
   // lightning onto the caret's new position, from a random angle above it.
   thunderstrike: false,
@@ -216,6 +232,7 @@ const DEFAULT_SETTINGS = {
   speedDemonSensitivity: 1,      // 0.5..2 multiplier on how fast heat builds
   speedDemonSparkQuantity: 1,    // 0..3 multiplier on how many sparks spawn per burst
   speedDemonSparkTrail: 0,       // 0..30px comet-tail trailing behind each spark; 0 = no trail
+  speedDemonNoCursorHeat: false, // true = cursor keeps its own color as it heats up
 
   // --- Stardust: the cursor gives off a slow stream of drifting, fading
   // pixels. A standalone effect (it used to hang off Pixel Trail), with its
@@ -354,7 +371,10 @@ const LOOK_KEYS = [
   "bracketTether", "bracketTetherStrength",
   "lineSerifs", "boxHollow", "boxHollowWidth", "underlineWidthPx",
   "speedDemon", "speedDemonSparks", "speedDemonSensitivity",
-  "speedDemonSparkQuantity", "speedDemonSparkTrail",
+  "speedDemonSparkQuantity", "speedDemonSparkTrail", "speedDemonNoCursorHeat",
+  "hotHead", "hotHeadQuantity", "hotHeadSpread", "hotHeadTrail",
+  "hotHeadFade", "hotHeadHeight", "hotHeadOpacity", "hotHeadFlat",
+  "hotHeadIdleMs",
   "cursorOpacity", "energyEffect", "energySpeed", "energyAurora",
   "trailLength", "trailFadeMs",
   "blinkingEnabled", "blinkSpeed", "blinkOnOffBalance", "blinkDelayMs", "blinkFade",
@@ -974,6 +994,190 @@ function hslToRgbString(h, s, l) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+// --- HSV, for the Speed Demon heat ramp ---------------------------------
+// The ramp is interpolated in HSV rather than RGB because a straight RGB lerp
+// between two colours that sit on opposite sides of the wheel passes through
+// grey: blue → yellow, for instance, has a washed-out sage midpoint. Fire is
+// never desaturated, so any segment that visibly greys out breaks the effect.
+// Rotating the hue instead keeps every intermediate colour fully lit, which is
+// what makes the ramp read as a temperature rather than a crossfade.
+function rgbToHsv([r, g, b]) {
+  const rr = r / 255, gg = g / 255, bb = b / 255;
+  const max = Math.max(rr, gg, bb);
+  const min = Math.min(rr, gg, bb);
+  const d = max - min;
+  let h = 0;
+  if (d > 1e-6) {
+    if (max === rr) h = 60 * (((gg - bb) / d) % 6);
+    else if (max === gg) h = 60 * ((bb - rr) / d + 2);
+    else h = 60 * ((rr - gg) / d + 4);
+  }
+  if (h < 0) h += 360;
+  return [h, max > 1e-6 ? d / max : 0, max];
+}
+
+function hsvToRgb([h, s, v]) {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = Math.max(0, Math.min(1, s));
+  const val = Math.max(0, Math.min(1, v));
+  const c = val * sat;
+  const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+  const m = val - c;
+  let r1 = 0, g1 = 0, b1 = 0;
+  if (hue < 60) { r1 = c; g1 = x; }
+  else if (hue < 120) { r1 = x; g1 = c; }
+  else if (hue < 180) { g1 = c; b1 = x; }
+  else if (hue < 240) { g1 = x; b1 = c; }
+  else if (hue < 300) { r1 = x; b1 = c; }
+  else { r1 = c; b1 = x; }
+  return [
+    Math.round((r1 + m) * 255),
+    Math.round((g1 + m) * 255),
+    Math.round((b1 + m) * 255),
+  ];
+}
+
+// Blend two HSV colours, taking the SHORT way around the hue wheel so a
+// transition never doubles back through the half of the spectrum it isn't
+// heading for (red → violet goes through magenta, not through green).
+//
+// `arc` overrides that when the short way is the wrong way round: +1 forces
+// the hue to climb, -1 forces it to fall, 0 (default) takes the short way.
+// Used for the ignition segment, where "shortest" is not the same as "most
+// like fire" - see heatColor.
+//
+// A colour with no saturation has no meaningful hue - its stored hue is an
+// artefact of whatever it was derived from. Interpolating toward that number
+// would swing the saturated end through unrelated colours on its way to grey,
+// so when one end is colourless the other end's hue is simply held and only
+// saturation/value move.
+function lerpHsv(a, b, f, arc = 0) {
+  let hue;
+  if (a[1] < 0.03) hue = b[0];
+  else if (b[1] < 0.03) hue = a[0];
+  else {
+    let d = ((b[0] - a[0] + 540) % 360) - 180;
+    if (arc > 0 && d < 0) d += 360;
+    else if (arc < 0 && d > 0) d -= 360;
+    hue = a[0] + d * f;
+  }
+  return [hue, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+
+function rgbTupleToHex([r, g, b]) {
+  const c = (n) => Math.max(0, Math.min(255, Math.round(n)));
+  return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
+}
+
+// --- Hot-head: the fire's colour ramp -------------------------------------
+// Waypoint positions. The first is a placeholder filled in per-call with the
+// cursor's own colour (see hotFireColor), so the coolest fire is the colour of
+// the cursor that lit it and everything above that is a warm climb.
+// Separate from Speed Demon's heatColor, which has its own ramp for the caret.
+// The cursor's own colour is deliberately given only a sliver at the very
+// bottom. It used to hold the bottom 28%, which - combined with the fact that
+// most particles spend most of their life at a low temperature - meant the bulk
+// of the fire was drawn in the cursor's colour rather than in fire colours. With
+// the default green cursor the whole effect came out green. It's a waypoint so
+// the fire still resolves to the cursor's colour at its coolest edge, but it
+// shouldn't be most of what you see.
+const HOT_STOP_POS = [0, 0.12, 0.42, 0.72, 1];
+
+// The fixed hot end, as HSV: a warm blackbody climb, yellow up through
+// red-orange to white-hot. No violet/blue - this is deliberately the classic
+// "fire" ramp rather than a full-spectrum one, so the whole effect reads as
+// something burning rather than as a colour cycle. Value is pinned at 1 so the
+// cursor emits light rather than reflecting it; only hue and saturation carry
+// the temperature. The white end keeps a faint warm tint instead of being pure
+// #ffffff, so the hottest core still looks like flame.
+const HOT_HSV = [
+  [ 44, 1.00, 1.00],  // amber-yellow (a touch warmer than a pure 48 gold,
+                      // which reads green-ish next to orange)
+  [ 30, 1.00, 1.00],  // orange
+  [ 12, 0.95, 1.00],  // red-orange
+  [ 26, 0.20, 1.00],  // white-hot, faintly warm
+];
+
+// Temperature is lifted by this exponent before the ramp is sampled. A particle
+// cools linearly with its remaining life, but lifetimes are skewed short, so a
+// linear mapping parks most of the fire at the very bottom of the ramp - the
+// cursor's own colour - and almost nothing in the oranges. Raising temp to a
+// power below 1 pushes the bulk of the distribution up into the fire colours
+// while leaving the extremes where they are.
+const HOT_TEMP_GAMMA = 0.55;
+
+// --- Hot-head: pixel fire, after smear-cursor.nvim's particle renderer -----
+// (sphamba/smear-cursor.nvim, lua/smear_cursor/draw.lua :: draw_particles)
+//
+// Upstream's insight, which this keeps: particles are dimensionless POINTS
+// binned into a grid, and how big one LOOKS is decided by its age, not by any
+// per-particle radius. Fresh particles are drawn as solid blocks, aged ones
+// shrink to specks, then they fade. That progression is the whole effect.
+//
+// Upstream's grid, which this does NOT keep: it bins into character cells
+// subdivided 4 rows x 2 cols, and gives all eight sub-cells of a cell one
+// shared colour and glyph, because a terminal can only put one character in
+// one cell. On a canvas that constraint doesn't exist, and honouring it anyway
+// made the grid far too legible - the fire came out as a lattice of
+// character-sized rectangles that read as a tiling artefact rather than as
+// fire. So the grid here is a fine SQUARE lattice, sized off the font rather
+// than off the character cell, and every grid square decides its own size and
+// colour from the particles in it. Same big-to-small-to-gone progression, none
+// of the character-cell banding.
+//
+// Size stages, in grid squares:
+const HOT_PX_DIVISOR = 5.6;   // font size / this = grid square, in px
+const HOT_PX_MIN = 2;
+const HOT_PX_MAX = 4;
+// A fresh particle covers a 2x2 patch of grid squares; past this fraction of
+// its life it drops to a single square, and past the next it becomes a small
+// dot inside one. Two thresholds instead of upstream's one, because with a
+// finer grid a single block/dot switch is too abrupt a jump.
+const HOT_STAGE_BLOCK = 0.55;  // above this: 2x2 block
+const HOT_STAGE_PIXEL = 0.22;  // above this: 1x1 pixel; below: small dot
+const HOT_DOT_SCALE = 0.55;    // dot size as a fraction of one grid square
+// Discrete shade steps (upstream color_levels). Quantising keeps edges crunchy.
+const FLAME_LEVELS = 16;
+
+// Particle budget and physics. Units marked "cw" are character widths (or
+// character widths per second) exactly as upstream expresses them, multiplied
+// by the measured character width at spawn - so the fire scales with font size
+// instead of being tuned for one zoom level.
+const FLAME_MAX_NUM = 260;
+const FLAME_MAX_LIFETIME = 620;         // ms, default fade time
+// Upstream particle_lifetime_distribution_exponent. lifetime = max * rand^n
+// skews toward zero, so most particles are short-lived specks and a minority
+// are long-lived blocks. That ratio is what gives the fire a few solid chunks
+// in a haze of sparks.
+const FLAME_LIFETIME_EXP = 3.4;
+const FLAME_PER_SECOND = 1350;          // steady emission while burning
+const FLAME_PER_LENGTH = 1.4;           // extra particles per cw of caret travel
+const FLAME_SPREAD = 0.5;               // cw, lateral scatter at the emit point
+const FLAME_INITIAL_VELOCITY = 6;       // cw/s, upstream particle_max_initial_velocity
+const FLAME_VELOCITY_FROM_CURSOR = 0.2; // share of caret velocity inherited
+const FLAME_RANDOM_VELOCITY = 62;       // cw/s, per-frame turbulence
+const FLAME_DAMPING = 0.2;              // per 17ms, upstream particle_damping
+// Upstream's particle_gravity is +20 (downward: it's a smear, debris falls).
+// Negated here, because this is fire. Damping is strong, so what matters is the
+// terminal velocity it implies - roughly accel * 0.085 - and the Flame Height
+// setting scales this directly.
+const FLAME_BUOYANCY = -120;            // cw/s^2
+
+// How long a patch of text keeps burning after the caret has moved off it, at
+// Fire Spread = 1. Scaled by the setting. This is what makes the fire linger
+// over what you just wrote instead of tracking the caret like a spotlight.
+// "Use cursor color" variance. The fire stays recognisably the cursor's colour
+// - the hue swing is small enough that it reads as one flame rather than as a
+// gradient - but shade and saturation move enough to give it texture.
+const HOT_FLAT_HUE_SPAN = 26;   // degrees, total spread across the ramp
+const HOT_FLAT_SAT_LO = 0.55;   // coolest embers: duller
+const HOT_FLAT_SAT_HI = 1.05;   // hottest: fully saturated (clamped at 1)
+const HOT_FLAT_VAL_LO = 0.45;   // coolest embers: darker
+const HOT_FLAT_VAL_HI = 1.15;   // hottest: blown out toward white (clamped)
+
+const HOT_BURN_LINGER_MS = 150;
+const HOT_BURN_MAX = 26;                // most burn marks kept alive at once
+
 function invertColor(colorStr) {
   const nums = (colorStr || "").match(/[\d.]+/g);
   if (!nums || nums.length < 3) return "#000000";
@@ -1123,6 +1327,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.trail = []; 
     this.particles = []; 
     this.flamePixels = [];
+    // Hot-head's fire. Deliberately NOT flamePixels: those are sprites with a
+    // per-particle colour and size, while these are points binned into a shared
+    // pixel lattice (see drawHotHead), so they have to be rasterised as a set
+    // rather than mixed in with particles that paint themselves.
+    this.flameEmbers = [];
+    // Patches of text currently alight, each decaying from the moment the caret
+    // leaves it - this is what keeps text burning after the caret has moved on.
+    this.hotBurns = [];
+    // Last caret sample and smoothed velocity, so particles can inherit caret
+    // motion as drag. See updateHotHeadInertia.
+    this._hotPrev = null;
+    this._hotVel = { x: 0, y: 0 };
     this.thunderbolts = [];
     // Signal Glitch: at most ONE burst is ever live (a second jump during a
     // burst restarts it rather than stacking), so this is a single nullable
@@ -1402,20 +1618,38 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (e.key === "Enter") {
         this._enterPending = performance.now();
       }
-      // Speed Demon: any key that plausibly represents "the user is typing"
-      // bumps heat. Filter out pure modifiers, navigation, function keys,
-      // and IME composition - none of those feel like writing to the user
-      // and shouldn't heat the cursor. Single-character keys ("a", "1",
-      // "?") plus Backspace/Enter/Space/Tab cover the real cases.
-      if (this.settings.speedDemon && !e.isComposing && !e.repeat) {
+      // Speed Demon: any key that plausibly represents "the user is working"
+      // bumps heat. Two classes, because they don't deserve the same weight:
+      //
+      //   typing     single-character keys plus Backspace/Enter/Space/Tab
+      //   navigating arrows, Home/End, PageUp/Down - moving the caret without
+      //              writing anything
+      //
+      // Navigation used to be filtered out entirely, which made the whole
+      // effect invisible to anyone reading or moving around a file. It counts
+      // now, at a lower rate than typing, so scrubbing through a document warms
+      // the caret without pretending it's the same thing as writing.
+      //
+      // Autorepeat is likewise allowed for navigation only: holding an arrow
+      // key IS the fast way to move, so ignoring repeats would mean the fastest
+      // movement generated the least heat. Held character keys are still
+      // ignored - leaning on "a" is not typing.
+      if (this.settings.speedDemon && !e.isComposing) {
         const k = e.key;
         const isTyping =
           (typeof k === "string" && k.length === 1) ||
           k === "Backspace" || k === "Enter" || k === " " ||
           k === "Spacebar" || k === "Tab";
-        if (isTyping) {
-          const bump = 0.09 * (this.settings.speedDemonSensitivity ?? 1);
+        const isNav =
+          k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown" ||
+          k === "Home" || k === "End" || k === "PageUp" || k === "PageDown";
+        if ((isTyping && !e.repeat) || isNav) {
+          const weight = isTyping ? 1 : (e.repeat ? 0.45 : 0.7);
+          const bump = 0.09 * weight * (this.settings.speedDemonSensitivity ?? 1);
           this.heat = Math.min(1, this.heat + bump);
+          // Tells commitMove this move already paid for its heat, so a
+          // keyboard-driven caret move isn't charged twice.
+          this._heatKeyT = performance.now();
         }
       }
     };
@@ -2180,13 +2414,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
   getActiveColor() {
     const baseColor = this.getBaseColor();
     if (!this.settings.speedDemon) return baseColor;
+    // "Keep cursor color": the caret stays exactly the colour it's configured
+    // to be, so you get Speed Demon's sparks without the cursor itself
+    // changing colour underneath you as you speed up.
+    if (this.styleFor("speedDemonNoCursorHeat")) return baseColor;
     return this.heatColor(this.heat, baseColor);
   }
 
   // Get the base (non-heated) color. Used by Speed Demon internally so its
-  // "cold" endpoint desaturates the user's chosen colour rather than
-  // always starting from the same grey - a green-configured cursor cools
-  // to a dim moss, an orange one cools to slate.
+  // damped resting colour and its ramp both start from the user's chosen
+  // colour rather than always from the same grey - a green-configured cursor
+  // rests as a dim moss, an orange one as slate.
   //
   // This is also the single flat colour every effect that ISN'T the cursor
   // body falls back to: the CRT glow halo, Pixel Trail particles, secondary
@@ -2194,8 +2432,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // stop, so those effects stay in the same family as the cursor instead of
   // going on painting themselves in a per-theme colour the cursor no longer
   // uses anywhere.
+  //
+  // Deliberately UNHEATED in both branches. It used to hand back
+  // gradientStops()[0], which has already been through heatColor, so every
+  // caller that then applied heat itself - getActiveColor, and the ember
+  // colour in spawnSparks - was heating a gradient cursor twice and landing
+  // way up the ramp for the actual heat level. Callers that want the heated
+  // colour go through getActiveColor.
   getBaseColor() {
-    if (this.settings.gradientEnabled) return this.gradientStops()[0];
+    if (this.settings.gradientEnabled) return this.gradientStops(false)[0];
     return this.isDarkTheme() ? this.settings.colorDark : this.settings.colorLight;
   }
 
@@ -2210,7 +2455,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // ---- Gradient cursor colour --------------------------------------------
   // The active theme's gradient stops, in order, as hex strings. Always at
   // least two entries, so callers can index [i] and [i+1] without guarding.
-  gradientStops() {
+  // `applyHeat` exists for the callers that need the stops as the user
+  // configured them - anything that is about to run them through heatColor
+  // itself, and would otherwise apply the ramp twice.
+  gradientStops(applyHeat = true) {
     const s = this.settings;
     const n = Math.max(2, Math.min(4, Math.round(s.gradientCount || 2)));
     // One ramp per theme, same as colorDark/colorLight: a ramp tuned for a
@@ -2225,7 +2473,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // you type. Running every stop through it keeps a gradient cursor
       // heating up like a flat one does, instead of sitting frozen at its
       // configured colours while the rest of the effect reacts.
-      if (s.speedDemon && this.heat > 0) hex = this.heatColor(this.heat, hex);
+      if (applyHeat && s.speedDemon && this.heat > 0 && !this.styleFor("speedDemonNoCursorHeat")) {
+        hex = this.heatColor(this.heat, hex);
+      }
       out.push(hex);
     }
     return out;
@@ -2300,6 +2550,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // Note this deliberately knows nothing about Energy Beam: the body-fill call
   // sites still pick createEnergyGradient over this one when the beam is on,
   // which keeps the beam's existing behaviour of not painting CRT trail dots.
+  // The cursor body is a single flat heat colour (getActiveColor already ran
+  // the ramp), or the user's gradient when that's enabled. The bottom-to-top
+  // "flame column" that briefly lived here was replaced by the fire that now
+  // rises off the top of the whole text line (see maybeSpawnSpeedDemonSparks) -
+  // the caret just glows its heat colour, the line above it is what burns.
   cursorPaint(x, y, w, h, color, alpha) {
     if (!this.settings.gradientEnabled) return hexToRgba(color, alpha);
     return this.createCursorGradient(x, y, w, h, alpha);
@@ -2363,6 +2618,340 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     return `#${((1 << 24) | (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b))
       .toString(16).slice(1)}`;
+  }
+
+  // Everything Hot-head holds - live particles, burn marks, the caret samples
+  // it measures travel against - is stored in viewport coordinates, because
+  // that's what the canvas draws in. Scrolling moves the text under those
+  // coordinates without changing them, which broke the effect in two ways at
+  // once: fire that was sitting on a word stayed pinned to the screen while the
+  // word slid away from under it, and the caret's viewport position changed
+  // without the caret having actually gone anywhere, so the emitter read the
+  // scroll as travel and laid a streak of fire across the screen.
+  //
+  // Shifting everything by the scroll delta fixes both: the fire is attached to
+  // the text, so it scrolls with the text, and the caret's apparent movement
+  // cancels out to roughly zero, so no spurious trail.
+  hotSyncScroll() {
+    // Nothing to keep in sync when the effect is off, and dropping the baseline
+    // means re-enabling it takes a fresh one rather than applying however far
+    // the document was scrolled in the meantime as one enormous delta.
+    if (!this.styleFor("hotHead")) {
+      this._hotScroll = null;
+      return;
+    }
+    const view = this.app.workspace.activeEditor?.editor?.cm;
+    const el = view && view.scrollDOM;
+    if (!el) {
+      this._hotScroll = null;
+      return;
+    }
+    const sx = el.scrollLeft || 0;
+    const sy = el.scrollTop || 0;
+    const prev = this._hotScroll;
+    // First sight of this scroller (or a switch to a different pane): take a
+    // baseline and shift nothing, or the delta against some other editor's
+    // scroll position would fling everything off screen.
+    if (!prev || prev.el !== el) {
+      this._hotScroll = { el, x: sx, y: sy };
+      return;
+    }
+    const dx = sx - prev.x;
+    const dy = sy - prev.y;
+    prev.x = sx;
+    prev.y = sy;
+    if (!dx && !dy) return;
+
+    const nEmbers = this.flameEmbers.length;
+    const nBurns = this.hotBurns ? this.hotBurns.length : 0;
+    if (!nEmbers && !nBurns && !this._hotPrev && !this._hotEmitFrom) return;
+
+    // Content moves opposite to the scroll offset.
+    const ox = -dx;
+    const oy = -dy;
+    for (const p of this.flameEmbers) { p.x += ox; p.y += oy; }
+    for (const b of this.hotBurns) {
+      b.x += ox;
+      b.y += oy;
+      // The row extents are viewport x too, so they have to travel with it -
+      // otherwise a horizontal scroll leaves the fire clamped to where the
+      // text used to be.
+      if (b.rowLeft != null) b.rowLeft += ox;
+      if (b.rowRight != null) b.rowRight += ox;
+    }
+    if (this._hotPrev) { this._hotPrev.x += ox; this._hotPrev.y += oy; }
+    if (this._hotEmitFrom) { this._hotEmitFrom.x += ox; this._hotEmitFrom.y += oy; }
+    // Every particle moved at once, so last frame's dirty rect doesn't cover
+    // where they used to be. Without a full clear this smears. Only when there
+    // were actually particles on screen, so a plain scroll with the fire out
+    // doesn't cost everyone a full-canvas clear per frame.
+    if (nEmbers) this._dirtyFull = true;
+  }
+
+  // Hot-head: track the caret between frames, and remember where it has been.
+  //
+  // Velocity feeds the share of caret motion new particles inherit. The burn
+  // marks are the other half: each is a patch of text the caret has occupied,
+  // with an intensity that decays over time. Fire is emitted from ALL live
+  // marks, not just the caret, so text the caret has moved off keeps burning
+  // for a moment afterwards - the point being that the text was set alight,
+  // rather than that a flame is following the cursor around.
+  updateHotHeadInertia() {
+    this.hotSyncScroll();
+    const now = performance.now();
+    const active = this.animActive;
+    if (!active) {
+      this._hotPrev = null;
+      this._hotEmitFrom = null;
+      this._hotVel = { x: 0, y: 0 };
+      this.hotBurns = [];
+      return;
+    }
+    const cx = active.x + (active.w || 0) / 2;
+    const cy = active.top + (active.h || 0) / 2;
+
+    if (!this._hotPrev) {
+      this._hotPrev = { x: cx, y: cy, t: now };
+      this._hotEmitFrom = { x: cx, y: cy };
+      this._hotVel = { x: 0, y: 0 };
+      this.hotBurns = [];
+      return;
+    }
+
+    const dt = Math.max(0.001, Math.min(0.1, (now - this._hotPrev.t) / 1000));
+    // Genuine caret movement, which is what the idle timer runs on. Measured
+    // here rather than from the plugin's global activity timestamp because that
+    // one is also poked by scrolling and focus changes, and neither of those
+    // should count as working on the text. The threshold ignores the last
+    // sub-pixel crawl of a smooth-motion glide settling onto its target.
+    if (Math.abs(cx - this._hotPrev.x) > 0.5 || Math.abs(cy - this._hotPrev.y) > 0.5) {
+      this._hotActiveT = now;
+    }
+    this._hotVel.x += ((cx - this._hotPrev.x) / dt - this._hotVel.x) * 0.25;
+    this._hotVel.y += ((cy - this._hotPrev.y) / dt - this._hotVel.y) * 0.25;
+    this._hotPrev.x = cx;
+    this._hotPrev.y = cy;
+    this._hotPrev.t = now;
+    if (!this._hotEmitFrom) this._hotEmitFrom = { x: cx, y: cy };
+
+    if (!this.hotBurns) this.hotBurns = [];
+    // Refresh the mark under the caret, or lay a new one. Marks within half a
+    // character of each other are merged, so sitting still keeps one mark
+    // topped up rather than stacking a new one every frame - which would fill
+    // the whole buffer with duplicates in half a second and evict the trail
+    // behind the caret that is the entire point of keeping these.
+    //
+    // Both sides of the comparison are the line TOP. Comparing against the
+    // caret's centre instead means the test is off by half a line height and
+    // can never match.
+    const cwHere = Math.max(4, active.actualCharWidth || active.w || 8);
+    const markY = active.top;
+    const last = this.hotBurns[this.hotBurns.length - 1];
+    if (last && Math.abs(last.x - cx) < cwHere * 0.5 && Math.abs(last.y - markY) < 2) {
+      last.t = now;
+      // Refresh the row extent too: the text either side of a stationary caret
+      // changes as you type, and a mark holding the extent from when it was
+      // laid would keep burning over characters that have since moved.
+      last.rowLeft = active.rowLeft;
+      last.rowRight = active.rowRight;
+    } else {
+      // Each mark remembers the row it was laid on, so a mark left behind on a
+      // previous line keeps being clamped to THAT line's text rather than to
+      // wherever the caret has since gone.
+      this.hotBurns.push({
+        x: cx, y: markY, t: now,
+        rowLeft: active.rowLeft, rowRight: active.rowRight, lh: active.h || 16,
+      });
+      if (this.hotBurns.length > HOT_BURN_MAX) this.hotBurns.shift();
+    }
+  }
+
+  // Whether the fire is currently being fed, i.e. the caret has moved recently
+  // enough to count as working. Shared by the emitter and the frame governor:
+  // the governor has to agree, or a fire that has burnt out would still pin the
+  // render loop at full rate forever on the grounds that the effect is enabled.
+  hotHeadFeeding(nowT) {
+    const idleMs = Math.max(0, this.styleFor("hotHeadIdleMs") ?? 0);
+    if (idleMs <= 0) return true;
+    return (nowT - (this._hotActiveT || 0)) <= idleMs;
+  }
+
+  // Emit fire from every patch of text that is currently alight.
+  //
+  // Particles are points with no size of their own - see drawHotHead, where how
+  // big they look is decided by their age.
+  maybeSpawnHotHead() {
+    const active = this.animActive;
+    const from = this._hotEmitFrom;
+    if (!active || !from) return;
+    const now = performance.now();
+
+    const cw = Math.max(4, active.actualCharWidth || active.w || 8);
+    const lh = Math.max(8, active.h || 16);
+
+    const cx = active.x + (active.w || 0) / 2;
+    const cy = active.top + lh / 2;
+    let dx = cx - from.x;
+    let dy = cy - from.y;
+
+    // Clamp the segment: a jump to the far side of the document shouldn't paint
+    // a ribbon of fire across the whole screen, just light the arrival.
+    const segLen = Math.hypot(dx, dy);
+    const maxSeg = cw * 12;
+    if (segLen > maxSeg) {
+      const k = maxSeg / segLen;
+      dx *= k;
+      dy *= k;
+    }
+
+    // Advance the anchors BEFORE any early return. Leaving them stale while the
+    // emitter is capped or idle means the next segment spans everything the
+    // caret did in the meantime, and the fire gets flung along it.
+    from.x = cx;
+    from.y = cy;
+    const dt = Math.max(0, Math.min(0.1, (now - (this._lastHotT || now)) / 1000));
+    this._lastHotT = now;
+
+    const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 4);
+    const fadeMs = Math.max(120, this.styleFor("hotHeadFade") ?? FLAME_MAX_LIFETIME);
+    const heightMul = Math.max(0.05, this.styleFor("hotHeadHeight") ?? 0.55);
+    const perLength = FLAME_PER_LENGTH * ((this.styleFor("hotHeadTrail") ?? 0) / 10);
+
+    // How long a patch stays alight after the caret leaves it, and how wide
+    // each patch burns. Both scale off Fire Spread, so one control governs
+    // "how much of the text is on fire" in both directions.
+    const linger = HOT_BURN_LINGER_MS * (1 + spreadCw);
+    const halfSpan = spreadCw * cw * 0.5;
+
+    // Drop burn marks that have gone out. Done BEFORE the early returns below:
+    // skipping the prune whenever the emitter happens to be capped or switched
+    // down leaves the list pinned at its cap holding marks that went out long
+    // ago, and the moment emission resumes they all light up again at once.
+    const burns = (this.hotBurns || []).filter((b) => now - b.t < linger);
+    this.hotBurns = burns;
+    if (!burns.length) return;
+
+    // Idle Timeout: stop feeding the fire once the caret has been still for
+    // this long. Emission simply stops - the particles already in the air run
+    // out their lifetimes, so the fire burns down and goes out rather than
+    // being switched off - and the next real movement starts it again.
+    if (!this.hotHeadFeeding(now)) return;
+
+    const live = this.flameEmbers.length;
+    if (live >= FLAME_MAX_NUM) return;
+    const qty = Math.max(0, this.styleFor("hotHeadQuantity") ?? 1);
+    if (qty <= 0) return;
+
+    // Total emission is shared across the live marks by their remaining
+    // intensity, so a long trail of dying marks doesn't emit more fire in total
+    // than a single fresh one - it spreads the same fire more thinly, which is
+    // what "burning down" should look like.
+    let weightSum = 0;
+    const weights = burns.map((b) => {
+      const w = 1 - (now - b.t) / linger;
+      const v = w * w;
+      weightSum += v;
+      return v;
+    });
+    if (weightSum <= 0) return;
+
+    const travelCw = Math.hypot(dx, dy) / cw;
+    // Emission scales with how much text is alight, but sub-linearly - a wide
+    // spread should look like more fire, not like the same fire smeared out,
+    // without the particle count exploding.
+    const spanScale = 1 + (halfSpan * 2) / (cw * 6);
+    const n = (FLAME_PER_SECOND * dt * spanScale * Math.min(1.6, 0.55 + weightSum * 0.45)
+      + travelCw * perLength) * qty;
+    let count = Math.floor(n) + (Math.random() < (n % 1) ? 1 : 0);
+    count = Math.max(0, Math.min(count, FLAME_MAX_NUM - live));
+    if (count <= 0) return;
+
+    const vel = this._hotVel || { x: 0, y: 0 };
+
+    for (let i = 0; i < count; i++) {
+      // Pick which alight patch this particle comes off, weighted by how
+      // strongly that patch is still burning.
+      let r = Math.random() * weightSum;
+      let bi = 0;
+      while (bi < burns.length - 1 && (r -= weights[bi]) > 0) bi++;
+      const burn = burns[bi];
+      const strength = Math.max(0, 1 - (now - burn.t) / linger);
+
+      // Fire sits on the TOP of the glyphs, not through the middle of them:
+      // the line box has leading above the cap height, so a particle at
+      // burn.y is floating in the gap above the text.
+      const topY = burn.y + lh * 0.22;
+      // Across the patch, biased toward its centre, plus the segment the caret
+      // just travelled for the freshest mark.
+      const across = (Math.random() + Math.random() - 1) * halfSpan;
+      const s = Math.random();
+      const alongX = (bi === burns.length - 1) ? -dx * (1 - s) : 0;
+      const alongY = (bi === burns.length - 1) ? -dy * (1 - s) : 0;
+
+      let px = burn.x + alongX + across + (Math.random() - 0.5) * FLAME_SPREAD * cw;
+      let py = topY + alongY + (Math.random() - 0.5) * lh * 0.3;
+
+      // Keep the fire on the text. Without this the spread band burns happily
+      // out into the empty margin past the end of a line, which looks like the
+      // page is on fire rather than the writing. The extent is the caret's
+      // VISUAL row, so on a wrapped line the fire stops at the wrap, not at the
+      // far end of the logical line. Half a character of overhang is allowed so
+      // the first and last glyphs aren't sliced down the middle.
+      const rl = burn.rowLeft, rr = burn.rowRight;
+      const haveRow = rl != null && rr != null;
+      let atEdge = false;
+      if (haveRow) {
+        const pad = cw * 0.5;
+        const lo = rl - pad;
+        const hi = rr + pad;
+        if (hi - lo < cw) {
+          // Blank row: nothing to burn but the caret's own cell.
+          px = Math.min(Math.max(px, burn.x - cw * 0.5), burn.x + cw * 0.5);
+        } else if (px < lo || px > hi) {
+          // Rather than clamping every stray particle onto the boundary (which
+          // stacks a bright wall of fire exactly on the last character), drop
+          // it. The band is simply thinner near an edge, which is what running
+          // out of fuel should look like.
+          continue;
+        }
+        // Is the caret itself sitting at the very start or end of the row?
+        atEdge = (burn.x <= rl + cw) || (burn.x >= rr - cw);
+      }
+
+      // At a row's first or last character there's no text to the side to carry
+      // the fire, so instead of stopping dead it licks DOWN over the row below -
+      // the way a flame at the edge of a burning sheet curls around it. Only a
+      // minority of particles do this, and only ones already near the edge, so
+      // it reads as a lick rather than as the next line also being alight.
+      if (atEdge && Math.random() < 0.28 && Math.abs(px - burn.x) < cw * 1.5) {
+        py += (burn.lh || lh) * (0.55 + Math.random() * 0.5);
+      }
+
+      // Uniform disc: sqrt(random) for magnitude, free angle. Plus a share of
+      // the caret's own velocity, so fire is dragged along a fast move.
+      const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul;
+      const ang = Math.random() * Math.PI * 2;
+
+      this.flameEmbers.push({
+        x: px, y: py,
+        vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
+        vy: mag * Math.sin(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+        // Upstream is a bare max*rand^n. The floor is ours: with no floor a
+        // large share of particles are born with a percent or two of max life
+        // and die inside a frame, spending the budget on specks nobody sees.
+        // The exponent still shapes the distribution; the floor just makes
+        // every particle last long enough to be drawn.
+        life: fadeMs * (0.1 + 0.9 * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.5 + 0.5 * strength),
+        maxLife: fadeMs,
+        // Older patches burn cooler, so a trail of lingering fire fades down
+        // the ramp as well as thinning out.
+        temp: Math.min(1, (0.55 + Math.random() * 0.45) * (0.45 + 0.55 * strength)),
+        cw,
+        // Buoyancy is per-particle so a change to Flame Height doesn't yank
+        // everything already in the air.
+        lift: heightMul,
+      });
+    }
   }
 
   // Emit small upward-rising fire embers when heat is high enough.
@@ -2735,6 +3324,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.smearQuadLastMoveT = 0;
     this.particles = [];
     this.flamePixels = [];
+    this.flameEmbers = [];
+    this.hotBurns = [];
     this.thunderbolts = [];
     this.glitch = null;
     this.stardust = [];
@@ -2779,6 +3370,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.trail = [];
     this.particles = [];
     this.flamePixels = [];
+    this.flameEmbers = [];
+    this.hotBurns = [];
     this.thunderbolts = [];
     this.glitch = null;
     this.stardust = [];
@@ -2981,6 +3574,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
           if (this.settings.speedDemon && this.settings.speedDemonSparks && this.animActive) {
             this.maybeSpawnSpeedDemonSparks();
           }
+          // Hot-head. The inertia/burn-mark tracker runs unconditionally so the
+          // caret history doesn't sit stale from wherever the caret was when
+          // the effect was last on and light a trail across the screen on the
+          // first frame after it's re-enabled.
+          this.updateHotHeadInertia();
+          if (this.styleFor("hotHead") && this.animActive) {
+            this.maybeSpawnHotHead();
+          }
           // Self-guarding (checks its own toggles and the idle window), and
           // must run before the gear decision below, which reads stardust
           // length to decide whether this frame may be skipped.
@@ -2998,6 +3599,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
             // flamePixels are aged inside draw(), so a skipped frame would
             // freeze a burst mid-flight rather than letting it expire.
             (this.flamePixels && this.flamePixels.length > 0) ||
+            // Same again for Hot-head's fire, aged in its own draw call.
+            (this.flameEmbers && this.flameEmbers.length > 0) ||
+            // ...and the effect itself, not just its live particles. While
+            // Hot-head is on the fire is continuously animating by definition,
+            // and the particle test alone has a hole in it: the instant the
+            // pool empties the loop would judge the frame static, drop to the
+            // 100ms idle heartbeat, and the next spawn would arrive as one
+            // lumpy burst instead of a steady flame.
+            (!!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT)) ||
             // Same reasoning: a bolt is aged and expired inside its draw call,
             // so a skipped frame would leave one frozen on screen.
             (this.thunderbolts && this.thunderbolts.length > 0) ||
@@ -3316,18 +3926,81 @@ module.exports = class CursorSmithPlugin extends Plugin {
           }
         }
 
+        // Horizontal extent of the rendered text on the caret's own VISUAL row.
+        //
+        // Hot-head needs this for two things: to keep fire off the empty part
+        // of a line, and to know when the caret is at a row's first or last
+        // character. The .cm-line element is the whole LOGICAL line, so its
+        // bounding box is useless once soft wrapping is on - it spans every
+        // wrapped row at once and is as wide as the editor. getClientRects()
+        // on the line's contents returns one rect per visual row instead, so
+        // picking the rect that vertically contains the caret gives the row the
+        // caret is actually sitting on, wrapped or not.
+        let _rowLeft = null, _rowRight = null;
+        if (lineEl) {
+          try {
+            const rng = doc.createRange();
+            rng.selectNodeContents(lineEl);
+            const rects = rng.getClientRects();
+            // Overlap against the caret's whole vertical span, not just whether
+            // the caret's midpoint falls inside a rect. Inline spans with a
+            // smaller font (inline code, sub/superscript, a smaller heading
+            // fragment) produce rects shorter than the caret, and a strict
+            // midpoint test misses them entirely - which is what left whole
+            // stretches of text with no fire on them.
+            let best = null;
+            let nearest = null, nearestD = Infinity;
+            for (let ri = 0; ri < rects.length; ri++) {
+              const r = rects[ri];
+              if (r.width <= 0 && r.height <= 0) continue;
+              const overlap = Math.min(c.bottom, r.bottom) - Math.max(c.top, r.top);
+              if (overlap > 0) {
+                // Several rects share a row (one per styled span), so grow the
+                // extent across all of them rather than taking the first.
+                if (!best) best = { left: r.left, right: r.right };
+                else { best.left = Math.min(best.left, r.left); best.right = Math.max(best.right, r.right); }
+              } else {
+                const d = Math.abs((r.top + r.bottom) / 2 - (c.top + c.bottom) / 2);
+                if (d < nearestD) { nearestD = d; nearest = r; }
+              }
+            }
+            if (!best && nearest && nearestD < (c.bottom - c.top)) {
+              // Nothing overlapped, but a row sits within a line-height of the
+              // caret - close enough to be the caret's own row on a display
+              // where the rects and the caret box don't quite line up.
+              best = { left: nearest.left, right: nearest.right };
+            }
+            if (best && best.right - best.left > 0.5) {
+              _rowLeft = best.left; _rowRight = best.right;
+            } else if (!(lineEl.textContent || "").trim()) {
+              // Genuinely blank line: a zero-width row is correct, and keeps the
+              // fire from spreading out into the empty margin.
+              _rowLeft = c.left; _rowRight = c.left;
+            } else {
+              // There IS text here but we couldn't resolve which row - leave the
+              // extent unknown so the fire simply isn't clamped. Falling back to
+              // a zero-width row instead (as this used to) squeezes the fire
+              // down to a single column and reads as the effect being broken on
+              // those lines.
+              _rowLeft = null; _rowRight = null;
+            }
+          } catch {
+            _rowLeft = null; _rowRight = null;
+          }
+        }
+
         sc = this._caretStyleCache = {
           doc: view.state.doc, pos, assoc: assocKey, t: nowMs,
           textColor: _textColor, fontSize: _fontSize, fontFamily: _fontFamily,
           fontWeight: _fontWeight, fontStyle: _fontStyleCss,
           letterSpacing: _letterSpacing, lineHeightStr: _lineHeightStr,
-          charWidth: _charWidth,
+          charWidth: _charWidth, rowLeft: _rowLeft, rowRight: _rowRight,
         };
       }
 
       const {
         textColor, fontSize, fontFamily, fontWeight, fontStyle: fontStyleCss,
-        letterSpacing, lineHeightStr, charWidth,
+        letterSpacing, lineHeightStr, charWidth, rowLeft, rowRight,
       } = sc;
 
       let finalWidth = charWidth;
@@ -3360,6 +4033,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         h: h,
         w: finalWidth,
         actualCharWidth: charWidth,
+        // Text extent of the caret's own visual row, in canvas coords (the
+        // canvas is position:fixed at 0,0 so client coords map straight over).
+        // Hot-head uses it to keep fire on the text and to spot row edges.
+        rowLeft, rowRight,
         char,
         textColor,
         fontSize,
@@ -3748,6 +4425,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         h: height,
         w: finalWidth,
         actualCharWidth: charWidth,
+        // No line-element geometry on this path (plain textarea /
+        // contenteditable); null means "unknown", and Hot-head falls back to
+        // burning around the caret without clamping.
+        rowLeft: null, rowRight: null,
         char,
         textColor: style.color || "#ffffff",
         fontSize,
@@ -4089,9 +4770,32 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.animActive.fontWeight = this.lastActive.fontWeight;
     this.animActive.fontStyle = this.lastActive.fontStyle;
     this.animActive.letterSpacing = this.lastActive.letterSpacing;
+    // Same reasoning again, and the reason Hot-head's fire vanished on some
+    // lines: animActive is spread once and reused for the whole glide, so the
+    // row extent stayed frozen at whatever line the caret happened to be on
+    // when animActive was first built. Hot-head clamps fire to that extent, so
+    // on any line whose text didn't overlap the stale one, every particle was
+    // dropped and no fire appeared at all.
+    this.animActive.rowLeft = this.lastActive.rowLeft;
+    this.animActive.rowRight = this.lastActive.rowRight;
   }
 
   commitMove(caret) {
+    // Speed Demon: a caret move that no heat-bumping keystroke accounts for -
+    // a mouse click, a Vim motion from another plugin, a jump to a search hit -
+    // still represents the user going somewhere, so it heats too. Scaled by how
+    // far the caret actually travelled and capped, so a click two characters
+    // over is a nudge and a leap across the file is a real bump, but neither
+    // can slam the cursor to white-hot in one go. Keyboard-driven moves are
+    // skipped here because onKeyDown already charged them.
+    if (this.settings.speedDemon && this.lastActive && caret) {
+      const keyed = this._heatKeyT && performance.now() - this._heatKeyT < 150;
+      if (!keyed) {
+        const dist = Math.hypot(caret.x - this.lastActive.x, caret.top - this.lastActive.top);
+        const bump = Math.min(0.12, dist / 900) * (this.settings.speedDemonSensitivity ?? 1);
+        this.heat = Math.min(1, this.heat + bump);
+      }
+    }
     // Record the position being left, and - if this move is a jump - the ghosts
     // bridging it to the destination, so the CRT/neon trail is continuous across
     // the leap the same commit it happens rather than one move later.
@@ -5199,6 +5903,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // and a mote crossing the caret shouldn't paint over it.
     this.drawStardust();
     this.drawFlamePixels();
+    // The fire sits behind the caret so the caret reads as the thing that is
+    // burning rather than a shape floating in front of a fire.
+    this.drawHotHead();
     // Behind the cursor, like every other effect here: the bolt lands ON the
     // caret, and the caret should be the thing you see it hit.
     this.drawThunderbolts();
@@ -5957,6 +6664,233 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       return true;
     });
+  }
+
+  // Hot-head's fire colour for a given temperature (0..1):
+  //
+  //   0.00  the cursor's own colour - the coolest fire is the colour of
+  //         whatever lit it, so the effect stays in the cursor's family
+  //   0.28  yellow
+  //   0.55  orange
+  //   0.80  red-orange
+  //   1.00  white-hot
+  //
+  // Separate from Speed Demon's heatColor, which drives the caret's own colour
+  // and has its own ramp. Interpolation is per-segment in HSV, not RGB: an RGB
+  // lerp from a cool cursor colour to yellow passes through grey, and fire is
+  // never desaturated. The ignition segment forces hues past 180 to climb, so a
+  // blue or violet cursor reddens on its way to yellow through magenta rather
+  // than flashing lime through cyan and green - shortest is not the same as
+  // most like fire.
+  hotFireColor(temp, baseHex) {
+    const h = Math.max(0, Math.min(1, temp));
+    const base = rgbToHsv(hexToRgbTuple(baseHex));
+
+    let i = 0;
+    while (i < HOT_STOP_POS.length - 2 && h > HOT_STOP_POS[i + 1]) i++;
+    const t0 = HOT_STOP_POS[i];
+    const t1 = HOT_STOP_POS[i + 1];
+    const t = t1 > t0 ? (h - t0) / (t1 - t0) : 0;
+    const f = t * 0.7 + easeInOutSine(t) * 0.3;
+
+    const from = i === 0 ? base : HOT_HSV[i - 1];
+    const to = HOT_HSV[i];
+    const arc = i === 0 && from[0] > 180 ? 1 : 0;
+    return rgbTupleToHex(hsvToRgb(lerpHsv(from, to, f, arc)));
+  }
+
+  // Hot-head's fire.
+  //
+  // Particles are points. They're binned into a fine square lattice, and how
+  // big each one is drawn is decided by its remaining life, not by any radius
+  // it carries: fresh ones cover a 2x2 patch of squares, middle-aged ones a
+  // single square, old ones a small dot inside one. Then they fade through
+  // discrete shade levels. Big blocks, then specks, then gone.
+  //
+  // The lattice is square and sized off the FONT, not off the character cell,
+  // and each square decides its own size stage and colour from the particles
+  // in it. Upstream bins into character cells and gives every sub-cell of a
+  // cell one shared glyph and colour, because a terminal can only put one
+  // character in one cell - reproducing that on a canvas made the grid far too
+  // legible, a lattice of character-sized rectangles that read as a tiling
+  // artefact instead of as fire.
+  //
+  // The lattice is anchored to absolute canvas coordinates, not to the caret.
+  // Particles move continuously but can only light whole squares, so they
+  // appear to step from square to square; anchor it to the caret and the whole
+  // fire slides smoothly with it, which just looks like a scaled-up bitmap.
+  drawHotHead() {
+    if (!this.flameEmbers.length) return;
+    const ctx = this.ctx;
+    const now = performance.now();
+    const active = this.animActive;
+    const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1))
+      * Math.max(0, Math.min(1, this.styleFor("hotHeadOpacity") ?? 1));
+    const maxLife = Math.max(120, this.styleFor("hotHeadFade") ?? FLAME_MAX_LIFETIME);
+
+    const dtMs = Math.max(1, Math.min(100, now - (this._hotDrawT || now - 17)));
+    this._hotDrawT = now;
+    const dt = dtMs / 1000;
+
+    // Upstream applies damping per 17ms frame; correcting by the real interval
+    // keeps the motion identical at 30, 60 and 144fps.
+    const damp = Math.exp(Math.log(1 - FLAME_DAMPING) * (dtMs / 17));
+
+    // Grid square, from the font rather than the character cell, so it stays
+    // square and stays small enough not to draw attention to itself.
+    const fontSize = (active && active.fontSize) || 16;
+    const px = Math.max(HOT_PX_MIN, Math.min(HOT_PX_MAX, Math.round(fontSize / HOT_PX_DIVISOR)));
+
+    const cells = new Map();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    // `stage` is 2 for a square belonging to a fresh 2x2 block, 1 for a lone
+    // pixel, 0 for a spent dot. Kept per square (highest wins) so opacity can
+    // key off how big the thing being drawn actually is.
+    const mark = (gx, gy, life, temp, stage) => {
+      const key = gy * 100000 + gx;
+      const c = cells.get(key);
+      if (c) {
+        if (life > c.life) c.life = life;
+        if (stage > c.stage) c.stage = stage;
+        c.tw += life * temp;
+        c.lw += life;
+      } else {
+        cells.set(key, { gx, gy, life, stage, tw: life * temp, lw: life });
+      }
+    };
+
+    this.flameEmbers = this.flameEmbers.filter((p) => {
+      p.life -= dtMs;
+      if (p.life <= 0) return false;
+
+      const pcw = p.cw || 8;
+      const lift = p.lift || 1;
+      // Buoyancy plus per-frame turbulence, then damping - upstream's
+      // update_particles with gravity negated so the fire rises.
+      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5)) * pcw * dt) * damp;
+      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5) * pcw * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+
+      const frac = p.life / (p.maxLife || maxLife);
+      const gx = Math.floor(p.x / px);
+      const gy = Math.floor(p.y / px);
+      const temp = Math.max(0, Math.min(1, (p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA)));
+
+      if (frac > HOT_STAGE_BLOCK) {
+        // Fresh: a 2x2 patch. Marking four squares rather than drawing one big
+        // rect keeps everything on the same lattice, so a cluster of fresh
+        // particles merges into one solid mass instead of overlapping quads.
+        mark(gx, gy, p.life, temp, 2);
+        mark(gx + 1, gy, p.life, temp, 2);
+        mark(gx, gy + 1, p.life, temp, 2);
+        mark(gx + 1, gy + 1, p.life, temp, 2);
+      } else {
+        mark(gx, gy, p.life, temp, frac > HOT_STAGE_PIXEL ? 1 : 0);
+      }
+      return true;
+    });
+
+    if (!cells.size) return;
+
+    // Flat mode paints every level in the cursor's own colour, so the fire is
+    // one colour varying only in brightness. Off, it runs the heat gradient and
+    // the colour tells you how hot that patch is.
+    const base = this.getBaseColor();
+    const flat = !!this.styleFor("hotHeadFlat");
+    const paletteKey = base + (flat ? "|flat" : "");
+    if (this._hotPaletteKey !== paletteKey) {
+      this._hotPaletteKey = paletteKey;
+      this._hotPalette = [];
+      const baseHsv = rgbToHsv(hexToRgbTuple(base));
+      for (let j = 0; j <= FLAME_LEVELS; j++) {
+        const u = j / FLAME_LEVELS;
+        if (flat) {
+          // "Use cursor color" doesn't mean one flat colour. A single RGB
+          // triple repeated across every particle reads as a stencil rather
+          // than as fire: real flame varies moment to moment even when it's all
+          // one hue family. So the flat palette is still a ramp, just one built
+          // around the cursor's own colour instead of around yellow-orange-red.
+          //
+          // Temperature already varies per particle (it's jittered at spawn and
+          // decays with age), so spreading hue, saturation and value across the
+          // palette index gives every particle its own tint for free, with no
+          // extra per-particle state: cool embers sit darker, duller and a few
+          // degrees to one side of the cursor's hue, hot ones brighter, more
+          // saturated and a few degrees to the other.
+          this._hotPalette.push(hsvToRgb([
+            baseHsv[0] + (u - 0.5) * HOT_FLAT_HUE_SPAN,
+            Math.max(0, Math.min(1, baseHsv[1] * (HOT_FLAT_SAT_LO + (HOT_FLAT_SAT_HI - HOT_FLAT_SAT_LO) * u))),
+            Math.max(0, Math.min(1, baseHsv[2] * (HOT_FLAT_VAL_LO + (HOT_FLAT_VAL_HI - HOT_FLAT_VAL_LO) * u))),
+          ]));
+        } else {
+          this._hotPalette.push(hexToRgbTuple(this.hotFireColor(u, base)));
+        }
+      }
+    }
+    const palette = this._hotPalette;
+
+    const dotSize = Math.max(1, Math.round(px * HOT_DOT_SCALE));
+
+    ctx.save();
+    for (const c of cells.values()) {
+      const frac = Math.max(0, Math.min(1, c.life / maxLife));
+
+      // Brightness is normalised WITHIN the square's own size stage, not across
+      // the whole lifetime. Measured across the lifetime, a dot is doubly
+      // penalised - it is small AND, by definition, near the end of its life -
+      // so it lands at a few percent alpha and effectively disappears. Scaling
+      // each stage over its own span means a fresh dot is a proper dot that
+      // then fades, and the size tiers stay a deliberate hierarchy rather than
+      // an accident of where the thresholds fell.
+      let shade;
+      if (c.stage === 2) shade = (frac - HOT_STAGE_BLOCK) / (1 - HOT_STAGE_BLOCK);
+      else if (c.stage === 1) shade = (frac - HOT_STAGE_PIXEL) / (HOT_STAGE_BLOCK - HOT_STAGE_PIXEL);
+      else shade = frac / HOT_STAGE_PIXEL;
+      shade = Math.max(0, Math.min(1, shade));
+      const level = Math.round(shade * FLAME_LEVELS);
+      if (level < 1) continue;
+
+      const temp = c.lw > 0 ? c.tw / c.lw : 0;
+      const [r, g, b] = palette[Math.round(Math.max(0, Math.min(1, temp)) * FLAME_LEVELS)];
+
+      // Opacity by how big the thing is. Big fresh blocks are the body of the
+      // fire and read as burning matter, so they carry nearly full ink; lone
+      // pixels sit back a little; spent dots get a fraction, because a generous
+      // alpha on something that small turns it into a bright saturated point -
+      // an LED, not a pixel. Three tiers rather than two, so a block reads as
+      // more solid than a single pixel beside it and not merely bigger.
+      const isDot = c.stage === 0;
+      const lvl = level / FLAME_LEVELS;
+      const alpha = (c.stage === 2 ? 0.72 + 0.28 * lvl
+        : c.stage === 1 ? 0.50 + 0.26 * lvl
+        : 0.20 + 0.22 * lvl) * opacity;
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+
+      const x0 = c.gx * px;
+      const y0 = c.gy * px;
+      if (isDot) {
+        const off = Math.round((px - dotSize) / 2);
+        ctx.fillRect(x0 + off, y0 + off, dotSize, dotSize);
+      } else {
+        // Whole-pixel lattice already, so no rounding needed - adjacent squares
+        // share an exact edge and runs of them tile seamlessly, with no
+        // antialiased fringes to make this look like sprites.
+        ctx.fillRect(x0, y0, px, px);
+      }
+    }
+    ctx.restore();
+
+    if (minX <= maxX) {
+      const pad = px * 3;
+      this._markDirty(minX - pad, minY - pad, (maxX - minX) + pad * 2, (maxY - minY) + pad * 2);
+    }
   }
 
   // Age and paint the idle motes.
@@ -7630,7 +8564,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Speed Demon")
-        .setDesc("The cursor heats up as you type — dull and grey when idle, through your own color to orange, red and finally white-hot — then cools back down over a few seconds of quiet.")
+        .setDesc("The cursor heats up as you type or move around — dull and grey when idle, through your own color to orange, red and finally white-hot — then cools back down over a few seconds of quiet.")
         .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(setAndRedraw("speedDemon")));
       if (get("speedDemon")) {
         const g = this.subGroup(body);
@@ -7646,9 +8580,43 @@ class CursorSmithSettingTab extends PluginSettingTab {
             .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
             .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
         }
+        new Setting(g).setName("Keep Cursor Color")
+          .setDesc("Stop the cursor itself changing color as it heats up — it stays exactly the color you picked, and only the sparks react to how fast you're going.")
+          .addToggle((toggle) => toggle.setValue(get("speedDemonNoCursorHeat") ?? false).onChange(setAndRedraw("speedDemonNoCursorHeat")));
         new Setting(g).setName("Sensitivity")
-          .setDesc("How fast typing heats the cursor up. Higher reaches white-hot in fewer keystrokes.")
+          .setDesc("How fast typing and caret movement heat the cursor up. Higher reaches white-hot in fewer keystrokes.")
           .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
+      }
+
+      new Setting(body).setName("Hot-head")
+        .setDesc("Sets the text you're working on alight. Fire starts as solid pixel blocks on the characters, breaks into rising specks as it ages, then fades — and text keeps smouldering for a moment after the cursor has moved off it.")
+        .addToggle((toggle) => toggle.setValue(!!get("hotHead")).onChange(setAndRedraw("hotHead")));
+      if (get("hotHead")) {
+        const gh = this.subGroup(body);
+        new Setting(gh).setName("Fire Quantity")
+          .setDesc("How much fire is emitted. 0 puts it out without turning Hot-head off; higher burns thicker.")
+          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("hotHeadQuantity") ?? 1).setDynamicTooltip().onChange(set("hotHeadQuantity")));
+        new Setting(gh).setName("Fire Spread")
+          .setDesc("How much of the text around the cursor catches, in characters — and how long a patch keeps burning once the cursor has moved past it. 0 burns only the cursor's own column, briefly.")
+          .addSlider((s) => s.setLimits(0, 14, 1).setValue(get("hotHeadSpread") ?? 4).setDynamicTooltip().onChange(set("hotHeadSpread")));
+        new Setting(gh).setName("Trail Over Text")
+          .setDesc("Extra fire laid along the path the cursor just travelled, so a fast move scorches what it crossed. 0 keeps the fire where the cursor stops.")
+          .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("hotHeadTrail") ?? 6).setDynamicTooltip().onChange(set("hotHeadTrail")));
+        new Setting(gh).setName("Flame Height")
+          .setDesc("How high the flames climb before they burn out.")
+          .addSlider((s) => s.setLimits(0.15, 1.5, 0.05).setValue(get("hotHeadHeight") ?? 0.55).setDynamicTooltip().onChange(set("hotHeadHeight")));
+        new Setting(gh).setName("Fade Time")
+          .setDesc("How long a single fire particle lasts, in milliseconds. Longer makes lazier, smokier flames; shorter keeps the fire tight to the text.")
+          .addSlider((s) => s.setLimits(200, 1600, 20).setValue(get("hotHeadFade") ?? 620).setDynamicTooltip().onChange(set("hotHeadFade")));
+        new Setting(gh).setName("Idle Timeout")
+          .setDesc("How long the cursor can sit still before the fire stops being fed and burns out. It relights as soon as you move again. 0 keeps it burning forever.")
+          .addSlider((s) => s.setLimits(0, 6000, 100).setValue(get("hotHeadIdleMs") ?? 1500).setDynamicTooltip().onChange(set("hotHeadIdleMs")));
+        new Setting(gh).setName("Fire Opacity")
+          .setDesc("How solid the fire is, independent of the cursor's own opacity.")
+          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("hotHeadOpacity") ?? 1).setDynamicTooltip().onChange(set("hotHeadOpacity")));
+        new Setting(gh).setName("Use Cursor Color")
+          .setDesc("Paint the fire in the cursor's own color instead of the yellow-orange-red-white heat gradient. It still varies in brightness, just not in hue.")
+          .addToggle((toggle) => toggle.setValue(!!get("hotHeadFlat")).onChange(setAndRedraw("hotHeadFlat")));
       }
 
       renderTorchToggleSetting(body);

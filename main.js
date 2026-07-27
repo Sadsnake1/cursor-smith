@@ -30,11 +30,11 @@ const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 //    this array. Reordering or removing an entry silently reinterprets every
 //    code ever shared. Add to the end; never insert.
 //
-//  • ADDING AN EFFECT MEANS SIX EDITS, not two. spawn + draw are the obvious
-//    ones. Also: reset the pool in all three places (constructor,
-//    enableCanvasEngine, disableCanvasEngine), add it to the `animating`
-//    check in the frame governor or it will freeze mid-animation, call its
-//    draw from draw(), and _markDirty its region or it leaves ghosts.
+//  • ADDING AN EFFECT MEANS FIVE EDITS, not two. spawn + draw are the obvious
+//    ones. Also: reset the pool in _resetEngineState (ONE place now - it used
+//    to be three hand-copied lists, and they had already drifted apart), add
+//    it to _isAnimating or it will freeze mid-animation, call its draw from
+//    draw(), and _markDirty its region or it leaves ghosts.
 //
 //  • GENERATE AT SPAWN, ADVANCE CLOSED-FORM AT DRAW. Every effect bakes its
 //    randomness once and animates as a pure function of elapsed time. Rolling
@@ -43,7 +43,14 @@ const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 //
 //  • NO CSS ANIMATIONS on cursor layers, in styles.css or injectStyles. They
 //    run on the compositor, outside the frame governor, and hold the display
-//    at full refresh regardless of what the governor decided.
+//    at full refresh regardless of what the governor decided. Anything that
+//    must pulse is written as a custom property from a tick instead - the
+//    torch's blink pulse and its candle flicker are both done that way.
+//
+//  • ANYTHING PUT INTO A DOCUMENT MUST COME BACK OUT in unregisterDocument -
+//    listeners, body classes, and the injected stylesheet. Obsidian updates a
+//    plugin by unloading and reloading it WITHOUT a window reload, so anything
+//    left behind outlives the version that created it.
 //
 //  • A BLEND INSIDE THE CURSOR WRAPPER composites against the wrapper, not the
 //    editor - the wrapper is a stacking context. Anything that must blend with
@@ -64,8 +71,9 @@ const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 //
 // TESTS: `node test.js` runs the whole file outside Obsidian with the Obsidian
 // API stubbed (harness.js), plus a settings-panel render harness
-// (panel_harness.js). 163 assertions covering migration, share codes, colour
-// precedence, effect physics, and which rows the panel actually builds.
+// (panel_harness.js). 228 assertions covering migration, share codes, colour
+// precedence, effect physics, the frame governor's gear decision, the engine
+// state reset, and which rows the panel actually builds.
 //
 //  • A settings row that throws while being built removes ITSELF AND EVERY ROW
 //    AFTER IT from the panel, silently. renderLookSettings has no `plugin`
@@ -170,6 +178,20 @@ const FIREWORK_MIN_GAP_MS = 70;
 // constant value - so this doesn't need display rate, and 33ms across a fade of
 // a few hundred ms is far more steps than a slow radius change can show.
 const TORCH_PULSE_FRAME_MS = 33;
+
+// Candle flicker. Three sine terms at deliberately incommensurate rates (in
+// rad/s) so the sum never repeats on any period a reader could notice; their
+// weights sum to 1, so the combined signal spans -1..1 exactly and the amount
+// slider maps straight onto "share of base intensity".
+//
+// A closed-form function of wall-clock time rather than per-frame randomness,
+// for the same reason every effect in this file bakes its randomness at spawn:
+// a value re-rolled each frame changes shape with the frame rate, and this runs
+// under a governor that deliberately varies it. Sampling this at 30fps and at
+// 60fps gives the same flame, just resolved more finely.
+const TORCH_FLICKER_RATES = [8.7, 13.1, 21.3];
+const TORCH_FLICKER_PHASES = [0, 1.7, 4.2];
+const TORCH_FLICKER_WEIGHTS = [0.5, 0.3, 0.2];
 
 // Ceiling on how far Smooth Movement's adaptive catch-up is allowed to stiffen
 // the smear's leading corners. See updateSmearQuad.
@@ -276,10 +298,21 @@ const DEFAULT_SETTINGS = {
   overlaySpareSidebars: true,
   overlayFollowMode: "caret", // caret | mouse | auto
   overlayRadius: 250,
-  overlayDarkness: 0.7,
-  overlayIntensity: 0.1,
+  // Tuned against 0xatrilla/obsidian-torch-cursor, which reads as a genuine
+  // torch rather than a dimmer: a nearly-black room (it ships 0.97) with a
+  // strong warm core (it ships 1.0). The old 0.7/0.1 pair was a gentle vignette
+  // with a barely-there tint - and the tint could only ever darken, since it
+  // was the multiply layer doing it. Existing installs keep their saved values;
+  // this only moves new ones.
+  overlayDarkness: 0.92,
+  overlayIntensity: 0.5,
   overlayColor: "#ff963c",
-  overlayFlicker: false,
+  // Candle flicker. The KEY never went away when the effect was removed - it
+  // is still at its original index in LOOK_KEYS - so every share code and saved
+  // preset in the wild already carries a value for it and lands on the restored
+  // feature with no migration at all. The amount dial is new, and is appended.
+  overlayFlicker: true,
+  overlayFlickerAmount: 0.3, // 0.05..1; share of base intensity the flame swings
   // Blink sync: the spotlight breathes with the caret's blink, contracting as
   // the caret fades out and opening back up as it returns. Off by default -
   // see the note in the torch tick, it is the one torch option that costs
@@ -287,6 +320,12 @@ const DEFAULT_SETTINGS = {
   overlayBlinkSync: false,
   overlayBlinkDepth: 0.25,   // 0.05..0.6; how far the light closes at the darkest point
   overlaySpeed: 0.22, // lerp factor: how fast the torch chases its target
+
+  // Honour the OS "reduce motion" preference by switching the moving effects
+  // off. Global rather than a LOOK key on purpose: it is an accessibility
+  // preference about this machine, not part of a look, so it must not travel
+  // in a share code or get overridden per Vim mode.
+  respectReducedMotion: true,
 
   // --- global caret properties ---
   caretWidthPx: 2,         
@@ -598,6 +637,12 @@ const LOOK_KEYS = [
   "speedDemonGradient",
   "speedHeatDark1", "speedHeatDark2", "speedHeatDark3", "speedHeatDark4",
   "speedHeatLight1", "speedHeatLight2", "speedHeatLight3", "speedHeatLight4",
+  // Torch candle flicker's depth dial. `overlayFlicker` itself is NOT here: it
+  // is still sitting at its original index above, where it stayed as a
+  // tombstone while the effect was gone. Reusing it rather than appending a new
+  // gate is what lets an old share code turn the restored effect straight back
+  // on instead of silently dropping the field.
+  "overlayFlickerAmount",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1553,6 +1598,69 @@ function invertColor(colorStr) {
   return `rgb(${255 - r}, ${255 - g}, ${255 - b})`;
 }
 
+// Candle flicker, as a multiplier on the torch's base glow strength.
+//
+// Returns 1 with amount 0, and swings within 1 ± amount otherwise - so at the
+// maximum the flame drops to nothing and doubles, and at the default 0.35 it
+// breathes gently either side of the level the Glow Strength slider set.
+//
+// Pure, closed-form, and driven by wall clock: it is sampled from the torch
+// tick under the frame governor, NOT from a CSS animation. The previous
+// implementation was a keyframe animation, which runs on the compositor
+// entirely outside the governor and therefore pinned the display at full
+// refresh rate for as long as the torch was lit, in whichever gear the loops
+// had otherwise chosen. See the notes in injectStyles and styles.css.
+function torchFlickerScale(nowMs, amount) {
+  const a = Math.max(0, Math.min(1, amount));
+  if (a === 0) return 1;
+  const t = nowMs / 1000;
+  let n = 0;
+  for (let i = 0; i < TORCH_FLICKER_RATES.length; i++) {
+    n += Math.sin(t * TORCH_FLICKER_RATES[i] + TORCH_FLICKER_PHASES[i]) * TORCH_FLICKER_WEIGHTS[i];
+  }
+  // Dips only, never brightens: a candle gutters down from steady and comes
+  // back, it does not flare above its own level. (The reference's keyframes run
+  // brightness 1.0 down to 0.75 and back, never above 1.) Mapping the -1..1 sum
+  // onto 1-a..1 rather than 1-a..1+a is the difference between a flame and a
+  // throbbing lamp.
+  return 1 - a * (1 - n) / 2;
+}
+
+// prefers-reduced-motion, applied as ONE gate over the effective settings
+// rather than as a check inside each effect. Every read in both render loops
+// goes through effectiveSettings, so suppressing keys here reaches the spawn
+// sites, the draw calls, the frame governor's animating test and the settings
+// the panel describes, all at once - and an effect added later is covered by
+// whichever of these keys gates it, with no new plumbing.
+//
+// Mutates in place: it only ever runs on the freshly-merged copy inside
+// effectiveSettings, never on this.settings, so nothing here is persisted and
+// the panel keeps showing what the user actually chose.
+//
+// The line drawn is movement and emission, not the cursor's existence. A caret
+// that is a different colour or shape is not motion, and blinking is left alone
+// - it is the platform-standard behaviour of every text caret, it is well under
+// the flash thresholds, and someone who wants it gone has a switch for it.
+const REDUCED_MOTION_OFF_KEYS = [
+  "smoothEnabled",       // the cursor gliding to its destination
+  "smear",               // corner springs
+  "popEffects",          // letters, disintegration, thunderstrike, fireworks
+  "flameTrail",          // pixel trail, including the jump streak
+  "stardustEnabled",     // ambient drift
+  "hotHead",             // continuous fire
+  "speedDemonSparks",    // emission; the heat colour itself is not motion
+  "crtGlitch",           // whole-cursor displacement bursts
+  "energyEffect",        // wall-clock shimmer inside the cursor body
+  "blinkBreathing",      // size oscillation
+  "overlayBlinkSync",    // torch radius pulse
+  "overlayFlicker",      // torch candle flicker
+];
+
+function applyReducedMotion(obj) {
+  for (const k of REDUCED_MOTION_OFF_KEYS) obj[k] = false;
+  return obj;
+}
+
 function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
@@ -1684,102 +1792,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
 
 
-    // Dynamic Multi-Window Tracking Engine
-    this._cleanups = [];
+    // Dynamic Multi-Window Tracking Engine. Cleanups are keyed by the document
+    // they belong to so a closed pop-out window can be unregistered
+    // individually - see registerWindowEvents / unregisterDocument.
+    this._docCleanups = new Map();
     this.registeredDocuments = new Set();
 
     // Engine Core States
     this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
-    this.trail = []; 
-    this.particles = []; 
-    this.flamePixels = [];
-    // Hot-head's fire. Deliberately NOT flamePixels: those are sprites with a
-    // per-particle colour and size, while these are points binned into a shared
-    // pixel lattice (see drawHotHead), so they have to be rasterised as a set
-    // rather than mixed in with particles that paint themselves.
-    this.flameEmbers = [];
-    // Patches of text currently alight, each decaying from the moment the caret
-    // leaves it - this is what keeps text burning after the caret has moved on.
-    this.hotBurns = [];
-    // Last caret sample and smoothed velocity, so particles can inherit caret
-    // motion as drag. See updateHotHeadInertia.
-    this._hotPrev = null;
-    this._hotVel = { x: 0, y: 0 };
-    this.thunderbolts = [];
-    // Fireworks. Its own pool rather than flamePixels, for the same reason
-    // thunderbolts have one: a shell is a two-phase animation (climb, then
-    // burst) whose sparks don't exist yet when it launches, so it can't be
-    // expressed as a bag of independent particles that each paint themselves.
-    this.fireworks = [];
-    this._lastFireworkT = 0;
-    // Signal Glitch: at most ONE burst is ever live (a second jump during a
-    // burst restarts it rather than stacking), so this is a single nullable
-    // record instead of a pool.
-    this.glitch = null;
-    // Stardust lives in its own pool rather than joining flamePixels,
-    // because the frame governor treats a non-empty flamePixels as "something
-    // is in motion" and latches the HOT (60fps) gear. Stardust is emitted
-    // precisely when the user is idle and can stay alive indefinitely, so
-    // sharing that pool would pin the display at full refresh rate for as long
-    // as the effect is switched on - the exact failure this file's power work
-    // exists to avoid. See the gear decision in the canvas tick: stardust asks
-    // for the WARM (30fps) gear instead, which is plenty for a slow drift.
-    this.stardust = [];
-    this._lastStardustT = 0;
-    // Bracket Tether: the rules to paint this frame (one per covered line),
-    // plus the cache key that lets the text scan behind them skip most frames.
-    this.bracketTether = null;
-    this._tetherKey = null;
-    this._tetherFrom = -1;
-    this._tetherTo = -1;
-    // Second cache, for the line-box measurement rather than the text scan:
-    // the rules themselves, the span they were measured for, and the two
-    // endpoint coordinates they were measured against (see tetherSegments).
-    this._tetherSegs = null;
-    this._tetherSegKey = null;
-    this._tetherAnchorA = null;
-    this._tetherAnchorB = null;
-    this.secondaryCarets = []; // dashed 2px vertical lines for CM6 multi-cursor mode
-    this.lastActive = null; 
-    this.pending = null; 
-    this.smearQuad = null;
-    // The corners actually painted: smearQuad itself, or a tapered copy of it.
-    // Kept apart from the quad because the quad is the spring's *state*, and a
-    // tapered corner fed back into it would spring toward the narrowed shape -
-    // the taper would fight the very lag it's drawn from.
-    this.smearShape = null;
-    this._taperBuf = null;
-    // Unit vector of the last real caret movement, held between frames so the
-    // tail keeps pointing the right way while the quad catches up after a stop.
-    this._smearDir = null;
-    this.smearCenterPrev = null;
-    this._smearMoving = false;
-    this._smearDtT = 0;
-    this.smearQuadLastMoveT = 0;
 
-    this.animActive = null;
-    this.lastMoveTime = 0;
-    this.typingSpeedMod = 1;
-    this._catchUpBoost = 1;
-
-    // Speed Demon heat: 0..1, ramps on keystrokes, decays per frame in the
-    // canvas tick. Kept separate from typingSpeedMod (which drives smooth-
-    // movement catch-up) because the two ease with very different curves
-    // and share no math beyond "user is typing".
-    this.heat = 0;
-    this._lastSparkT = 0;
-
-    // Pop Effects rainbow: a running hue that advances each time any of the
-    // three effects fires (rather than picking randomly) so consecutive pops
-    // step smoothly around the color wheel instead of jumping around.
-    //
-    // Deliberately ONE hue shared by letters, bolts and fireworks rather than
-    // three counters: pressing Space mid-word should continue the sweep the
-    // letters either side of it are on, not start a second, unrelated one that
-    // happens to be running at the same time.
-    this._popRainbowHue = 0;
+    // Every pool, cache and derived caret/smear value the engine builds up as
+    // it runs. ONE function, called from here, enableCanvasEngine() and
+    // disableCanvasEngine(), because keeping three hand-written lists in sync
+    // is an invariant that fails silently and had already drifted: `trail`,
+    // `lastActive` and the firework/stardust rate stamps were reset in two of
+    // the three places, and `_hotPrev`, `_taperBuf`, `heat` and the tether
+    // anchors in only one. Adding an effect now touches one reset site, not
+    // three.
+    this._resetEngineState();
 
     this.overlay = null;
     this.modalObserver = null;
@@ -1802,6 +1834,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._canvasBlend = "";   // last mix-blend-mode written (see applyCanvasBlend)
     this._lastOverlayRect = "";
     this._lastTorchRadius = -1;
+    this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
+    this._lastGlowRect = "";
+    this._lastGlowPos = "";
     this._chromeCache = null;
     // Per-caret computed-style/metric cache for cmCaretCoords (see there).
     this._caretStyleCache = null;
@@ -1850,6 +1885,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // one memoized mode read per tick.
     this.registerInterval(window.setInterval(() => this.updateVimStatusBar(), 250));
 
+    // Pop-out windows: drop a document's listeners and stylesheet as its window
+    // closes. Without this, registeredDocuments only ever grew - every closed
+    // pop-out stayed in the set with a live cleanup closure pinning its
+    // `document` and `window`, and applyBodyClasses / disableCanvasEngine /
+    // disableTorchOverlay went on iterating detached documents for the rest of
+    // the session.
+    this.registerEvent(
+      this.app.workspace.on("window-close", (_leaf, win) => {
+        const doc = (win && win.document) || (_leaf && _leaf.doc) || null;
+        if (doc) this.unregisterDocument(doc);
+      })
+    );
+
     this.app.workspace.onLayoutReady(() => {
       // Honor the auto-control setting on startup: if Vim cursors are on and
       // we're meant to drive Obsidian's Vim keybindings, make sure they're on.
@@ -1875,16 +1923,54 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.vimStatusEl.remove();
       this.vimStatusEl = null;
     }
-    if (this._cleanups) {
-      for (const cleanup of this._cleanups) cleanup();
-      this._cleanups = [];
+    // Unregister every document we ever attached to. Iterating a copy because
+    // unregisterDocument mutates the map.
+    for (const doc of Array.from(this._docCleanups.keys())) {
+      this.unregisterDocument(doc);
     }
+  }
+
+  // Detach everything this plugin put into one document: its listeners and its
+  // injected stylesheet. Called per pop-out window as it closes, and for every
+  // registered document on unload.
+  //
+  // The stylesheet removal is the part that matters beyond tidiness. Obsidian
+  // updates a plugin by unloading and reloading it WITHOUT reloading the
+  // window, so a stylesheet left behind by the previous version survives into
+  // the new one - and injectStyles() keys on a fixed element id, so the new
+  // version would find the old element, return early, and quietly run its
+  // settings-driven torch values against the previous release's CSS until the
+  // user restarted Obsidian. That is the same silent-cascade failure the torch
+  // rules are already covered in warnings about, just arriving by a different
+  // route.
+  unregisterDocument(doc) {
+    const cleanup = this._docCleanups.get(doc);
+    if (cleanup) {
+      try { cleanup(); } catch (e) { console.error("[cursor-smith] document cleanup failed:", e); }
+      this._docCleanups.delete(doc);
+    }
+    this.registeredDocuments.delete(doc);
+    try {
+      doc.getElementById("cursor-smith-dynamic-styles")?.remove();
+      doc.querySelector(".torch-cursor-glow")?.remove();
+      doc.body?.classList.remove(
+        "retro-box-cursor-active", "retro-box-cursor-hide-native", "torch-cursor-active");
+    } catch (e) { /* document already torn down with its window */ }
   }
 
   injectStyles(doc) {
     const id = "cursor-smith-dynamic-styles";
-    if (doc.getElementById(id)) return;
-    
+    // Replace, never skip. This used to `return` when an element with this id
+    // already existed, which is correct for the every-frame case it was written
+    // for and wrong for the one that matters: Obsidian updates a plugin by
+    // unloading and reloading it in place, without a window reload. The old
+    // version's stylesheet was never removed (nothing removed it - see
+    // unregisterDocument, which does now), so the NEW version found it, took
+    // this early return, and ran with the previous release's torch CSS until
+    // Obsidian was restarted. Rewriting the element is cheap and this only
+    // runs when a canvas or overlay is (re)built, not per frame.
+    doc.getElementById(id)?.remove();
+
     const styleEl = doc.createElement("style");
     styleEl.id = id;
     styleEl.textContent = `
@@ -1936,31 +2022,92 @@ module.exports = class CursorSmithPlugin extends Plugin {
         width: 0;
         height: 0;
         z-index: 9990;
+        /* NO mix-blend-mode. This used to be multiply with a warm colour at the
+           centre stop, which is why the spotlight read as a muddy brown wash
+           rather than as a dark room: multiply can only ever darken, so a warm
+           "tint" walks the page toward brown instead of lighting it. Plain
+           black with alpha, composited normally, is what the reference does -
+           and it is one less blend pass per frame.
+
+           Four stops, not two. The centre is fully transparent, then the
+           darkness ramps 0.52 / 0.91 / 1.0 of the setting across 40% / 70% /
+           100% of the radius. A two-stop ramp puts the halfway point of the
+           fade at the halfway point of the circle, which reads as a soft
+           vignette; this holds the middle of the pool nearly clear and then
+           closes fast, which is what makes it read as a pool of light with an
+           edge. */
         background: radial-gradient(
           circle var(--torch-radius, 250px) at var(--torch-x, 50%) var(--torch-y, 50%),
-          rgba(var(--torch-warm, 255, 150, 60), var(--torch-intensity, 0.1)) 0%,
-          rgba(0, 0, 0, var(--torch-darkness, 0.7)) 100%
+          transparent 0%,
+          rgba(0, 0, 0, calc(var(--torch-darkness, 0.92) * 0.52)) 40%,
+          rgba(0, 0, 0, calc(var(--torch-darkness, 0.92) * 0.91)) 70%,
+          rgba(0, 0, 0, var(--torch-darkness, 0.92)) 100%
         );
-        mix-blend-mode: multiply;
         opacity: 1;
         transition: opacity 0.2s ease;
+      }
+      /* The warm core, as its own layer. It CANNOT live inside
+         .torch-cursor-overlay: that element carries mix-blend-mode: multiply
+         and a z-index, so it is a stacking context, and a screen blend nested
+         inside it would composite against the overlay's own gradient instead
+         of against the editor - visible effect nil, cost one blend pass per
+         frame. See ARCHITECTURE.md, "Blending against the editor".
+
+         multiply can only ever darken: multiplying by a warm colour walks the
+         page toward brown, it does not add light. Actual glow needs an
+         additive pass, which is what this is, sitting one z-index above the
+         darkness so it lights what the overlay just dimmed.
+
+         Built and destroyed by the torch tick, only while Glow Strength > 0 -
+         a blended layer costs a re-composite of everything beneath it whether
+         or not it is showing anything. */
+      .torch-cursor-glow {
+        position: fixed;
+        pointer-events: none;
+        top: 0;
+        left: 0;
+        width: 0;
+        height: 0;
+        z-index: 9991;
+        mix-blend-mode: screen;
+        /* Glow Strength scales the whole layer rather than the gradient's
+           stops, so the falloff shape stays put as the slider moves and the
+           flicker is one number to multiply in. */
+        opacity: var(--torch-glow, 0);
+        /* 0.6x the spotlight radius: the warm core sits INSIDE the lit circle.
+           A halo wider than the pool was the wrong shape - it put light where
+           the overlay had already gone dark, which just greyed the edge. */
+        background: radial-gradient(
+          circle calc(var(--torch-radius, 250px) * 0.6) at var(--torch-x, 50%) var(--torch-y, 50%),
+          rgba(var(--torch-warm, 255, 150, 60), 0.4),
+          rgba(var(--torch-warm, 255, 150, 60), 0.12) 45%,
+          transparent 75%
+        );
+      }
+      .torch-cursor-glow.torch-cursor-hidden {
+        opacity: 0 !important;
+        display: none !important;
       }
       .torch-cursor-overlay.torch-cursor-hidden {
         opacity: 0 !important;
         display: none !important;
       }
-      /* The candle-flicker keyframe animation was removed deliberately. A CSS
-         animation is driven by the compositor, entirely outside the rAF frame
-         governor below - so it pinned the display to full refresh rate forever
+      /* Candle flicker LIVES IN THE TORCH TICK, which writes --torch-intensity
+         under the frame governor. It used to be a keyframe animation here, and
+         that is why the warning below exists rather than the feature.
+
+         A CSS animation is driven by the compositor, entirely outside the rAF
+         frame governor - so it pinned the display to full refresh rate forever
          whenever the torch was on, no matter what gear the render loops chose.
-         It was also the worst possible element to animate: the overlay carries
-         mix-blend-mode: multiply over the whole editor pane, so every flicker
-         frame forced the blended layer to be recomposited against its backdrop
-         rather than being a cheap compositor-only opacity change. Do NOT
-         re-add an animation property on .torch-cursor-overlay, here or in
-         styles.css. If the effect is ever wanted again, drive it from the
-         torch tick by writing --torch-intensity, so that it is subject to the
-         frame governor and parks along with everything else. */
+         The overlay is also the worst possible element to animate that way: it
+         carries mix-blend-mode: multiply over the whole editor pane, so every
+         flicker frame forced the blended layer to be recomposited against its
+         backdrop rather than being a cheap compositor-only opacity change.
+
+         So: do NOT re-add an animation or transition property on
+         .torch-cursor-overlay for the flame, here or in styles.css - the
+         effect you would be reaching for already exists, one governor-friendly
+         custom-property write per frame, quantised so most frames skip it. */
     `;
     doc.head.appendChild(styleEl);
   }
@@ -1972,7 +2119,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const onMouseMove = (e) => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
-      this.lastMouseMove = Date.now();
+      this.lastMouseMove = performance.now();
       // Wakes only the torch (which may be following the mouse) — moving the
       // pointer must not spin the cursor canvas up to full rate.
       this._wakeTorch();
@@ -2083,7 +2230,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       win.addEventListener("blur", onWindowFocusChange);
     }
     
-    this._cleanups.push(() => {
+    this._docCleanups.set(doc, () => {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
       doc.removeEventListener("selectionchange", onActivity);
@@ -2515,20 +2662,44 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // this object for the duration of the draw, so every existing read of
   // this.settings in the engine automatically honors the active mode — no
   // per-key plumbing needed.
+  // True when the OS asks for reduced motion and the user has not opted out.
+  //
+  // Read live off the MediaQueryList rather than cached in a field: `.matches`
+  // is a plain property read, and a cached copy would need its own change
+  // listener and would be one more thing that can desync. Guarded because
+  // matchMedia is absent from the test harness's stubbed environment.
+  reducedMotion() {
+    if (this.settings.respectReducedMotion === false) return false;
+    try {
+      if (!this._reduceMQ) {
+        const win = (this.canvas && this.canvas.ownerDocument.defaultView) || window;
+        this._reduceMQ = win.matchMedia("(prefers-reduced-motion: reduce)");
+      }
+      return !!this._reduceMQ.matches;
+    } catch {
+      return false;
+    }
+  }
+
   effectiveSettings(mode) {
     if (mode === undefined) mode = this.currentVimMode();
-    if (!mode) return this.settings;
-    const cfg = this.settings.vimModes && this.settings.vimModes[mode];
-    if (!cfg) return this.settings;
+    const cfg = (mode && this.settings.vimModes && this.settings.vimModes[mode]) || null;
+    const reduce = this.reducedMotion();
+    // The common case, and the only one that can hand back this.settings
+    // untouched: no Vim mode to merge and nothing to suppress.
+    if (!cfg && !reduce) return this.settings;
     // Memoized: two render loops each merged a fresh ~60-key object EVERY
     // frame, which is pure allocation/GC churn since the inputs only change
     // on a mode switch or a settings edit. Keyed on identity of the inputs;
     // saveSettings drops the cache so in-place edits (sliders mutate the
     // mode object directly, then save) are picked up immediately.
     const c = this._effCache;
-    if (c && c.mode === mode && c.base === this.settings && c.cfg === cfg) return c.obj;
+    if (c && c.mode === mode && c.base === this.settings && c.cfg === cfg && c.reduce === reduce) {
+      return c.obj;
+    }
     const obj = Object.assign({}, this.settings, cfg);
-    this._effCache = { mode, base: this.settings, cfg, obj };
+    if (reduce) applyReducedMotion(obj);
+    this._effCache = { mode, base: this.settings, cfg, reduce, obj };
     return obj;
   }
 
@@ -2560,6 +2731,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._overlaySig = "";
     this._lastOverlayRect = "";
     this._lastTorchRadius = -1;
+    this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
+    this._lastGlowRect = "";
+    this._lastGlowPos = "";
     // Repaint the status bar label on the same frame as the cursor, so the two
     // never disagree about which mode you're in.
     this.updateVimStatusBar();
@@ -3588,7 +3762,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // its own dedupe; a second writer here would stamp the un-pulsed value back
     // over it whenever anything else about the overlay changed.
     o.style.setProperty("--torch-darkness", String(s.overlayDarkness));
-    o.style.setProperty("--torch-intensity", String(s.overlayIntensity));
+    // Glow Strength is NOT written here at all any more. It is the glow layer's
+    // opacity, that layer is built and owned by the torch tick, and the tick
+    // rewrites it every frame it is flickering - so this had nothing to
+    // contribute and everything to fight over.
     o.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
   }
 
@@ -3693,6 +3870,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // properties, so the radius cache has to be dropped with it or the tick
       // would dedupe against a value this overlay was never given.
       this._lastTorchRadius = -1;
+      this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
+    this._lastGlowRect = "";
+    this._lastGlowPos = "";
       this.injectStyles(targetDoc);
       this.applyOverlayStyle();
       
@@ -3702,6 +3882,38 @@ module.exports = class CursorSmithPlugin extends Plugin {
       });
       this.modalObserver.observe(targetDoc.body, { childList: true });
     }
+  }
+
+  // Build or tear down the additive glow layer.
+  //
+  // Called from the torch tick, NOT from ensureTorchOverlayForView: that runs
+  // before the Vim per-mode settings swap, so a mode that turns the glow up
+  // while the global setting has it at 0 would silently get no layer to light.
+  // Decide after the swap. (Same rule as the canvas engine's lazy layers.)
+  //
+  // Torn down rather than hidden when unused, because a blended layer forces a
+  // re-composite of everything beneath it whether or not it paints anything.
+  _ensureGlowLayer(wanted) {
+    if (!wanted) {
+      if (this.glowEl) { this.glowEl.remove(); this.glowEl = null; this._lastGlow = null; }
+      return null;
+    }
+    const doc = this.overlay && this.overlay.ownerDocument;
+    if (!doc) return null;
+    // Follow the overlay between documents, same as everything else here.
+    if (this.glowEl && this.glowEl.ownerDocument !== doc) {
+      this.glowEl.remove();
+      this.glowEl = null;
+    }
+    if (!this.glowEl) {
+      const appContainer = doc.querySelector(".app-container") || doc.body;
+      // Sibling of the overlay, deliberately - see the CSS note in injectStyles.
+      this.glowEl = appContainer.createDiv({ cls: "torch-cursor-glow" });
+      this._lastGlow = null;
+      this._lastGlowRect = "";
+      this._lastGlowPos = "";
+    }
+    return this.glowEl;
   }
 
   // Returns true when Obsidian's Slides plugin is showing a presentation
@@ -3735,6 +3947,114 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // Never crash the tick loop over a failed presentation check.
     }
     return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // THE pool/state reset. Called from three places - onload, enableCanvasEngine
+  // and disableCanvasEngine - which is exactly why it is a function: those
+  // three used to be three hand-maintained lists, and ARCHITECTURE.md's warning
+  // that missing one lets state survive a plugin toggle had already come true
+  // in both directions (see the comment at the call site in onload).
+  //
+  // ADDING AN EFFECT: reset its pool HERE and nowhere else. This is the second
+  // of the six touchpoints in the header, and now the only one that is a single
+  // edit rather than three.
+  //
+  // Nothing here may touch the DOM, the canvas, the rAF handles or the engine's
+  // active flags: those are genuinely per-site (a disable tears the canvas down,
+  // an enable builds it) and stay at their call sites.
+  // ---------------------------------------------------------------------------
+  _resetEngineState() {
+    this.trail = [];
+    this.particles = [];
+    this.flamePixels = [];
+    // Hot-head's fire. Deliberately NOT flamePixels: those are sprites with a
+    // per-particle colour and size, while these are points binned into a shared
+    // pixel lattice (see drawHotHead), so they have to be rasterised as a set
+    // rather than mixed in with particles that paint themselves.
+    this.flameEmbers = [];
+    // Patches of text currently alight, each decaying from the moment the caret
+    // leaves it - this is what keeps text burning after the caret has moved on.
+    this.hotBurns = [];
+    // Last caret sample and smoothed velocity, so particles can inherit caret
+    // motion as drag. See updateHotHeadInertia.
+    this._hotPrev = null;
+    this._hotVel = { x: 0, y: 0 };
+    this.thunderbolts = [];
+    // Fireworks. Its own pool rather than flamePixels, for the same reason
+    // thunderbolts have one: a shell is a two-phase animation (climb, then
+    // burst) whose sparks don't exist yet when it launches, so it can't be
+    // expressed as a bag of independent particles that each paint themselves.
+    this.fireworks = [];
+    // Zeroed with the pool: a stamp left over from before the engine was last
+    // torn down would swallow the first launch after it comes back.
+    this._lastFireworkT = 0;
+    // Signal Glitch: at most ONE burst is ever live (a second jump during a
+    // burst restarts it rather than stacking), so this is a single nullable
+    // record instead of a pool.
+    this.glitch = null;
+    // Stardust lives in its own pool rather than joining flamePixels,
+    // because the frame governor treats a non-empty flamePixels as "something
+    // is in motion" and latches the HOT (60fps) gear. Stardust is emitted
+    // precisely when the user is idle and can stay alive indefinitely, so
+    // sharing that pool would pin the display at full refresh rate for as long
+    // as the effect is switched on - the exact failure this file's power work
+    // exists to avoid. See the gear decision in the canvas tick: stardust asks
+    // for the WARM (30fps) gear instead, which is plenty for a slow drift.
+    this.stardust = [];
+    this._lastStardustT = 0;
+    // Bracket Tether: the rules to paint this frame (one per covered line),
+    // plus the cache key that lets the text scan behind them skip most frames.
+    this.bracketTether = null;
+    this._tetherKey = null;
+    this._tetherFrom = -1;
+    this._tetherTo = -1;
+    // Second cache, for the line-box measurement rather than the text scan:
+    // the rules themselves, the span they were measured for, and the two
+    // endpoint coordinates they were measured against (see tetherSegments).
+    this._tetherSegs = null;
+    this._tetherSegKey = null;
+    this._tetherAnchorA = null;
+    this._tetherAnchorB = null;
+    this.secondaryCarets = []; // dashed 2px vertical lines for CM6 multi-cursor mode
+    this.lastActive = null;
+    this.pending = null;
+    this.smearQuad = null;
+    // The corners actually painted: smearQuad itself, or a tapered copy of it.
+    // Kept apart from the quad because the quad is the spring's *state*, and a
+    // tapered corner fed back into it would spring toward the narrowed shape -
+    // the taper would fight the very lag it's drawn from.
+    this.smearShape = null;
+    this._taperBuf = null;
+    // Unit vector of the last real caret movement, held between frames so the
+    // tail keeps pointing the right way while the quad catches up after a stop.
+    this._smearDir = null;
+    this.smearCenterPrev = null;
+    this._smearMoving = false;
+    this._smearDtT = 0;
+    this.smearQuadLastMoveT = 0;
+
+    this.animActive = null;
+    this.lastMoveTime = 0;
+    this.typingSpeedMod = 1;
+    this._catchUpBoost = 1;
+
+    // Speed Demon heat: 0..1, ramps on keystrokes, decays per frame in the
+    // canvas tick. Kept separate from typingSpeedMod (which drives smooth-
+    // movement catch-up) because the two ease with very different curves
+    // and share no math beyond "user is typing".
+    this.heat = 0;
+    this._lastSparkT = 0;
+
+    // Pop Effects rainbow: a running hue that advances each time any of the
+    // three effects fires (rather than picking randomly) so consecutive pops
+    // step smoothly around the color wheel instead of jumping around.
+    //
+    // Deliberately ONE hue shared by letters, bolts and fireworks rather than
+    // three counters: pressing Space mid-word should continue the sweep the
+    // letters either side of it are on, not start a second, unrelated one that
+    // happens to be running at the same time.
+    this._popRainbowHue = 0;
   }
 
   enable() {
@@ -3781,28 +4101,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
-    this.pending = null;
-    this.smearQuad = null;
-    this.smearShape = null;
-    this._smearDir = null;
-    this.smearCenterPrev = null;
-    this._smearMoving = false;
-    this._smearDtT = 0;
-    this.smearQuadLastMoveT = 0;
-    this.particles = [];
-    this.flamePixels = [];
-    this.flameEmbers = [];
-    this.hotBurns = [];
-    this.thunderbolts = [];
-    this.fireworks = [];
-    this.glitch = null;
-    this.stardust = [];
-    this.secondaryCarets = [];
-    this.bracketTether = null;
-    this._tetherKey = null;
-    this._tetherSegs = null;
-    this._tetherSegKey = null;
-    this.animActive = null;
+    // Single reset site (see _resetEngineState). This used to be a hand-copied
+    // list that had quietly fallen behind the other two: `trail`, `lastActive`,
+    // `lastMoveTime`, `typingSpeedMod`, `_catchUpBoost` and the firework /
+    // stardust rate stamps were never cleared on the way down.
+    this._resetEngineState();
     this._formMirror?.remove();
     this._formMirror = null;
   }
@@ -3816,6 +4119,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._torchTick = null;
     this._lastTorchPos = "";
     this._lastTorchRadius = -1;
+    this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
+    this._lastGlowRect = "";
+    this._lastGlowPos = "";
     if (this.torchRaf) {
       cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
@@ -3825,9 +4131,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (doc && doc.body) {
         doc.body.classList.remove("torch-cursor-active");
         doc.querySelector(".torch-cursor-overlay")?.remove();
+        doc.querySelector(".torch-cursor-glow")?.remove();
       }
     }
     this.overlay = null;
+    // The glow is a sibling, so removing the overlay does not take it with it.
+    this.glowEl?.remove();
+    this.glowEl = null;
+    this._lastGlow = null;
+    this._lastGlowRect = "";
+    this._lastGlowPos = "";
     this.modalObserver?.disconnect();
     this.modalObserver = null;
     this.modalOpen = false;
@@ -3835,37 +4148,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   enableCanvasEngine() {
     this.canvasEngineActive = true;
-    this.trail = [];
-    this.particles = [];
-    this.flamePixels = [];
-    this.flameEmbers = [];
-    this.hotBurns = [];
-    this.thunderbolts = [];
-    this.fireworks = [];
-    // Zeroed with the pool: a stamp left over from before the engine was last
-    // torn down would swallow the first launch after it comes back.
-    this._lastFireworkT = 0;
-    this.glitch = null;
-    this.stardust = [];
-    this._lastStardustT = 0;
-    this.secondaryCarets = [];
-    this.bracketTether = null;
-    this._tetherKey = null;
-    this._tetherSegs = null;
-    this._tetherSegKey = null;
-    this.lastActive = null;
-    this.pending = null;
-    this.smearQuad = null;
-    this.smearShape = null;
-    this._smearDir = null;
-    this.smearCenterPrev = null;
-    this._smearMoving = false;
-    this._smearDtT = 0;
-    this.smearQuadLastMoveT = 0;
-    this.animActive = null;
-    this.lastMoveTime = 0;
-    this.typingSpeedMod = 1;
-    this._catchUpBoost = 1;
+    // Single reset site (see _resetEngineState).
+    this._resetEngineState();
     this._suspendCleared = false;
     // Begin from a known-clean surface: the canvas survives enable/disable
     // cycles, so assume nothing about what is currently painted on it.
@@ -4063,47 +4347,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
           const nowT = performance.now();
           const eff = this.settings; // the effective (mode-merged) object
           // Anything genuinely in motion demands continuous frames.
-          const animating =
-            !!this._smoothMoving ||
-            !!this.pending ||
-            (this.trail && this.trail.length > 0) ||
-            (this.particles && this.particles.length > 0) ||
-            // flamePixels are aged inside draw(), so a skipped frame would
-            // freeze a burst mid-flight rather than letting it expire.
-            (this.flamePixels && this.flamePixels.length > 0) ||
-            // Same again for Hot-head's fire, aged in its own draw call.
-            (this.flameEmbers && this.flameEmbers.length > 0) ||
-            // ...and the effect itself, not just its live particles. While
-            // Hot-head is on the fire is continuously animating by definition,
-            // and the particle test alone has a hole in it: the instant the
-            // pool empties the loop would judge the frame static, drop to the
-            // 100ms idle heartbeat, and the next spawn would arrive as one
-            // lumpy burst instead of a steady flame.
-            (!!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT)) ||
-            // Same reasoning: a bolt is aged and expired inside its draw call,
-            // so a skipped frame would leave one frozen on screen.
-            (this.thunderbolts && this.thunderbolts.length > 0) ||
-            // And again for a firework. Note this covers a shell still sitting
-            // out its stagger delay, which paints nothing yet but must not be
-            // allowed to drop the loop into the idle heartbeat - the volley
-            // would land in lumps a tenth of a second apart.
-            (this.fireworks && this.fireworks.length > 0) ||
-            // A Signal Glitch burst is a ~200ms wall-clock animation, so it
-            // needs continuous frames for its whole life. Tested inline rather
-            // than via glitchState() because that RETIRES an expired burst as a
-            // side effect, and the gear decision must stay a pure read - the
-            // draw call below is what should do the retiring.
-            (!!this.glitch && (nowT - this.glitch.start) < this.glitch.dur) ||
-            this.heat > 0 ||
-            // Precise: the spring reports whether any corner is still off its
-            // target or carrying velocity. This used to be a 1200ms window
-            // after the last motion, which was a workaround for a timestamp
-            // that was being restamped every frame and so never expired. Now
-            // that the spring snaps exactly onto its targets when it settles,
-            // it cannot flap back and forth, so the grace period is dead
-            // weight - it just held the hot gear for an extra 1.2s after every
-            // smear finished.
-            !!this._smearMoving;
+          const animating = this._isAnimating(nowT);
           // The energy gradient is driven by wall clock, so it does have to
           // keep repainting - but it is a slow shimmer (roughly a 1.7s period
           // at speed 1), not motion. Repainting it at display rate is pure
@@ -6640,6 +6884,66 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // primitive that paints WITHOUT calling _markDirty will leave ghost pixels
   // behind. If you add an effect, mark its bounds, generously: over-reporting
   // only costs fill rate, under-reporting corrupts the frame.
+  // ---------------------------------------------------------------------------
+  // "Is anything actually in motion this frame?" - the frame governor's hot-gear
+  // test, and the fourth of the six touchpoints for adding an effect.
+  //
+  // Extracted from the canvas tick so it can be TESTED. Missing an entry here is
+  // the one effect-authoring mistake that is both silent and user-visible: the
+  // loop judges the frame static, drops to its 100ms idle heartbeat, and the
+  // effect freezes mid-animation whenever nothing else happens to be moving. It
+  // was previously guarded by a comment alone while every other effect invariant
+  // in this file had coverage. See test.js, "frame governor".
+  //
+  // MUST STAY A PURE READ. The gear decision runs before draw(), and anything
+  // that retires state here (glitchState() would - it drops an expired burst as
+  // a side effect) would retire it before the frame that should have painted it.
+  // ---------------------------------------------------------------------------
+  _isAnimating(nowT) {
+    return (
+      !!this._smoothMoving ||
+      !!this.pending ||
+      (this.trail && this.trail.length > 0) ||
+      (this.particles && this.particles.length > 0) ||
+      // flamePixels are aged inside draw(), so a skipped frame would
+      // freeze a burst mid-flight rather than letting it expire.
+      (this.flamePixels && this.flamePixels.length > 0) ||
+      // Same again for Hot-head's fire, aged in its own draw call.
+      (this.flameEmbers && this.flameEmbers.length > 0) ||
+      // ...and the effect itself, not just its live particles. While
+      // Hot-head is on the fire is continuously animating by definition,
+      // and the particle test alone has a hole in it: the instant the
+      // pool empties the loop would judge the frame static, drop to the
+      // 100ms idle heartbeat, and the next spawn would arrive as one
+      // lumpy burst instead of a steady flame.
+      (!!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT)) ||
+      // Same reasoning: a bolt is aged and expired inside its draw call,
+      // so a skipped frame would leave one frozen on screen.
+      (this.thunderbolts && this.thunderbolts.length > 0) ||
+      // And again for a firework. Note this covers a shell still sitting
+      // out its stagger delay, which paints nothing yet but must not be
+      // allowed to drop the loop into the idle heartbeat - the volley
+      // would land in lumps a tenth of a second apart.
+      (this.fireworks && this.fireworks.length > 0) ||
+      // A Signal Glitch burst is a ~200ms wall-clock animation, so it
+      // needs continuous frames for its whole life. Tested inline rather
+      // than via glitchState() because that RETIRES an expired burst as a
+      // side effect, and the gear decision must stay a pure read - the
+      // draw call below is what should do the retiring.
+      (!!this.glitch && (nowT - this.glitch.start) < this.glitch.dur) ||
+      this.heat > 0 ||
+      // Precise: the spring reports whether any corner is still off its
+      // target or carrying velocity. This used to be a 1200ms window
+      // after the last motion, which was a workaround for a timestamp
+      // that was being restamped every frame and so never expired. Now
+      // that the spring snaps exactly onto its targets when it settles,
+      // it cannot flap back and forth, so the grace period is dead
+      // weight - it just held the hot gear for an extra 1.2s after every
+      // smear finished.
+      !!this._smearMoving
+    );
+  }
+
   _markDirty(x, y, w, h) {
     const d = this._dirty;
     if (!d) {
@@ -8614,6 +8918,70 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 this.overlay.style.setProperty("--torch-radius", rKey + "px");
               }
 
+              // Candle flicker. Driven from this tick so it stays under the
+              // frame governor, never from a CSS animation - the reference does
+              // it as a keyframe animation, which is exactly the implementation
+              // this codebase deleted once already (it runs on the compositor
+              // and pins the display at full refresh for as long as the torch
+              // is lit, whatever gear the loops chose).
+              //
+              // Applied to the GLOW ONLY, not to the darkness. Flickering the
+              // dark layer as well makes the whole page pulse, which is a very
+              // different and much more distracting effect; the reference
+              // flickers only the warm core, and it is right to.
+              const hidden = hideForModal;
+              const fScale = (!hidden && this.settings.overlayFlicker)
+                ? torchFlickerScale(performance.now(),
+                    this.settings.overlayFlickerAmount ?? 0.3)
+                : 1;
+              if (fScale !== 1 && this._torchGear === "idle") {
+                // Same gear as the blink pulse. A flame is turbulence, not
+                // motion: 30fps resolves it, and it must never claim hot.
+                this._torchGear = "pulse";
+              }
+
+              // ---- The warm core -------------------------------------------
+              // The darkness layer composites normally and can only subtract
+              // light. Adding any requires a second, additive layer - this one.
+              // Built only while Glow Strength is above 0, because a blended
+              // layer costs a re-composite of everything beneath it whether or
+              // not it paints anything.
+              const baseI = this.settings.overlayIntensity;
+              const glow = this._ensureGlowLayer(!hidden && baseI > 0);
+              if (glow) {
+                if (key !== this._lastGlowRect) {
+                  this._lastGlowRect = key;
+                  glow.style.top = top + "px";
+                  glow.style.left = left + "px";
+                  glow.style.width = width + "px";
+                  glow.style.height = height + "px";
+                }
+                // Glow Strength scales the layer's opacity; the flicker is just
+                // another multiplier on the same number, so both end up in one
+                // property write. Quantised to 3dp before the dedupe: the raw
+                // value changes every frame while flickering, and without a
+                // quantum this would force a style recalc plus a re-composite
+                // of a blended layer on every single frame. 3dp is finer than
+                // 8-bit alpha can resolve.
+                const gAlpha = Math.max(0, Math.min(1, baseI * fScale)).toFixed(3);
+                // The gradient sizes itself off --torch-radius (at 0.6x, in the
+                // CSS), so the pulse and the spotlight stay locked together
+                // with one value rather than two that can drift.
+                const gSig = rKey + ":" + gAlpha + ":" + this.settings.overlayColor;
+                if (gSig !== this._lastGlow) {
+                  this._lastGlow = gSig;
+                  glow.style.setProperty("--torch-radius", rKey + "px");
+                  glow.style.setProperty("--torch-glow", gAlpha);
+                  glow.style.setProperty("--torch-warm", hexToRgb(this.settings.overlayColor));
+                }
+                const gPos = (this.x - left).toFixed(1) + "," + (this.y - top).toFixed(1);
+                if (gPos !== this._lastGlowPos) {
+                  this._lastGlowPos = gPos;
+                  glow.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
+                  glow.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
+                }
+              }
+
               // Dedupe the spotlight position write: setting a CSS custom
               // property forces a style recalc even when the value hasn't
               // changed, and this used to run every frame forever with a
@@ -8681,7 +9049,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // dead unshaded strip for no benefit (the concern _isVisiblyRendered was
   // originally written for).
   _chromeInsets(doc) {
-    const now = Date.now();
+    // performance.now() like every other timestamp in this file. Both this and
+    // its cache stamp were Date.now(), which was self-consistent but is a wall
+    // clock: an NTP correction or a DST jump can move it backwards, and this
+    // cache would then hold a stale inset for as long as the clock was behind.
+    const now = performance.now();
     const c = this._chromeCache;
     if (c && c.doc === doc && now - c.t < 500) return c;
 
@@ -8891,14 +9263,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const caret = this.caretCoords();
     if (caret) {
       if (!this.lastCaret || caret.x !== this.lastCaret.x || caret.top !== this.lastCaret.top) {
-        this.lastCaretMove = Date.now();
+        this.lastCaretMove = performance.now();
       }
       this.lastCaret = caret;
     }
 
     const useMouse =
       mode === "mouse" ||
-      (mode === "auto" && (Date.now() - this.lastMouseMove < 800 || !this.lastCaret));
+      (mode === "auto" && (performance.now() - this.lastMouseMove < 800 || !this.lastCaret));
 
     if (useMouse) {
       this.tx = this.mouseX;
@@ -8918,6 +9290,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
   display() {
     const { containerEl } = this;
+    // Hold the scroll position across the rebuild. Every redrawing toggle in
+    // this panel calls display(), which empties containerEl and builds it
+    // again - so before this, flipping a toggle two thirds of the way down
+    // threw you back to the top of a very long panel, and the further down the
+    // setting was the worse it got.
+    const scroller = this._scrollHost();
+    const scrollTop = scroller ? scroller.scrollTop : 0;
     containerEl.empty();
 
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
@@ -8925,7 +9304,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     // --- Enable Plugin: always on top ---
     new Setting(containerEl)
       .setName("Enable Plugin")
-      .setDesc("Turns the custom cursor off entirely and hands you back Obsidian's own caret. Everything below is remembered while it is off.")
+      .setDesc("Hands you back Obsidian's own caret.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.enabled)
@@ -8951,14 +9330,21 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Hide Real Cursor")
-      .setDesc("Hides the native primary cursor so only the custom one shows. Additional cursors (multi-cursor editing) remain visible in Obsidian's default style.")
+      .setDesc("Hides the native primary cursor so only the custom one shows.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.hideNativeCaret).onChange(setGlobal("hideNativeCaret")));
 
     new Setting(containerEl)
       .setName("Hide Cursor When Unfocused")
-      .setDesc("Hides the cursor while Obsidian isn't the active window, the way most writing apps do. It comes straight back when you return, in the same place.")
+      .setDesc("Hides the cursor while Obsidian isn't the active window.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.hideOnWindowBlur ?? true).onChange(setGlobal("hideOnWindowBlur")));
+
+    new Setting(containerEl)
+      .setName("Respect Reduced Motion")
+      .setDesc("Switches off the moving effects when your system asks for reduced motion. The cursor's own look is untouched.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.respectReducedMotion !== false)
+          .onChange(setGlobal("respectReducedMotion")));
 
     // --- CUA/Normal vs Vim mode switch ---
     this.renderModeSwitch(containerEl);
@@ -8967,6 +9353,14 @@ class CursorSmithSettingTab extends PluginSettingTab {
       this.renderVimSection(containerEl);
     } else {
       this.renderNormalSection(containerEl);
+    }
+
+    // After the rebuild, not during: the panel has to be its full height again
+    // before a scroll offset means anything. requestAnimationFrame rather than
+    // a straight assignment because rows are laid out on the next frame, so
+    // setting it here would clamp against a container that is still short.
+    if (scroller && scrollTop) {
+      requestAnimationFrame(() => { scroller.scrollTop = scrollTop; });
     }
   }
 
@@ -9022,11 +9416,38 @@ class CursorSmithSettingTab extends PluginSettingTab {
   // -------------------------------------------------------------------------
   renderSection(containerEl, title, renderFn, { open = true } = {}) {
     const details = containerEl.createEl("details", { cls: "cursor-smith-section" });
-    details.open = open;
+    // Remember which sections the user had collapsed. display() rebuilds the
+    // whole panel via containerEl.empty() on ~40 of its toggles, so without
+    // this, collapsing a section to get it out of the way lasted exactly until
+    // the next toggle - which is the same act. Keyed by title rather than by
+    // index so adding a section doesn't shuffle everyone's saved state.
+    //
+    // Deliberately in memory rather than in settings: it is panel state, not
+    // configuration, and it should not travel in a share code or a preset.
+    if (!this._sectionOpen) this._sectionOpen = {};
+    details.open = this._sectionOpen[title] ?? open;
+    // Optional-chained: the panel test harness stubs elements with just the
+    // Obsidian DOM helpers renderLookSettings needs, and has no event support.
+    details.addEventListener?.("toggle", () => {
+      this._sectionOpen[title] = details.open;
+    });
     const summary = details.createEl("summary");
     summary.createEl("span", { cls: "cursor-smith-section-title", text: title });
     renderFn(details);
     return details;
+  }
+
+  // The element that actually scrolls the settings pane. Obsidian's own
+  // containerEl is usually it, but that is an implementation detail of the
+  // settings modal rather than a promise, so walk up until something is
+  // genuinely overflowing rather than assuming.
+  _scrollHost() {
+    let el = this.containerEl;
+    for (let i = 0; el && i < 6; i++) {
+      if (el.scrollHeight > el.clientHeight + 1) return el;
+      el = el.parentElement;
+    }
+    return this.containerEl;
   }
 
   // Container for a run of sub-options belonging to whatever setting sits
@@ -9085,6 +9506,23 @@ class CursorSmithSettingTab extends PluginSettingTab {
   //                                 that call site).
   // -------------------------------------------------------------------------
   renderLookSettings(containerEl, { get, set, setAndRedraw, renderCursorStyleSetting, renderTorchToggleSetting }) {
+    // Several colour pickers on ONE Setting, so they lay out side by side in
+    // that row's control area (Obsidian's .setting-item-control is already a
+    // flex row; .cursor-smith-color-row only adds the gap between swatches)
+    // instead of each claiming its own full-width labelled row.
+    //
+    // Order carries the meaning here - there is nowhere to hang a per-swatch
+    // label - so every caller's description has to state what the order is.
+    const swatchRow = (parent, label, keys, desc) => {
+      const row = new Setting(parent).setName(label).setDesc(desc);
+      row.settingEl.addClass("cursor-smith-color-row");
+      for (const key of keys) {
+        row.addColorPicker((cp) =>
+          cp.setValue(get(key) || DEFAULT_SETTINGS[key]).onChange(set(key)));
+      }
+      return row;
+    };
+
     this.renderSection(containerEl, "Appearance", (body) => {
       renderCursorStyleSetting(body);
 
@@ -9105,7 +9543,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
         new Setting(g)
           .setName("Serifs")
-          .setDesc("Adds classic I-beam serifs (small horizontal caps) at the top and bottom of the line cursor.")
+          .setDesc("Adds I-beam serifs at the top and bottom of the line.")
           .addToggle((toggle) => toggle.setValue(get("lineSerifs")).onChange(set("lineSerifs")));
       }
 
@@ -9113,7 +9551,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g)
           .setName("Underline Thickness")
-          .setDesc("How thick the underline bar is, in pixels. 0 = automatic, which scales the bar with the line height so it stays in proportion at any font size.")
+          .setDesc("Thickness of the underline, in pixels. 0 = automatic, scaled to the line height.")
           .addSlider((slider) => slider.setLimits(0, 12, 1).setValue(get("underlineWidthPx") ?? 0).setDynamicTooltip().onChange(set("underlineWidthPx")));
       }
 
@@ -9122,13 +9560,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g)
           .setName("Show Letter Inside Cursor")
           .setDesc(get("boxHollow") || get("cursorTranslucent")
-            ? `Shows the letter under the cursor inside the block, with the colors flipped. Does nothing while ${get("boxHollow") ? "Hollow" : "Translucent"} is on — the real character already shows through.`
-            : "Shows the letter under the cursor inside the block, with the colors flipped.")
+            ? `Shows the letter inside the block, colors flipped. Does nothing while ${get("boxHollow") ? "Hollow" : "Translucent"} is on.`
+            : "Shows the letter inside the block, with the colors flipped.")
           .addToggle((toggle) => toggle.setValue(get("showChar")).onChange(set("showChar")));
 
         new Setting(g)
           .setName("Hollow")
-          .setDesc("Draws only the outline of the box instead of a filled block. Lets the underlying character show through naturally.")
+          .setDesc("Draws only the outline of the box instead of a filled block.")
           .addToggle((toggle) => toggle.setValue(get("boxHollow")).onChange(setAndRedraw("boxHollow")));
 
         if (get("boxHollow")) {
@@ -9143,7 +9581,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Gradient")
-        .setDesc("Paints the cursor with a blend of several colors instead of one flat color. Replaces the per-theme cursor colors, so the same gradient is used in light and dark themes.")
+        .setDesc("Blends several colors instead of one flat color.")
         .addToggle((toggle) => toggle.setValue(!!get("gradientEnabled")).onChange(setAndRedraw("gradientEnabled")));
 
       if (get("gradientEnabled")) {
@@ -9157,46 +9595,35 @@ class CursorSmithSettingTab extends PluginSettingTab {
             // from. Redraws the panel to add or remove color pickers.
             .onChange((v) => setAndRedraw("gradientCount")(Number(v))));
 
-        // Each theme gets its own row of pickers, mirroring the flat
-        // Dark/Light colour pair this replaces. All of a row's pickers hang
-        // off ONE Setting, so they land side by side in that row's control
-        // area (Obsidian lays it out as a flex row) rather than stacking into
-        // one labelled row each.
         const count = Math.max(2, Math.min(4, Number(get("gradientCount")) || 2));
-        const colorRow = (label, prefix, desc) => {
-          const row = new Setting(g).setName(label).setDesc(desc);
-          row.settingEl.addClass("cursor-smith-color-row");
-          for (let i = 1; i <= count; i++) {
-            const key = prefix + i;
-            row.addColorPicker((cp) =>
-              cp.setValue(get(key) || DEFAULT_SETTINGS[key]).onChange(set(key)));
-          }
-        };
-        colorRow("Colors (Dark Theme)", "gradientDark",
+        const keys = (prefix) => Array.from({ length: count }, (_, i) => prefix + (i + 1));
+        swatchRow(g, "Colors (Dark Theme)", keys("gradientDark"),
           "In order from the top of the cursor to the bottom — or left to right for the Underline style.");
-        colorRow("Colors (Light Theme)", "gradientLight",
+        swatchRow(g, "Colors (Light Theme)", keys("gradientLight"),
           "The same ramp for light themes, where neon colors tend to wash out.");
       } else {
-        new Setting(body).setName("Cursor Color (Dark Theme)")
-          .setDesc("The cursor color used while a dark theme is active.")
-          .addColorPicker((cp) => cp.setValue(get("colorDark")).onChange(set("colorDark")));
-        new Setting(body).setName("Cursor Color (Light Theme)")
-          .setDesc("The cursor color used while a light theme is active. Kept separate because neon colors that look right on a dark background wash out on a white page.")
-          .addColorPicker((cp) => cp.setValue(get("colorLight")).onChange(set("colorLight")));
+        // One row, two swatches - dark theme then light - rather than the two
+        // full-width labelled rows this used to be. Same helper, same layout as
+        // the gradient rows above, and it is the pattern the panel already
+        // established for "several pickers that belong to one idea"; splitting
+        // a pair of colours across two rows spent a lot of vertical space in a
+        // panel this long to say something the description says in six words.
+        swatchRow(body, "Cursor Color", ["colorDark", "colorLight"],
+          "Dark theme first, then light. Kept separate because neon colors that look right on a dark background wash out on a white page.");
       }
 
       new Setting(body).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
         .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")));
 
       new Setting(body).setName("Translucent")
-        .setDesc("Blends the cursor into the page instead of painting it on top, so text under a Box stays readable and the cursor reads as ink rather than a sticker. Works with every style. Note it blends the trail and any effects along with the cursor — and while it's on, Show Letter Inside Cursor does nothing, since the real character shows through.")
+        .setDesc("Blends the cursor into the page instead of painting over it. Overrides Show Letter Inside Cursor.")
         .addToggle((toggle) => toggle.setValue(!!get("cursorTranslucent")).onChange(setAndRedraw("cursorTranslucent")));
     });
 
     this.renderSection(containerEl, "Blinking", (body) => {
       new Setting(body)
         .setName("Blinking")
-        .setDesc("Makes the cursor blink. Turn off to keep it always fully lit.")
+        .setDesc("Makes the cursor blink.")
         .addToggle((toggle) => toggle.setValue(get("blinkingEnabled")).onChange(setAndRedraw("blinkingEnabled")));
 
       if (get("blinkingEnabled")) {
@@ -9205,13 +9632,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(get("blinkSpeed")).setDynamicTooltip().onChange(set("blinkSpeed")));
         new Setting(g).setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
           .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(get("blinkOnOffBalance")).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
-        new Setting(g).setName("Fade Smoothness").setDesc("How gradually the cursor fades in and out. Low is a snappy on/off; higher stretches the fade so it eases gently, up to one continuous breathing-like fade at the top of the range. 0.15 is the original feel.")
+        new Setting(g).setName("Fade Smoothness").setDesc("How gradually the cursor fades in and out. 0.15 is the original feel.")
           .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkFade") ?? 0.15).setDynamicTooltip().onChange(set("blinkFade")));
         new Setting(g).setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
           .addToggle((toggle) => toggle.setValue(get("smoothStopBlinking")).onChange(set("smoothStopBlinking")));
-        new Setting(g).setName("Blink Delay").setDesc("How long (in ms) the cursor stays fully lit after any move or keystroke before blinking resumes. Works independently of Smooth Movement.")
+        new Setting(g).setName("Blink Delay").setDesc("How long the cursor stays lit after a keystroke, in ms.")
           .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
-        new Setting(g).setName("Breathing").setDesc("The cursor shrinks and swells on the blink cycle instead of fading out, so it never disappears.")
+        new Setting(g).setName("Breathing").setDesc("The cursor swells and shrinks instead of fading out.")
           .addToggle((toggle) => toggle.setValue(!!get("blinkBreathing")).onChange(setAndRedraw("blinkBreathing")));
         if (get("blinkBreathing")) {
           const g2 = this.subGroup(g);
@@ -9230,46 +9657,44 @@ class CursorSmithSettingTab extends PluginSettingTab {
       if (get("smoothEnabled")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Glide Amount")
-          .setDesc("How much the cursor eases as it travels. Higher stretches the glide out; lower snaps it into place.")
+          .setDesc("How much the cursor eases as it travels.")
           .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(get("smoothness")).setDynamicTooltip().onChange(set("smoothness")));
         new Setting(g).setName("Catch-Up Speed")
-          .setDesc("How quickly the cursor chases the real caret. Higher arrives sooner.")
+          .setDesc("How quickly the cursor chases the real caret.")
           .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(get("catchUpSpeed")).setDynamicTooltip().onChange(set("catchUpSpeed")));
         // Max Catch-Up Speed is meaningless on its own - it is only ever read
         // inside the adaptive branch - so it hangs off that toggle rather than
         // sitting beside it as a live-looking slider that does nothing.
         new Setting(g).setName("Speed Up When Typing Fast")
-          .setDesc("Lets the cursor run above Catch-Up Speed during sustained typing or key repeat so it doesn't fall behind, then eases back down once you stop.")
+          .setDesc("Lets the cursor exceed Catch-Up Speed while you type, so it can't fall behind.")
           .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(setAndRedraw("smoothAdaptive")));
         if (get("smoothAdaptive")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Max Catch-Up Speed")
-            .setDesc("The fastest the speed-up is allowed to get. Also carries through to Motion Smear, so the cursor keeps up whether or not it is smearing.")
+            .setDesc("The fastest the speed-up is allowed to get.")
             .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
         }
         new Setting(g).setName("Movement Delay")
-          .setDesc("How long (in ms) the cursor waits before setting off after the caret. 0 follows immediately.")
+          .setDesc("Delay before the cursor sets off, in ms. 0 follows immediately.")
           .addSlider((s) => s.setLimits(0, 500, 10).setValue(get("moveDelayMs")).setDynamicTooltip().onChange(set("moveDelayMs")));
       }
     });
 
     this.renderSection(containerEl, "Effects", (body) => {
       // Pop Effects: one group for everything the cursor throws off in
-      // response to a keystroke. Rainbow sits directly under the group toggle,
-      // above the three effects, because it recolours all of them - a modifier
-      // nested under any one of them would read as belonging to that one.
+      // response to a keystroke. Rainbow is a modifier across all four, so it
+      // sits at the BOTTOM of the group rather than nested under any one of
+      // them - and only once at least one of them is actually on, since with
+      // the whole group idle it is a switch that recolours nothing.
+      //
+      // It used to sit directly under the group toggle, above the effects. That
+      // put the modifier before the things it modifies, so the first thing
+      // anyone opening Pop Effects met was an option that did nothing yet.
       new Setting(body).setName("Pop Effects")
         .setDesc("Things the cursor throws off as you type — letters, lightning and fireworks.")
         .addToggle((toggle) => toggle.setValue(!!get("popEffects")).onChange(setAndRedraw("popEffects")));
       if (get("popEffects")) {
         const g = this.subGroup(body);
-        new Setting(g).setName("Rainbow")
-          .setDesc("Sweeps every pop effect around the color wheel as you type, instead of using the cursor's own colors. Overrides Gradient where the two would disagree.")
-          // Redraws rather than just saving: this toggle now changes what the
-          // Thunderstrike and Fireworks rows below say about where their
-          // colors come from, and those descriptions are built at render time.
-          .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(setAndRedraw("popRainbow")));
-
         new Setting(g).setName("Popping Letters")
           .setDesc("Each character you type springs out of the cursor and tumbles away as it fades.")
           .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
@@ -9279,27 +9704,30 @@ class CursorSmithSettingTab extends PluginSettingTab {
         // are the bigger, rarer events.
         new Setting(g).setName("Backspace Disintegration")
           .setDesc(get("popRainbow")
-            ? "Deleting throws a heavy burst outward, so text comes apart rather than just vanishing. Rainbow is on, so each burst takes the next color in the sweep, inverted."
-            : "Deleting throws a heavier burst outward in inverted colors, so text comes apart rather than just vanishing.")
-          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
+            ? "Deleting throws a burst outward. Rainbow takes the next color in the sweep, inverted."
+            : "Deleting throws a burst outward in inverted colors.")
+          // setAndRedraw, not set: Rainbow at the bottom of this group appears
+          // as soon as any one of the four effects is on, so this row now
+          // controls another row's visibility and has to redraw the panel.
+          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(setAndRedraw("backspaceDisintegrate")));
 
         new Setting(g).setName("Thunderstrike")
-          .setDesc("Pressing Enter calls down a bolt of pixelated lightning onto the cursor's new line, from a random angle above.")
+          .setDesc("Enter calls down a bolt of pixelated lightning onto the new line.")
           .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(setAndRedraw("thunderstrike")));
         if (get("thunderstrike")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Bolt Size")
-            .setDesc("How fine the lightning is, in pixels per block. Lower is a thinner, more delicate strike.")
+            .setDesc("How fine the lightning is, in pixels per block.")
             .addSlider((s) => s.setLimits(1, 5, 1).setValue(get("thunderstrikeSize") ?? 2).setDynamicTooltip().onChange(set("thunderstrikeSize")));
           new Setting(g2).setName("Strength")
             .setDesc(get("popRainbow")
-              ? "How brightly the strike shows. Rainbow is on, so each bolt takes the next color in the sweep."
-              : "How brightly the strike shows. Each bolt takes its colours at random from blue, purple, red, yellow and white.")
+              ? "How brightly the strike shows. Rainbow colors each bolt."
+              : "How brightly the strike shows.")
             .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("thunderstrikeStrength") ?? 0.5).setDynamicTooltip().onChange(set("thunderstrikeStrength")));
         }
 
         new Setting(g).setName("Fireworks")
-          .setDesc("Space and Enter send pixelated shells climbing out of the cursor to burst above it.")
+          .setDesc("Space and Enter send shells climbing out of the cursor to burst above it.")
           .addToggle((toggle) => toggle.setValue(!!get("fireworks")).onChange(setAndRedraw("fireworks")));
         if (get("fireworks")) {
           const g2 = this.subGroup(g);
@@ -9308,14 +9736,30 @@ class CursorSmithSettingTab extends PluginSettingTab {
           // offered, and the description says which of those is currently in
           // play instead of listing rules that may not apply.
           new Setting(g2).setName("Quantity")
-            .setDesc(
-              (get("popRainbow")
-                ? "How many shells go up per keypress and how much each throws. Rainbow is on, so each volley takes the next color in the sweep."
-                : get("gradientEnabled")
-                  ? "How many shells go up per keypress and how much each throws. Sparks are drawn from the cursor's gradient, with slight variation."
-                  : "How many shells go up per keypress and how much each throws.")
-            )
+            .setDesc("How many shells go up per keypress, and how much each throws.")
             .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("fireworksQuantity") ?? 1).setDynamicTooltip().onChange(set("fireworksQuantity")));
+        }
+
+        // Rainbow last, and only when there is something for it to recolour.
+        // The four effects above are independent of each other; this is the one
+        // control in the group that reaches all of them, so it reads as a
+        // summary of the group rather than as another sibling effect.
+        //
+        // Note the gate is on the four effects, NOT on popEffects: the group
+        // can be on with every effect inside it off, and that is exactly the
+        // state where a Rainbow toggle is a switch that visibly does nothing.
+        // Same rule as Sync With Blink under the torch, and Gradient Colors
+        // under Pixel Trail.
+        const anyPop = !!get("popLetters") || !!get("backspaceDisintegrate") ||
+                       !!get("thunderstrike") || !!get("fireworks");
+        if (anyPop) {
+          new Setting(g).setName("Rainbow")
+            .setDesc("Sweeps every pop effect around the color wheel as you type.")
+            // Redraws rather than just saving: this toggle changes what the
+            // Backspace Disintegration, Thunderstrike and Fireworks rows above
+            // say about where their colors come from, and those descriptions
+            // are built at render time.
+            .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(setAndRedraw("popRainbow")));
         }
       }
 
@@ -9325,26 +9769,26 @@ class CursorSmithSettingTab extends PluginSettingTab {
       if (get("flameTrail")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Density")
-          .setDesc("How many pixels the trail sheds as you move. Slide to 0 to hide the pixels entirely — the deletion burst is a Pop Effect now and fires either way.")
+          .setDesc("How many pixels the trail sheds. 0 hides them entirely.")
           .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("flameTrailDensity") ?? 1).setDynamicTooltip().onChange(set("flameTrailDensity")));
         new Setting(g).setName("Trail On Jump")
-          .setDesc("When the cursor jumps (a click or a big move) lay pixels along the whole path, so a leap leaves a streak instead of a single puff at the start.")
+          .setDesc("Lays pixels along the whole path of a jump, not just at the start.")
           .addToggle((toggle) => toggle.setValue(!!get("flameTrailOnJump")).onChange(set("flameTrailOnJump")));
         new Setting(g).setName("Pixel Lifetime")
           .setDesc("How long each pixel lasts before it fades out, in milliseconds.")
           .addSlider((s) => s.setLimits(100, 2000, 50).setValue(get("flameTrailLifeMs") ?? 400).setDynamicTooltip().onChange(set("flameTrailLifeMs")));
         new Setting(g).setName("Pixel Size")
-          .setDesc("How big each pixel is. Each still varies a little around this.")
+          .setDesc("How big each pixel is.")
           .addSlider((s) => s.setLimits(1, 12, 0.5).setValue(get("flameTrailPixelSize") ?? 4).setDynamicTooltip().onChange(set("flameTrailPixelSize")));
         // Only meaningful with a gradient to sample - offered only when Gradient
         // is on, so it isn't a switch that visibly does nothing.
         if (get("gradientEnabled")) {
           new Setting(g).setName("Gradient Colors")
-            .setDesc("Colors each pixel from a random point along the cursor's gradient, with slight variation, instead of the one cursor color. Applies to the jump trail, and to Pop Effects' deletion burst unless its Rainbow overrides it.")
+            .setDesc("Colors each pixel from the cursor's gradient instead of one flat color.")
             .addToggle((toggle) => toggle.setValue(!!get("flameTrailGradientColors")).onChange(set("flameTrailGradientColors")));
         }
         new Setting(g).setName("Gravity")
-          .setDesc("A steady pull on the pixels. 0 leaves them drifting sideways as before; higher drags them off in the direction below.")
+          .setDesc("A steady pull on the pixels. 0 leaves them drifting sideways.")
           .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("flameTrailGravity") ?? 0).setDynamicTooltip().onChange(setAndRedraw("flameTrailGravity")));
         if ((get("flameTrailGravity") ?? 0) > 0) {
           const g2 = this.subGroup(g);
@@ -9355,12 +9799,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Stardust")
-        .setDesc("The cursor gives off a slow stream of floating pixels that drift upward and fade. Waits until you stop typing unless Always On is set.")
+        .setDesc("A slow stream of floating pixels that drift up and fade.")
         .addToggle((toggle) => toggle.setValue(!!get("stardustEnabled")).onChange(setAndRedraw("stardustEnabled")));
       if (get("stardustEnabled")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Always On")
-          .setDesc("Streams continuously instead of waiting for the cursor to sit still — including while you type.")
+          .setDesc("Streams continuously instead of waiting for the cursor to settle.")
           .addToggle((toggle) => toggle.setValue(!!get("stardustAlwaysOn")).onChange(setAndRedraw("stardustAlwaysOn")));
         // The delay is what Always On overrides, so hide it rather than leave
         // a live-looking slider that no longer does anything.
@@ -9374,18 +9818,18 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("stardustRate") ?? 1).setDynamicTooltip().onChange(set("stardustRate")));
 
         new Setting(g).setName("Orbit")
-          .setDesc("Motes circle the cursor like fireflies instead of drifting upward, and follow it as it moves.")
+          .setDesc("Motes circle the cursor like fireflies instead of drifting up.")
           .addToggle((toggle) => toggle.setValue(!!get("stardustOrbit")).onChange(setAndRedraw("stardustOrbit")));
         if (get("stardustOrbit")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Orbit Radius")
-            .setDesc("How wide the motes circle, in pixels. Each mote varies around this.")
+            .setDesc("How wide the motes circle, in pixels.")
             .addSlider((s) => s.setLimits(10, 60, 2).setValue(get("stardustOrbitRadius") ?? 22).setDynamicTooltip().onChange(set("stardustOrbitRadius")));
         }
       }
 
       new Setting(body).setName("Bracket Tether")
-        .setDesc("Underlines the span between matching brackets or quotes — straight or curly — whether the cursor is next to one or somewhere inside the pair.")
+        .setDesc("Underlines the span between matching brackets or quotes.")
         .addToggle((toggle) => toggle.setValue(!!get("bracketTether")).onChange(setAndRedraw("bracketTether")));
       if (get("bracketTether")) {
         const g = this.subGroup(body);
@@ -9395,26 +9839,26 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Motion Smear")
-        .setDesc("The cursor's corners lag behind on springs, so it stretches as it moves and snaps back once it arrives.")
+        .setDesc("The cursor stretches as it moves and snaps back when it arrives.")
         .addToggle((toggle) => toggle.setValue(get("smear")).onChange(setAndRedraw("smear")));
       if (get("smear")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Stiffness")
-          .setDesc("How hard the leading edge is pulled toward the new position. Higher gets there faster and stretches less.")
+          .setDesc("How hard the leading edge is pulled toward the new position.")
           .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearStiffness")).setDynamicTooltip().onChange(set("smearStiffness")));
         new Setting(g).setName("Trailing Stiffness")
-          .setDesc("The same for the edge left behind. Lower is what makes the smear long — it is the gap between the two that you see.")
+          .setDesc("The same for the edge left behind.")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearTrailingStiffness")).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
         new Setting(g).setName("Damping")
-          .setDesc("How much the springs resist overshooting. Low values let the cursor wobble past and settle back; high values stop it dead.")
+          .setDesc("How much the springs resist overshooting.")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearDamping")).setDynamicTooltip().onChange(set("smearDamping")));
         new Setting(g).setName("Tapered Trail")
-          .setDesc("Narrows the smear to a point behind the cursor, so a fast move reads as a comet tail instead of a dragged rectangle.")
+          .setDesc("Narrows the smear to a point behind the cursor, like a comet tail.")
           .addToggle((toggle) => toggle.setValue(!!get("smearTaper")).onChange(setAndRedraw("smearTaper")));
         if (get("smearTaper")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Taper Amount")
-            .setDesc("How sharply the tail closes. At 1 it comes to a full point; lower just narrows it.")
+            .setDesc("How sharply the tail closes. At 1 it comes to a full point.")
             .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearTaperAmount") ?? 0.7).setDynamicTooltip().onChange(set("smearTaperAmount")));
         }
       }
@@ -9433,19 +9877,19 @@ class CursorSmithSettingTab extends PluginSettingTab {
         // cross-mixes gradient colors - so it only appears once Gradient is on.
         if (get("gradientEnabled")) {
           new Setting(g).setName("Aurora")
-            .setDesc("Swirls and mixes your gradient colors inside the cursor instead of scrolling them past.")
+            .setDesc("Swirls your gradient colors instead of scrolling them past.")
             .addToggle((toggle) => toggle.setValue(!!get("energyAurora")).onChange(setAndRedraw("energyAurora")));
           if (get("energyAurora")) {
             const g2 = this.subGroup(g);
             new Setting(g2).setName("Waviness")
-              .setDesc("How hard the bands bend. At 0 they stay flat and just slide along the cursor; turned up they curve and ripple across it.")
+              .setDesc("How hard the bands bend. 0 keeps them flat.")
               .addSlider((s) => s.setLimits(0, 2, 0.05).setValue(get("energyAuroraWaviness") ?? 1).setDynamicTooltip().onChange(set("energyAuroraWaviness")));
           }
         }
       }
 
       new Setting(body).setName("CRT Effect")
-        .setDesc("Old-monitor phosphor look: the cursor leaves fading ghosts of itself behind as it moves.")
+        .setDesc("Old-monitor phosphor look: the cursor leaves fading ghosts behind it.")
         .addToggle((toggle) => toggle.setValue(get("crtEffect")).onChange(setAndRedraw("crtEffect")));
       if (get("crtEffect")) {
         const g = this.subGroup(body);
@@ -9461,18 +9905,18 @@ class CursorSmithSettingTab extends PluginSettingTab {
             : "Soft halo around the cursor, in its own color.")
           .addToggle((toggle) => toggle.setValue(get("glow")).onChange(setAndRedraw("glow")));
         new Setting(g).setName("Neon Trail")
-          .setDesc("Render the ghosts as a glowing neon tube — a hot white core inside a saturated streak — instead of plain fading boxes. The tail matches the cursor's own width and full height.")
+          .setDesc("Renders the ghosts as a glowing neon tube instead of fading boxes.")
           .addToggle((toggle) => toggle.setValue(!!get("crtNeon")).onChange(setAndRedraw("crtNeon")));
         if (get("crtNeon")) {
           const g2 = this.subGroup(g);
           if (get("gradientEnabled")) {
             new Setting(g2).setName("Gradient Trail")
-              .setDesc("Run the cursor's gradient along the neon streak, from the newest ghost to the oldest, instead of the one cursor color.")
+              .setDesc("Runs the cursor's gradient along the streak, newest ghost to oldest.")
               .addToggle((toggle) => toggle.setValue(!!get("crtNeonGradient")).onChange(set("crtNeonGradient")));
           }
         }
         new Setting(g).setName("Signal Glitch")
-          .setDesc("When the cursor jumps somewhere far away — a click, a search result, a Vim motion — it briefly breaks up like a mistracked video signal: torn into slipping slices with the color channels pulled apart. Only fires on jumps, never while you type.")
+          .setDesc("Long jumps break up like a mistracked video signal.")
           .addToggle((toggle) => toggle.setValue(!!get("crtGlitch")).onChange(setAndRedraw("crtGlitch")));
         if (get("crtGlitch")) {
           const g3 = this.subGroup(g);
@@ -9480,7 +9924,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
             .setDesc("How far the slices are thrown and how much the cursor's shape warps.")
             .addSlider((s) => s.setLimits(0.2, 2.5, 0.1).setValue(get("crtGlitchStrength") ?? 1).setDynamicTooltip().onChange(set("crtGlitchStrength")));
           new Setting(g3).setName("Color Split")
-            .setDesc("How far the red, green and blue channels separate. 0 keeps the cursor's own color and only tears the shape.")
+            .setDesc("How far the color channels separate. 0 only tears the shape.")
             .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("crtGlitchAberration") ?? 1).setDynamicTooltip().onChange(set("crtGlitchAberration")));
           new Setting(g3).setName("Duration")
             .setDesc("How long each burst lasts, in milliseconds.")
@@ -9489,27 +9933,27 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Speed Demon")
-        .setDesc("The cursor heats up as you type or move around — dull and grey when idle, through your own color to orange, red and finally white-hot — then cools back down over a few seconds of quiet.")
+        .setDesc("The cursor heats from grey to white-hot as you type, then cools when you stop.")
         .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(setAndRedraw("speedDemon")));
       if (get("speedDemon")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Fire Sparks")
-          .setDesc("Throws embers off the top of the cursor once it is hot enough, faster the hotter it gets.")
+          .setDesc("Throws embers off the cursor once it is hot enough.")
           .addToggle((toggle) => toggle.setValue(get("speedDemonSparks")).onChange(setAndRedraw("speedDemonSparks")));
         if (get("speedDemonSparks")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Spark Quantity")
-            .setDesc("How many embers spawn per burst. 0 stops sparks without turning Fire Sparks off; higher throws a heavier shower.")
+            .setDesc("How many embers spawn per burst. 0 stops them without switching the effect off.")
             .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("speedDemonSparkQuantity") ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
           new Setting(g2).setName("Spark Trail")
             .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
             .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
         }
         new Setting(g).setName("Keep Cursor Color")
-          .setDesc("Stop the cursor itself changing color as it heats up — it stays exactly the color you picked, and only the sparks react to how fast you're going.")
+          .setDesc("The cursor keeps your color; only the sparks react to speed.")
           .addToggle((toggle) => toggle.setValue(get("speedDemonNoCursorHeat") ?? false).onChange(setAndRedraw("speedDemonNoCursorHeat")));
         new Setting(g).setName("Sensitivity")
-          .setDesc("How fast typing and caret movement heat the cursor up. Higher reaches white-hot in fewer keystrokes.")
+          .setDesc("How fast typing and caret movement heat the cursor up.")
           .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
 
         // Hidden while Keep Cursor Color is on: that option says the cursor
@@ -9517,7 +9961,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         // colour ramp for exactly that a contradiction rather than a choice.
         if (!get("speedDemonNoCursorHeat")) {
           new Setting(g).setName("Custom Gradient")
-            .setDesc("Replace the built-in cold-to-white-hot curve with four colors of your own, from resting to flat out. These become the cursor's color while Speed Demon is on, so they override the Gradient section above.")
+            .setDesc("Replaces the built-in heat curve with four colors of your own.")
             .addToggle((toggle) => toggle.setValue(!!get("speedDemonGradient")).onChange(setAndRedraw("speedDemonGradient")));
           if (get("speedDemonGradient")) {
             const g2 = this.subGroup(g);
@@ -9541,33 +9985,33 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Hot-head")
-        .setDesc("Sets the text you're working on alight. Fire starts as solid pixel blocks on the characters, breaks into rising specks as it ages, then fades — and text keeps smouldering for a moment after the cursor has moved off it.")
+        .setDesc("Sets the text you're working on alight.")
         .addToggle((toggle) => toggle.setValue(!!get("hotHead")).onChange(setAndRedraw("hotHead")));
       if (get("hotHead")) {
         const gh = this.subGroup(body);
         new Setting(gh).setName("Fire Quantity")
-          .setDesc("How much fire is emitted. 0 puts it out without turning Hot-head off; higher burns thicker.")
+          .setDesc("How much fire is emitted. 0 puts it out without switching Hot-head off.")
           .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("hotHeadQuantity") ?? 1).setDynamicTooltip().onChange(set("hotHeadQuantity")));
         new Setting(gh).setName("Fire Spread")
-          .setDesc("How much of the text around the cursor catches, in characters — and how long a patch keeps burning once the cursor has moved past it. 0 burns only the cursor's own column, briefly.")
+          .setDesc("How much surrounding text catches, in characters. 0 burns only the cursor's own column.")
           .addSlider((s) => s.setLimits(0, 14, 1).setValue(get("hotHeadSpread") ?? 4).setDynamicTooltip().onChange(set("hotHeadSpread")));
         new Setting(gh).setName("Trail Over Text")
-          .setDesc("Extra fire laid along the path the cursor just travelled, so a fast move scorches what it crossed. 0 keeps the fire where the cursor stops.")
+          .setDesc("Fire laid along the path travelled. 0 keeps it where the cursor stops.")
           .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("hotHeadTrail") ?? 6).setDynamicTooltip().onChange(set("hotHeadTrail")));
         new Setting(gh).setName("Flame Height")
           .setDesc("How high the flames climb before they burn out.")
           .addSlider((s) => s.setLimits(0.15, 1.5, 0.05).setValue(get("hotHeadHeight") ?? 0.55).setDynamicTooltip().onChange(set("hotHeadHeight")));
         new Setting(gh).setName("Fade Time")
-          .setDesc("How long a single fire particle lasts, in milliseconds. Longer makes lazier, smokier flames; shorter keeps the fire tight to the text.")
+          .setDesc("How long a single fire particle lasts, in milliseconds.")
           .addSlider((s) => s.setLimits(200, 1600, 20).setValue(get("hotHeadFade") ?? 620).setDynamicTooltip().onChange(set("hotHeadFade")));
         new Setting(gh).setName("Idle Timeout")
-          .setDesc("How long the cursor can sit still before the fire stops being fed and burns out. It relights as soon as you move again. 0 keeps it burning forever.")
+          .setDesc("Idle time before the fire burns out. 0 keeps it burning forever.")
           .addSlider((s) => s.setLimits(0, 6000, 100).setValue(get("hotHeadIdleMs") ?? 1500).setDynamicTooltip().onChange(set("hotHeadIdleMs")));
         new Setting(gh).setName("Fire Opacity")
           .setDesc("How solid the fire is, independent of the cursor's own opacity.")
           .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("hotHeadOpacity") ?? 1).setDynamicTooltip().onChange(set("hotHeadOpacity")));
         new Setting(gh).setName("Use Cursor Color")
-          .setDesc("Paint the fire in the cursor's own color instead of the yellow-orange-red-white heat gradient. It still varies in brightness, just not in hue.")
+          .setDesc("Paints the fire in the cursor's color instead of the heat gradient.")
           .addToggle((toggle) => toggle.setValue(!!get("hotHeadFlat")).onChange(setAndRedraw("hotHeadFlat")));
       }
 
@@ -9579,7 +10023,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         this.renderSubheading(g, "Spotlight");
         new Setting(g).setName("Follow")
-          .setDesc("What the light tracks. Auto follows the mouse while you are moving it and hands back to the text cursor shortly after you stop.")
+          .setDesc("What the light tracks.")
           .addDropdown((d) => d.addOptions({ caret: "Text Cursor Only", mouse: "Mouse Pointer Only", auto: "Auto Intelligent Swap" })
             .setValue(get("overlayFollowMode")).onChange(set("overlayFollowMode")));
         new Setting(g).setName("Light Size")
@@ -9590,20 +10034,20 @@ class CursorSmithSettingTab extends PluginSettingTab {
         // be in a different section of the panel.
         if (get("blinkingEnabled")) {
           new Setting(g).setName("Sync With Blink")
-            .setDesc("The light closes in as the cursor blinks out and opens back up as it returns. Keeps the spotlight redrawing while the cursor blinks, so it costs a little more than the other options here.")
+            .setDesc("The light closes in as the cursor blinks out and opens back up as it returns.")
             .addToggle((toggle) => toggle.setValue(!!get("overlayBlinkSync")).onChange(setAndRedraw("overlayBlinkSync")));
           if (get("overlayBlinkSync")) {
             const g2 = this.subGroup(g);
             new Setting(g2).setName("Pulse Depth")
-              .setDesc("How far the light closes at the darkest point, as a share of Light Size. At 1 the torch goes out entirely while the cursor is blinked off.")
+              .setDesc("How far the light closes at its darkest, as a share of Light Size. At 1 it goes out.")
               .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayBlinkDepth") ?? 0.25).setDynamicTooltip().onChange(set("overlayBlinkDepth")));
           }
         }
         new Setting(g).setName("Light Color")
-          .setDesc("The color of the light at its center. Independent of the cursor color.")
+          .setDesc("The color of the light at its center.")
           .addColorPicker((cp) => cp.setValue(get("overlayColor")).onChange(set("overlayColor")));
         new Setting(g).setName("Follow Speed")
-          .setDesc("How quickly the light catches up when the cursor moves. Lower drifts after it; higher sticks to it.")
+          .setDesc("How quickly the light catches up when the cursor moves.")
           .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlaySpeed")).setDynamicTooltip().onChange(set("overlaySpeed")));
 
         this.renderSubheading(g, "Environment");
@@ -9611,10 +10055,25 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc("How far everything outside the light is dimmed.")
           .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")));
         new Setting(g).setName("Glow Strength")
-          .setDesc("How strongly the light tints what it falls on. 0 lights the area without coloring it.")
+          .setDesc("Strength of the warm glow. 0 gives a pure spotlight.")
           .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
+        // Sits under Glow Strength because that is the value it modulates: the
+        // flame swings either side of whatever that slider is set to, so at 0
+        // there is nothing to flicker and this says so rather than appearing to
+        // be broken.
+        new Setting(g).setName("Flicker")
+          .setDesc(get("overlayIntensity") > 0
+            ? "The light gutters like a candle instead of burning steady."
+            : "The light gutters like a candle. Does nothing while Glow Strength is 0.")
+          .addToggle((toggle) => toggle.setValue(!!get("overlayFlicker")).onChange(setAndRedraw("overlayFlicker")));
+        if (get("overlayFlicker")) {
+          const g2 = this.subGroup(g);
+          new Setting(g2).setName("Flicker Depth")
+            .setDesc("How far the flame swings either side of Glow Strength. At 1 it gutters right out.")
+            .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayFlickerAmount") ?? 0.35).setDynamicTooltip().onChange(set("overlayFlickerAmount")));
+        }
         new Setting(g).setName("Keep Sidebars Lit")
-          .setDesc("Dims only the note you are editing, leaving the sidebars, tabs and ribbon at normal brightness. Also lifts the shading while a dialog is open. Desktop only — on mobile, where the sidebars are drawers rather than side panes, the whole screen dims.")
+          .setDesc("Dims only the editor, leaving sidebars and ribbon lit. Desktop only.")
           .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
       }
     });
@@ -9713,7 +10172,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       renderCursorStyleSetting: (body) => {
         new Setting(body)
           .setName("Cursor Style")
-          .setDesc("The shape of the cursor itself. Each style has its own options below.")
+          .setDesc("The shape of the cursor itself.")
           .addDropdown((dropdown) =>
             dropdown
               .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
@@ -9734,7 +10193,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       renderTorchToggleSetting: (body) => {
         new Setting(body)
           .setName("Torch Spotlight")
-          .setDesc("Darkens everything except a pool of light around the cursor, so only the part of the note you are working on stays lit.")
+          .setDesc("Darkens everything except a pool of light around the cursor.")
           .addToggle((toggle) =>
             toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
               plugin.settings.torchEffect = value;
@@ -9809,7 +10268,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Control Obsidian's Vim key bindings")
-      .setDesc("When on, this plugin owns Obsidian's Vim key bindings: switching to Vim mode turns them on, switching to CUA/Normal turns them off. Turn this off if you manage Vim key bindings yourself in Settings → Editor.")
+      .setDesc("Lets this plugin turn Obsidian's Vim key bindings on and off with the mode.")
       .addToggle((toggle) =>
         toggle.setValue(plugin.settings.vimControlObsidian).onChange(async (value) => {
           plugin.settings.vimControlObsidian = value;
@@ -9823,7 +10282,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Show Vim mode in status bar")
-      .setDesc("Displays the live mode on the left side of Obsidian's status bar, vim-style: -- NORMAL --, -- INSERT --, and so on.")
+      .setDesc("Shows the live mode in the status bar, vim-style: -- NORMAL --.")
       .addToggle((toggle) =>
         toggle.setValue(plugin.settings.vimStatusBar).onChange(async (value) => {
           plugin.settings.vimStatusBar = value;
@@ -9836,7 +10295,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     if (plugin.settings.vimStatusBar) {
       new Setting(this.subGroup(containerEl))
         .setName("Color status bar text to match the cursor")
-        .setDesc("Tints the mode name with that mode's cursor color — Normal shows in the Normal cursor's blue, Insert in its green, and so on. Off uses your theme's normal status bar color.")
+        .setDesc("Tints the mode name with that mode's cursor color.")
         .addToggle((toggle) =>
           toggle.setValue(plugin.settings.vimStatusBarColor).onChange(async (value) => {
             plugin.settings.vimStatusBarColor = value;
@@ -9880,7 +10339,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     let importVimCode = "";
     new Setting(containerEl)
       .setName("Import Vim preset")
-      .setDesc("Paste a Vim share code from someone else to add their Vim preset — all five mode cursors at once. Regular preset codes go in the CUA/Normal panel instead.")
+      .setDesc("Paste a Vim share code to add all five mode cursors at once.")
       .addText((text) => {
         text.setPlaceholder("Paste code here…");
         text.onChange((v) => { importVimCode = v.trim(); });
@@ -10005,7 +10464,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       renderCursorStyleSetting: (body) => {
         new Setting(body)
           .setName("Cursor Style")
-          .setDesc("The shape of the cursor itself. Each style has its own options below.")
+          .setDesc("The shape of the cursor itself.")
           .addDropdown((d) =>
             d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
               .setValue(target.cursorStyle).onChange(setR("cursorStyle"))
@@ -10013,7 +10472,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       },
       renderTorchToggleSetting: (body) => {
         new Setting(body).setName("Torch Spotlight")
-          .setDesc("Darkens everything except a pool of light around the cursor, so only the part of the note you are working on stays lit.")
+          .setDesc("Darkens everything except a pool of light around the cursor.")
           .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
       },
     });

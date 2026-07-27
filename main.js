@@ -1,9 +1,90 @@
 const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 
+// ===========================================================================
+// Cursor-Smith — READ THIS BEFORE EDITING
+//
+// ~9.8k lines in one file because Obsidian loads a single main.js and there
+// is no build step. It is navigated by grep, not by scrolling. See
+// ARCHITECTURE.md for the full tour; this header is the short version plus
+// the rules that are expensive to rediscover.
+//
+// LAYOUT, in order:
+//   1. Tuning constants        (DIRTY_RECT_CLEAR … FIREWORK_*, THUNDER_*)
+//   2. DEFAULT_SETTINGS        — 116 keys, the single source of truth
+//   3. LOOK_KEYS / VIM_STATE_KEYS
+//   4. migrateLegacyKeys       — renamed/regrouped keys, runs on ALL loads
+//   5. Built-in presets        (PRESET1_VIM_MODES, DEFAULT_PRESETS, …)
+//   6. Share-code codec        (presetToCode / codeToPreset, "1|…" and "2|…")
+//   7. Pure helpers            (colour maths, easing, geometry)
+//   8. class CursorSmithPlugin — lifecycle, input, engine, every effect
+//   9. class CursorSmithSettingTab — the panel
+//
+// FINDING THINGS: grep the symbol. Effects follow a strict naming convention,
+// so `grep -n "Fireworks\|Thunderbolt" main.js` finds every touchpoint of one
+// effect: spawnX / drawX, a gate in commitMove, a pool reset in three places,
+// an entry in the frame governor's `animating` check, and a settings block.
+//
+// INVARIANTS — breaking these fails silently, not loudly:
+//
+//  • LOOK_KEYS IS APPEND-ONLY. Share codes encode a field as its INDEX in
+//    this array. Reordering or removing an entry silently reinterprets every
+//    code ever shared. Add to the end; never insert.
+//
+//  • ADDING AN EFFECT MEANS SIX EDITS, not two. spawn + draw are the obvious
+//    ones. Also: reset the pool in all three places (constructor,
+//    enableCanvasEngine, disableCanvasEngine), add it to the `animating`
+//    check in the frame governor or it will freeze mid-animation, call its
+//    draw from draw(), and _markDirty its region or it leaves ghosts.
+//
+//  • GENERATE AT SPAWN, ADVANCE CLOSED-FORM AT DRAW. Every effect bakes its
+//    randomness once and animates as a pure function of elapsed time. Rolling
+//    per frame makes the effect boil, and ties its shape to whichever gear
+//    the frame governor picked.
+//
+//  • NO CSS ANIMATIONS on cursor layers, in styles.css or injectStyles. They
+//    run on the compositor, outside the frame governor, and hold the display
+//    at full refresh regardless of what the governor decided.
+//
+//  • A BLEND INSIDE THE CURSOR WRAPPER composites against the wrapper, not the
+//    editor - the wrapper is a stacking context. Anything that must blend with
+//    the editor needs its own sibling layer under .app-container. See
+//    ARCHITECTURE.md, "Blending against the editor".
+//
+//  • TORCH OVERLAY CSS LIVES HERE ONLY (injectStyles), never in styles.css —
+//    its values are settings-driven custom properties, and a styles.css rule
+//    outranked them once already. Same for mix-blend-mode on the canvas
+//    wrapper: see applyCanvasBlend.
+//
+//  • THE CANVAS IS CLIPPED, NOT Z-INDEXED, to the editor pane (editorClip).
+//    A full-viewport layer over the titlebar breaks Electron window dragging
+//    even when invisible.
+//
+//  • SETTINGS READS GO THROUGH this.settings, which is SWAPPED per Vim mode
+//    during the tick. Don't cache values across frames; use styleFor(key).
+//
+// TESTS: `node test.js` runs the whole file outside Obsidian with the Obsidian
+// API stubbed (harness.js), plus a settings-panel render harness
+// (panel_harness.js). 163 assertions covering migration, share codes, colour
+// precedence, effect physics, and which rows the panel actually builds.
+//
+//  • A settings row that throws while being built removes ITSELF AND EVERY ROW
+//    AFTER IT from the panel, silently. renderLookSettings has no `plugin`
+//    binding - only `this.plugin` - and reads settings through `get`, never
+//    this.plugin.settings, because it also renders the per-Vim-mode panels.
+//    Add a panel assertion for any new row.
+// ===========================================================================
+
 // Clear only the region the previous frame actually painted, instead of the
 // whole viewport-sized surface. See the damage-tracking notes above draw().
 // Flip to false to restore full-surface clears if you ever see ghost pixels.
 const DIRTY_RECT_CLEAR = true;
+
+// How much Speed Demon's heat inflates the CRT glow, as a multiplier on top of
+// the base blur: 1 + GLOW_HEAT_GAIN at full heat. Only applies when Speed Demon
+// and the CRT glow are BOTH on - see glowHeatScale. Raising this past ~2 starts
+// to bloom far enough that the damage pad in the caret's dirty rect (which is
+// widened by the same factor, see drawCursor) dominates the frame's clear cost.
+const GLOW_HEAT_GAIN = 1.6;
 
 // Frame interval for the energy shimmer when it is the only thing animating.
 // The gradient's pulse has roughly a 1.7s period at speed 1, so 33ms gives
@@ -283,7 +364,13 @@ const DEFAULT_SETTINGS = {
   thunderstrike: false,
   thunderstrikeSize: 2,    // px per block of the bolt; the effect's chunkiness
   thunderstrikeStrength: 0.5,  // 0.1..1 overall visibility of the strike
-  backspaceDisintegrate: false,  // Backspace/Delete → invert flame trail direction + colors
+  // Pop Effects sub-option: Backspace/Delete throws the trail's particle burst
+  // outward instead of trailing it, in inverted colours. Like Thunderstrike,
+  // this used to hang off Pixel Trail and be gated on it; it now fires on its
+  // own, so text can come apart with the ambient trail switched off. It still
+  // borrows the trail's particle pool and physics dials (lifetime, pixel size,
+  // gravity) - see the note in spawnFlamePixels.
+  backspaceDisintegrate: false,
   lineSerifs: false,             // Line cursor: add horizontal serifs (I-beam look)
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing
@@ -316,6 +403,24 @@ const DEFAULT_SETTINGS = {
   speedDemonSparkQuantity: 1,    // 0..3 multiplier on how many sparks spawn per burst
   speedDemonSparkTrail: 0,       // 0..30px comet-tail trailing behind each spark; 0 = no trail
   speedDemonNoCursorHeat: false, // true = cursor keeps its own color as it heats up
+  // Custom heat ramp: replace the built-in blackbody curve (cold desaturated →
+  // your colour → orange → white-hot, see heatColor) with four colours of your
+  // own, sampled by heat from stage 1 at rest to stage 4 flat out.
+  //
+  // One ramp per theme, matching the Gradient feature's convention and for the
+  // same reason: a ramp tuned against a dark background washes out on a light
+  // one. Unlike the built-in curve, these stops do NOT derive from the cursor
+  // colour - they ARE the cursor colour while Speed Demon is on, which is what
+  // "custom" means here. See heatColor for what that overrides.
+  speedDemonGradient: false,
+  speedHeatDark1: "#2b4a8f",   // cold — deep blue
+  speedHeatDark2: "#17b8c4",   // cooling — cyan
+  speedHeatDark3: "#ff9a2e",   // warm — orange
+  speedHeatDark4: "#fff3d0",   // white-hot
+  speedHeatLight1: "#1d3a75",
+  speedHeatLight2: "#0e8a94",
+  speedHeatLight3: "#d96b00",
+  speedHeatLight4: "#e8a33c",
 
   // --- Stardust: the cursor gives off a slow stream of drifting, fading
   // pixels. A standalone effect (it used to hang off Pixel Trail), with its
@@ -488,6 +593,11 @@ const LOOK_KEYS = [
   // simply doesn't mention them and migrateLegacyKeys synthesises popEffects
   // from the popLetters value the code does carry.
   "popEffects", "fireworks", "fireworksQuantity",
+  // Speed Demon's custom heat ramp, and the CRT inverted trail. Appended, like
+  // everything else here.
+  "speedDemonGradient",
+  "speedHeatDark1", "speedHeatDark2", "speedHeatDark3", "speedHeatDark4",
+  "speedHeatLight1", "speedHeatLight2", "speedHeatLight3", "speedHeatLight4",
 ];
 
 // ---------------------------------------------------------------------------
@@ -536,30 +646,56 @@ function migrateLegacyKeys(src) {
   delete o.boxTranslucency;
   delete o.boxTranslucentMode;
   delete o.boxLens;
-  // Pop Effects. "Popping Letters" was itself the top-level toggle and
-  // Thunderstrike was a sub-option of Pixel Trail; both are now sub-options of
-  // a Pop Effects group with its own gate. Nothing saved before that grouping
-  // carries the gate, so it has to be inferred - without this, every returning
-  // user's popping letters and lightning silently switch off on upgrade.
+  // Text Crawl, removed outright. Its keys are deleted rather than left in
+  // place so a config saved while it existed doesn't carry five dead settings
+  // forever - same treatment as the box-translucency keys above.
+  delete o.textCrawl;
+  delete o.textCrawlSpeed;
+  delete o.textCrawlGlow;
+  delete o.textCrawlFlip;
+  delete o.textCrawlRainbow;
+  // CRT Inverted Trail, also removed outright. Same treatment: it never
+  // shipped, so there is nothing to preserve, and leaving the keys in saved
+  // configs would just carry two dead settings forever.
+  delete o.crtInvert;
+  delete o.crtInvertStrength;
+  // Matrix Rain, likewise. Same reasoning as the two above.
+  delete o.matrixRain;
+  delete o.matrixRainDensity;
+  // Pop Effects. "Popping Letters" was itself the top-level toggle, and both
+  // Thunderstrike and Backspace Disintegration were sub-options of Pixel
+  // Trail; all three are now sub-options of a Pop Effects group with its own
+  // gate. Nothing saved before that grouping carries the gate, so it has to be
+  // inferred - without this, every returning user's popping letters, lightning
+  // and deletion bursts silently switch off on upgrade.
   //
   // Guarded on one of the old keys actually being present, NOT just on the
   // gate being absent: this function also runs over sparse objects (an empty
   // Vim-mode entry, a partial preset) that are meant to inherit everything
   // they don't mention, and unconditionally writing popEffects into those
   // would override the defaults they're supposed to fall through to.
-  if (!("popEffects" in o) && ("popLetters" in o || "thunderstrike" in o)) {
-    // Thunderstrike was unreachable with Pixel Trail off - the toggle was
-    // hidden and spawnThunderbolt refused to fire - so a stale `true` sitting
-    // behind a disabled trail was inert, and the user never saw lightning.
-    // Decoupling the two would bring it to life on upgrade for someone who
-    // never asked for it, so that combination is settled here instead: it
-    // doesn't count toward the gate, and the stale flag is cleared outright.
+  const OLD_POP_KEYS = ["popLetters", "thunderstrike", "backspaceDisintegrate"];
+  if (!("popEffects" in o) && OLD_POP_KEYS.some((k) => k in o)) {
+    // Both relocated options were unreachable with Pixel Trail off - their
+    // toggles were hidden, and neither effect would fire - so a stale `true`
+    // sitting behind a disabled trail was inert and the user never saw it.
+    // Decoupling them would bring both to life on upgrade for someone who
+    // never asked for either, so that combination is settled here instead:
+    // it doesn't count toward the gate, and the stale flags are cleared.
+    //
+    // This clearing MUST stay inside the "no popEffects key" guard. In the new
+    // world, Thunderstrike or Disintegration with Pixel Trail off is a
+    // perfectly legal configuration, and running the clear unconditionally
+    // would wipe it out every time settings were loaded.
+    //
     // `flameTrail !== false` rather than a truthiness test because absent
     // means "inherits the default", and that default is on.
     const trailWasOn = o.flameTrail !== false;
-    const boltWasLive = !!o.thunderstrike && trailWasOn;
-    if (o.thunderstrike && !trailWasOn) o.thunderstrike = false;
-    o.popEffects = !!o.popLetters || boltWasLive;
+    if (!trailWasOn) {
+      if (o.thunderstrike) o.thunderstrike = false;
+      if (o.backspaceDisintegrate) o.backspaceDisintegrate = false;
+    }
+    o.popEffects = !!o.popLetters || !!o.thunderstrike || !!o.backspaceDisintegrate;
   }
   return o;
 }
@@ -780,6 +916,19 @@ DEFAULT_SETTINGS.vimModes = cloneVimModes(PRESET1_VIM_MODES);
 // Default starter presets — seeded into new installs (or any install that
 // does not yet have a userPresets key in its data file). Existing user
 // presets are never touched; only missing keys are added.
+//
+// Four of these (Jell-O, Torch-Crt, mr.Blue, old_Joe) look self-contradictory
+// at a glance: they set "backspaceDisintegrate": true alongside "flameTrail":
+// false. That combination could never fire under the old rules - disintegration
+// was gated on Pixel Trail - so the flag has always been dead weight in these
+// snapshots, and none of the four has ever shown a deletion burst.
+//
+// It is left as written rather than corrected to false here, because
+// migrateLegacyKeys already resolves exactly this case for user data and runs
+// over these presets too (via presetWithDefaults). Fixing it in both places
+// would put the same decision in two spots, and anyone who later decides these
+// presets SHOULD get the burst now that the gate is gone would have to
+// remember to change both. One knob, in the migration.
 // ---------------------------------------------------------------------------
 const DEFAULT_PRESETS = {
   "Jell-O": {
@@ -934,9 +1083,11 @@ const DEFAULT_VIM_PRESETS = {
 //   • only fields differing from DEFAULT_SETTINGS are emitted; on decode,
 //     everything else falls back to the default via presetWithDefaults.
 //
-// Old codes (raw base64url JSON) are still accepted - codeToPreset sniffs the
-// "1|" prefix and routes anything else to the legacy decoder, so nobody's saved
-// codes stop working.
+// This is the only accepted format. A pre-v1 decoder (raw base64url JSON) used
+// to run as a fallback for anything without the "1|" prefix; it has been
+// removed. Note this is unrelated to migrateLegacyKeys, which maps renamed
+// SETTING KEYS and is still very much load-bearing - a v1 code written before
+// a key was renamed still decodes into the old key names and needs it.
 // ---------------------------------------------------------------------------
 const SHARE_VERSION = "1";
 
@@ -1021,12 +1172,11 @@ function presetToCode(name, snap) {
 
 function codeToPreset(code) {
   const trimmed = (code || "").trim();
-  // Legacy: anything that isn't the new versioned format is tried as the old
-  // base64url-JSON blob, so previously shared codes keep importing. A Vim code
-  // ("2|...") is not a regular preset and falls in here too, where the legacy
-  // decoder rejects it - which is the intended answer, since a five-mode
-  // snapshot has no meaning as a single cursor look.
-  if (trimmed.slice(0, 2) !== SHARE_VERSION + "|") return legacyCodeToPreset(trimmed);
+  // Anything that isn't the versioned format is rejected outright. That
+  // includes a Vim code ("2|..."), which is five look snapshots and has no
+  // meaning as a single cursor look - the import button reads the prefix
+  // itself and says so, rather than leaving the user with a flat "invalid".
+  if (trimmed.slice(0, 2) !== SHARE_VERSION + "|") return null;
   try {
     const parts = trimmed.split("|");
     // parts[0] is the version, already matched. Extra "|" only appears if the
@@ -1094,21 +1244,6 @@ function codeToVimPreset(code) {
       modes[m] = migrateLegacyKeys(shareParseFields(body));
     });
     return { name, modes };
-  } catch {
-    return null;
-  }
-}
-
-// The pre-v1 decoder: base64url of the snapshot JSON with the name under __name.
-function legacyCodeToPreset(code) {
-  try {
-    const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
-    const json = decodeURIComponent(escape(atob(b64)));
-    const obj = JSON.parse(json);
-    const name = obj.__name || "Imported preset";
-    const snap = Object.assign({}, obj);
-    delete snap.__name;
-    return { name, snap };
   } catch {
     return null;
   }
@@ -2735,7 +2870,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // you type. Running every stop through it keeps a gradient cursor
       // heating up like a flat one does, instead of sitting frozen at its
       // configured colours while the rest of the effect reacts.
-      if (applyHeat && s.speedDemon && this.heat > 0 && !this.styleFor("speedDemonNoCursorHeat")) {
+      //
+      // The `heat > 0` shortcut is skipped when the custom ramp is on. With
+      // the built-in curve, heat 0 returns approximately the stop it was given,
+      // so skipping the call at rest is a free optimisation. A custom ramp
+      // returns stage 1 instead, which is a different colour - so honouring the
+      // shortcut would leave the cursor showing its configured gradient at rest
+      // and snap it to stage 1 on the first keystroke.
+      const custom = this.styleFor("speedDemonGradient");
+      if (applyHeat && s.speedDemon && (this.heat > 0 || custom)
+          && !this.styleFor("speedDemonNoCursorHeat")) {
         hex = this.heatColor(this.heat, hex);
       }
       out.push(hex);
@@ -2830,8 +2974,64 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // Piecewise-linear in RGB is crude but reads well because each segment
   // is short and the eye interprets the sequence as temperature, not as
   // three separate interpolations.
+  // Multiplier on the CRT glow's blur radius, driven by Speed Demon's heat.
+  //
+  // Returns 1 (no change) unless Speed Demon is actually on, so the glow keeps
+  // its existing look for everyone not using the two together. Deliberately not
+  // behind its own toggle: the CRT glow already only exists when you've asked
+  // for the CRT effect, and heat only exists when you've asked for Speed Demon,
+  // so wanting both and NOT wanting them to interact is the odd case. If that
+  // turns out to be wrong, this is the one place to gate.
+  //
+  // Reads `speedDemonNoCursorHeat` too: someone who has explicitly said the
+  // cursor should keep its own colour as it heats up has said they don't want
+  // the caret reacting to speed, and a pulsing halo is exactly that.
+  glowHeatScale() {
+    if (!this.settings.speedDemon) return 1;
+    if (this.styleFor("speedDemonNoCursorHeat")) return 1;
+    const h = Math.max(0, Math.min(1, this.heat || 0));
+    return 1 + GLOW_HEAT_GAIN * h;
+  }
+
+  // The active theme's four custom heat stops, cold → hot, as hex strings.
+  speedHeatStops() {
+    const prefix = this.isDarkTheme() ? "speedHeatDark" : "speedHeatLight";
+    const out = [];
+    for (let i = 1; i <= 4; i++) {
+      out.push(this.settings[prefix + i] || DEFAULT_SETTINGS[prefix + i]);
+    }
+    return out;
+  }
+
+  // Sample the custom ramp at `h` (0 = stage 1 at rest, 1 = stage 4 flat out).
+  // Three equal linear segments rather than an eased curve: these are stops the
+  // user picked deliberately, and easing would mean each chosen colour is only
+  // hit exactly at one instant while the time is spent in between. Linear makes
+  // each quarter of the speed range read as "that stage".
+  sampleHeatRamp(h) {
+    const stops = this.speedHeatStops();
+    const t = Math.max(0, Math.min(1, h)) * 3;
+    const i = Math.min(2, Math.floor(t));
+    const f = t - i;
+    const [r1, g1, b1] = hexToRgbTuple(stops[i]);
+    const [r2, g2, b2] = hexToRgbTuple(stops[i + 1]);
+    const r = Math.round(r1 + (r2 - r1) * f);
+    const g = Math.round(g1 + (g2 - g1) * f);
+    const b = Math.round(b1 + (b2 - b1) * f);
+    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+  }
+
   heatColor(heat, baseHex) {
     const h = Math.max(0, Math.min(1, heat));
+    // Custom ramp: ignores baseHex entirely and hands back the sampled stop.
+    //
+    // That "ignores baseHex" is the whole behaviour, and it has one consequence
+    // worth stating plainly: gradientStops() runs every stop of a Gradient
+    // cursor through here, so with a custom ramp on, all of them come back the
+    // same colour and the spatial gradient flattens. That's intended - two
+    // features both claiming the cursor's colour can't both win - and the
+    // settings panel says so where you turn it on.
+    if (this.styleFor("speedDemonGradient")) return this.sampleHeatRamp(h);
     const [br, bg, bb] = hexToRgbTuple(baseHex);
     // Cold endpoint: 30% saturation-preserving desaturation toward mid-grey,
     // then dim to ~72% brightness. Uses luma (Rec. 601 coefficients) so
@@ -5089,7 +5289,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // 250ms covers slow input pipelines but not so long that unrelated
       // caret motion (mouse click, arrow keys) inherits the deletion look.
       const now = performance.now();
+      // Both gates, like every other pop effect: the group, then the option.
+      // Pixel Trail is deliberately absent - a deletion burst no longer needs
+      // the ambient trail to be switched on.
       const disintegrate =
+        this.settings.popEffects &&
         this.settings.backspaceDisintegrate &&
         this._deletePending &&
         now - this._deletePending < 250;
@@ -5479,9 +5683,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // `baseRGB` is the pre-computed [r,g,b] of the flat path (already inverted for
   // disintegrate by the caller), passed in so the common case doesn't re-parse
   // the hex for every pixel.
-  flamePixelColor(baseRGB, disintegrate) {
+  //
+  // `forceBase` makes that base authoritative and skips the gradient sample
+  // entirely. It's set when Pop Effects' Rainbow is driving a deletion burst:
+  // Rainbow outranks Gradient throughout Pop Effects, and without this the
+  // gradient branch would quietly win for anyone running both.
+  flamePixelColor(baseRGB, disintegrate, forceBase = false) {
     let r, g, b;
-    if (this.settings.flameTrailGradientColors && this.settings.gradientEnabled) {
+    if (!forceBase && this.settings.flameTrailGradientColors && this.settings.gradientEnabled) {
       [r, g, b] = this.sampleRamp(Math.random());
       if (disintegrate) { r = 255 - r; g = 255 - g; b = 255 - b; }
     } else {
@@ -5495,15 +5704,24 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   spawnFlamePixels(anchor, disintegrate = false) {
-    if (!this.settings.flameTrail) return;
+    // Pixel Trail gates the AMBIENT trail only. Backspace Disintegration is a
+    // Pop Effects option now, with its own gate checked by the caller, so a
+    // deletion burst still fires with the trail switched off. The two share
+    // this function because the burst has always been the same particle system
+    // running backwards - not because one depends on the other.
+    //
+    // Note what a disintegration burst with the trail off inherits: pixel
+    // lifetime, pixel size and gravity are all Pixel Trail settings, and their
+    // sliders are hidden while the trail is off. The saved values still apply,
+    // which keeps the burst identical for anyone who had both on; it does mean
+    // those three dials are only reachable by switching the trail back on.
+    if (!disintegrate && !this.settings.flameTrail) return;
 
-    // Density scales the whole burst. At 0 the trail emits nothing - the way to
-    // hide the pixels while keeping Disintegration usable. (Thunderstrike used
-    // to be listed here too; it is a Pop Effects option now and no longer
-    // passes through this function at all.)
+    // Density scales the whole burst. At 0 the trail emits nothing.
     // Disintegration is exempt from a 0 density: pressing Backspace is an
     // explicit request for the burst, not the ambient trail, so it still fires
-    // (at the normal amount) even with the trail turned down to nothing.
+    // (at the normal amount) even with the trail turned down to nothing - and
+    // now, with the trail off altogether.
     const density = Math.max(0, this.settings.flameTrailDensity ?? 1);
     if (density <= 0 && !disintegrate) return;
 
@@ -5527,6 +5745,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
     let r = (parseInt(h, 16) >> 16) & 255;
     let g = (parseInt(h, 16) >> 8) & 255;
     let b = parseInt(h, 16) & 255;
+    // Pop Effects' Rainbow reaches the deletion burst - Backspace
+    // Disintegration is a pop effect now, and Rainbow governs the whole group -
+    // but deliberately NOT the ambient trail, which belongs to Pixel Trail and
+    // keeps the cursor's own colour. That's why this is gated on `disintegrate`
+    // rather than applied to every burst this function makes.
+    //
+    // The hue replaces the cursor colour as the base and is then inverted like
+    // any other base below, so the burst keeps its "wrong colour" reading while
+    // still stepping through the sweep - one step per deletion, shared with the
+    // letters, bolts and fireworks either side of it.
+    const popRainbow = disintegrate
+      && !!this.settings.popEffects
+      && !!this.settings.popRainbow;
+    if (popRainbow) {
+      [r, g, b] = hslToRgbTuple(this.nextRainbowHue(), 0.85, 0.6);
+    }
     // Colour inversion: photographic negative of the cursor colour. Gives
     // a distinct "wrong colour" flash that reads as destruction against
     // any theme, without needing a separate configurable colour.
@@ -5534,7 +5768,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
       r = 255 - r; g = 255 - g; b = 255 - b;
     }
     // The flat-path base for flamePixelColor; ignored when Gradient Colours
-    // samples the ramp instead.
+    // samples the ramp instead - unless Rainbow is driving, which outranks the
+    // gradient everywhere else in Pop Effects and does so here too.
     const baseRGB = [r, g, b];
     // Pixel size, scaled from the setting. The 0.65 + rand·0.7 spread keeps the
     // same variation the trail always had (default base 4 → ~2.6-5.4px, the
@@ -5551,7 +5786,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     for (let i = 0; i < count; i++) {
       const pX = anchor.x + Math.random() * anchorW;
       const pY = anchor.top + Math.random() * anchor.h;
-      const color = this.flamePixelColor(baseRGB, disintegrate);
+      const color = this.flamePixelColor(baseRGB, disintegrate, popRainbow);
 
       let vx, vy;
       if (disintegrate) {
@@ -6483,6 +6718,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
         }
       }
       let pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
+      // The CRT glow's blur grows with Speed Demon's heat (glowHeatScale), and
+      // a shadow spreads roughly its blur radius. 24 comfortably covers the
+      // base blur of 8-10; at full heat that becomes ~26 and would paint
+      // outside the rect this frame clears, leaving a halo smeared across the
+      // pane. Scale the pad by the same factor rather than picking a fixed
+      // worst case, so an idle cursor still clears the small rect.
+      if (this.settings.crtEffect && this.settings.glow) {
+        pad += 10 * (this.glowHeatScale() - 1);
+      }
       // A Signal Glitch throws slices far outside the caret box, and anything
       // painted outside the damage rect is never cleared - it would leave
       // permanent debris on the canvas. Widen the rect to cover the worst-case
@@ -7021,7 +7265,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     ctx.save();
     if (settings.crtEffect && settings.glow) {
       ctx.shadowColor = color;
-      ctx.shadowBlur = 8 * blinkAlpha;
+      ctx.shadowBlur = 8 * blinkAlpha * this.glowHeatScale();
     }
 
     let rx, ry, rw, rh;
@@ -8056,7 +8300,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // looked fine purely because they skipped that branch. Don't
         // reintroduce a pre-fill pass here.
         ctx.shadowColor = color;
-        ctx.shadowBlur = 10 * blinkAlpha;
+        ctx.shadowBlur = 10 * blinkAlpha * this.glowHeatScale();
       }
 
       // Signal Glitch takes over the body of the cursor entirely while a burst
@@ -9030,6 +9274,15 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc("Each character you type springs out of the cursor and tumbles away as it fades.")
           .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
 
+        // Sits next to Popping Letters on purpose: they're the pair that fires
+        // per character, one for adding and one for removing. The two below
+        // are the bigger, rarer events.
+        new Setting(g).setName("Backspace Disintegration")
+          .setDesc(get("popRainbow")
+            ? "Deleting throws a heavy burst outward, so text comes apart rather than just vanishing. Rainbow is on, so each burst takes the next color in the sweep, inverted."
+            : "Deleting throws a heavier burst outward in inverted colors, so text comes apart rather than just vanishing.")
+          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
+
         new Setting(g).setName("Thunderstrike")
           .setDesc("Pressing Enter calls down a bolt of pixelated lightning onto the cursor's new line, from a random angle above.")
           .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(setAndRedraw("thunderstrike")));
@@ -9072,7 +9325,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
       if (get("flameTrail")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Density")
-          .setDesc("How many pixels the trail sheds as you move. Slide to 0 to hide the pixels entirely while keeping Backspace Disintegration.")
+          .setDesc("How many pixels the trail sheds as you move. Slide to 0 to hide the pixels entirely — the deletion burst is a Pop Effect now and fires either way.")
           .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("flameTrailDensity") ?? 1).setDynamicTooltip().onChange(set("flameTrailDensity")));
         new Setting(g).setName("Trail On Jump")
           .setDesc("When the cursor jumps (a click or a big move) lay pixels along the whole path, so a leap leaves a streak instead of a single puff at the start.")
@@ -9087,7 +9340,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         // is on, so it isn't a switch that visibly does nothing.
         if (get("gradientEnabled")) {
           new Setting(g).setName("Gradient Colors")
-            .setDesc("Colors each pixel from a random point along the cursor's gradient, with slight variation, instead of the one cursor color. Applies to the jump trail and backspace burst too.")
+            .setDesc("Colors each pixel from a random point along the cursor's gradient, with slight variation, instead of the one cursor color. Applies to the jump trail, and to Pop Effects' deletion burst unless its Rainbow overrides it.")
             .addToggle((toggle) => toggle.setValue(!!get("flameTrailGradientColors")).onChange(set("flameTrailGradientColors")));
         }
         new Setting(g).setName("Gravity")
@@ -9099,9 +9352,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
             .setDesc("Which way the pull goes, in degrees. 0 is down, 90 right, 180 up, 270 left.")
             .addSlider((s) => s.setLimits(0, 359, 5).setValue(get("flameTrailGravityAngle") ?? 0).setDynamicTooltip().onChange(set("flameTrailGravityAngle")));
         }
-        new Setting(g).setName("Backspace Disintegration")
-          .setDesc("Deleting throws a heavier burst outward in inverted colors, so text comes apart rather than just vanishing.")
-          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(set("backspaceDisintegrate")));
       }
 
       new Setting(body).setName("Stardust")
@@ -9206,8 +9456,10 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc("How long (in ms) each ghost takes to fade out.")
           .addSlider((s) => s.setLimits(50, 1500, 25).setValue(get("trailFadeMs")).setDynamicTooltip().onChange(set("trailFadeMs")));
         new Setting(g).setName("Glow")
-          .setDesc("Soft halo around the cursor, in its own color.")
-          .addToggle((toggle) => toggle.setValue(get("glow")).onChange(set("glow")));
+          .setDesc(get("speedDemon") && !get("speedDemonNoCursorHeat")
+            ? "Soft halo around the cursor, in its own color. Speed Demon is on, so the halo swells as the cursor heats up and settles back as it cools."
+            : "Soft halo around the cursor, in its own color.")
+          .addToggle((toggle) => toggle.setValue(get("glow")).onChange(setAndRedraw("glow")));
         new Setting(g).setName("Neon Trail")
           .setDesc("Render the ghosts as a glowing neon tube — a hot white core inside a saturated streak — instead of plain fading boxes. The tail matches the cursor's own width and full height.")
           .addToggle((toggle) => toggle.setValue(!!get("crtNeon")).onChange(setAndRedraw("crtNeon")));
@@ -9259,6 +9511,33 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g).setName("Sensitivity")
           .setDesc("How fast typing and caret movement heat the cursor up. Higher reaches white-hot in fewer keystrokes.")
           .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
+
+        // Hidden while Keep Cursor Color is on: that option says the cursor
+        // shouldn't change colour with speed at all, which makes a custom
+        // colour ramp for exactly that a contradiction rather than a choice.
+        if (!get("speedDemonNoCursorHeat")) {
+          new Setting(g).setName("Custom Gradient")
+            .setDesc("Replace the built-in cold-to-white-hot curve with four colors of your own, from resting to flat out. These become the cursor's color while Speed Demon is on, so they override the Gradient section above.")
+            .addToggle((toggle) => toggle.setValue(!!get("speedDemonGradient")).onChange(setAndRedraw("speedDemonGradient")));
+          if (get("speedDemonGradient")) {
+            const g2 = this.subGroup(g);
+            // Same one-Setting-per-row layout the Gradient section uses, so the
+            // four pickers sit side by side instead of each claiming a row.
+            const heatRow = (label, prefix, desc) => {
+              const row = new Setting(g2).setName(label).setDesc(desc);
+              row.settingEl.addClass("cursor-smith-color-row");
+              for (let i = 1; i <= 4; i++) {
+                const key = prefix + i;
+                row.addColorPicker((cp) =>
+                  cp.setValue(get(key) || DEFAULT_SETTINGS[key]).onChange(set(key)));
+              }
+            };
+            heatRow("Stages (Dark Theme)", "speedHeatDark",
+              "Cold to hot, left to right: resting, warming, hot, flat out.");
+            heatRow("Stages (Light Theme)", "speedHeatLight",
+              "The same four stages for light themes, where a white-hot final stage disappears into the page.");
+          }
+        }
       }
 
       new Setting(body).setName("Hot-head")

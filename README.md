@@ -9,11 +9,13 @@ Forge your cursor of choice!
 https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
 
 ## Features
-- **Cursor styles** — Box, Line, Underline.
-- **Smooth movement** — the cursor eases and glides between positions instead of jumping, with adjustable glide, catch-up speed, and an optional adaptive boost while typing fast.
-- **Customizable blinking** — control both how fast the cursor blinks and how the on/off time is balanced within each cycle, or turn blinking off entirely.
-- **After effects** — popping letters, a fading pixel trail, and motion smear for a more expressive, retro feel.
-- **Appearance controls** — separate colors for dark/light themes, adjustable thickness and opacity, glow, and MORE, MUCH-MUCH MORE.
+- **Cursor styles** — Box, Line, Underline, each with their own shape controls (serifs, hollow, outline width, letter-inside-the-block).
+- **Smooth movement** — the cursor eases and glides between positions instead of jumping, with adjustable glide, catch-up speed, movement delay, and an optional adaptive boost while typing fast.
+- **Customizable blinking** — control both how fast the cursor blinks and how the on/off time is balanced within each cycle, fade smoothness, a don't-blink-while-typing mode, or a breathing cursor that swells and shrinks instead of fading. Or turn blinking off entirely.
+- **Appearance controls** — separate colors for dark/light themes, multi-stop gradients, adjustable thickness and opacity, glow, translucency, and MORE, MUCH-MUCH MORE.
+- **Effects** — a dozen of them, from subtle to absurd. See the table below.
+- **Torch spotlight** — darkens the page around a pool of warm light that follows your cursor, with a candle flicker.
+- **Accessibility** — respects your system's reduced-motion preference out of the box, and every effect can be switched off individually.
 - **Presets** — save any cursor configuration as a named preset, load or edit it later, and cycle through all your presets with a single command.
 - **Preset sharing** — every preset gets a compact share code. Copy it, send it to a friend, and they can paste it straight into their own vault.
 - **Vim mode** — per-mode cursors for Normal, Insert, Visual, Replace, and Command, each fully configurable. The live mode indicator sits in the status bar vim-style (`-- NORMAL --`), tinted to match the active cursor color.
@@ -31,17 +33,47 @@ Once enabled, the plugin activates automatically. You can:
 - Adjust every visual detail from **Settings → Cursor-Smith**.
 
 ## Settings
-The settings panel is organized into the following sections:
+The settings panel is organized into collapsible sections. Collapse the ones you don't use — Cursor-Smith remembers which sections you closed and where you were scrolled to, so the panel stays how you left it.
 
 | Section | What it controls |
 |---|---|
+| **Core Configuration** | Enable the plugin, hide the real cursor, hide the cursor when Obsidian isn't focused, and respect reduced motion. |
 | **Presets** | Save, load, edit, delete, and share cursor configurations. |
-| **Core Configuration** | Enable the plugin and pick a cursor style. |
-| **Appearance** | Thickness, colors, glow, opacity, and (Box style only) showing the letter inside the cursor. |
-| **Blinking** | Blink speed, the on/off balance of each blink, and hiding the browser's native caret. |
-| **Smooth Movement** | Enable gliding motion and tune its speed, catch-up behavior, and typing-adaptive boost. |
-| **After Effects** | Popping letters, pixel trail, and motion smear. |
-| **Torch** | Spotlight follow mode, size, color, and speed; environment darkness, glow, and flicker. |
+| **Appearance** | Cursor style and thickness, colors and gradients, glow, opacity, translucency, and (Box style only) showing the letter inside the cursor. |
+| **Blinking** | Blink speed, the on/off balance of each blink, fade smoothness, blink delay, and breathing. |
+| **Smooth Movement** | Enable gliding motion and tune its speed, catch-up behavior, movement delay, and typing-adaptive boost. |
+| **Effects** | Everything the cursor does beyond sitting there. See below. |
+
+### Effects
+
+| Effect | What it does |
+|---|---|
+| **Pop Effects** | Popping letters, backspace disintegration, thunderstrike on Enter, and fireworks on Space/Enter. Rainbow sweeps all of them around the color wheel together. |
+| **Pixel Trail** | A fading trail of pixels behind the cursor, with lifetime, size, gravity and jump-streak controls. |
+| **Stardust** | A slow stream of floating motes, either drifting upward or orbiting the cursor like fireflies. |
+| **Bracket Tether** | Underlines the span between matching brackets or quotes. |
+| **Motion Smear** | The cursor's corners lag on springs, stretching as it moves and snapping back when it arrives. Optional comet-tail taper. |
+| **Energy Beam** | Bands of light that slide or ripple through the cursor body, with an aurora mode. |
+| **CRT Effect** | Old-monitor phosphor ghosts trailing the cursor, with neon-tube and gradient variants, plus Signal Glitch on long jumps. |
+| **Speed Demon** | The cursor heats from grey to white-hot as you type, throwing sparks. Bring your own heat gradient if you like. |
+| **Hot-head** | The cursor sets the text on fire. The fire spreads, lingers, and burns out when you stop. |
+| **Torch Spotlight** | See below. |
+
+### Torch Spotlight
+Darkens the page except for a pool of light around the cursor, so only the part of the note you're working on stays lit.
+
+It's built as two layers: a darkness layer that dims everything outside the pool, and a separate warm glow that *adds* light inside it. **Glow Strength** controls the warm core — slide it to 0 for a pure, colorless spotlight. **Flicker** makes the light gutter like a candle, and **Flicker Depth** sets how far it swings.
+
+The light can follow the caret, the mouse, or whichever moved last, and it can pulse in time with your cursor's blink. On desktop, **Keep Sidebars Lit** dims only the editor and leaves the sidebars, tabs and ribbon at normal brightness.
+
+## Accessibility
+Cursor-Smith is animation-heavy by design, so it takes reduced motion seriously.
+
+**Respect Reduced Motion** is on by default. When your system asks for reduced motion, the moving effects switch themselves off — smooth movement, motion smear, pop effects, pixel trail, stardust, fire, sparks, glitch, energy beam, and the torch's pulse and flicker. Your cursor keeps the style, color, size and glow you chose; only the movement stops.
+
+Blinking is deliberately left alone. It's the standard behavior of every text caret, it's well under the flash thresholds, and it has its own switch if you want it gone.
+
+If you'd rather run the effects anyway, turn the setting off.
 
 ## Presets
 Cursor-Smith ships with six starter presets so you have something to work from right away.
@@ -83,10 +115,6 @@ When Vim mode is active a `-- MODE --` indicator appears on the **left side** of
 
 ### Keybindings
 Turn on **Control Obsidian's Vim key bindings** to let the plugin own that setting: switching to Vim mode forces Obsidian's native vim keybindings on, and switching to CUA forces them off. Turn it off if you manage that setting yourself.
-
-## Compatibility notes
-- Built for CodeMirror 6, the editor used in current versions of Obsidian.
-- If you use Vim keybindings, the native block cursor is hidden along with the regular caret.
 
 ## Feedback
 Found a bug or have an idea for a new effect? Open an issue!

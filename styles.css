@@ -1,202 +1,954 @@
-/* --- Settings panel: collapsible section groups --------------------------
-   Wraps each named group of settings (Presets, Appearance, Blinking, etc.)
-   in a native <details>/<summary>, so a 60+ setting panel can be collapsed
-   down to just the sections someone actually uses. Sections default open -
-   collapsibility is the point, not being hidden by default. */
-.cursor-smith-section {
-  margin-bottom: 0.5em;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--background-modifier-border);
+/* =========================================================================
+   Word-Smith — combined zen + typewriter + retro styles
+   ========================================================================= */
+
+:root {
+	--zg-bg:   #050505;
+	--zg-text: #ffb000;
+
+	--zg-editor-padding-h:    40px;
+	/* Arrow size tracks window width via clamp() so it stays current after
+	   resize with zero JS. --zg-arrow-scale is stamped by JS (default 1). */
+	--zg-arrow-font-size:     clamp(10px, calc(1.2vw * var(--zg-arrow-scale, 1)), 40px);
+	--zg-status-bar-height:   30px;
+	--zg-status-row-height:   30px;
+	--zg-status-bar-font-size:13px;
+	--zg-separator-style:     solid;
+	--zg-separator-weight:    2px;
+	--zg-z-mask:     20;
+	--zg-z-arrows:   21;
+	--zg-z-status:   22;
+	--zg-z-titlebar: 23;
+	--zen-mode-top-padding:   0px;
+	--zen-mode-bottom-padding:0px;
+	--zg-scroller-pad-top:    0px;
+	--zg-scroller-pad-bottom: 0px;
 }
 
-.cursor-smith-section > summary {
-  cursor: pointer;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  padding: 0.2em 0;
+/* Whenever the letterbox masks are visible (typewriter mode + letterbox on)
+   AND the note editor actually has focus, raise ZenGrinder elements above
+   Cursor Smith's canvas (z:10000) so the masks fully occlude the cursor
+   while scrolling/writing. Requiring editor focus keeps this from floating
+   above the command palette, settings tab, context menus, or any other
+   modal — those all move focus away from .cm-editor, which drops us back
+   to normal stacking automatically. */
+body.zg-masks-active.zg-editor-focused {
+	--zg-z-mask:     10003;
+	--zg-z-arrows:   10004;
+	--zg-z-status:   10005;
+	--zg-z-titlebar: 10006;
 }
 
-.cursor-smith-section > summary::-webkit-details-marker {
-  display: none;
+/* =========================================================================
+   Zen mode — UI hiding
+   ========================================================================= */
+
+/* Tab headers, nav, view headers */
+.zenmode-active .mod-root .workspace-tabs .workspace-tab-header-container,
+.zenmode-active .mobile-navbar,
+.zenmode-active .pdf-toolbar,
+.zenmode-active .workspace-tab-container .view-header,
+.zenmode-active .view-header-nav-buttons,
+.zenmode-active .tooltip,
+.zenmode-hide-status-bar .status-bar,
+.zenmode-hide-ribbon .workspace-ribbon,
+.zenmode-active .sidebar-toggle-button.mod-right,
+.zenmode-active .sidebar-toggle-button.mod-left,
+.zenmode-active .tree-item-flair:not(.tag-pane-tag-count),
+.zenmode-active .prompt-instructions,
+.zenmode-active .workspace-sidedock-vault-profile,
+body.hider-vault:not(.is-mobile) .workspace-split.mod-left-split .workspace-sidedock-vault-profile {
+	display: none;
 }
 
-.cursor-smith-section > summary::before {
-  content: "▸";
-  display: inline-block;
-  margin-right: 6px;
-  color: var(--text-muted);
-  transition: transform 0.1s ease;
+.zenmode-active .mod-top-left-space .view-header { padding-left: var(--frame-left-space); }
+
+/* Native status bar: dedicated !important rule (in addition to the list
+   above and the inline style set from JS) so no theme/snippet rule that
+   also targets .status-bar can win and peek through the retro bar's
+   goal-met flash. */
+body.zenmode-hide-status-bar .status-bar {
+	display: none !important;
 }
 
-.cursor-smith-section[open] > summary::before {
-  transform: rotate(90deg);
+.zenmode-hide-properties .markdown-reading-view .metadata-container { display: none; }
+.zenmode-hide-properties { --metadata-display-editing: none; }
+.zenmode-active[data-zen-hide-inline-title="true"] .inline-title { display: none; }
+.zenmode-hide-linked-mentions .embedded-backlinks { display: none; }
+/* Obsidian's own scroller is a plain div, so the ::-webkit-scrollbar
+   pseudo-element is all that's needed here for Chromium/Electron. */
+.zenmode-hide-scroll-bar ::-webkit-scrollbar { display: none; }
+
+/* Padding */
+.zenmode-active .markdown-preview-view,
+.zenmode-active .markdown-source-view {
+	padding-top:    var(--zen-mode-top-padding,    0px);
+	padding-bottom: var(--zen-mode-bottom-padding, 0px);
 }
 
-.cursor-smith-section-title {
-  font-size: var(--font-ui-medium);
-  font-weight: 700;
+/* Focused file mode. */
+.workspace-tabs.zenmode-tab-hidden { display: none; }
+.workspace-tabs.zenmode-tab-active { display: block; width: 100%; flex: 1 1 100%; }
+
+/* Draggable titlebar strip (leaves OS buttons).
+
+   The z-index has to clear the letterbox band, not sit below it. Electron's
+   -webkit-app-region hit test ignores pointer-events, so the top mask —
+   visually inert, fixed at top: 0 — still swallowed window dragging once it
+   was painted over this strip. */
+body:not(.is-mobile).zenmode-active .titlebar {
+	display: block; position: fixed; top: 0;
+	left: 0; width: 100%;
+	z-index: var(--zg-z-titlebar, 23);
+	background: transparent; -webkit-app-region: drag;
+}
+body:not(.is-mobile).zenmode-active .titlebar * { -webkit-app-region: no-drag; }
+
+/* And make the masks draggable in their own right. Raising the strip fixes
+   the thin band it occupies; this makes the whole letterbox a drag handle,
+   which in a mode with no other chrome is where you would reach anyway. */
+body:not(.is-mobile).zenmode-active .zengrinder-mask {
+	-webkit-app-region: drag;
 }
 
-.cursor-smith-subsection-title {
-  font-size: var(--font-ui-smaller);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-  margin: 0.9em 0 0.2em;
+/* The arrow row and separator lines are resize handles — they must keep
+   their own gestures rather than moving the window. */
+body:not(.is-mobile) .zengrinder-arrows-wrap,
+body:not(.is-mobile) .zengrinder-arrows,
+body:not(.is-mobile) .zengrinder-arrow-line {
+	-webkit-app-region: no-drag;
 }
 
-/* ...but not when it's what opens a group - the group's own top margin
-   already provides the gap. */
-.cursor-smith-sub > .cursor-smith-subsection-title:first-child {
-  margin-top: 0.2em;
+/* =========================================================================
+   Editor constraints (zen mode full-width)
+   ========================================================================= */
+
+body.zenmode-active {
+	--file-line-width: calc(100vw - (var(--zg-editor-padding-h) * 2));
 }
 
-/* --- Settings panel: indent sub-options nested under a parent toggle
-   (or style dropdown), so conditional groups - e.g. Torch Spotlight's
-   Follow/Light Size/etc., or Box style's Hollow -> Outline Width - read
-   as a visual hierarchy instead of a flat list of settings.
-
-   This is a container that WRAPS a group of settings (see subGroup() in
-   main.js), not a class stamped onto each individual setting row, which is
-   what it used to be (.cursor-smith-indent-1 / -2). One element per group
-   means one guide line with a real start and end, rather than a stack of
-   per-row segments that only read as continuous while no row had a margin;
-   and because the indent comes from the wrapper, groups nest by nesting -
-   no hardcoded class and margin per depth level.
-
-   Geometry deliberately matches Word-Smith's .ws-settings-sub so the two
-   plugins' settings panels line up visually. */
-.cursor-smith-sub {
-  border-left: 2px solid var(--background-modifier-border);
-  margin-left: 12px;
-  padding-left: 12px;
-  margin-top: 4px;
-  margin-bottom: 8px;
+/* Chained through the source-view + cm-editor ancestry for specificity. */
+.zenmode-active .markdown-source-view.mod-cm6 .cm-editor .cm-scroller {
+	padding-top:    50vh;
+	padding-bottom: 50vh;
 }
 
-/* Obsidian gives every .setting-item a top border to separate it from the
-   previous row. At the top of a group that separator is redundant - the
-   group's own left rule and margin already mark the break - and it reads as
-   a stray line hanging off the corner. */
-.cursor-smith-sub > .setting-item:first-child {
-  border-top: none;
-  padding-top: 0.4em;
+/* Outside zen mode the masks have no built-in scroll padding — give the
+   scroller just enough to clear the mask height. */
+body.zg-masks-active:not(.zenmode-active) .markdown-source-view.mod-cm6 .cm-editor .cm-scroller {
+	padding-top:    var(--zg-scroller-pad-top, 0px);
+	padding-bottom: var(--zg-scroller-pad-bottom, 0px);
 }
 
-/* A nested group sits directly under its parent setting rather than a
-   sibling row, so it doesn't need the extra breathing room above. */
-.cursor-smith-sub > .cursor-smith-sub {
-  margin-top: 0;
+.zenmode-active .markdown-source-view.mod-cm6 .cm-sizer,
+.zenmode-active .markdown-reading-view .markdown-preview-sizer,
+.zenmode-active .cm-contentContainer {
+	max-width: 100%;
+	width: 100%;
 }
 
-/* --- Settings panel: the Gradient feature's rows of color pickers --------
-   The gradient has one row of 2-4 pickers per theme (dark and light). Each
-   row's pickers are all added to a SINGLE Setting (see renderLookSettings in
-   main.js) so they lay out side by side in that row's control area rather
-   than each getting its own labelled row. Obsidian's .setting-item-control is
-   already a flex row, so all this needs to add is breathing room between the
-   swatches - without it they butt against each other and read as one wide
-   multi-colored control instead of N separate pickers. */
-.cursor-smith-color-row .setting-item-control {
-  gap: 6px;
+/* Horizontal text padding — applies everywhere, independent of zen mode.
+   (Zen mode's own top/bottom padding above is intentionally still scoped to
+   .zenmode-active — only the horizontal inset is a general text option.) */
+.markdown-source-view.mod-cm6 .cm-content,
+.markdown-reading-view .markdown-preview-view {
+	padding-left:  var(--zg-editor-padding-h);
+	padding-right: var(--zg-editor-padding-h);
 }
 
-/* --- Canvas Engine Styles (Box, Line, Underline) --- */
-.retro-box-cursor-canvas {
-  position: fixed;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  z-index: 9999;
+.zenmode-active .markdown-source-view.mod-cm6 .cm-content,
+.zenmode-active .markdown-reading-view .markdown-preview-view {
+	max-width: 100%;
+	width: auto;
+	margin: 0 auto;
 }
 
-/* The Translucent option works by putting a mix-blend-mode on the canvas
-   WRAPPER (the div this canvas sits in), set from main.js - see
-   applyCanvasBlend there for why it has to be the wrapper and not the canvas
-   itself. Two things would quietly break it, neither of which looks like a
-   bug at the point you'd write it:
+/* =========================================================================
+   Letterbox masks + arrows
+   ========================================================================= */
 
-     • `isolation: isolate` on anything between the wrapper and
-       .app-container. Isolation stops the blend reaching the editor, so the
-       option silently does nothing at all.
-     • a mix-blend-mode declared on .retro-box-cursor-canvas here. The
-       wrapper is a stacking context, so a blend on the canvas inside it
-       composites against the wrapper's empty background - no visible effect,
-       and it costs a blend pass every frame to achieve nothing.
-
-   Keep blend-mode handling for this layer in main.js only. */
-
-/* The class is doubled (`.foo.foo`) purely to raise this selector's
-   specificity above a plausible community theme or CSS snippet that sets
-   caret-color on the same or a more specific element - without reaching for
-   !important, which would make this impossible for a user to override in
-   turn (e.g. to combine this plugin with their own caret tweaks). */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
-  caret-color: transparent;
+.zengrinder-mask {
+	position: fixed;
+	z-index: var(--zg-z-mask, 20);
+	pointer-events: none;
+	background-color: var(--background-primary);
 }
 
-/* CodeMirror 6 (Obsidian's editor) draws its own cursor as a DOM element
-   rather than relying on the browser's native caret, so caret-color alone
-   doesn't hide it - it has its own independent blink cycle and would
-   otherwise flash through whenever our custom cursor fades out. The
-   ancestor class is doubled for the same specificity reason as above: CM6
-   themes style these cursor elements directly, so we need real specificity
-   headroom rather than relying on !important or stylesheet load order. */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor-primary,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor-secondary,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-fat-cursor,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-dropCursor {
-  display: none;
-  opacity: 0;
-  visibility: hidden;
-  border-color: transparent;
-  background-color: transparent;
+.zengrinder-arrows-wrap {
+	position: fixed;
+	z-index: var(--zg-z-arrows, 21);
+	pointer-events: none;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 0;
+	box-sizing: border-box;
+	opacity: 0;
+	transition: opacity 0.25s ease-in-out;
 }
 
-/* Belt-and-braces: some CM themes set caret-color directly on .cm-content
-   or .cm-line. That used to tie in specificity with the rule above and
-   fall back to stylesheet load order (fixed here with !important); doubling
-   the ancestor class instead gives this selector more specificity than a
-   theme's plain `.cm-content`/`.cm-line` rule outright, so we no longer
-   depend on load order OR need !important to win the cascade. */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-content,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
-  caret-color: transparent;
+.zengrinder-arrows-wrap.is-visible { opacity: 1; }
+.zengrinder-arrows-wrap-top    { justify-content: flex-end; }
+.zengrinder-arrows-wrap-bottom { justify-content: flex-start; }
+
+.zengrinder-arrows-wrap-top    .zengrinder-arrows { margin-bottom: 5px; }
+.zengrinder-arrows-wrap-bottom .zengrinder-arrows { margin-top:    5px; }
+
+.zengrinder-arrows {
+	display: flex;
+	justify-content: space-evenly;
+	width: 100%;
+	color: var(--zg-arrow-color, var(--text-normal));
+	font-family: inherit;
+	font-size: var(--zg-arrow-font-size);
+	line-height: 1;
+	letter-spacing: 2px;
+	pointer-events: auto;
+	cursor: ew-resize;
+	/* touch-action: none lets pointerdown fire immediately on touch without
+	   the browser waiting to see if it's a scroll gesture. */
+	touch-action: none;
 }
 
-/* --- Torch Spotlight Effect ---
-   All of the torch overlay's CSS (positioning, gradient, blend mode) lives
-   entirely in the dynamically-injected stylesheet in main.js (injectStyles),
-   since the overlay's colors and radius are driven live from plugin settings
-   via CSS custom properties. Do NOT re-add a .torch-cursor-overlay rule here:
-   a version of this rule used to live in this file and, because its selector
-   was more specific than the one in main.js, it silently won the cascade and
-   overrode the settings-driven values. Keep all torch-cursor-overlay styling
-   in main.js only.
+.zengrinder-arrow-line {
+	position: relative;
+	width: 100%;
+	height: 0;
+	border: none;
+	border-top: var(--zg-separator-weight) var(--zg-separator-style) var(--zg-line-color, var(--text-normal));
+	box-sizing: content-box;
+	pointer-events: auto;
+	cursor: ns-resize;
+	touch-action: none;
+}
 
-   The candle flicker is back, but NOT as the keyframe animation it used to be:
-   the torch tick in main.js writes --torch-intensity per frame instead. The
-   original was a CSS animation, which runs on the compositor completely outside
-   main.js's requestAnimationFrame frame governor, so it held the display at
-   full refresh rate for as long as the torch was on no matter which gear the
-   render loops selected - and because the overlay uses mix-blend-mode:
-   multiply across the editor pane, each flicker frame forced a re-composite of
-   the blended layer against its backdrop instead of being a cheap opacity
-   change. Do not re-add an animation property on this element in either file
-   to drive the flame; the tick already does it, under the governor. */
+/* Wider invisible hit area for dragging. */
+.zengrinder-arrow-line::before {
+	content: '';
+	position: absolute;
+	left: 0; right: 0;
+	top: -6px; bottom: -6px;
+	pointer-events: auto;
+}
 
+/* =========================================================================
+   Hidden markers (spaces / tabs / paragraphs / end of lines)
+   ========================================================================= */
+/* All four are rendered by CM6 decorations (see setupEditorExtensions in
+   main.js) — spans/widgets created inside the editor's own pipeline, so
+   nothing here fights the editor's rendering. */
 
-/* Note: we used to force .titlebar/.status-bar to a very high z-index here
-   to keep the cursor canvas from painting over them. That fought against
-   whatever stacking context Obsidian's own DOM created around those
-   elements (numerically "winning" z-index doesn't help if an ancestor
-   creates its own stacking context), so the canvas could still end up on
-   top in practice - and a full-viewport layer sitting over the titlebar,
-   even invisibly, is exactly what breaks Electron's native window-drag
-   hit-testing. The canvas is now clip-path'd to the actual editor pane in
-   main.js (see editorClip()), so it's physically incapable of overlapping
-   the titlebar or status bar - no z-index tug-of-war needed, and dragging
-   the window works normally again. */
+/* Each decorated space gets a small centred dot painted behind the
+   (invisible) space character itself — same technique as CM6's own
+   highlightWhitespace. Fixed em radius so it stays a subtle point instead
+   of scaling with the glyph box. */
+.zg-ws-space {
+	background-image: radial-gradient(circle at 50% 55%, var(--text-faint, #888) 0.07em, transparent 0.085em);
+	background-position: center;
+	background-repeat: no-repeat;
+}
+
+/* Tabs keep their real width; the arrow is overlaid at the start. */
+.zg-ws-tab {
+	position: relative;
+}
+.zg-ws-tab::before {
+	content: '→';
+	position: absolute;
+	left: 1px;
+	color: var(--text-faint, currentColor);
+	opacity: 0.6;
+	pointer-events: none;
+}
+
+/* ¶ / ↵ end-of-line widgets */
+.zg-invisible {
+	color: var(--text-faint, currentColor);
+	opacity: 0.5;
+	margin-left: 2px;
+	pointer-events: none;
+	user-select: none;
+}
+
+/* =========================================================================
+   Prose analysis + parts of speech
+   ========================================================================= */
+/* Marks are produced by CM6 decorations (see buildEditorExtensions in
+   main.js). Colours and the underline/tint/text treatment are injected from
+   settings by updateStyleEl, so they change without touching this file —
+   only the structural bits that never vary live here. */
+
+.zg-pos-noun,
+.zg-pos-verb,
+.zg-pos-adj,
+.zg-pos-adv,
+.zg-pos-conj {
+	transition: color 0.12s ease;
+}
+
+/* Muting the rest of the line is what makes one highlighted class readable
+   as structure. The transition is suppressed under reduced-motion, since
+   toggling a class then repaints the whole viewport at once. */
+body.zg-pos-dim .markdown-source-view.mod-cm6 .cm-content .cm-line {
+	transition: color 0.12s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.zg-pos-noun, .zg-pos-verb, .zg-pos-adj, .zg-pos-adv, .zg-pos-conj,
+	body.zg-pos-dim .markdown-source-view.mod-cm6 .cm-content .cm-line {
+		transition: none;
+	}
+}
+
+/* =========================================================================
+   Hemingway mode
+   ========================================================================= */
+
+/* A blocked key needs to read as "that is switched off", not "the editor
+   froze". An inset outline that fades is enough, and unlike a nudge it does
+   not create a containing block on .cm-content — which would drag the fixed
+   letterbox masks out of position. */
+@keyframes zg-hem-flash {
+	from { box-shadow: inset 0 0 0 2px var(--zg-hem-block-color, #c2544d); }
+	to   { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+/* Retro bar flash. */
+.zengrinder-status-bar.zg-hem-blocked {
+	animation: zg-hem-flash 0.5s ease-out;
+}
+
+/* Screen flash. z-index has to clear the letterbox masks, which rise to
+   10003 while the editor has focus — and Hemingway is exactly the mode most
+   likely to be running with letterbox on, so a flash underneath them would
+   be invisible when it matters most. */
+@keyframes zg-hem-screen-flash {
+	0%   { opacity: 0;    }
+	18%  { opacity: 0.24; }
+	100% { opacity: 0;    }
+}
+
+.zg-hem-screen {
+	position: fixed;
+	inset: 0;
+	z-index: 10100;
+	pointer-events: none;
+	opacity: 0;
+	background: var(--zg-hem-block-color, #c2544d);
+}
+
+.zg-hem-screen.is-on {
+	animation: zg-hem-screen-flash 0.5s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.zengrinder-status-bar.zg-hem-blocked { animation: none; box-shadow: inset 0 0 0 2px var(--zg-hem-block-color, #c2544d); }
+	.zg-hem-screen.is-on { animation: none; opacity: 0.18; }
+}
+
+/* The caret is the one piece of the editor that still moves while the lock
+   is on, so it stays. Selection, however, implies a replacement you cannot
+   make — mute it so the affordance matches what is possible. */
+body.zg-hemingway-active .cm-editor .cm-selectionBackground {
+	opacity: 0.4;
+}
+
+/* =========================================================================
+   Word count badges
+   ========================================================================= */
+
+.zg-count {
+	font-size: 0.8em;
+	opacity: 0.45;
+	margin-left: 6px;
+	flex-shrink: 0;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+/* =========================================================================
+   Retro status bar
+   ========================================================================= */
+
+.zengrinder-status-bar {
+	position: fixed;
+	bottom: 0; left: 0; width: 100%;
+	height: var(--zg-status-bar-height, 30px);
+	background-color: var(--zg-bg);
+	color: var(--zg-text);
+	font-family: var(--font-interface, var(--font-ui-small, var(--font-default, sans-serif)));
+	font-size: var(--zg-status-bar-font-size, 13px);
+	font-weight: 600;
+	letter-spacing: 0.3px;
+	padding: 0 15px;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	white-space: pre;
+	overflow: hidden;
+	z-index: var(--zg-z-status, 22);
+}
+
+/* One line of the bar. A single-row bar is still wrapped in one of these,
+   so there is only one layout path to reason about. */
+.zg-status-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
+	height: var(--zg-status-row-height, 30px);
+	flex: 0 0 auto;
+	overflow: hidden;
+}
+
+/* Rows after the first are supporting information — the file name and goal
+   belong on row one. Fading them keeps the bar from reading as three equally
+   loud things competing for the same glance. */
+.zengrinder-status-bar.zg-status-multirow .zg-status-row + .zg-status-row {
+	opacity: 0.72;
+}
+
+.zg-status-section {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: pre;
+}
+
+.zg-status-left   { text-align: left; }
+.zg-status-center { text-align: center; }
+.zg-status-right  { text-align: right; }
+
+/* Width, style and colour are stamped inline from settings; this only keeps
+   the box model from shifting when the border appears or disappears. */
+.zengrinder-status-bar {
+	border-top: 0 none var(--zg-text);
+}
+
+/* CodeMirror bottom panels — the vim ":" command line lives here — stick
+   to the bottom edge of the editor, which the fixed retro bar overlays.
+   While the bar is active, lift them by its height so they stay visible.
+   !important because CM's own generated theme sets bottom: 0 at matching
+   specificity. */
+body.zg-retrobar-active .cm-editor .cm-panels-bottom {
+	bottom: var(--zg-status-bar-height, 30px) !important;
+}
+
+/* =========================================================================
+   Mode badges — {mode}
+   ========================================================================= */
+
+.zg-mode {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.32em;
+	vertical-align: middle;
+	letter-spacing: 0;
+}
+
+/* Sized in em against its own font-size, so the badge keeps its proportions
+   whatever size fitStatusBarText settles on. 1.5px borders match the WS
+   ribbon badge, which is the only other bordered glyph in the plugin. */
+.zg-mode-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	min-width: 1.5em;
+	height: 1.5em;
+	font-size: 0.76em;
+	font-weight: 700;
+	line-height: 1;
+	/* Capitals sit fractionally high inside a ring at this size; the nudge
+	   centres them optically rather than metrically. */
+	padding-top: 0.06em;
+}
+
+.zg-mode-badge.is-zen {
+	border: 1.5px solid currentColor;
+	border-radius: 50%;
+}
+
+.zg-mode-badge.is-hem {
+	border: 1.5px solid currentColor;
+	border-radius: 2px;
+}
+
+/* Rules above and below, no sides. The extra horizontal padding lets them
+   overhang the letter, which is what reads as a platen rather than a box
+   missing two edges. */
+.zg-mode-badge.is-tw {
+	border-top: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	border-radius: 0;
+	padding-left: 0.2em;
+	padding-right: 0.2em;
+}
+
+/* Every mode is always shown, so the badges can act as switches — a mode you
+   cannot see is a mode you cannot turn back on from here. */
+.zg-mode-badge.is-clickable {
+	cursor: pointer;
+	position: relative;
+	transition: opacity 0.12s ease;
+}
+
+.zg-mode-badge.is-clickable:hover { opacity: 0.8; }
+
+.zg-mode-badge.is-off { opacity: 0.45; }
+
+/* A diagonal strike rather than a horizontal one: it reads as "not this"
+   instead of as a strikethrough on the letter. Overhangs the badge slightly
+   so it clearly crosses the whole shape. */
+.zg-mode-badge.is-off::after {
+	content: '';
+	position: absolute;
+	left: -12%;
+	right: -12%;
+	top: 50%;
+	height: 1.5px;
+	background: currentColor;
+	transform: rotate(-45deg);
+	transform-origin: center;
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.zg-mode-badge.is-clickable { transition: none; }
+}
+
+/* =========================================================================
+   Bar buttons and pickers — {syntax} {markers} {textview} {toc} {file}
+   ========================================================================= */
+
+.zg-barbtn {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3em;
+	vertical-align: middle;
+	line-height: 1;
+}
+
+/* Off states dim rather than disappear, so the bar does not reflow every
+   time a class is switched on or off mid-sentence. */
+.zg-barbtn.is-off { opacity: 0.45; }
+
+.zg-barbtn-markers { font-size: 1.15em; }
+
+/* "Aa" previews the chosen face, so the button is its own sample. */
+.zg-barbtn-font {
+	font-weight: 700;
+	letter-spacing: 0;
+}
+
+.zg-barbtn-textview .svg-icon,
+.zg-barbtn-textview svg {
+	width:  1.1em;
+	height: 1.1em;
+}
+
+/* ── Popup ─────────────────────────────────────────────────────────────── */
+
+.zg-picker {
+	position: fixed;
+	z-index: 10050;          /* above the bar's own z-index band */
+	min-width: 148px;
+	padding: 4px;
+	border-radius: 8px;
+	background: var(--zg-bg);
+	color: var(--zg-text);
+	border: 1px solid currentColor;
+	box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+	font-family: var(--font-interface, sans-serif);
+	font-size: 13px;
+	font-weight: 500;
+	letter-spacing: 0;
+	white-space: nowrap;
+}
+
+.zg-picker-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 9px;
+	border-radius: 5px;
+	cursor: pointer;
+	transition: background-color 0.1s ease, opacity 0.1s ease;
+}
+
+.zg-picker-row:hover {
+	background-color: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+/* Disabled rows fade whole — swatch and label together — so the state reads
+   at a glance without needing a checkbox column. */
+.zg-picker-row.is-off { opacity: 0.4; }
+
+.zg-picker-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex: none;
+	background: currentColor;
+}
+
+.zg-picker-label { flex: 1 1 auto; }
+
+/* Font rows render their own name in their own face. Sizes vary wildly
+   between families, so the row height is pinned to stop the list jumping. */
+.zg-picker-row .zg-picker-label[style*="font-family"] {
+	font-size: 15px;
+	line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.zg-picker-row { transition: none; }
+}
+
+/* =========================================================================
+   Lock key glyphs — {caps} {num}
+   ========================================================================= */
+
+/* Both are drawn rather than typed: no font carries a caps-lock glyph, and a
+   flat "CAPS" in a status bar reads as shouting rather than as a key. */
+.zg-keycap {
+	display: inline-flex;
+	align-items: center;
+	vertical-align: middle;
+	line-height: 1;
+}
+
+.zg-key { height: 1.5em; width: auto; flex: none; }
+
+.zg-key-shape {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.4;
+	stroke-linejoin: round;
+}
+
+.zg-key-text {
+	fill: currentColor;
+	font-family: inherit;
+	font-weight: 700;
+	letter-spacing: 0;
+}
+
+/* =========================================================================
+   Goal ring
+   ========================================================================= */
+
+/* Wrapper for whichever indicator is in use, plus its label. */
+.zg-goal {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45em;
+	vertical-align: middle;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0;
+}
+
+/* Ring. Everything is stroked in currentColor so the indicator inherits
+   --zg-text and needs no colour settings of its own. Sized in em so it
+   shrinks with the bar's text when fitStatusBarText steps the font down.
+   Larger than before because the percentage now lives inside it. */
+.zg-goal-ring {
+	width: 1.85em;
+	height: 1.85em;
+	flex: none;
+	overflow: visible;
+}
+
+.zg-goal-ring circle {
+	fill: none;
+	stroke: currentColor;
+}
+
+.zg-goal-ring-track { opacity: 0.22; }
+
+.zg-goal-ring-fill {
+	stroke-linecap: round;
+	transition: stroke-dashoffset 0.35s ease;
+}
+
+/* Sits inside the ring, outside the rotated group, so it stays upright. No
+   percent sign: at this size the ring is the unit. */
+.zg-goal-ring-pct {
+	fill: currentColor;
+	font-family: inherit;
+	font-weight: 700;
+	letter-spacing: -0.3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.zg-goal-ring-fill { transition: none; }
+}
+
+/* Goal reached. Two separate states, deliberately:
+
+   The persistent one is a quiet halo on the filled ring — visible if you
+   look, invisible if you don't. The old behaviour strobed the entire bar on
+   a five-second infinite loop, which is a fire alarm for a small piece of
+   good news, and unreadable to work next to.
+
+   The transient one is a single swell fired on the edge where the target is
+   crossed (see celebrateGoal in main.js), so you get the moment without
+   having to live in it. */
+
+/* Goal reached: a slow, continuous green breath. Opacity only — a growing
+   drop-shadow reads as the ring swelling, and the bar clips its overflow so
+   anything that grows gets sliced by the row padding anyway. */
+@keyframes zg-goal-met-breathe {
+	0%, 100% { opacity: 1;    }
+	50%      { opacity: 0.42; }
+}
+
+.zg-goal.is-met .zg-goal-ring-fill,
+.zg-goal.is-met .zg-goal-ring-icon {
+	color: var(--zg-goal-met-color, #3fb950);
+	animation: zg-goal-met-breathe 2.6s ease-in-out infinite;
+}
+
+.zg-goal.is-met .zg-goal-ring-fill { stroke: var(--zg-goal-met-color, #3fb950); }
+
+/* Fraction mode has no inside to put the glyph in, so the number turns green
+   and the reset arrow sits beside it. */
+.zg-goal.is-met .zg-goal-text {
+	color: var(--zg-goal-met-color, #3fb950);
+	animation: zg-goal-met-breathe 2.6s ease-in-out infinite;
+}
+
+.zg-goal-reset {
+	width: 1em;
+	height: 1em;
+	flex: none;
+	color: var(--zg-goal-met-color, #3fb950);
+	animation: zg-goal-met-breathe 2.6s ease-in-out infinite;
+}
+
+/* The refresh glyph replaces the percentage once the target is met: the
+   number would read 100 and stay there, where the glyph says what a click
+   does now. */
+.zg-goal-ring-icon { fill: currentColor; }
+
+@media (prefers-reduced-motion: reduce) {
+	.zg-goal.is-met .zg-goal-ring-fill,
+	.zg-goal.is-met .zg-goal-ring-icon,
+	.zg-goal.is-met .zg-goal-text,
+	.zg-goal-reset { animation: none; }
+}
+
+/* The click target is the indicator, not the whole bar. */
+.zg-goal.is-clickable,
+.zg-barbtn.is-clickable {
+	cursor: pointer;
+	border-radius: 4px;
+	padding: 0 3px;
+	margin: 0 -3px;
+	transition: background-color 0.12s ease;
+}
+
+.zg-goal.is-clickable:hover,
+.zg-barbtn.is-clickable:hover {
+	background-color: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.zengrinder-status-bar.zg-goal-just-met .zg-goal-ring-fill,
+	.zengrinder-status-bar.zg-goal-just-met .zg-goal-ring-pct {
+		animation: none;
+	}
+}
+
+/* =========================================================================
+   "WS" ribbon badge — toggles the entire plugin on/off
+   ========================================================================= */
+
+.ws-ribbon-btn .ws-ribbon-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width:  18px;
+	height: 18px;
+	border: 1.5px solid currentColor;
+	border-radius: 3px;
+	font-family: var(--font-interface, var(--font-ui-small, sans-serif));
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+	line-height: 1;
+}
+
+/* Dimmed when disabled */
+.ws-ribbon-btn.is-disabled { opacity: 0.45; }
+
+/* =========================================================================
+   Settings tab helpers
+   ========================================================================= */
+
+.ws-settings-hr {
+	margin: 16px 0 8px;
+	border: none;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.ws-settings-sub {
+	border-left: 2px solid var(--background-modifier-border);
+	margin-left: 12px;
+	padding-left: 12px;
+	margin-top: 4px;
+	margin-bottom: 8px;
+}
+
+.ws-settings-label {
+	margin: 12px 0 4px;
+	font-weight: 600;
+	font-size: 0.9em;
+	color: var(--text-muted);
+}
+
+.ws-settings-note {
+	font-size: 0.82em;
+	color: var(--text-muted);
+	margin: 0 0 6px 0;
+}
+
+.ws-fmt-row {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	margin: 4px 0 8px;
+}
+
+.ws-fmt-row button {
+	font-family: monospace;
+	font-size: 11px;
+	padding: 2px 6px;
+	cursor: pointer;
+}
+
+.ws-num-input {
+	width: 60px;
+}
+
+/* =========================================================================
+   Scope list
+   ========================================================================= */
+
+.ws-scope-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 4px 0 12px;
+}
+
+.ws-scope-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 6px 4px 10px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+}
+
+.ws-scope-row:hover { background: var(--background-modifier-hover); }
+
+.ws-scope-path {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 0.86em;
+	/* Paths are structural, not prose — read the separators, not the words. */
+	font-family: var(--font-monospace, monospace);
+	direction: rtl;      /* keep the file name visible when a path is clipped */
+	text-align: left;
+}
+
+/* A folder covers everything under it, which the trailing separator says
+   more compactly than a label would. */
+.ws-scope-path.is-folder::after {
+	content: '/';
+	opacity: 0.5;
+}
+
+.ws-scope-remove {
+	flex: none;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	line-height: 1;
+	font-size: 15px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.ws-scope-remove:hover {
+	background: var(--background-modifier-error-hover, var(--background-modifier-hover));
+	color: var(--text-error, var(--text-normal));
+}
+
+/* Frontmatter example under the scope picker. Monospace because it is YAML
+   the user will copy, not prose they will read. */
+.ws-fm-help { margin: 2px 0 12px; }
+
+.ws-fm-sample {
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	font-family: var(--font-monospace, monospace);
+	font-size: 0.78em;
+	line-height: 1.5;
+	white-space: pre;
+	overflow-x: auto;
+	color: var(--text-muted);
+}
+
+/* =========================================================================
+   Settings tab navigation (Zen / Typewriter / Mask / Retro Bar / Text)
+   ========================================================================= */
+
+.ws-tab-nav {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 4px 0 16px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding-bottom: 8px;
+}
+
+.ws-tab-btn {
+	font-family: inherit;
+	font-size: 0.88em;
+	font-weight: 600;
+	padding: 6px 14px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: background-color 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+
+.ws-tab-btn:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.ws-tab-btn.is-active {
+	background: var(--interactive-accent);
+	border-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.ws-tab-body {
+	margin-top: 4px;
+}

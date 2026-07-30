@@ -9529,6 +9529,58 @@ class CursorSmithSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  // --- "Why is nothing moving?" ------------------------------------------
+  // Reduced motion is deliberately invisible to the rest of the panel: the
+  // suppression runs on the merged copy inside effectiveSettings(), never on
+  // this.settings, so every toggle below keeps showing what the USER chose
+  // (see applyReducedMotion). That is the right call for the data - a saved
+  // preset must not be rewritten by an OS preference - but on its own it
+  // produces the worst possible symptom: Motion Smear and Smooth Movement read
+  // as ON and do nothing, with nothing anywhere saying why.
+  //
+  // This is the missing half. It says so, in the one place someone goes to
+  // find out, and only while the OS is actually asking.
+  //
+  // Windows is where this bites hardest, which is why it arrived as a bug
+  // report from there. Turning off Settings > Accessibility > Visual effects >
+  // Animation effects - or choosing "Adjust for best performance" in the old
+  // Performance Options dialog, which does the same thing - sets
+  // prefers-reduced-motion for every Chromium app on the machine. People do
+  // that for speed, years earlier, with no idea it is an accessibility signal
+  // that anything will later read.
+  //
+  // Deliberately NOT fixed by flipping the respectReducedMotion default: the
+  // preference is real and honouring it by default is correct. The defect was
+  // only ever that it was silent.
+  renderReducedMotionNotice(containerEl) {
+    // Fail closed. This runs FIRST in display(), so anything thrown here takes
+    // the entire settings panel down with it - the exact failure panel_harness
+    // exists to catch, and a far worse outcome than the silent suppression
+    // this notice is here to explain. reducedMotion() already swallows a
+    // missing matchMedia, but it reads this.settings before its own try, and
+    // an explanatory banner is never worth the risk of an empty panel.
+    let reduced = false;
+    try {
+      reduced = this.plugin.reducedMotion();
+    } catch (e) {
+      console.error("[cursor-smith] reduced-motion check failed:", e);
+      return null;
+    }
+    if (!reduced) return null;
+    const notice = containerEl.createDiv({ cls: "cursor-smith-reduced-notice" });
+    notice.createEl("div", {
+      cls: "cursor-smith-reduced-notice-title",
+      text: "Motion effects are off",
+    });
+    notice.createEl("div", {
+      text: "Your system is set to reduce motion, so Smooth Movement, Motion " +
+            "Smear and the other moving effects are suppressed - the toggles " +
+            "below still show your own settings. Turn off \"Respect Reduced " +
+            "Motion\" to override this.",
+    });
+    return notice;
+  }
+
   display() {
     const { containerEl } = this;
     // Hold the scroll position across the rebuild. Every redrawing toggle in
@@ -9541,6 +9593,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
+
+    this.renderReducedMotionNotice(containerEl);
 
     // --- Enable Plugin: always on top ---
     new Setting(containerEl)

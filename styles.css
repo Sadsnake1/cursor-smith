@@ -200,3 +200,34 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
    main.js (see editorClip()), so it's physically incapable of overlapping
    the titlebar or status bar - no z-index tug-of-war needed, and dragging
    the window works normally again. */
+/* --- Settings panel: the "motion effects are off" notice -----------------
+   Shown at the top of the panel only while the OS is actually asking for
+   reduced motion (see display() in main.js).
+
+   It exists because the suppression is deliberately invisible everywhere
+   else: applyReducedMotion() runs on the merged copy inside
+   effectiveSettings(), never on this.settings, so the toggles below keep
+   showing what the user chose rather than being rewritten by an OS
+   preference. Correct for the data, but it means Smooth Movement and Motion
+   Smear can read as ON while doing nothing - which is precisely the bug
+   report this notice is here to pre-empt.
+
+   Styled off --text-warning rather than a hardcoded colour so it follows the
+   user's theme, and kept as a static rule here (not injectStyles) because
+   nothing about it is driven by a setting. */
+.cursor-smith-reduced-notice {
+  border: 1px solid var(--text-warning);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-secondary);
+  padding: 0.7em 0.9em;
+  margin: 0.6em 0 1em;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.cursor-smith-reduced-notice-title {
+  font-weight: 700;
+  color: var(--text-warning);
+  margin-bottom: 0.25em;
+}

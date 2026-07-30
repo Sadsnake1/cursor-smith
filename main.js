@@ -92,6 +92,22 @@ const DIRTY_RECT_CLEAR = true;
 // and the CRT glow are BOTH on - see glowHeatScale. Raising this past ~2 starts
 // to bloom far enough that the damage pad in the caret's dirty rect (which is
 // widened by the same factor, see drawCursor) dominates the frame's clear cost.
+// Fraction of the heat range the custom ramp spends easing out of the cursor's
+// own colour and into stage 1.
+//
+// Without it, stage 1 IS the resting colour, so a custom ramp replaced the
+// cursor's colour whenever you stopped typing - heat decays to zero after a few
+// seconds of silence, so most of the time you saw stage 1 and not the colour you
+// picked. Reported as "it paints the cursor with the first of the four colours",
+// and it is the same complaint as the cold-end damping in the built-in curve:
+// Speed Demon is supposed to add heat on top of your cursor, not take the colour
+// away and hand it back as a reward for typing.
+//
+// A hard `heat === 0 ? base : ramp` would snap on the first keystroke, so the
+// bottom slice of the range is spent blending instead. All four stops stay
+// reachable - stage 1 lands exactly at this value rather than at zero.
+const SPEED_RAMP_LIFTOFF = 0.12;
+
 const GLOW_HEAT_GAIN = 1.6;
 
 // Frame interval for the energy shimmer when it is the only thing animating.
@@ -165,13 +181,47 @@ const FIREWORK_CELL = 3;
 // "Subtle" is the brief, so the whole effect is painted through this ceiling.
 // Raising it is the single knob that makes fireworks loud.
 const FIREWORK_ALPHA = 0.55;
-// Most shells allowed in flight at once, across all keystrokes. Holding Space
-// down would otherwise stack a burst per repeat and fill the pane.
-const FIREWORK_MAX_LIVE = 6;
+// Most shells allowed in flight at once, across all keystrokes. Raised from 6
+// now that a launch at capacity is SKIPPED rather than allowed to evict a live
+// shell (see spawnFireworks): the old cap wasn't bounding cost so much as
+// deciding how early a burst got killed.
+const FIREWORK_MAX_LIVE = 10;
 // Floor on the gap between launches. The live cap alone still lets key-repeat
-// spawn (and immediately evict) a shell every few ms, which costs the work of
-// a full burst to show a flicker.
+// spawn a shell every few ms, which costs the work of a full burst to show a
+// flicker.
 const FIREWORK_MIN_GAP_MS = 70;
+// The real bound on GPU cost: total live sparks across every shell in flight.
+// Shell count alone doesn't bound anything, because a shell's cost is its
+// spark count and the quantity slider triples that.
+//
+// This is what holding Space now degrades against. A new shell is given
+// whatever budget is left rather than a fixed count, so a held key produces
+// more, smaller bursts instead of the same expensive burst repeatedly, and the
+// per-frame fill stays flat no matter how hard the key is leaned on.
+const FIREWORK_SPARK_BUDGET = 260;
+// Below this many sparks there's no burst worth drawing, so the launch is
+// skipped entirely and the gap timer is left alone for the next attempt.
+const FIREWORK_SPARK_MIN = 5;
+// Live-spark fraction past which a shell is built cheap: no trails, no
+// secondary pops. The expensive extras are what a burst can most afford to
+// lose, and losing them is far less visible than losing the burst.
+const FIREWORK_PRESSURE = 0.55;
+// Blocks of tail behind each falling spark. Each one is another fillRect per
+// spark per frame, so this is the single most expensive number here.
+const FIREWORK_TRAIL_LEN = 2;
+// Fraction of the fall after which sparks start guttering in and out. Twinkle
+// is free - a spark that's dark this frame simply isn't drawn - so it makes
+// the back half of a burst cheaper as well as livelier.
+const FIREWORK_TWINKLE_AT = 0.42;
+// How many distinct colours one shell quantises its sparks into. Sparks are
+// sorted by colour at spawn so the draw sets fillStyle this many times instead
+// of once per spark.
+const FIREWORK_PALETTE_MAX = 6;
+// Secondary pops: a few sparks detonate again on the way down. Generated at
+// spawn like everything else, never at draw time.
+const FIREWORK_SECOND_MAX = 3;
+const FIREWORK_SECOND_SPARKS = 5;
+const FIREWORK_SECOND_AT = [0.30, 0.55];   // range of fall fraction to pop at
 
 // Frame interval for the torch's blink-sync pulse. The spotlight's radius only
 // moves during the blink's two short fades - the long holds either side are a
@@ -393,6 +443,7 @@ const DEFAULT_SETTINGS = {
   hotHeadIdleMs: 1500,     // 0..6000ms of stillness before the fire stops being
                            // fed and burns out; 0 = burns forever
   hotHeadFlat: false,      // true = fire in the cursor's own color, no heat gradient
+  hotHeadSpeedHeat: false, // true = Speed Demon's heat also tints the fire
 
   // Pop Effects sub-option: pressing Enter calls down a bolt of pixelated
   // lightning onto the caret's new position, from a random angle above it.
@@ -643,6 +694,8 @@ const LOOK_KEYS = [
   // gate is what lets an old share code turn the restored effect straight back
   // on instead of silently dropping the field.
   "overlayFlickerAmount",
+  // Speed Demon tinting Hot-head's fire. Appended, like everything else here.
+  "hotHeadSpeedHeat",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1772,6 +1825,35 @@ function applyReducedMotion(obj) {
   return obj;
 }
 
+// Support/donate links, read out of manifest.json's `fundingUrl` and nowhere
+// else. Obsidian already renders its own Donate button from that field, so
+// taking the panel's links from the same place means one edit lights up both,
+// and there is no second copy of a URL to fall out of date.
+//
+// Obsidian accepts either form, and so does this:
+//    "fundingUrl": "https://buymeacoffee.com/you"
+//    "fundingUrl": { "Buy Me a Coffee": "...", "GitHub Sponsor": "..." }
+//
+// An absent, empty or malformed field yields no links and therefore no section
+// at all - which is also what makes it safe to ship the field commented out or
+// blank rather than with a placeholder URL somebody forgets to replace.
+const FUNDING_URL_RE = /^https:\/\/[^\s"'<>]+$/i;
+
+function fundingLinks(manifest) {
+  const raw = manifest && manifest.fundingUrl;
+  if (!raw) return [];
+  // The href is built from a data file, so the scheme is checked rather than
+  // trusted. Only https - not http, and emphatically not javascript:.
+  const ok = (u) => typeof u === "string" && FUNDING_URL_RE.test(u.trim());
+  if (typeof raw === "string") {
+    return ok(raw) ? [{ label: "Donate", url: raw.trim() }] : [];
+  }
+  if (typeof raw !== "object") return [];
+  return Object.entries(raw)
+    .filter(([label, url]) => typeof label === "string" && label.trim() && ok(url))
+    .map(([label, url]) => ({ label: label.trim(), url: url.trim() }));
+}
+
 function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
@@ -2279,6 +2361,58 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Any of these means the picture may be about to change: snap the render
     // loops out of idle so the very next frame reflects it.
     const onActivity = () => this._markActivity();
+    // Everything below used to hang off `keydown` alone, and that is exactly
+    // why none of it worked on a phone.
+    //
+    // A software keyboard (Gboard especially, and iOS to a lesser degree) does
+    // not report character keys through keydown. It fires keydown with
+    // `key: "Unidentified"` and `keyCode: 229` - the "the IME is handling
+    // this" sentinel - and the real text turns up in beforeinput/input
+    // instead. Backspace is one of the few keys that DOES still send a genuine
+    // keydown, which is why the bug report was "Speed Demon only reacts to
+    // backspace": it was the only key the listener could see. Space never set
+    // the firework flag either, so fireworks simply never fired on mobile.
+    //
+    // So the logical keystroke is recorded here, and both keydown (desktop,
+    // and mobile's real keys) and beforeinput (mobile's character input) call
+    // it. `kind` is what the keystroke MEANS, not which key produced it.
+    const noteKeystroke = (kind, opts = {}) => {
+      const now = performance.now();
+      if (kind === "delete") this._deletePending = now;
+      if (kind === "enter") this._enterPending = now;
+      // Fireworks fire on Space as well as Enter. Kept as its own flag rather
+      // than widening _enterPending, because the two effects want different
+      // keys and folding them together would call down lightning on every
+      // space bar press.
+      if (kind === "enter" || kind === "space") this._popKeyPending = now;
+
+      // Speed Demon: any key that plausibly represents "the user is working"
+      // bumps heat. Two classes, because they don't deserve the same weight:
+      //
+      //   typing     characters plus Backspace/Enter/Space/Tab
+      //   navigating arrows, Home/End, PageUp/Down - moving the caret without
+      //              writing anything
+      //
+      // Navigation used to be filtered out entirely, which made the whole
+      // effect invisible to anyone reading or moving around a file. It counts
+      // now, at a lower rate than typing, so scrubbing through a document
+      // warms the caret without pretending it's the same thing as writing.
+      //
+      // Autorepeat is allowed for navigation only: holding an arrow key IS the
+      // fast way to move, so ignoring repeats would mean the fastest movement
+      // generated the least heat. Held character keys are still ignored -
+      // leaning on "a" is not typing.
+      if (!this.settings.speedDemon) return;
+      const isNav = kind === "nav";
+      if (!isNav && opts.repeat) return;
+      const weight = isNav ? (opts.repeat ? 0.45 : 0.7) : 1;
+      const bump = 0.09 * weight * (this.settings.speedDemonSensitivity ?? 1);
+      this.heat = Math.min(1, this.heat + bump);
+      // Tells commitMove this move already paid for its heat, so a
+      // keyboard-driven caret move isn't charged twice.
+      this._heatKeyT = performance.now();
+    };
+
     // Backspace/Delete flag: set on keydown, consumed by the next
     // commitMove() so the flame-pixel burst at the *old* caret position
     // knows it was caused by deletion (and can invert direction + color).
@@ -2286,63 +2420,63 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // burst caused by unrelated caret movement that arrived late.
     const onKeyDown = (e) => {
       this._markActivity();
-      if (e.key === "Backspace" || e.key === "Delete") {
-        this._deletePending = performance.now();
-      }
-      // Enter flag: same shape as the delete flag above, consumed by the next
-      // commitMove() so a Thunderstrike can be aimed at the caret's NEW line.
-      // Keyed off the keystroke rather than off "the caret moved down a line",
-      // because that also describes arrow keys, clicking, and wrapping - none
-      // of which should call down lightning.
-      if (e.key === "Enter") {
-        this._enterPending = performance.now();
-      }
-      // Fireworks flag: same shape again, but fired by Space as well as Enter.
-      // Kept as its own flag rather than widening _enterPending, because the
-      // two effects want different keys and folding them together would call
-      // down lightning on every space bar press.
+      const k = e.key;
+      // The IME sentinel. Nothing useful here - beforeinput will carry the
+      // actual edit - and acting on it would charge every mobile keystroke as
+      // an unknown character.
+      if (k === "Unidentified" || e.keyCode === 229 || e.isComposing) return;
+
+      // A real key came through, so this platform reports keydown properly.
+      // beforeinput uses this to stay out of the way rather than double-count
+      // (see there).
+      this._realKeyT = performance.now();
+
+      if (k === "Backspace" || k === "Delete") noteKeystroke("delete", e);
+      // Enter flag: consumed by the next commitMove() so a Thunderstrike can
+      // be aimed at the caret's NEW line. Keyed off the keystroke rather than
+      // off "the caret moved down a line", because that also describes arrow
+      // keys, clicking, and wrapping - none of which should call down
+      // lightning.
       //
       // "Spacebar" is the legacy key name older Electron/IME paths still
-      // report; both are accepted here for the same reason Speed Demon below
-      // accepts both.
-      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
-        this._popKeyPending = performance.now();
-      }
-      // Speed Demon: any key that plausibly represents "the user is working"
-      // bumps heat. Two classes, because they don't deserve the same weight:
-      //
-      //   typing     single-character keys plus Backspace/Enter/Space/Tab
-      //   navigating arrows, Home/End, PageUp/Down - moving the caret without
-      //              writing anything
-      //
-      // Navigation used to be filtered out entirely, which made the whole
-      // effect invisible to anyone reading or moving around a file. It counts
-      // now, at a lower rate than typing, so scrubbing through a document warms
-      // the caret without pretending it's the same thing as writing.
-      //
-      // Autorepeat is likewise allowed for navigation only: holding an arrow
-      // key IS the fast way to move, so ignoring repeats would mean the fastest
-      // movement generated the least heat. Held character keys are still
-      // ignored - leaning on "a" is not typing.
-      if (this.settings.speedDemon && !e.isComposing) {
-        const k = e.key;
-        const isTyping =
-          (typeof k === "string" && k.length === 1) ||
-          k === "Backspace" || k === "Enter" || k === " " ||
-          k === "Spacebar" || k === "Tab";
-        const isNav =
-          k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown" ||
-          k === "Home" || k === "End" || k === "PageUp" || k === "PageDown";
-        if ((isTyping && !e.repeat) || isNav) {
-          const weight = isTyping ? 1 : (e.repeat ? 0.45 : 0.7);
-          const bump = 0.09 * weight * (this.settings.speedDemonSensitivity ?? 1);
-          this.heat = Math.min(1, this.heat + bump);
-          // Tells commitMove this move already paid for its heat, so a
-          // keyboard-driven caret move isn't charged twice.
-          this._heatKeyT = performance.now();
-        }
+      // report; both are accepted for the same reason beforeinput is listened
+      // to at all.
+      else if (k === "Enter") noteKeystroke("enter", e);
+      else if (k === " " || k === "Spacebar") noteKeystroke("space", e);
+      else if (k === "Tab" || (typeof k === "string" && k.length === 1)) {
+        noteKeystroke("type", e);
+      } else if (
+        k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown" ||
+        k === "Home" || k === "End" || k === "PageUp" || k === "PageDown"
+      ) {
+        noteKeystroke("nav", e);
       }
     };
+
+    // The mobile half. beforeinput describes the EDIT rather than the key, so
+    // it says the same things in a different vocabulary - and it is the only
+    // vocabulary a software keyboard speaks.
+    //
+    // Skipped whenever a real keydown just fired, because on desktop both
+    // events arrive for the same keystroke and counting it twice would double
+    // every heat bump. 60ms is comfortably longer than the keydown ->
+    // beforeinput gap and far shorter than any plausible second keystroke.
+    const onBeforeInput = (e) => {
+      this._markActivity();
+      if (performance.now() - (this._realKeyT || 0) < 60) return;
+      const t = e.inputType || "";
+      if (t.startsWith("delete")) noteKeystroke("delete");
+      else if (t === "insertLineBreak" || t === "insertParagraph") noteKeystroke("enter");
+      else if (t === "insertText" || t === "insertCompositionText" ||
+               t === "insertReplacementText" || t === "insertFromPaste") {
+        // Swipe typing and autocorrect deliver a whole word as one event. It
+        // is still one gesture and gets one bump - charging it per character
+        // would let a single swipe redline the heat.
+        const data = typeof e.data === "string" ? e.data : "";
+        noteKeystroke(data.endsWith(" ") ? "space" : "type");
+      }
+    };
+
     const onResize = () => {
       // Chrome insets and the deduped wrapper/overlay rects are all stale
       // after a resize - drop them so the next frame re-measures instead
@@ -2356,6 +2490,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     
     doc.addEventListener("mousemove", onMouseMove);
     doc.addEventListener("keydown", onKeyDown, true);
+    // Capture phase, like keydown: CodeMirror handles beforeinput itself and
+    // may stop it, and an effect that vanishes inside the editor but works in
+    // a search box would be worse than one that never worked at all.
+    doc.addEventListener("beforeinput", onBeforeInput, true);
     // Wake sources beyond typing: caret moves from clicks and selection
     // changes, viewport shifts from scroll/wheel, and focus hops between
     // fields. All capture-phase (or document-level) so nothing that
@@ -2385,6 +2523,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._docCleanups.set(doc, () => {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
+      doc.removeEventListener("beforeinput", onBeforeInput, true);
       doc.removeEventListener("selectionchange", onActivity);
       doc.removeEventListener("mousedown", onActivity, true);
       doc.removeEventListener("focusin", onActivity, true);
@@ -3197,14 +3336,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // heating up like a flat one does, instead of sitting frozen at its
       // configured colours while the rest of the effect reacts.
       //
-      // The `heat > 0` shortcut is skipped when the custom ramp is on. With
-      // the built-in curve, heat 0 returns approximately the stop it was given,
-      // so skipping the call at rest is a free optimisation. A custom ramp
-      // returns stage 1 instead, which is a different colour - so honouring the
-      // shortcut would leave the cursor showing its configured gradient at rest
-      // and snap it to stage 1 on the first keystroke.
-      const custom = this.styleFor("speedDemonGradient");
-      if (applyHeat && s.speedDemon && (this.heat > 0 || custom)
+      // The `heat > 0` shortcut is a free optimisation: at rest, BOTH curves
+      // now hand back the stop they were given - the built-in one because its
+      // cold end is the base colour, the custom one because of
+      // SPEED_RAMP_LIFTOFF. It used to have to be skipped for the custom ramp,
+      // which returned stage 1 at rest and would otherwise have snapped to it
+      // on the first keystroke; that special case is gone with the cause.
+      if (applyHeat && s.speedDemon && this.heat > 0
           && !this.styleFor("speedDemonNoCursorHeat")) {
         hex = this.heatColor(this.heat, hex);
       }
@@ -3357,18 +3495,43 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // same colour and the spatial gradient flattens. That's intended - two
     // features both claiming the cursor's colour can't both win - and the
     // settings panel says so where you turn it on.
-    if (this.styleFor("speedDemonGradient")) return this.sampleHeatRamp(h);
+    if (this.styleFor("speedDemonGradient")) {
+      if (h >= SPEED_RAMP_LIFTOFF) {
+        // Stops are compressed into what's left of the range, so stage 1 is hit
+        // at liftoff and stage 4 still lands at full heat.
+        return this.sampleHeatRamp((h - SPEED_RAMP_LIFTOFF) / (1 - SPEED_RAMP_LIFTOFF));
+      }
+      // Easing out of the colour this stop was actually given. Note that is
+      // per-stop, not from one shared colour: gradientStops() sends every stop
+      // of a Gradient cursor through here, so at rest each one returns itself
+      // and the spatial gradient survives, then collapses into the heat ramp as
+      // the cursor warms up.
+      const [sr, sg, sb] = hexToRgbTuple(this.speedHeatStops()[0]);
+      const [r0, g0, b0] = hexToRgbTuple(baseHex);
+      const f = h / SPEED_RAMP_LIFTOFF;
+      const rr = Math.round(r0 + (sr - r0) * f);
+      const gg = Math.round(g0 + (sg - g0) * f);
+      const bb = Math.round(b0 + (sb - b0) * f);
+      return `#${((1 << 24) | (rr << 16) | (gg << 8) | bb).toString(16).slice(1)}`;
+    }
     const [br, bg, bb] = hexToRgbTuple(baseHex);
-    // Cold endpoint: 30% saturation-preserving desaturation toward mid-grey,
-    // then dim to ~72% brightness. Uses luma (Rec. 601 coefficients) so
-    // the grey we blend toward matches the perceived brightness of the
-    // base colour instead of muddying dark colours.
-    const luma = 0.299 * br + 0.587 * bg + 0.114 * bb;
-    const desatMix = 0.7;                      // higher = greyer
-    const dim = 0.72;
-    const coldR = ((1 - desatMix) * br + desatMix * luma) * dim;
-    const coldG = ((1 - desatMix) * bg + desatMix * luma) * dim;
-    const coldB = ((1 - desatMix) * bb + desatMix * luma) * dim;
+    // Cold endpoint: the user's colour, exactly.
+    //
+    // It used to be a desaturated (70% toward luma grey) and dimmed (72%)
+    // version of it, on the theory that "cold" should read as dulled. In
+    // practice that meant switching Speed Demon on changed how the cursor
+    // looked when you WEREN'T typing, which is most of the time - you picked a
+    // colour and got a washed-out version of it until you started moving. The
+    // effect is supposed to add heat on top of your cursor, not take the
+    // colour away and hand some of it back as a reward.
+    //
+    // Now heat 0 is the configured colour and the ramp only ever adds: base ->
+    // warm -> red-orange -> white-hot. The `nudge` below is left in place; it
+    // still keeps the base colour present through the middle of the ramp,
+    // which is a different job from the resting colour.
+    const coldR = br;
+    const coldG = bg;
+    const coldB = bb;
 
     // Warm waypoints (classic blackbody-ish ramp).
     const warm  = [255, 140,  40];             // orange
@@ -6486,6 +6649,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // call only advances it along a closed-form path. Rolling any of that per
   // frame would make the spray boil instead of fly, and would tie the shape of
   // the effect to the frame rate the governor happened to pick.
+  // Total sparks in flight, which is what actually costs anything to draw.
+  // Walked rather than kept as a running total: shells are removed by a filter
+  // inside drawFireworks, so a counter would need decrementing from the draw
+  // path and would drift the first time that changed.
+  _liveSparkCount() {
+    let n = 0;
+    for (const fw of this.fireworks) n += fw.sparks.length;
+    return n;
+  }
+
   spawnFireworks(target) {
     if (!this.settings.popEffects || !this.settings.fireworks) return;
     if (!target) return;
@@ -6496,7 +6669,6 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // first, before any of the generation cost is paid.
     const now = performance.now();
     if (now - this._lastFireworkT < FIREWORK_MIN_GAP_MS) return;
-    this._lastFireworkT = now;
 
     // One slider, two jobs: how many shells go up, and how much each throws.
     // Kept deliberately blunt at the low end - the shell count rounds to 1 for
@@ -6504,7 +6676,28 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // rather than a thin volley.
     const q = Math.max(0.2, Math.min(3, this.settings.fireworksQuantity ?? 1));
     const shells = Math.max(1, Math.min(3, Math.round(q)));
-    const sparkCount = Math.max(4, Math.round(12 * q));
+    const wanted = Math.max(4, Math.round(12 * q));
+
+    // What's already in the air decides what this launch can afford.
+    //
+    // The old rule was `while (live >= MAX) shift()` - evict the OLDEST shell
+    // to make room. That is backwards, and it is the whole reason holding
+    // Space looked like the effect had died: the oldest shell is the one
+    // mid-burst, so a held key killed every shell at ~48% of its arc, just
+    // after it detonated. You saw shells climb, flash, and vanish.
+    //
+    // A launch that never happens is invisible. A shell that dies mid-burst is
+    // a visible glitch. So nothing in flight is ever evicted now; instead the
+    // budget decides how big THIS burst gets, and a launch with nothing left
+    // to spend is simply skipped.
+    const liveSparks = this._liveSparkCount();
+    const roomTotal = FIREWORK_SPARK_BUDGET - liveSparks;
+    if (roomTotal < FIREWORK_SPARK_MIN) return;
+    // Don't re-stamp the gap on a skipped launch, so the next keystroke can
+    // try again immediately rather than serving out a gap it never used.
+    this._lastFireworkT = now;
+    const pressure = liveSparks / FIREWORK_SPARK_BUDGET;
+    const rich = pressure < FIREWORK_PRESSURE;
 
     const lh = target.h || 16;
     const w = target.w || target.actualCharWidth || 8;
@@ -6521,9 +6714,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
       : null;
 
     for (let i = 0; i < shells; i++) {
-      // Oldest first, so a held key rolls the volley forward rather than
-      // refusing new shells once the cap is reached.
-      while (this.fireworks.length >= FIREWORK_MAX_LIVE) this.fireworks.shift();
+      // Hard shell cap as well as the spark budget: a great many tiny bursts
+      // still costs a damage box and a filter pass each.
+      if (this.fireworks.length >= FIREWORK_MAX_LIVE) break;
+      // Split what's left across the shells still to launch, so shell 0 of a
+      // three-shell volley doesn't spend the whole budget.
+      const share = Math.floor((FIREWORK_SPARK_BUDGET - this._liveSparkCount()) / (shells - i));
+      if (share < FIREWORK_SPARK_MIN) break;
+      const sparkCount = Math.max(FIREWORK_SPARK_MIN, Math.min(wanted, share));
 
       const rise = lh * (FIREWORK_RISE_LINES + (Math.random() - 0.5) * 2 * FIREWORK_RISE_JITTER);
       // Two clamps, in this order:
@@ -6541,6 +6739,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
         Math.max(y0 - rise, clipTop + lh * 0.5),
       );
 
+      // Colours are quantised into a small palette and each spark stores an
+      // INDEX into it, rather than its own r/g/b. Two reasons, both about the
+      // draw call: the rgba() string for each entry is built once here instead
+      // of once per spark per frame (which was thousands of throwaway strings
+      // a second), and sorting the sparks by index lets the draw set fillStyle
+      // a handful of times per shell instead of once per spark.
+      const palN = Math.max(2, Math.min(FIREWORK_PALETTE_MAX, Math.ceil(sparkCount / 3)));
+      const palette = [];
+      for (let c = 0; c < palN; c++) {
+        const [r, g, b] = this.fireworkSparkRGB(base);
+        palette.push(`rgb(${r}, ${g}, ${b})`);
+      }
+
       const sparks = [];
       let maxReach = 0;
       for (let s = 0; s < sparkCount; s++) {
@@ -6551,13 +6762,49 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // relative to the text at any font size, rather than being a fixed
         // pixel radius that swamps small type and vanishes in large.
         const speed = lh * (3.4 + Math.random() * 6.2);
-        const [r, g, b] = this.fireworkSparkRGB(base);
         // A few sparks at double size carry the burst; the rest are single
         // grid cells. All of it stays on the grid - that is what keeps this
         // pixel art rather than a particle spray.
         const size = FIREWORK_CELL * (Math.random() < 0.22 ? 2 : 1);
-        sparks.push({ ang, speed, r, g, b, size });
+        sparks.push({
+          ang, speed, size,
+          ci: (Math.random() * palN) | 0,
+          // Twinkle phase and rate, rolled once. Rolling per frame would be
+          // noise rather than a flicker, for the same reason the thunderbolt
+          // generates its jitter once.
+          tw: Math.random() * Math.PI * 2,
+          tr: 9 + Math.random() * 14,
+        });
         if (speed > maxReach) maxReach = speed;
+      }
+      // Sorted so the draw can walk colour-major. Done once, here.
+      sparks.sort((a, b) => a.ci - b.ci);
+
+      // Secondary pops: a handful of sparks detonate again on the way down.
+      // Pre-generated like everything else - the parent's position at the pop
+      // instant is closed-form, so the children can be advanced from it
+      // without the draw ever having to remember where anything was.
+      const secondaries = [];
+      if (rich && sparkCount >= 8) {
+        const nSec = Math.min(FIREWORK_SECOND_MAX, Math.max(1, Math.round(sparkCount / 10)));
+        for (let n = 0; n < nSec; n++) {
+          const parent = sparks[(Math.random() * sparks.length) | 0];
+          const at = FIREWORK_SECOND_AT[0] +
+            Math.random() * (FIREWORK_SECOND_AT[1] - FIREWORK_SECOND_AT[0]);
+          const kids = [];
+          for (let s = 0; s < FIREWORK_SECOND_SPARKS; s++) {
+            kids.push({
+              ang: Math.random() * Math.PI * 2,
+              speed: lh * (1.1 + Math.random() * 2.0),
+              size: FIREWORK_CELL,
+              ci: (Math.random() * palN) | 0,
+              tw: Math.random() * Math.PI * 2,
+              tr: 12 + Math.random() * 16,
+            });
+          }
+          kids.sort((a, b) => a.ci - b.ci);
+          secondaries.push({ ang: parent.ang, speed: parent.speed, at, sparks: kids });
+        }
       }
 
       // Bounds for the damage box, worked out once for the firework's whole
@@ -6565,10 +6812,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // the widest the spray can get, and the full gravity drop.
       const spread = maxReach * fallSec;
       const drop = 0.5 * FIREWORK_GRAVITY * fallSec * fallSec;
+      // Secondaries pop away from a parent that has already travelled, so they
+      // reach further than the primary spray and the box has to cover them or
+      // they leave streaks behind. Worst case: the fastest parent, plus a full
+      // child throw from wherever it got to.
+      const secReach = secondaries.length
+        ? maxReach * fallSec + lh * 3.1 * fallSec
+        : 0;
+      const reach = Math.max(spread, secReach);
 
       this.fireworks.push({
         x0, y0, bx, by,
-        sparks,
+        sparks, palette, secondaries,
+        // Trails are the first thing dropped when the air is already full.
+        trail: rich ? FIREWORK_TRAIL_LEN : 0,
         riseMs: FIREWORK_RISE_MS * (0.85 + Math.random() * 0.3),
         fallMs: FIREWORK_FALL_MS,
         // Stagger, so a volley goes up as a volley instead of as one lump.
@@ -6576,10 +6833,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // keystroke that caused it or the whole effect feels laggy.
         delay: i === 0 ? 0 : i * (70 + Math.random() * 60),
         flash: Math.max(FIREWORK_CELL * 2, lh * 0.32),
-        minX: Math.min(x0, bx - spread),
-        maxX: Math.max(x0, bx + spread),
-        minY: by - spread,
-        maxY: Math.max(y0, by + spread + drop),
+        minX: Math.min(x0, bx - reach),
+        maxX: Math.max(x0, bx + reach),
+        minY: by - reach,
+        maxY: Math.max(y0, by + reach + drop),
         start: now,
       });
     }
@@ -6644,12 +6901,68 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // long enough to be read as debris.
         const a = FIREWORK_ALPHA * opacity * Math.max(0, 1 - u * u);
         if (a > 0.01) {
-          for (const s of fw.sparks) {
-            const sx = snap(fw.bx + Math.cos(s.ang) * s.speed * el);
-            const sy = snap(fw.by + Math.sin(s.ang) * s.speed * el + drop);
-            ctx.fillStyle = `rgba(${s.r}, ${s.g}, ${s.b}, ${a})`;
-            ctx.fillRect(sx, sy, s.size, s.size);
+          // Alpha rides globalAlpha and colour comes from the shell's small
+          // pre-built palette, so the inner loop does no string work at all -
+          // it used to build one rgba() per spark per frame. Sparks arrive
+          // pre-sorted by palette index, so fillStyle changes a handful of
+          // times per shell rather than once per spark.
+          //
+          // Twinkle gates on a per-spark sine rolled at spawn. It's the one
+          // piece of physics here that makes the effect CHEAPER: a guttering
+          // spark simply isn't drawn.
+          const tw = u > FIREWORK_TWINKLE_AT;
+          const drawSet = (list, ox, oy, sc, alpha) => {
+            let ci = -1;
+            for (const s of list) {
+              if (tw && Math.sin(s.tw + u * s.tr) < -0.35) continue;
+              if (s.ci !== ci) { ci = s.ci; ctx.fillStyle = fw.palette[ci]; }
+              const vx = Math.cos(s.ang) * s.speed;
+              const vy = Math.sin(s.ang) * s.speed;
+              // Tail blocks sit back along the path actually travelled, so a
+              // spark trails behind its own arc rather than straight down.
+              //
+              // Only the double-size carrier sparks get one. Trailing every
+              // spark triples the fill cost of the whole burst to produce a
+              // smear - it's the few bright ones streaking past the rest that
+              // read as depth, and the small ones are a grid cell wide, so
+              // their "tail" was three cells of mush. Cheaper AND better.
+              const tail = s.size > FIREWORK_CELL ? fw.trail : 0;
+              for (let k = tail; k >= 1; k--) {
+                const bt = Math.max(0, sc - k * 0.035);
+                ctx.globalAlpha = alpha * (0.30 / k);
+                ctx.fillRect(
+                  snap(ox + vx * bt),
+                  snap(oy + vy * bt + 0.5 * FIREWORK_GRAVITY * bt * bt),
+                  FIREWORK_CELL, FIREWORK_CELL,
+                );
+              }
+              ctx.globalAlpha = alpha;
+              ctx.fillRect(
+                snap(ox + vx * sc),
+                snap(oy + vy * sc + 0.5 * FIREWORK_GRAVITY * sc * sc),
+                s.size, s.size,
+              );
+            }
+          };
+          drawSet(fw.sparks, fw.bx, fw.by, el, a);
+
+          // Secondaries. The parent's position at its pop instant is the same
+          // closed-form expression as any other spark, so nothing had to be
+          // remembered between frames to place them.
+          for (const sec of fw.secondaries) {
+            if (u <= sec.at) continue;
+            const pt = sec.at * fallSec;
+            const px = fw.bx + Math.cos(sec.ang) * sec.speed * pt;
+            const py = fw.by + Math.sin(sec.ang) * sec.speed * pt +
+                       0.5 * FIREWORK_GRAVITY * pt * pt;
+            const ct = el - pt;
+            // Children fade on their own clock, from their own pop, so a
+            // secondary doesn't inherit a parent that's already nearly gone.
+            const cu = (u - sec.at) / Math.max(0.001, 1 - sec.at);
+            const ca = a * Math.max(0, 1 - cu);
+            if (ca > 0.01) drawSet(sec.sparks, px, py, ct, ca);
           }
+          ctx.globalAlpha = 1;
         }
         // The detonation itself: a block flaring at the apex for the first
         // moment, so the burst reads as an event rather than as sparks that
@@ -8058,8 +8371,44 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Flat mode paints every level in the cursor's own colour, so the fire is
     // one colour varying only in brightness. Off, it runs the heat gradient and
     // the colour tells you how hot that patch is.
-    const base = this.getBaseColor();
-    const flat = !!this.styleFor("hotHeadFlat");
+    //
+    // Whichever branch runs, the colour it starts FROM is the cursor's, and
+    // hotHeadSpeedHeat decides whether that means the configured colour or the
+    // one Speed Demon has heated it to. On, the fire warms with you: the flames
+    // ride the same ramp as the caret, so flat mode tracks the heated colour
+    // and gradient mode ignites from it. Off (the default) the fire keeps its
+    // own look no matter how fast you type, which is what every existing setup
+    // has always done.
+    //
+    // Deliberately NOT gated on speedDemonNoCursorHeat: that switch is about
+    // the caret BODY keeping its colour, and someone who wants a steady caret
+    // throwing hotter flames as they speed up is asking for something
+    // coherent, not contradictory.
+    // Gated on flat mode as well as on the toggle, and that is not just
+    // mirroring the panel. In gradient mode `base` is only the IGNITION colour
+    // - the coolest embers - and everything above it is the fixed
+    // yellow/orange/red/white fire ramp. Measured: 2 of 17 palette entries
+    // move with heat there, against all 17 in flat mode, where the whole
+    // palette is built around the cursor's colour. So the toggle did close to
+    // nothing unless Use Cursor Color was on, which is how it was reported.
+    //
+    // Enforced here rather than left to the panel because a share code or a
+    // preset can carry the key on with flat mode off, and a setting that
+    // silently does nothing is worse than one that isn't offered.
+    const flatMode = !!this.styleFor("hotHeadFlat");
+    const heatTheFire =
+      flatMode && this.styleFor("hotHeadSpeedHeat") && this.settings.speedDemon;
+    // Quantised, and this is load-bearing rather than a micro-optimisation.
+    // The palette is rebuilt whenever this key changes, and `heat` is a
+    // continuously varying float - feeding it in raw would rebuild all
+    // HOT_PALETTE_STEPS entries EVERY frame that the heat moved at all, which
+    // is every frame you are typing. 32 buckets is finer than the eye can
+    // follow on a flame and rebuilds at most 32 times across the whole ramp.
+    const heatQ = heatTheFire ? Math.round(Math.max(0, Math.min(1, this.heat || 0)) * 32) : -1;
+    const base = heatTheFire
+      ? this.heatColor(heatQ / 32, this.getBaseColor())
+      : this.getBaseColor();
+    const flat = flatMode;
     const paletteKey = base + (flat ? "|flat" : "");
     if (this._hotPaletteKey !== paletteKey) {
       this._hotPaletteKey = paletteKey;
@@ -9581,6 +9930,46 @@ class CursorSmithSettingTab extends PluginSettingTab {
     return notice;
   }
 
+  // A support/donate row at the foot of the panel, one button per entry in
+  // manifest.json's fundingUrl. Renders nothing at all when that field is
+  // absent or malformed, so an unconfigured build simply has no section - see
+  // fundingLinks().
+  //
+  // Obsidian's own Donate button (the heart on the plugin's entry in Community
+  // Plugins) comes from the same field for free; this is the in-panel copy,
+  // which is where people actually are when they think to look.
+  //
+  // Placed last on purpose: it must never push a setting off the first screen.
+  renderSupportSection(containerEl) {
+    let links = [];
+    try {
+      links = fundingLinks(this.plugin && this.plugin.manifest);
+    } catch (e) {
+      // Same reasoning as renderReducedMotionNotice: a decorative row must
+      // never be able to take the settings panel down with it.
+      console.error("[cursor-smith] could not read funding links:", e);
+      return null;
+    }
+    if (!links.length) return null;
+
+    const row = new Setting(containerEl)
+      .setName("Support Cursor-Smith")
+      .setDesc("Cursor-Smith is free and always will be. If it earned a coffee, this is where.");
+    for (const { label, url } of links) {
+      row.addButton((b) =>
+        b.setButtonText(label)
+          .setCta()
+          .onClick(() => {
+            // Obsidian routes this to the system browser rather than opening a
+            // window inside the app. "noopener" so the opened page gets no
+            // handle back to the Electron window.
+            window.open(url, "_blank", "noopener");
+          })
+      );
+    }
+    return row;
+  }
+
   display() {
     const { containerEl } = this;
     // Hold the scroll position across the rebuild. Every redrawing toggle in
@@ -9649,6 +10038,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
     } else {
       this.renderNormalSection(containerEl);
     }
+
+    this.renderSupportSection(containerEl);
 
     // After the rebuild, not during: the panel has to be its full height again
     // before a scroll offset means anything. requestAnimationFrame rather than
@@ -10272,7 +10663,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
               }
             };
             heatRow("Stages (Dark Theme)", "speedHeatDark",
-              "Cold to hot, left to right: resting, warming, hot, flat out.");
+              "Warming to flat out, left to right. At rest the cursor keeps its own color.");
             heatRow("Stages (Light Theme)", "speedHeatLight",
               "The same four stages for light themes, where a white-hot final stage disappears into the page.");
           }
@@ -10308,6 +10699,16 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(gh).setName("Use Cursor Color")
           .setDesc("Paints the fire in the cursor's color instead of the heat gradient.")
           .addToggle((toggle) => toggle.setValue(!!get("hotHeadFlat")).onChange(setAndRedraw("hotHeadFlat")));
+        // Nested under Use Cursor Color, and hidden without it, because that
+        // is the only mode it can actually do anything in - see
+        // hotHeadSpeedHeat's gate in drawHotHead. Also hidden without Speed
+        // Demon itself, since there would be no heat to follow.
+        if (get("hotHeadFlat") && get("speedDemon")) {
+          const gf = this.subGroup(gh);
+          new Setting(gf).setName("Heat With Speed Demon")
+            .setDesc("The fire warms up as you type, following Speed Demon's heat.")
+            .addToggle((toggle) => toggle.setValue(!!get("hotHeadSpeedHeat")).onChange(setAndRedraw("hotHeadSpeedHeat")));
+        }
       }
 
       renderTorchToggleSetting(body);

@@ -756,6 +756,89 @@ const BRACKET_OPEN = { "(": ")", "[": "]", "{": "}", "<": ">" };
 const BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{", ">": "<" };
 const BRACKET_SCAN_LIMIT = 20000;
 
+// A structural block cuts the tether: a pair with one end inside a code block,
+// blockquote or callout and the other outside it isn't a pair, it's two
+// unrelated characters that happen to match. A `<` in a ```` ```html ```` block
+// and a stray `>` in the prose below it was the case that started this.
+//
+// The two kinds of block are marked completely differently, and the difference
+// decides how each is detected:
+//
+//   • A CODE FENCE is a delimiter LINE. You cross it. So the question is
+//     "is there a fence line between the two ends", answered by scanning the
+//     span. Asking instead "is this offset inside a code block" would need
+//     fence PARITY counted from the top of the document - an O(document) scan
+//     on every keystroke, since the tether's cache key includes doc length.
+//
+//   • A BLOCKQUOTE (and therefore a CALLOUT, which is just a blockquote whose
+//     first line carries a [!type] marker) has no delimiter lines at all. It
+//     is a per-line PREFIX: every line carries ">", and the block ends at the
+//     first line that doesn't. So membership is a purely LOCAL property of a
+//     line, needing no scan beyond the line itself - and the question is
+//     "do both ends sit at the same quote depth, unbroken".
+//
+// Both come out of one walk over the lines the span touches: cut on any fence
+// line beginning inside the span, or on any line whose quote depth differs
+// from the depth of the line the span starts on. A blank line between two
+// quoted passages reads as depth 0 and correctly separates them.
+const CODE_FENCE_RE = /^ {0,3}(?:`{3,}|~{3,})/;
+// Longest prefix CODE_FENCE_RE can need: 3 spaces of indent + 3 fence chars.
+// Used to read a few characters past the end of a span so a fence opening the
+// span's final line is still matchable when the span stops mid-fence.
+const CODE_FENCE_PREFIX = 8;
+// How far back a ">" will look for the start of its line before giving up on
+// deciding whether it's a blockquote marker. A real prefix is "> " per level;
+// this is many levels deeper than anything legible.
+const BLOCK_PREFIX_MAX = 64;
+// Enough of a line to read its quote depth and then test it for a fence.
+const BLOCK_HEAD_MAX = BLOCK_PREFIX_MAX + CODE_FENCE_PREFIX;
+// How far back to reach for the start of the line a span BEGINS on, whose
+// depth is the baseline every later line is compared against. Overrunning a
+// longer line than this misreads that baseline as depth 0, which can only
+// produce a spurious cut, never a spurious tether.
+const BLOCK_LINE_LOOKBACK = 1024;
+
+// The blockquote depth of one line, and whether what remains after stripping
+// that prefix opens a code fence. Callouts need no special case: "> [!note]"
+// is a blockquote line like any other, and its body lines carry the same ">".
+function blockLineInfo(line) {
+  let i = 0;
+  let depth = 0;
+  for (;;) {
+    // Up to 3 spaces of indent are allowed before each ">" marker; a 4th would
+    // make the line an indented code block instead.
+    let j = i;
+    let spaces = 0;
+    while (j < line.length && (line[j] === " " || line[j] === "\t") && spaces < 3) { j++; spaces++; }
+    if (line[j] !== ">") break;
+    depth++;
+    i = j + 1;
+    if (line[i] === " ") i++; // the single optional space after a marker
+  }
+  return { depth, fence: CODE_FENCE_RE.test(line.slice(i, i + CODE_FENCE_PREFIX)) };
+}
+
+// Is text[i] a blockquote marker rather than a closing angle bracket? True
+// when nothing but prefix characters sit between it and the start of its line.
+//
+// This is what stops the tether joining a "<" in one line to the ">" that
+// merely OPENS the next one - by far the most visible way a decorative guide
+// gets Markdown wrong, since in a callout every single line starts with one.
+//
+// `textStart` is the document offset of text[0], so a slice that begins
+// mid-document isn't mistaken for the start of a line.
+function isBlockquoteMarker(text, i, textStart) {
+  const floor = Math.max(0, i - BLOCK_PREFIX_MAX);
+  for (let j = i - 1; j >= floor; j--) {
+    const c = text[j];
+    if (c === "\n") return true;
+    if (c !== ">" && c !== " " && c !== "\t") return false;
+  }
+  // Ran out of look-back without finding a line start: only genuinely one if
+  // we reached the top of the document.
+  return floor === 0 && textStart === 0;
+}
+
 // Quote-ish delimiters the tether will also pair up. Backtick is in here
 // because inline code spans are everywhere in Markdown and behave exactly like
 // a quoted run; drop it from this list if that's not wanted.
@@ -1091,6 +1174,34 @@ const DEFAULT_PRESETS = {
     "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
   },
 };
+
+// Which of the above a brand-new install opens on.
+//
+// It is applied once, on first load, rather than being folded into
+// DEFAULT_SETTINGS - and that is not a stylistic choice. DEFAULT_SETTINGS is
+// the share-code baseline: shareFields() emits only the keys that DIFFER from
+// it, and the recipient fills the rest back in from their own copy. Move a
+// default and every share code ever posted silently decodes to a different
+// look, which is the same class of break as reordering LOOK_KEYS. The defaults
+// are a wire format; the starter look is a product decision. Keep them apart.
+const DEFAULT_PRESET_NAME = "Jell-O";
+
+// Point a fresh install's live settings at the starter preset, in place.
+// Returns whether it found one to apply.
+//
+// Reads out of settings.userPresets rather than DEFAULT_PRESETS directly, so
+// the live look and the preset entry are guaranteed to be the same snapshot -
+// the same reasoning that sets vimActivePreset to "Preset1" in onload(). Call
+// it AFTER the preset-seeding loop.
+function applyStarterPreset(settings) {
+  const starter = settings && settings.userPresets && settings.userPresets[DEFAULT_PRESET_NAME];
+  if (!starter) return false;
+  // presetWithDefaults, not a bare Object.assign: a starter written before
+  // some setting existed must land on that setting's default rather than on
+  // whatever happened to be in the object already (see loadUserPreset).
+  Object.assign(settings, presetWithDefaults(starter));
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Default Vim presets — seeded into any install that doesn't already have a
@@ -1724,8 +1835,16 @@ function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5, fade = 0.15) {
 
 module.exports = class CursorSmithPlugin extends Plugin {
   async onload() {
-    const saved = migrateLegacyKeys(await this.loadData());
+    const rawSaved = await this.loadData();
+    const saved = migrateLegacyKeys(rawSaved);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+
+    // A genuinely fresh install: no data file at all. Distinct from "a data
+    // file missing some key", which every backfill below handles instead, and
+    // the difference matters - the starter look must be applied exactly once,
+    // on the very first load, and never again over settings a user has since
+    // touched.
+    const freshInstall = !rawSaved || typeof rawSaved !== "object";
 
     // Migrate: existing installs that already had Vim cursors on should land
     // on the Vim panel by default instead of silently reverting to CUA.
@@ -1746,6 +1865,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (!(name in this.settings.userPresets)) {
         this.settings.userPresets[name] = snap;
       }
+    }
+
+    // A new install opens on a look somebody actually designed, rather than on
+    // the raw DEFAULT_SETTINGS - which are a neon-green blinking box matching
+    // no preset in the list, so the first thing a new user saw was the one
+    // look they could not get back to. See DEFAULT_PRESET_NAME for why this
+    // happens here instead of in the defaults themselves.
+    if (freshInstall && applyStarterPreset(this.settings)) {
+      // So the palette's next/previous-preset command steps on from here
+      // instead of restarting at the top of the list.
+      this._activePresetName = DEFAULT_PRESET_NAME;
     }
 
     // Vim: rebuild every mode as a COMPLETE look snapshot. This backfills any
@@ -1789,6 +1919,28 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // vimActivePreset (by hand-editing a mode) doesn't get it re-asserted.
     if (!hadVimPresets && !this.settings.vimActivePreset) {
       this.settings.vimActivePreset = "Preset1";
+    }
+
+    // Commit the first-run config now that every block above has had its say.
+    // Without this there is no data file until the user changes something, so
+    // the freshInstall test would answer "yes" again on the next load and the
+    // starter look would be re-applied over whatever they had. That is only
+    // harmless while nothing else keys off first-run state, which is a
+    // guarantee for today rather than for the next person to edit this.
+    //
+    // saveData rather than saveSettings: the latter also re-applies body
+    // classes, the overlay style and the Vim status bar, none of which exist
+    // yet this early in onload. They'd each fail into their own try/catch and
+    // log, and the setup below builds all three properly a moment later.
+    if (freshInstall) {
+      try {
+        await this.saveData(this.settings);
+      } catch (e) {
+        // A vault that can't be written to is the user's problem to fix, not
+        // a reason to abort loading the plugin: everything above is already
+        // correct in memory, so this run works and only persistence is lost.
+        console.error("[cursor-smith] could not write initial settings:", e);
+      }
     }
 
 
@@ -8068,6 +8220,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // the tether can occasionally point somewhere a compiler wouldn't. For a
   // decorative guide in a Markdown editor that's an acceptable trade; it is
   // NOT a good enough basis for anything that edits text.
+  //
+  // The one Markdown fact it does know is that a ">" opening a line is a
+  // blockquote marker, not an angle bracket. Without that, every line of a
+  // callout offers a fresh false partner to any "<" above it, which is the
+  // most visible way this goes wrong in a real vault - and no boundary check
+  // catches it, because the marker sits at the same quote depth as the "<".
   matchingBracketPos(doc, at, ch) {
     const open = BRACKET_OPEN[ch] ? ch : BRACKET_CLOSE[ch];
     if (!open) return -1;
@@ -8082,22 +8240,46 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const end = Math.min(len, at + BRACKET_SCAN_LIMIT);
       const text = doc.sliceString(at, end);
       let depth = 0;
+      // Whether we're still inside a line's blockquote prefix. False to begin
+      // with because `at` is itself a bracket, so nothing before the first
+      // newline can be a marker. Tracked inline rather than by calling
+      // isBlockquoteMarker per ">": going forwards the prefix state is simply
+      // carried along, at no cost.
+      let inPrefix = false;
       for (let i = 0; i < text.length; i++) {
         const c = text[i];
+        if (c === "\n") { inPrefix = true; continue; }
+        if (inPrefix) {
+          if (c === " " || c === "\t" || c === ">") continue; // still the prefix
+          inPrefix = false;
+        }
         if (c === open) depth++;
         else if (c === close) { if (--depth === 0) return at + i; }
       }
     } else {
       const start = Math.max(0, at - BRACKET_SCAN_LIMIT + 1);
       const text = doc.sliceString(start, at + 1);
+      // Only angle brackets can collide with a marker, so the look-back is
+      // skipped entirely for every other pair.
+      const angles = close === ">";
       let depth = 0;
       for (let i = text.length - 1; i >= 0; i--) {
         const c = text[i];
+        if (angles && c === ">" && isBlockquoteMarker(text, i, start)) continue;
         if (c === close) depth++;
         else if (c === open) { if (--depth === 0) return start + i; }
       }
     }
     return -1;
+  }
+
+  // Whether the character at `at` is a blockquote marker. Used to stop the
+  // caret tethering FROM one - parking next to the ">" that opens a callout
+  // line should do nothing, not hunt backwards for a "<".
+  isQuoteMarkerAt(doc, at) {
+    if (doc.sliceString(at, at + 1) !== ">") return false;
+    const back = Math.max(0, at - BLOCK_PREFIX_MAX);
+    return isBlockquoteMarker(doc.sliceString(back, at + 1), at - back, back);
   }
 
   // The text of the line containing `pos`, plus that line's start offset.
@@ -8171,7 +8353,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
     for (const closer in BRACKET_CLOSE) depth[closer] = 0;
     for (let i = text.length - 1; i >= 0; i--) {
       const c = text[i];
-      if (BRACKET_CLOSE[c]) { depth[c]++; continue; }
+      if (BRACKET_CLOSE[c]) {
+        // A ">" opening a line is a blockquote marker, not a closer - counting
+        // it would leave depth[">"] permanently ahead inside any callout and
+        // hide every real angle pair in it.
+        if (c === ">" && isBlockquoteMarker(text, i, start)) continue;
+        depth[c]++;
+        continue;
+      }
       const closer = BRACKET_OPEN[c];
       if (!closer) continue;
       if (depth[closer] > 0) { depth[closer]--; continue; }
@@ -8180,6 +8369,44 @@ module.exports = class CursorSmithPlugin extends Plugin {
       return to >= 0 ? { from, to } : null;
     }
     return null;
+  }
+
+  // True when a structural block boundary falls between two offsets - i.e. the
+  // pair runs into, out of, or clean across a code block, blockquote or
+  // callout. See blockLineInfo for why fences and quotes are detected
+  // differently but resolved in one walk.
+  //
+  // The line the span BEGINS on sets the baseline depth and is exempt from the
+  // fence test: a bracket sitting on a fence line must not cut its own tether,
+  // and only lines that actually begin inside the span can introduce a fence.
+  crossesBlockBoundary(doc, from, to) {
+    if (!(to > from)) return false;
+    // Reach back for the start of `from`'s line, and slightly past `to` so a
+    // fence opening the final line is still matchable when the span stops
+    // mid-fence.
+    const back = Math.max(0, from - BLOCK_LINE_LOOKBACK);
+    const text = doc.sliceString(back, Math.min(doc.length, to + CODE_FENCE_PREFIX));
+    const rel = from - back;
+    const relTo = to - back;
+
+    let ls = rel <= 0 ? 0 : text.lastIndexOf("\n", rel - 1) + 1;
+    let base = -1;
+    while (ls <= relTo) {
+      let le = text.indexOf("\n", ls);
+      if (le < 0) le = text.length;
+      // Cap the read: only the head of a line decides its depth and fence, and
+      // a span can legitimately cover very long lines.
+      const info = blockLineInfo(text.slice(ls, Math.min(le, ls + BLOCK_HEAD_MAX)));
+      if (base < 0) {
+        base = info.depth;
+      } else {
+        if (info.fence) return true;          // a code fence opens inside the span
+        if (info.depth !== base) return true; // moved into, out of, or between quotes
+      }
+      if (le >= text.length) break;
+      ls = le + 1;
+    }
+    return false;
   }
 
   // What the tether should join, as { from, to } document offsets with
@@ -8197,12 +8424,26 @@ module.exports = class CursorSmithPlugin extends Plugin {
     for (const at of adjacent) {
       const ch = doc.sliceString(at, at + 1);
       if (!BRACKET_OPEN[ch] && !BRACKET_CLOSE[ch]) continue;
+      // Parking beside the ">" that opens a quoted or callout line must do
+      // nothing - it's punctuation belonging to the block, not a bracket.
+      if (ch === ">" && this.isQuoteMarkerAt(doc, at)) continue;
       const m = this.matchingBracketPos(doc, at, ch);
-      if (m >= 0) return { from: Math.min(at, m), to: Math.max(at, m) };
+      if (m < 0) continue;
+      const from = Math.min(at, m), to = Math.max(at, m);
+      // A match across a block boundary isn't a match. `continue` rather than
+      // `return null` so the caret still gets whatever run it's sitting in -
+      // the touched bracket losing its partner says nothing about the pair
+      // enclosing it.
+      if (this.crossesBlockBoundary(doc, from, to)) continue;
+      return { from, to };
     }
 
     const q = this.quoteSpanAt(doc, pos);
-    const b = this.enclosingBracketSpan(doc, pos);
+    // Not filtered: quoteSpanAt is scoped to a single line (see the note on
+    // QUOTE_CHARS), and both a fence and a quote-depth change are properties
+    // of a whole line, so a quote span cannot cross either.
+    let b = this.enclosingBracketSpan(doc, pos);
+    if (b && this.crossesBlockBoundary(doc, b.from, b.to)) b = null;
     if (q && b) return q.from > b.from ? q : b;
     return q || b || null;
   }

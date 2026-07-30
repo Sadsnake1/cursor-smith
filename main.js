@@ -2184,6 +2184,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._docCleanups.delete(doc);
     }
     this.registeredDocuments.delete(doc);
+    // If the canvas currently lives in this document - which is now routine:
+    // it migrates into the 1.13 settings window while you type there, and
+    // that window can simply be closed - drop our references along with it.
+    // The next tick's ensureCanvasForView sees no wrapper and rebuilds in
+    // the right document immediately; holding on instead would pin the
+    // closed window's detached DOM tree until the ownerDocument-mismatch
+    // check happened to notice.
+    if (this.canvasWrapper && this.canvasWrapper.ownerDocument === doc) {
+      try { this.canvasWrapper.remove(); } catch { /* already torn down */ }
+      this.canvasWrapper = null;
+      this.canvas = null;
+      this.ctx = null;
+    }
     try {
       doc.getElementById("cursor-smith-dynamic-styles")?.remove();
       doc.querySelector(".torch-cursor-glow")?.remove();
@@ -2221,6 +2234,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
          the drag surface (enforced by _chromeInsets in the tick loops). */
       .retro-box-cursor-canvas {
         pointer-events: none;
+      }
+      /* The native caret in plain <input>/<textarea>/contenteditable fields.
+         In the main window this is styles.css's job, but this stylesheet is
+         the one thing guaranteed to be present in EVERY document the canvas
+         migrates into - including the 1.13 settings window - so the rule has
+         to live here as well or the browser caret shows through under the
+         drawn cursor there. Same doubled-class specificity convention as
+         styles.css (outrank themes without !important); harmless duplicate
+         where both stylesheets are loaded. */
+      body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
+        caret-color: transparent;
       }
       /* Hide the primary cursor by BOTH position (first child of the
          cursor layer) and class (.cm-cursor-primary), so this works whether
@@ -2519,7 +2543,25 @@ module.exports = class CursorSmithPlugin extends Plugin {
       win.addEventListener("focus", onWindowFocusChange);
       win.addEventListener("blur", onWindowFocusChange);
     }
-    
+
+    // The workspace's window-close event (wired in onload) only fires for
+    // pop-out WORKSPACE windows. The 1.13 settings window is an Obsidian
+    // window with no workspace in it, so it closes without that event - and
+    // a registered document with no close notification is precisely the leak
+    // unregisterDocument exists to prevent: a dead document pinned in
+    // registeredDocuments with a live cleanup closure holding its window.
+    // pagehide is the closing document's own last word, so it covers every
+    // non-workspace window without needing to know what kind it is; for
+    // workspace pop-outs it simply races window-close, and
+    // unregisterDocument is idempotent so whichever fires second is a no-op.
+    // Never registered on the main document - it only "pagehides" when the
+    // whole app is going down, and onunload already walks every document.
+    let onPageHide = null;
+    if (win && doc !== document) {
+      onPageHide = () => this.unregisterDocument(doc);
+      win.addEventListener("pagehide", onPageHide);
+    }
+
     this._docCleanups.set(doc, () => {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
@@ -2533,6 +2575,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         win.removeEventListener("resize", onResize);
         win.removeEventListener("focus", onWindowFocusChange);
         win.removeEventListener("blur", onWindowFocusChange);
+        if (onPageHide) win.removeEventListener("pagehide", onPageHide);
       }
     });
   }
@@ -3197,11 +3240,38 @@ module.exports = class CursorSmithPlugin extends Plugin {
   windowFocused() {
     if (!this.settings.hideOnWindowBlur) return true;
     try {
-      const doc =
-        (this.canvas && this.canvas.ownerDocument) ||
-        (typeof activeDocument !== "undefined" && activeDocument) ||
-        document;
-      return doc.hasFocus();
+      // Not just the canvas's own document. Since Obsidian 1.13 the Settings
+      // panel is a WINDOW of its own rather than a modal in the main
+      // document, so "the user is typing in a Settings search box" now looks,
+      // from the canvas's document, exactly like "the app is in the
+      // background" - and checking only the canvas doc parked the engine here
+      // BEFORE ensureCanvasForView ever got the chance to migrate the canvas
+      // to the window the caret is actually in. Chicken and egg: the canvas
+      // can't follow focus into a window if losing focus to that window
+      // stops the tick.
+      //
+      // So the question this answers is "is any window of OURS focused", and
+      // ensureCanvasForView (which runs right after this, same frame) then
+      // decides WHICH focused document to draw in. hasFocus() still answers
+      // per-document, so a genuinely backgrounded app - no Obsidian window
+      // focused at all - still parks exactly as before.
+      const canvasDoc = this.canvas && this.canvas.ownerDocument;
+      if (canvasDoc && canvasDoc.hasFocus()) return true;
+      if (typeof activeDocument !== "undefined" && activeDocument &&
+          activeDocument.hasFocus()) return true;
+      for (const d of this.registeredDocuments) {
+        // A registered document whose window already closed throws or answers
+        // false here; either way it must not decide anything.
+        try { if (d && d.hasFocus()) return true; } catch { /* dead doc */ }
+      }
+      // Nothing above matched and there was nothing to consult beyond the
+      // main document: fall back to it, preserving the pre-multi-window
+      // behaviour exactly.
+      if (canvasDoc || (typeof activeDocument !== "undefined" && activeDocument) ||
+          this.registeredDocuments.size) {
+        return false;
+      }
+      return document.hasFocus();
     } catch {
       // Never let a focus probe kill a frame - assume focused.
       return true;
@@ -4084,6 +4154,48 @@ module.exports = class CursorSmithPlugin extends Plugin {
     o.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
   }
 
+  // The focused document that ISN'T the active view's - or null when the
+  // view's own window is the focused one (or nothing of ours is focused).
+  //
+  // This is the Obsidian 1.13 settings window, made a first-class citizen.
+  // Before 1.13, Settings was a modal INSIDE the main document, so the
+  // interface-caret machinery (genericCaretCoords / formFieldCaretCoords /
+  // getCaretClipRect - all of which were built for exactly those text boxes)
+  // found its inputs for free: same document as the canvas. 1.13 moved
+  // Settings into its own window, and every document this engine knew how to
+  // reach came from `view.dom.ownerDocument` - a document that, by
+  // construction, hosts a workspace view. The settings window hosts none, so
+  // the canvas never migrated there, its activeElement was never consulted,
+  // and the cursor simply didn't exist in any of its boxes.
+  //
+  // The rule: the view's document keeps the canvas for as long as it has OS
+  // focus. Only when it doesn't - and some OTHER document of ours does - is
+  // that other document offered as the migration target. Candidates are
+  // Obsidian's activeDocument global (which tracks the focused Obsidian
+  // window) plus every document we've registered, which includes the
+  // settings window itself via CursorSmithSettingTab.display(). A fully
+  // backgrounded app matches nothing here and returns null, so the old
+  // fallback chain - and windowFocused()'s parking - behave exactly as
+  // before.
+  _focusedForeignDoc(view) {
+    try {
+      const viewDoc = view && view.dom.ownerDocument;
+      if (viewDoc && viewDoc.hasFocus()) return null;
+      const candidates = [];
+      if (typeof activeDocument !== "undefined" && activeDocument) {
+        candidates.push(activeDocument);
+      }
+      for (const d of this.registeredDocuments) candidates.push(d);
+      for (const d of candidates) {
+        if (!d || d === viewDoc) continue;
+        // body can be gone on a document whose window is mid-teardown; such a
+        // document must never be chosen (ensureCanvasForView appends to it).
+        try { if (d.body && d.hasFocus()) return d; } catch { /* dead doc */ }
+      }
+    } catch { /* a focus probe must never take a frame down */ }
+    return null;
+  }
+
   ensureCanvasForView(view) {
     // CRASH FIX: this used to read `this.overlay.ownerDocument` when there
     // was no view - but this.overlay belongs to the torch engine and is
@@ -4093,7 +4205,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // making the cursor vanish until plugin reload. Fall back to the
     // canvas's own current document (don't migrate anywhere while there's
     // no view), then to Obsidian's activeDocument, then to the main doc.
+    //
+    // _focusedForeignDoc outranks even the view's document, because
+    // activeEditor is sticky: while you type in the 1.13 settings window,
+    // the last note you touched still reports as the active editor, so
+    // "there is a view" is true and yet the caret is in another window
+    // entirely. It answers non-null only while that other window actually
+    // holds OS focus, so during normal editing this line contributes
+    // nothing and the chain below is unchanged.
     const targetDoc =
+      this._focusedForeignDoc(view) ||
       (view && view.dom.ownerDocument) ||
       (this.canvasWrapper && this.canvasWrapper.ownerDocument) ||
       (typeof activeDocument !== "undefined" && activeDocument) ||
@@ -4539,6 +4660,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureCanvasForView(view);
         if (view) this.registerWindowEvents(view.dom.ownerDocument);
+        // The canvas may have just migrated to a document that hosts no view
+        // at all - the 1.13 settings window - which the line above therefore
+        // cannot register. Without listeners there, typing in a settings box
+        // neither wakes the render loop nor resets the blink, so the cursor
+        // would freeze mid-fade between idle heartbeats. Set-guarded inside
+        // registerWindowEvents, so per-frame this is a no-op.
+        if (this.canvasWrapper) {
+          this.registerWindowEvents(this.canvasWrapper.ownerDocument);
+        }
 
         if (this.canvasWrapper && this.canvas) {
           // Only clip to the editor pane while the note editor is the thing
@@ -9972,6 +10102,24 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
   display() {
     const { containerEl } = this;
+    // Since Obsidian 1.13 this panel renders in a window of its own, in a
+    // document the engine has no other way to discover: documents are
+    // otherwise learned from `view.dom.ownerDocument`, and the settings
+    // window hosts no view. Registering it here is what lets
+    // _focusedForeignDoc offer it as a canvas target, so the cursor can
+    // follow the caret into the panel's own text boxes (preset names, share
+    // codes) the way it always could when Settings was a modal in the main
+    // document. Set-guarded and a no-op pre-1.13, where ownerDocument IS the
+    // main document. Fail closed, same rule as everything else that runs at
+    // the top of display(): a nicety here must never take the panel down.
+    try {
+      const panelDoc = containerEl.ownerDocument;
+      if (panelDoc && panelDoc !== document) {
+        this.plugin.registerWindowEvents(panelDoc);
+      }
+    } catch (e) {
+      console.error("[cursor-smith] could not register settings window:", e);
+    }
     // Hold the scroll position across the rebuild. Every redrawing toggle in
     // this panel calls display(), which empties containerEl and builds it
     // again - so before this, flipping a toggle two thirds of the way down

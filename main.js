@@ -110,6 +110,34 @@ const SPEED_RAMP_LIFTOFF = 0.12;
 
 const GLOW_HEAT_GAIN = 1.6;
 
+// Speed Demon's answer to "how much heat is this keystroke worth" - including
+// zero, which means "ignore it entirely". Pulled out to module level so the
+// repeat rules are testable as data; noteKeystroke (in registerWindowEvents)
+// supplies the sensitivity multiplier and the 0.09 base bump on top.
+//
+// The repeat column is the part with history. Autorepeat used to be allowed
+// for navigation ONLY - the reasoning being that holding an arrow key IS the
+// fast way to move, while leaning on "a" is not typing. Correct for character
+// keys, but "delete" fell into the character bucket, and holding Backspace IS
+// the fast way to delete: every repeat removes a real character, exactly the
+// argument that got navigation its exemption. Dropping those repeats produced
+// a platform split that shipped as a bug report: on desktop a held Backspace
+// autorepeats through keydown with e.repeat set, so only the first press ever
+// counted and the heat colour drained away mid-deletion - while on mobile
+// there is no keydown autorepeat at all (each deletion is its own beforeinput
+// event, no repeat flag), so the same gesture heated up fine. The platform
+// where the guard was written is the one where it misfired.
+//
+// Weights: a held delete is real editing arriving at machine rate rather than
+// finger rate, so it takes the same kind of discount navigation's autorepeat
+// does (0.45/0.7 of the hand-pressed rate) off its full press weight of 1.
+// Held character keys stay at 0 - that part of the old rule was right.
+function keystrokeHeatWeight(kind, repeat) {
+  if (kind === "nav") return repeat ? 0.45 : 0.7;
+  if (kind === "delete") return repeat ? 0.7 : 1;
+  return repeat ? 0 : 1;
+}
+
 // Frame interval for the energy shimmer when it is the only thing animating.
 // The gradient's pulse has roughly a 1.7s period at speed 1, so 33ms gives
 // ~50 samples per cycle (visually identical to 60fps). Raise this to trade
@@ -2422,14 +2450,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // now, at a lower rate than typing, so scrubbing through a document
       // warms the caret without pretending it's the same thing as writing.
       //
-      // Autorepeat is allowed for navigation only: holding an arrow key IS the
-      // fast way to move, so ignoring repeats would mean the fastest movement
-      // generated the least heat. Held character keys are still ignored -
-      // leaning on "a" is not typing.
+      // Autorepeat rules live in keystrokeHeatWeight, per kind, because they
+      // are NOT uniform: holding an arrow key or Backspace is the fast way to
+      // do that thing and must keep heating (at a discount), while a held
+      // character key is ignored - leaning on "a" is not typing. See the
+      // helper for the desktop/mobile split that made "delete" earn its
+      // repeat exemption the hard way.
       if (!this.settings.speedDemon) return;
-      const isNav = kind === "nav";
-      if (!isNav && opts.repeat) return;
-      const weight = isNav ? (opts.repeat ? 0.45 : 0.7) : 1;
+      const weight = keystrokeHeatWeight(kind, !!opts.repeat);
+      if (!weight) return;
       const bump = 0.09 * weight * (this.settings.speedDemonSensitivity ?? 1);
       this.heat = Math.min(1, this.heat + bump);
       // Tells commitMove this move already paid for its heat, so a

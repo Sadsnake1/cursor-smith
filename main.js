@@ -1853,35 +1853,6 @@ function applyReducedMotion(obj) {
   return obj;
 }
 
-// Support/donate links, read out of manifest.json's `fundingUrl` and nowhere
-// else. Obsidian already renders its own Donate button from that field, so
-// taking the panel's links from the same place means one edit lights up both,
-// and there is no second copy of a URL to fall out of date.
-//
-// Obsidian accepts either form, and so does this:
-//    "fundingUrl": "https://buymeacoffee.com/you"
-//    "fundingUrl": { "Buy Me a Coffee": "...", "GitHub Sponsor": "..." }
-//
-// An absent, empty or malformed field yields no links and therefore no section
-// at all - which is also what makes it safe to ship the field commented out or
-// blank rather than with a placeholder URL somebody forgets to replace.
-const FUNDING_URL_RE = /^https:\/\/[^\s"'<>]+$/i;
-
-function fundingLinks(manifest) {
-  const raw = manifest && manifest.fundingUrl;
-  if (!raw) return [];
-  // The href is built from a data file, so the scheme is checked rather than
-  // trusted. Only https - not http, and emphatically not javascript:.
-  const ok = (u) => typeof u === "string" && FUNDING_URL_RE.test(u.trim());
-  if (typeof raw === "string") {
-    return ok(raw) ? [{ label: "Donate", url: raw.trim() }] : [];
-  }
-  if (typeof raw !== "object") return [];
-  return Object.entries(raw)
-    .filter(([label, url]) => typeof label === "string" && label.trim() && ok(url))
-    .map(([label, url]) => ({ label: label.trim(), url: url.trim() }));
-}
-
 function easeInOutSine(x) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
@@ -3388,11 +3359,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // rests as a dim moss, an orange one as slate.
   //
   // This is also the single flat colour every effect that ISN'T the cursor
-  // body falls back to: the CRT glow halo, Pixel Trail particles, secondary
-  // carets, popping letters. With Gradient on, that colour is the ramp's first
-  // stop, so those effects stay in the same family as the cursor instead of
-  // going on painting themselves in a per-theme colour the cursor no longer
-  // uses anywhere.
+  // body falls back to: the CRT glow halo, Pixel Trail particles, popping
+  // letters. With Gradient on, that colour is the ramp's first stop, so those
+  // effects stay in the same family as the cursor instead of going on painting
+  // themselves in a per-theme colour the cursor no longer uses anywhere.
+  //
+  // Secondary (multi-cursor) carets used to be in that list and no longer are:
+  // they are cursor bodies too, so they take the whole ramp rather than a flat
+  // slice of it. See drawSecondaryCarets.
   //
   // Deliberately UNHEATED in both branches. It used to hand back
   // gradientStops()[0], which has already been through heatColor, so every
@@ -8245,29 +8219,66 @@ module.exports = class CursorSmithPlugin extends Plugin {
     ctx.restore();
   }
 
-  // Simple solid 2px vertical line per non-primary caret, drawn in the
-  // active cursor colour. Deliberately minimal: no smear (independent
-  // spring per caret would be visually noisy and expensive with many
-  // cursors), no letter-inside-box, no trail. Blinks in sync with the
-  // main cursor so all carets fade together.
+  // Simple solid 2px vertical line per non-primary caret. Deliberately
+  // minimal: no smear (independent spring per caret would be visually noisy
+  // and expensive with many cursors), no letter-inside-box, no trail. Blinks
+  // in sync with the main cursor so all carets fade together.
+  //
+  // Colour follows the primary cursor, including its Gradient: with Gradient
+  // on, each secondary caret gets the whole ramp down its own height, the same
+  // way cursorPaint() paints the primary one. It used to take getActiveColor()
+  // in every case, which for a gradient cursor is the ramp's FIRST STOP - so a
+  // multi-cursor edit put one caret in full colour and the rest in a flat slice
+  // of it, which reads as the extra carets being a different, wrong colour.
+  //
+  // The ramp is resolved ONCE per frame, not once per caret. A CanvasGradient
+  // is tied to absolute canvas coordinates, so each caret does need its own
+  // object - but the expensive part (walking the stops, applying Speed Demon's
+  // heat, building an rgba() string per stop) does not depend on position, and
+  // multi-cursor edits are exactly where the caret count can run into the
+  // hundreds. Same reasoning as the firework sparks' baked palette.
   drawSecondaryCarets() {
     const carets = this.secondaryCarets;
     if (!carets || carets.length === 0) return;
     const ctx = this.ctx;
-    const color = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
     const alpha = this.blinkAlpha(performance.now()) * opacity;
     if (alpha <= 0.01) return;
+    const strokeAlpha = 0.9 * alpha;
+
+    // Exactly one of these is used, decided once for the whole frame.
+    let ramp = null;
+    if (this.settings.gradientEnabled) {
+      ramp = this.gradientStops().map((hex) => {
+        const [r, g, b] = hexToRgbTuple(hex);
+        return `rgba(${r}, ${g}, ${b}, ${strokeAlpha})`;
+      });
+    }
 
     ctx.save();
-    ctx.strokeStyle = hexToRgba(color, 0.9 * alpha);
     ctx.lineWidth = 2;
     ctx.lineCap = "butt";
+    if (!ramp) ctx.strokeStyle = hexToRgba(this.getActiveColor(), strokeAlpha);
     for (const c of carets) {
       // 0.5-pixel offset so a 2px stroke lands on whole pixels rather than
       // straddling a boundary and antialiasing to a blurry 3px stripe.
       const x = Math.round(c.x) + 0.5;
-      this._markDirty(x - 3, c.top - 2, 6, (c.bottom - c.top) + 4);
+      const h = c.bottom - c.top;
+      if (ramp) {
+        // A zero-length gradient line paints nothing at all (canvas spec), so
+        // a caret with no measured height falls back to a flat first stop
+        // rather than silently vanishing.
+        if (h > 0) {
+          const grad = ctx.createLinearGradient(x, c.top, x, c.bottom);
+          for (let i = 0; i < ramp.length; i++) {
+            grad.addColorStop(i / (ramp.length - 1), ramp[i]);
+          }
+          ctx.strokeStyle = grad;
+        } else {
+          ctx.strokeStyle = ramp[0];
+        }
+      }
+      this._markDirty(x - 3, c.top - 2, 6, h + 4);
       ctx.beginPath();
       ctx.moveTo(x, c.top);
       ctx.lineTo(x, c.bottom);
@@ -10089,46 +10100,6 @@ class CursorSmithSettingTab extends PluginSettingTab {
     return notice;
   }
 
-  // A support/donate row at the foot of the panel, one button per entry in
-  // manifest.json's fundingUrl. Renders nothing at all when that field is
-  // absent or malformed, so an unconfigured build simply has no section - see
-  // fundingLinks().
-  //
-  // Obsidian's own Donate button (the heart on the plugin's entry in Community
-  // Plugins) comes from the same field for free; this is the in-panel copy,
-  // which is where people actually are when they think to look.
-  //
-  // Placed last on purpose: it must never push a setting off the first screen.
-  renderSupportSection(containerEl) {
-    let links = [];
-    try {
-      links = fundingLinks(this.plugin && this.plugin.manifest);
-    } catch (e) {
-      // Same reasoning as renderReducedMotionNotice: a decorative row must
-      // never be able to take the settings panel down with it.
-      console.error("[cursor-smith] could not read funding links:", e);
-      return null;
-    }
-    if (!links.length) return null;
-
-    const row = new Setting(containerEl)
-      .setName("Support Cursor-Smith")
-      .setDesc("Cursor-Smith is free and always will be. If it earned a coffee, this is where.");
-    for (const { label, url } of links) {
-      row.addButton((b) =>
-        b.setButtonText(label)
-          .setCta()
-          .onClick(() => {
-            // Obsidian routes this to the system browser rather than opening a
-            // window inside the app. "noopener" so the opened page gets no
-            // handle back to the Electron window.
-            window.open(url, "_blank", "noopener");
-          })
-      );
-    }
-    return row;
-  }
-
   display() {
     const { containerEl } = this;
     // Since Obsidian 1.13 this panel renders in a window of its own, in a
@@ -10216,7 +10187,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       this.renderNormalSection(containerEl);
     }
 
-    this.renderSupportSection(containerEl);
+    // Note: a "Support Cursor-Smith" donate row used to render here, last in
+    // the panel, built from manifest.json's `fundingUrl` via fundingLinks().
+    // Both are gone. The manifest field is deliberately left in place - it is
+    // what drives Obsidian's OWN Donate button on the plugin's entry in
+    // Community Plugins, which is a separate thing and not what was removed.
+    // Delete that field too if the intent is to have no donate link anywhere.
 
     // After the rebuild, not during: the panel has to be its full height again
     // before a scroll offset means anything. requestAnimationFrame rather than
@@ -10386,6 +10362,34 @@ class CursorSmithSettingTab extends PluginSettingTab {
       return row;
     };
 
+    // --- "Restore default" on every slider ---------------------------------
+    // A small icon button sitting to the right of a slider, putting that one
+    // dial back to its DEFAULT_SETTINGS value. Every slider in this panel gets
+    // one, from this one helper - so there is no per-row copy of "what is this
+    // slider's default" to drift out of date, and a new slider that forgets
+    // the button is visibly the odd one out.
+    //
+    // The write goes through setAndRedraw even for the sliders whose own
+    // onChange is the cheaper `set`. A slider's handle position is DOM state
+    // that nothing else in the panel updates, so without the rebuild the value
+    // would change underneath a handle still sitting where the user left it -
+    // i.e. the button would look broken while working perfectly. The rebuild
+    // also re-runs the gates, which is what the dials that reveal other rows
+    // need (flameTrailGravity's angle, say). This is the same full-panel
+    // rebuild that ~40 toggles here already do, and display() carries scroll
+    // position and collapsed sections across it.
+    //
+    // The default is read from DEFAULT_SETTINGS rather than from the
+    // `?? fallback` at the call site: those fallbacks are what a *sparse*
+    // Vim-mode snapshot displays for a key it has never been given, and the
+    // two are not obliged to agree (overlayFlickerAmount's don't). What the
+    // button promises is the default, so it reads the defaults.
+    const resetSlider = (key) => (btn) =>
+      btn
+        .setIcon("rotate-ccw")
+        .setTooltip(`Restore default (${DEFAULT_SETTINGS[key]})`)
+        .onClick(() => setAndRedraw(key)(DEFAULT_SETTINGS[key]));
+
     this.renderSection(containerEl, "Appearance", (body) => {
       renderCursorStyleSetting(body);
 
@@ -10402,7 +10406,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g)
           .setName("Cursor Thickness")
           .setDesc("How thick the Line cursor is, in pixels.")
-          .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(get("caretWidthPx")).setDynamicTooltip().onChange(set("caretWidthPx")));
+          .addSlider((slider) => slider.setLimits(1, 12, 1).setValue(get("caretWidthPx")).setDynamicTooltip().onChange(set("caretWidthPx")))
+          .addExtraButton(resetSlider("caretWidthPx"));
 
         new Setting(g)
           .setName("Serifs")
@@ -10415,7 +10420,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g)
           .setName("Underline Thickness")
           .setDesc("Thickness of the underline, in pixels. 0 = automatic, scaled to the line height.")
-          .addSlider((slider) => slider.setLimits(0, 12, 1).setValue(get("underlineWidthPx") ?? 0).setDynamicTooltip().onChange(set("underlineWidthPx")));
+          .addSlider((slider) => slider.setLimits(0, 12, 1).setValue(get("underlineWidthPx") ?? 0).setDynamicTooltip().onChange(set("underlineWidthPx")))
+          .addExtraButton(resetSlider("underlineWidthPx"));
       }
 
       if (style === "Box") {
@@ -10439,7 +10445,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           new Setting(g2)
             .setName("Outline Width")
             .setDesc("Thickness of the hollow box's outline, in pixels.")
-            .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(get("boxHollowWidth")).setDynamicTooltip().onChange(set("boxHollowWidth")));
+            .addSlider((slider) => slider.setLimits(1, 6, 1).setValue(get("boxHollowWidth")).setDynamicTooltip().onChange(set("boxHollowWidth")))
+            .addExtraButton(resetSlider("boxHollowWidth"));
         }
       }
 
@@ -10476,7 +10483,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
 
       new Setting(body).setName("Cursor Opacity").setDesc("How see-through the cursor is.")
-        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")));
+        .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("cursorOpacity")).setDynamicTooltip().onChange(set("cursorOpacity")))
+        .addExtraButton(resetSlider("cursorOpacity"));
 
       new Setting(body).setName("Translucent")
         .setDesc("Blends the cursor into the page instead of painting over it. Overrides Show Letter Inside Cursor.")
@@ -10492,21 +10500,26 @@ class CursorSmithSettingTab extends PluginSettingTab {
       if (get("blinkingEnabled")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Blink Speed").setDesc("How fast the cursor blinks.")
-          .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(get("blinkSpeed")).setDynamicTooltip().onChange(set("blinkSpeed")));
+          .addSlider((s) => s.setLimits(0.1, 3, 0.1).setValue(get("blinkSpeed")).setDynamicTooltip().onChange(set("blinkSpeed")))
+          .addExtraButton(resetSlider("blinkSpeed"));
         new Setting(g).setName("Blink Balance").setDesc("How the blink cycle is split between lit and dark.")
-          .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(get("blinkOnOffBalance")).setDynamicTooltip().onChange(set("blinkOnOffBalance")));
+          .addSlider((s) => s.setLimits(0.1, 0.9, 0.05).setValue(get("blinkOnOffBalance")).setDynamicTooltip().onChange(set("blinkOnOffBalance")))
+          .addExtraButton(resetSlider("blinkOnOffBalance"));
         new Setting(g).setName("Fade Smoothness").setDesc("How gradually the cursor fades in and out. 0.15 is the original feel.")
-          .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkFade") ?? 0.15).setDynamicTooltip().onChange(set("blinkFade")));
+          .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkFade") ?? 0.15).setDynamicTooltip().onChange(set("blinkFade")))
+          .addExtraButton(resetSlider("blinkFade"));
         new Setting(g).setName("Don't Blink While Typing").setDesc("Keeps the cursor fully lit while you type or move it.")
           .addToggle((toggle) => toggle.setValue(get("smoothStopBlinking")).onChange(set("smoothStopBlinking")));
         new Setting(g).setName("Blink Delay").setDesc("How long the cursor stays lit after a keystroke, in ms.")
-          .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")));
+          .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")))
+          .addExtraButton(resetSlider("blinkDelayMs"));
         new Setting(g).setName("Breathing").setDesc("The cursor swells and shrinks instead of fading out.")
           .addToggle((toggle) => toggle.setValue(!!get("blinkBreathing")).onChange(setAndRedraw("blinkBreathing")));
         if (get("blinkBreathing")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Breath Depth").setDesc("How far the cursor shrinks at the bottom of the breath.")
-            .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkBreathDepth") ?? 0.2).setDynamicTooltip().onChange(set("blinkBreathDepth")));
+            .addSlider((s) => s.setLimits(0.05, 0.5, 0.05).setValue(get("blinkBreathDepth") ?? 0.2).setDynamicTooltip().onChange(set("blinkBreathDepth")))
+            .addExtraButton(resetSlider("blinkBreathDepth"));
         }
       }
     });
@@ -10521,10 +10534,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g).setName("Glide Amount")
           .setDesc("How much the cursor eases as it travels.")
-          .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(get("smoothness")).setDynamicTooltip().onChange(set("smoothness")));
+          .addSlider((s) => s.setLimits(0.05, 0.30, 0.05).setValue(get("smoothness")).setDynamicTooltip().onChange(set("smoothness")))
+          .addExtraButton(resetSlider("smoothness"));
         new Setting(g).setName("Catch-Up Speed")
           .setDesc("How quickly the cursor chases the real caret.")
-          .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(get("catchUpSpeed")).setDynamicTooltip().onChange(set("catchUpSpeed")));
+          .addSlider((s) => s.setLimits(0.30, 0.80, 0.05).setValue(get("catchUpSpeed")).setDynamicTooltip().onChange(set("catchUpSpeed")))
+          .addExtraButton(resetSlider("catchUpSpeed"));
         // Max Catch-Up Speed is meaningless on its own - it is only ever read
         // inside the adaptive branch - so it hangs off that toggle rather than
         // sitting beside it as a live-looking slider that does nothing.
@@ -10535,11 +10550,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Max Catch-Up Speed")
             .setDesc("The fastest the speed-up is allowed to get.")
-            .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")));
+            .addSlider((s) => s.setLimits(0.50, 1.0, 0.05).setValue(get("maxCatchUpSpeed")).setDynamicTooltip().onChange(set("maxCatchUpSpeed")))
+            .addExtraButton(resetSlider("maxCatchUpSpeed"));
         }
         new Setting(g).setName("Movement Delay")
           .setDesc("Delay before the cursor sets off, in ms. 0 follows immediately.")
-          .addSlider((s) => s.setLimits(0, 500, 10).setValue(get("moveDelayMs")).setDynamicTooltip().onChange(set("moveDelayMs")));
+          .addSlider((s) => s.setLimits(0, 500, 10).setValue(get("moveDelayMs")).setDynamicTooltip().onChange(set("moveDelayMs")))
+          .addExtraButton(resetSlider("moveDelayMs"));
       }
     });
 
@@ -10581,12 +10598,14 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Bolt Size")
             .setDesc("How fine the lightning is, in pixels per block.")
-            .addSlider((s) => s.setLimits(1, 5, 1).setValue(get("thunderstrikeSize") ?? 2).setDynamicTooltip().onChange(set("thunderstrikeSize")));
+            .addSlider((s) => s.setLimits(1, 5, 1).setValue(get("thunderstrikeSize") ?? 2).setDynamicTooltip().onChange(set("thunderstrikeSize")))
+            .addExtraButton(resetSlider("thunderstrikeSize"));
           new Setting(g2).setName("Strength")
             .setDesc(get("popRainbow")
               ? "How brightly the strike shows. Rainbow colors each bolt."
               : "How brightly the strike shows.")
-            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("thunderstrikeStrength") ?? 0.5).setDynamicTooltip().onChange(set("thunderstrikeStrength")));
+            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("thunderstrikeStrength") ?? 0.5).setDynamicTooltip().onChange(set("thunderstrikeStrength")))
+            .addExtraButton(resetSlider("thunderstrikeStrength"));
         }
 
         new Setting(g).setName("Fireworks")
@@ -10600,7 +10619,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           // play instead of listing rules that may not apply.
           new Setting(g2).setName("Quantity")
             .setDesc("How many shells go up per keypress, and how much each throws.")
-            .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("fireworksQuantity") ?? 1).setDynamicTooltip().onChange(set("fireworksQuantity")));
+            .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("fireworksQuantity") ?? 1).setDynamicTooltip().onChange(set("fireworksQuantity")))
+            .addExtraButton(resetSlider("fireworksQuantity"));
         }
 
         // Rainbow last, and only when there is something for it to recolour.
@@ -10633,16 +10653,19 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g).setName("Density")
           .setDesc("How many pixels the trail sheds. 0 hides them entirely.")
-          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("flameTrailDensity") ?? 1).setDynamicTooltip().onChange(set("flameTrailDensity")));
+          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("flameTrailDensity") ?? 1).setDynamicTooltip().onChange(set("flameTrailDensity")))
+          .addExtraButton(resetSlider("flameTrailDensity"));
         new Setting(g).setName("Trail On Jump")
           .setDesc("Lays pixels along the whole path of a jump, not just at the start.")
           .addToggle((toggle) => toggle.setValue(!!get("flameTrailOnJump")).onChange(set("flameTrailOnJump")));
         new Setting(g).setName("Pixel Lifetime")
           .setDesc("How long each pixel lasts before it fades out, in milliseconds.")
-          .addSlider((s) => s.setLimits(100, 2000, 50).setValue(get("flameTrailLifeMs") ?? 400).setDynamicTooltip().onChange(set("flameTrailLifeMs")));
+          .addSlider((s) => s.setLimits(100, 2000, 50).setValue(get("flameTrailLifeMs") ?? 400).setDynamicTooltip().onChange(set("flameTrailLifeMs")))
+          .addExtraButton(resetSlider("flameTrailLifeMs"));
         new Setting(g).setName("Pixel Size")
           .setDesc("How big each pixel is.")
-          .addSlider((s) => s.setLimits(1, 12, 0.5).setValue(get("flameTrailPixelSize") ?? 4).setDynamicTooltip().onChange(set("flameTrailPixelSize")));
+          .addSlider((s) => s.setLimits(1, 12, 0.5).setValue(get("flameTrailPixelSize") ?? 4).setDynamicTooltip().onChange(set("flameTrailPixelSize")))
+          .addExtraButton(resetSlider("flameTrailPixelSize"));
         // Only meaningful with a gradient to sample - offered only when Gradient
         // is on, so it isn't a switch that visibly does nothing.
         if (get("gradientEnabled")) {
@@ -10652,12 +10675,14 @@ class CursorSmithSettingTab extends PluginSettingTab {
         }
         new Setting(g).setName("Gravity")
           .setDesc("A steady pull on the pixels. 0 leaves them drifting sideways.")
-          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("flameTrailGravity") ?? 0).setDynamicTooltip().onChange(setAndRedraw("flameTrailGravity")));
+          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("flameTrailGravity") ?? 0).setDynamicTooltip().onChange(setAndRedraw("flameTrailGravity")))
+          .addExtraButton(resetSlider("flameTrailGravity"));
         if ((get("flameTrailGravity") ?? 0) > 0) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Gravity Direction")
             .setDesc("Which way the pull goes, in degrees. 0 is down, 90 right, 180 up, 270 left.")
-            .addSlider((s) => s.setLimits(0, 359, 5).setValue(get("flameTrailGravityAngle") ?? 0).setDynamicTooltip().onChange(set("flameTrailGravityAngle")));
+            .addSlider((s) => s.setLimits(0, 359, 5).setValue(get("flameTrailGravityAngle") ?? 0).setDynamicTooltip().onChange(set("flameTrailGravityAngle")))
+            .addExtraButton(resetSlider("flameTrailGravityAngle"));
         }
       }
 
@@ -10674,11 +10699,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
         if (!get("stardustAlwaysOn")) {
           new Setting(g).setName("Idle Delay")
             .setDesc("How long (in ms) the cursor must sit still before the stardust starts.")
-            .addSlider((s) => s.setLimits(500, 8000, 250).setValue(get("stardustDelayMs") ?? 2000).setDynamicTooltip().onChange(set("stardustDelayMs")));
+            .addSlider((s) => s.setLimits(500, 8000, 250).setValue(get("stardustDelayMs") ?? 2000).setDynamicTooltip().onChange(set("stardustDelayMs")))
+            .addExtraButton(resetSlider("stardustDelayMs"));
         }
         new Setting(g).setName("Density")
           .setDesc("How thickly the stardust streams off the cursor.")
-          .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("stardustRate") ?? 1).setDynamicTooltip().onChange(set("stardustRate")));
+          .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("stardustRate") ?? 1).setDynamicTooltip().onChange(set("stardustRate")))
+          .addExtraButton(resetSlider("stardustRate"));
 
         new Setting(g).setName("Orbit")
           .setDesc("Motes circle the cursor like fireflies instead of drifting up.")
@@ -10687,7 +10714,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Orbit Radius")
             .setDesc("How wide the motes circle, in pixels.")
-            .addSlider((s) => s.setLimits(10, 60, 2).setValue(get("stardustOrbitRadius") ?? 22).setDynamicTooltip().onChange(set("stardustOrbitRadius")));
+            .addSlider((s) => s.setLimits(10, 60, 2).setValue(get("stardustOrbitRadius") ?? 22).setDynamicTooltip().onChange(set("stardustOrbitRadius")))
+            .addExtraButton(resetSlider("stardustOrbitRadius"));
         }
       }
 
@@ -10698,7 +10726,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g).setName("Strength")
           .setDesc("How visible the line is.")
-          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("bracketTetherStrength") ?? 0.35).setDynamicTooltip().onChange(set("bracketTetherStrength")));
+          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("bracketTetherStrength") ?? 0.35).setDynamicTooltip().onChange(set("bracketTetherStrength")))
+          .addExtraButton(resetSlider("bracketTetherStrength"));
       }
 
       new Setting(body).setName("Motion Smear")
@@ -10708,13 +10737,16 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g).setName("Stiffness")
           .setDesc("How hard the leading edge is pulled toward the new position.")
-          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearStiffness")).setDynamicTooltip().onChange(set("smearStiffness")));
+          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearStiffness")).setDynamicTooltip().onChange(set("smearStiffness")))
+          .addExtraButton(resetSlider("smearStiffness"));
         new Setting(g).setName("Trailing Stiffness")
           .setDesc("The same for the edge left behind.")
-          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearTrailingStiffness")).setDynamicTooltip().onChange(set("smearTrailingStiffness")));
+          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearTrailingStiffness")).setDynamicTooltip().onChange(set("smearTrailingStiffness")))
+          .addExtraButton(resetSlider("smearTrailingStiffness"));
         new Setting(g).setName("Damping")
           .setDesc("How much the springs resist overshooting.")
-          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearDamping")).setDynamicTooltip().onChange(set("smearDamping")));
+          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("smearDamping")).setDynamicTooltip().onChange(set("smearDamping")))
+          .addExtraButton(resetSlider("smearDamping"));
         new Setting(g).setName("Tapered Trail")
           .setDesc("Narrows the smear to a point behind the cursor, like a comet tail.")
           .addToggle((toggle) => toggle.setValue(!!get("smearTaper")).onChange(setAndRedraw("smearTaper")));
@@ -10722,7 +10754,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Taper Amount")
             .setDesc("How sharply the tail closes. At 1 it comes to a full point.")
-            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearTaperAmount") ?? 0.7).setDynamicTooltip().onChange(set("smearTaperAmount")));
+            .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("smearTaperAmount") ?? 0.7).setDynamicTooltip().onChange(set("smearTaperAmount")))
+            .addExtraButton(resetSlider("smearTaperAmount"));
         }
       }
 
@@ -10735,7 +10768,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g).setName("Beam Speed")
           .setDesc("How fast the pulse travels along the cursor.")
-          .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("energySpeed")).setDynamicTooltip().onChange(set("energySpeed")));
+          .addSlider((s) => s.setLimits(0.2, 3, 0.1).setValue(get("energySpeed")).setDynamicTooltip().onChange(set("energySpeed")))
+          .addExtraButton(resetSlider("energySpeed"));
         // Aurora has nothing to work with without a ramp - it warps and
         // cross-mixes gradient colors - so it only appears once Gradient is on.
         if (get("gradientEnabled")) {
@@ -10746,7 +10780,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
             const g2 = this.subGroup(g);
             new Setting(g2).setName("Waviness")
               .setDesc("How hard the bands bend. 0 keeps them flat.")
-              .addSlider((s) => s.setLimits(0, 2, 0.05).setValue(get("energyAuroraWaviness") ?? 1).setDynamicTooltip().onChange(set("energyAuroraWaviness")));
+              .addSlider((s) => s.setLimits(0, 2, 0.05).setValue(get("energyAuroraWaviness") ?? 1).setDynamicTooltip().onChange(set("energyAuroraWaviness")))
+              .addExtraButton(resetSlider("energyAuroraWaviness"));
           }
         }
       }
@@ -10758,10 +10793,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const g = this.subGroup(body);
         new Setting(g).setName("Trail Length")
           .setDesc("How many ghosts are kept behind the cursor. 0 leaves none.")
-          .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("trailLength")).setDynamicTooltip().onChange(set("trailLength")));
+          .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("trailLength")).setDynamicTooltip().onChange(set("trailLength")))
+          .addExtraButton(resetSlider("trailLength"));
         new Setting(g).setName("Trail Fade Time")
           .setDesc("How long (in ms) each ghost takes to fade out.")
-          .addSlider((s) => s.setLimits(50, 1500, 25).setValue(get("trailFadeMs")).setDynamicTooltip().onChange(set("trailFadeMs")));
+          .addSlider((s) => s.setLimits(50, 1500, 25).setValue(get("trailFadeMs")).setDynamicTooltip().onChange(set("trailFadeMs")))
+          .addExtraButton(resetSlider("trailFadeMs"));
         new Setting(g).setName("Glow")
           .setDesc(get("speedDemon") && !get("speedDemonNoCursorHeat")
             ? "Soft halo around the cursor, in its own color. Speed Demon is on, so the halo swells as the cursor heats up and settles back as it cools."
@@ -10785,13 +10822,16 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g3 = this.subGroup(g);
           new Setting(g3).setName("Break-Up")
             .setDesc("How far the slices are thrown and how much the cursor's shape warps.")
-            .addSlider((s) => s.setLimits(0.2, 2.5, 0.1).setValue(get("crtGlitchStrength") ?? 1).setDynamicTooltip().onChange(set("crtGlitchStrength")));
+            .addSlider((s) => s.setLimits(0.2, 2.5, 0.1).setValue(get("crtGlitchStrength") ?? 1).setDynamicTooltip().onChange(set("crtGlitchStrength")))
+            .addExtraButton(resetSlider("crtGlitchStrength"));
           new Setting(g3).setName("Color Split")
             .setDesc("How far the color channels separate. 0 only tears the shape.")
-            .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("crtGlitchAberration") ?? 1).setDynamicTooltip().onChange(set("crtGlitchAberration")));
+            .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("crtGlitchAberration") ?? 1).setDynamicTooltip().onChange(set("crtGlitchAberration")))
+            .addExtraButton(resetSlider("crtGlitchAberration"));
           new Setting(g3).setName("Duration")
             .setDesc("How long each burst lasts, in milliseconds.")
-            .addSlider((s) => s.setLimits(60, 600, 10).setValue(get("crtGlitchMs") ?? 220).setDynamicTooltip().onChange(set("crtGlitchMs")));
+            .addSlider((s) => s.setLimits(60, 600, 10).setValue(get("crtGlitchMs") ?? 220).setDynamicTooltip().onChange(set("crtGlitchMs")))
+            .addExtraButton(resetSlider("crtGlitchMs"));
         }
       }
 
@@ -10807,17 +10847,20 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Spark Quantity")
             .setDesc("How many embers spawn per burst. 0 stops them without switching the effect off.")
-            .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("speedDemonSparkQuantity") ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")));
+            .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("speedDemonSparkQuantity") ?? 1).setDynamicTooltip().onChange(set("speedDemonSparkQuantity")))
+            .addExtraButton(resetSlider("speedDemonSparkQuantity"));
           new Setting(g2).setName("Spark Trail")
             .setDesc("Gives each spark a fading comet tail, in pixels. 0 = no trail.")
-            .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")));
+            .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("speedDemonSparkTrail") ?? 0).setDynamicTooltip().onChange(set("speedDemonSparkTrail")))
+            .addExtraButton(resetSlider("speedDemonSparkTrail"));
         }
         new Setting(g).setName("Keep Cursor Color")
           .setDesc("The cursor keeps your color; only the sparks react to speed.")
           .addToggle((toggle) => toggle.setValue(get("speedDemonNoCursorHeat") ?? false).onChange(setAndRedraw("speedDemonNoCursorHeat")));
         new Setting(g).setName("Sensitivity")
           .setDesc("How fast typing and caret movement heat the cursor up.")
-          .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")));
+          .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")))
+          .addExtraButton(resetSlider("speedDemonSensitivity"));
 
         // Hidden while Keep Cursor Color is on: that option says the cursor
         // shouldn't change colour with speed at all, which makes a custom
@@ -10854,25 +10897,32 @@ class CursorSmithSettingTab extends PluginSettingTab {
         const gh = this.subGroup(body);
         new Setting(gh).setName("Fire Quantity")
           .setDesc("How much fire is emitted. 0 puts it out without switching Hot-head off.")
-          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("hotHeadQuantity") ?? 1).setDynamicTooltip().onChange(set("hotHeadQuantity")));
+          .addSlider((s) => s.setLimits(0, 3, 0.1).setValue(get("hotHeadQuantity") ?? 1).setDynamicTooltip().onChange(set("hotHeadQuantity")))
+          .addExtraButton(resetSlider("hotHeadQuantity"));
         new Setting(gh).setName("Fire Spread")
           .setDesc("How much surrounding text catches, in characters. 0 burns only the cursor's own column.")
-          .addSlider((s) => s.setLimits(0, 14, 1).setValue(get("hotHeadSpread") ?? 4).setDynamicTooltip().onChange(set("hotHeadSpread")));
+          .addSlider((s) => s.setLimits(0, 14, 1).setValue(get("hotHeadSpread") ?? 4).setDynamicTooltip().onChange(set("hotHeadSpread")))
+          .addExtraButton(resetSlider("hotHeadSpread"));
         new Setting(gh).setName("Trail Over Text")
           .setDesc("Fire laid along the path travelled. 0 keeps it where the cursor stops.")
-          .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("hotHeadTrail") ?? 6).setDynamicTooltip().onChange(set("hotHeadTrail")));
+          .addSlider((s) => s.setLimits(0, 30, 1).setValue(get("hotHeadTrail") ?? 6).setDynamicTooltip().onChange(set("hotHeadTrail")))
+          .addExtraButton(resetSlider("hotHeadTrail"));
         new Setting(gh).setName("Flame Height")
           .setDesc("How high the flames climb before they burn out.")
-          .addSlider((s) => s.setLimits(0.15, 1.5, 0.05).setValue(get("hotHeadHeight") ?? 0.55).setDynamicTooltip().onChange(set("hotHeadHeight")));
+          .addSlider((s) => s.setLimits(0.15, 1.5, 0.05).setValue(get("hotHeadHeight") ?? 0.55).setDynamicTooltip().onChange(set("hotHeadHeight")))
+          .addExtraButton(resetSlider("hotHeadHeight"));
         new Setting(gh).setName("Fade Time")
           .setDesc("How long a single fire particle lasts, in milliseconds.")
-          .addSlider((s) => s.setLimits(200, 1600, 20).setValue(get("hotHeadFade") ?? 620).setDynamicTooltip().onChange(set("hotHeadFade")));
+          .addSlider((s) => s.setLimits(200, 1600, 20).setValue(get("hotHeadFade") ?? 620).setDynamicTooltip().onChange(set("hotHeadFade")))
+          .addExtraButton(resetSlider("hotHeadFade"));
         new Setting(gh).setName("Idle Timeout")
           .setDesc("Idle time before the fire burns out. 0 keeps it burning forever.")
-          .addSlider((s) => s.setLimits(0, 6000, 100).setValue(get("hotHeadIdleMs") ?? 1500).setDynamicTooltip().onChange(set("hotHeadIdleMs")));
+          .addSlider((s) => s.setLimits(0, 6000, 100).setValue(get("hotHeadIdleMs") ?? 1500).setDynamicTooltip().onChange(set("hotHeadIdleMs")))
+          .addExtraButton(resetSlider("hotHeadIdleMs"));
         new Setting(gh).setName("Fire Opacity")
           .setDesc("How solid the fire is, independent of the cursor's own opacity.")
-          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("hotHeadOpacity") ?? 1).setDynamicTooltip().onChange(set("hotHeadOpacity")));
+          .addSlider((s) => s.setLimits(0.1, 1, 0.05).setValue(get("hotHeadOpacity") ?? 1).setDynamicTooltip().onChange(set("hotHeadOpacity")))
+          .addExtraButton(resetSlider("hotHeadOpacity"));
         new Setting(gh).setName("Use Cursor Color")
           .setDesc("Paints the fire in the cursor's color instead of the heat gradient.")
           .addToggle((toggle) => toggle.setValue(!!get("hotHeadFlat")).onChange(setAndRedraw("hotHeadFlat")));
@@ -10901,7 +10951,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
             .setValue(get("overlayFollowMode")).onChange(set("overlayFollowMode")));
         new Setting(g).setName("Light Size")
           .setDesc("How far the lit circle reaches, in pixels.")
-          .addSlider((s) => s.setLimits(100, 800, 10).setValue(get("overlayRadius")).setDynamicTooltip().onChange(set("overlayRadius")));
+          .addSlider((s) => s.setLimits(100, 800, 10).setValue(get("overlayRadius")).setDynamicTooltip().onChange(set("overlayRadius")))
+          .addExtraButton(resetSlider("overlayRadius"));
         // Only offered when there's a blink to sync to - with blinking off the
         // toggle would be a switch that does nothing, and the reason why would
         // be in a different section of the panel.
@@ -10913,7 +10964,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
             const g2 = this.subGroup(g);
             new Setting(g2).setName("Pulse Depth")
               .setDesc("How far the light closes at its darkest, as a share of Light Size. At 1 it goes out.")
-              .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayBlinkDepth") ?? 0.25).setDynamicTooltip().onChange(set("overlayBlinkDepth")));
+              .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayBlinkDepth") ?? 0.25).setDynamicTooltip().onChange(set("overlayBlinkDepth")))
+              .addExtraButton(resetSlider("overlayBlinkDepth"));
           }
         }
         new Setting(g).setName("Light Color")
@@ -10921,15 +10973,18 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addColorPicker((cp) => cp.setValue(get("overlayColor")).onChange(set("overlayColor")));
         new Setting(g).setName("Follow Speed")
           .setDesc("How quickly the light catches up when the cursor moves.")
-          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlaySpeed")).setDynamicTooltip().onChange(set("overlaySpeed")));
+          .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlaySpeed")).setDynamicTooltip().onChange(set("overlaySpeed")))
+          .addExtraButton(resetSlider("overlaySpeed"));
 
         this.renderSubheading(g, "Environment");
         new Setting(g).setName("Darkness")
           .setDesc("How far everything outside the light is dimmed.")
-          .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")));
+          .addSlider((s) => s.setLimits(0.2, 1, 0.01).setValue(get("overlayDarkness")).setDynamicTooltip().onChange(set("overlayDarkness")))
+          .addExtraButton(resetSlider("overlayDarkness"));
         new Setting(g).setName("Glow Strength")
           .setDesc("Strength of the warm glow. 0 gives a pure spotlight.")
-          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")));
+          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("overlayIntensity")).setDynamicTooltip().onChange(set("overlayIntensity")))
+          .addExtraButton(resetSlider("overlayIntensity"));
         // Sits under Glow Strength because that is the value it modulates: the
         // flame swings either side of whatever that slider is set to, so at 0
         // there is nothing to flicker and this says so rather than appearing to
@@ -10943,7 +10998,8 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Flicker Depth")
             .setDesc("How far the flame swings either side of Glow Strength. At 1 it gutters right out.")
-            .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayFlickerAmount") ?? 0.35).setDynamicTooltip().onChange(set("overlayFlickerAmount")));
+            .addSlider((s) => s.setLimits(0.05, 1, 0.05).setValue(get("overlayFlickerAmount") ?? 0.35).setDynamicTooltip().onChange(set("overlayFlickerAmount")))
+            .addExtraButton(resetSlider("overlayFlickerAmount"));
         }
         new Setting(g).setName("Keep Sidebars Lit")
           .setDesc("Dims only the editor, leaving sidebars and ribbon lit. Desktop only.")
@@ -11351,4 +11407,5 @@ class CursorSmithSettingTab extends PluginSettingTab {
     });
   }
 }
+/* nosourcemap */
 /* nosourcemap */

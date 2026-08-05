@@ -2075,26 +2075,46 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._caretStyleCache = null;
     this._tickErrorLogged = false;
     this._torchErrorLogged = false;
+    // Single-flight latch for the palette's mode toggle; see toggleUiMode.
+    this._uiModeSwitching = false;
 
     // -----------------------------------------------------------------------
-    // Command palette — exactly two entries, registered unconditionally.
+    // Command palette — three entries, registered unconditionally.
     //
-    // Both work regardless of whether Cursor-Smith itself is toggled on: the
-    // Vim system deliberately never reads settings.enabled or the engine
+    // All three work regardless of whether Cursor-Smith itself is toggled on:
+    // the Vim system deliberately never reads settings.enabled or the engine
     // flags, so "Cycle preset" keeps functioning with the custom cursors off.
-    //
-    // The CUA/Vim mode switch is intentionally NOT a palette command anymore.
-    // Toggling it from the palette meant setVimModeEnabled could fire from
-    // any app state (mid-typing, palette focus in flight, no editor, etc.),
-    // and its side-effect chain — flipping Obsidian's vim keybindings via
-    // updateOptions(), which rebuilds every editor's extensions, plus the
-    // synthetic-Escape normal-mode forcing — proved too heavy/fragile to run
-    // from arbitrary contexts. The mode switch lives only in the settings
-    // panel (renderModeSwitch), where it runs from a known-quiet state.
     //
     // "Cycle preset" is one command that dispatches on the current mode
     // (CUA presets in CUA mode, Vim presets in Vim mode) under a single
     // stable ID, so one hotkey works in both modes.
+    //
+    // "Toggle CUA/Vim mode" was removed from the palette once, and is back.
+    // Worth knowing why it left, because the reasons were real and none of
+    // them was "we changed our minds": firing setVimModeEnabled from an
+    // arbitrary app state ran a side-effect chain — flipping Obsidian's vim
+    // keybindings via updateOptions(), which rebuilds every editor's
+    // extensions, plus the synthetic-Escape normal-mode forcing — with no
+    // idea whether there was an editor to run it against, and a failure
+    // anywhere in it could lose the mode change itself.
+    //
+    // What changed is that every step of that chain now defends itself, and
+    // none of that hardening was done for this command's sake:
+    //
+    //   • setVimModeEnabled PERSISTS the mode before any side effect runs, so
+    //     nothing downstream can lose the switch.
+    //   • Obsidian's vim keybindings are driven level-triggered and
+    //     symmetrically, so there is no captured "previous state" left to be
+    //     poisoned by a crash mid-switch.
+    //   • forceVimNormalMode is single-flight, retries only until the vim
+    //     adapter shows up (~1s) rather than spinning, bails outright if the
+    //     mode flipped back underneath it, and is cancelled on unload.
+    //
+    // The one hazard the palette adds that the settings panel does not is
+    // REPEAT: a held hotkey re-fires as fast as the OS repeats it, where a
+    // segmented button cannot be clicked again mid-flight. toggleUiMode() is
+    // single-flighted for exactly that, and is the only thing here that
+    // exists because of the palette.
     // -----------------------------------------------------------------------
     this.addCommand({
       id: "cycle-preset",
@@ -2108,7 +2128,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       callback: () => this.toggle(),
     });
 
-    this.addSettingTab(new CursorSmithSettingTab(this.app, this));
+    this.addCommand({
+      id: "toggle-cua-vim-mode",
+      name: "Toggle CUA/Vim mode",
+      callback: () => this.toggleUiMode(),
+    });
+
+    // Held so toggleUiMode can refresh the panel when the mode is switched
+    // from the palette while Settings happens to be open (refreshSettingTab).
+    this.settingTab = new CursorSmithSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     // Status bar indicator. The canvas tick calls updateVimStatusBar() the
     // instant the mode changes, so while the cursor engine runs this interval
@@ -2715,6 +2744,64 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return result.name;
   }
 
+  // The palette's CUA/Vim switch. Deliberately a wrapper around
+  // setVimModeEnabled rather than a second way of doing the same thing: the
+  // panel's segmented control and this command have to stay on one path, or
+  // the two drift the moment either grows a step.
+  //
+  // Single-flight, and that guard exists FOR the palette. A segmented button
+  // cannot be clicked again mid-flight; a hotkey held down re-fires as fast as
+  // the OS repeats it, and setVimModeEnabled awaits a disk write in the middle
+  // of a chain that rebuilds every editor's extensions. Without this, a held
+  // key stacks overlapping switches whose saveSettings() calls race.
+  //
+  // Reads through isVimUiMode() rather than settings.uiMode directly, so an
+  // install predating uiMode (vimModeEnabled only) toggles the right way on
+  // the first press instead of appearing to do nothing.
+  async toggleUiMode() {
+    if (this._uiModeSwitching) return;
+    this._uiModeSwitching = true;
+    try {
+      const next = !this.isVimUiMode();
+      await this.setVimModeEnabled(next);
+      // The status bar indicator only exists in Vim mode, so switching TO CUA
+      // would otherwise be a silent no-feedback command - it removes the one
+      // thing that was showing the mode. Say which mode you landed in.
+      new Notice(`Cursor-Smith: ${next ? "Vim" : "CUA / Normal"} mode`);
+      this.refreshSettingTab();
+    } finally {
+      // In a finally, not after the await: setVimModeEnabled swallows its own
+      // side-effect failures but saveSettings() is not guarded, and a flag
+      // left stuck true would kill the command for the rest of the session.
+      this._uiModeSwitching = false;
+    }
+  }
+
+  // Re-render the settings panel, but only if it is actually on screen.
+  //
+  // The mode switch is a segmented control there, drawn from uiMode at build
+  // time, so toggling from the palette with Settings open used to leave the
+  // panel showing the mode you just left - and clicking the half that looked
+  // inactive then did nothing, because renderModeSwitch's own guard correctly
+  // saw the mode was already current.
+  //
+  // Obsidian gives no "is my tab open" flag, so ask the DOM: a tab that was
+  // built and then closed keeps its containerEl, but that element is no longer
+  // attached to a document. Fails closed - a stale panel is much cheaper than
+  // a command that throws.
+  refreshSettingTab() {
+    try {
+      const tab = this.settingTab;
+      const el = tab && tab.containerEl;
+      if (!el) return;
+      const doc = el.ownerDocument;
+      if (!doc || !doc.body || !doc.body.contains(el)) return;
+      tab.display();
+    } catch (e) {
+      console.error("[cursor-smith] could not refresh the settings panel:", e);
+    }
+  }
+
   toggle() {
     const wasActive = !!(this.canvasEngineActive || this.torchEngineActive);
     wasActive ? this.disable() : this.enable();
@@ -2726,10 +2813,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // Vim-aware cursors
   // =========================================================================
 
-  // Single entry point for turning the plugin's Vim cursors on/off. Only
-  // reachable from the settings panel's CUA/Vim switch (renderModeSwitch) —
-  // deliberately not exposed as a palette command; see the note where the
-  // commands are registered. Also:
+  // Single entry point for turning the plugin's Vim cursors on/off. Two
+  // callers, and they must stay the only two: the settings panel's CUA/Vim
+  // switch (renderModeSwitch) and the palette command (toggleUiMode, which
+  // wraps this rather than repeating it). Also:
   //  • drives Obsidian's own Vim keybindings when vimControlObsidian is set
   //    (remembering the prior state so turning the feature off restores it),
   //  • creates/removes the status bar mode indicator.

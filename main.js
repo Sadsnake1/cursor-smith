@@ -310,6 +310,12 @@ const JUMP_TRAIL_MAX_PUFFS = 40;
 // it, so the global slider keeps working the same way everywhere.
 const TRANSLUCENT_ALPHA = 0.95;
 
+// How fast the adaptive catch-up boost may change, as an exponential rate
+// (1/s). ~8 is a 125ms time constant: quick enough to follow a genuine burst
+// of typing, slow enough to flatten the per-frame sawtooth the backlog
+// measurement produces. See updateSmoothCursor.
+const CATCHUP_BOOST_RATE = 8;
+
 // Rounded Corners. See cornerRadius(): a shape whose narrow axis is at or
 // under ROUNDED_THIN_PX is treated as a bar and goes fully round (capsule
 // ends), anything wider is a block and takes the gentler fraction. 6px is
@@ -550,6 +556,11 @@ const DEFAULT_SETTINGS = {
   // of sharp boxes behind a rounded head.
   cursorRounded: false,
 
+  // See GLYPH_COLOR_MODES. Defaults to the neutral flip: RGB inversion
+  // produces a complementary hue rather than a neutral, so "invert" and
+  // "tinted" both tint the letter with a colour most people did not ask for.
+  glyphColorMode: "contrast",
+
   // --- Speed Demon: cursor heats up with typing speed ---
   speedDemon: false,
   speedDemonSparks: true,        // spawn small fire particles at high heat
@@ -765,6 +776,8 @@ const LOOK_KEYS = [
   // code written before this existed imports as sharp, which is exactly what
   // it looked like when it was written.
   "cursorRounded",
+  // Glyph colour mode. Appended, like everything else here.
+  "glyphColorMode",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1821,6 +1834,23 @@ const HOT_FLAT_SAT_HI = 1.05;   // hottest: fully saturated (clamped at 1)
 const HOT_FLAT_VAL_LO = 0.45;   // coolest embers: darker
 const HOT_FLAT_VAL_HI = 1.15;   // hottest: blown out toward white (clamped)
 
+// Where the base of the fire sits relative to the top of the glyphs, as a
+// fraction of the font size. NEGATIVE means below that line, i.e. overlapping
+// the letters slightly.
+//
+// Zero would put the base exactly on the glyph tops, which still reads as a
+// gap once the particles shrink with age - a flame has to bite into what it
+// is burning to look attached to it. A small overlap is what makes the fire
+// touch the text instead of hovering over it.
+const HOT_HEAD_LIFT = -0.06;
+
+// Vertical jitter around that base, as a fraction of the line height.
+// Asymmetric on purpose: mostly upward, since flames rise, but with a little
+// downward room so some particles sit right on the letters rather than every
+// one of them starting above.
+const HOT_HEAD_JITTER_UP = 0.16;
+const HOT_HEAD_JITTER_DOWN = 0.05;
+
 const HOT_BURN_LINGER_MS = 150;
 const HOT_BURN_MAX = 26;                // most burn marks kept alive at once
 
@@ -1873,6 +1903,21 @@ function contrastRatio(a, b) {
 
 const GLYPH_MIN_CONTRAST = 4.5;
 
+// How the character inside a filled Box cursor is coloured.
+//
+//   contrast  black or white, whichever measures higher against the box.
+//             Neutral and always legible. The default.
+//   tinted    invert the box, then push toward a pole until it clears the
+//             floor. Keeps a hue, at the cost of that hue being the box's
+//             COMPLEMENT - a green cursor gives a magenta letter, which
+//             passes the contrast test and still looks wrong. Named for what
+//             you get rather than "auto", which implied the plugin was
+//             choosing for you - that is what "contrast" does.
+//   invert    raw inversion, no floor. Purest reading of "flipped colours",
+//             and genuinely unusable on a mid-grey box, which inverts to
+//             within one unit of itself.
+const GLYPH_COLOR_MODES = ["contrast", "tinted", "invert"];
+
 // The colour for the character drawn inside a FILLED Box cursor.
 //
 // This used to be invertColor(textColor): the inverse of whatever the editor
@@ -1892,30 +1937,41 @@ const GLYPH_MIN_CONTRAST = 4.5;
 // finds the first passing step; stopping AT the threshold rather than jumping
 // straight to black/white is the whole point, since it keeps as much of the
 // inverted hue as legibility allows.
-function readableGlyphColor(boxColorStr) {
+function readableGlyphColor(boxColorStr, mode = "contrast") {
   const box = parseColorTuple(boxColorStr);
   if (!box) return "#000000";
 
   const inv = [255 - box[0], 255 - box[1], 255 - box[2]];
-  if (contrastRatio(inv, box) >= GLYPH_MIN_CONTRAST) {
-    return `rgb(${inv[0]}, ${inv[1]}, ${inv[2]})`;
-  }
+  const rgb = (c) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 
-  // Which way is "out" is decided by MEASURING both poles, not by the usual
-  // `luminance < 0.5 ? white : black` shortcut - that shortcut is wrong over
-  // a wide band of ordinary cursor colours. The contrast formula is a ratio
-  // of (L + 0.05), so its crossover sits at L ≈ 0.179, not 0.5; every colour
-  // between those two figures gets sent the wrong way by the naive test.
-  // Concretely, it picked white for #c792ea (2.4:1) when black was available
-  // at 9.4:1, and did the same to #3182ed, #ed3131 and mid-grey.
-  //
-  // Worth knowing for the threshold above: the hardest possible box sits at
-  // that crossover, where both poles tie at ~4.58:1. So 4.5 is very nearly
-  // the highest floor that is universally reachable - asking for 5 would be
-  // unsatisfiable for some colours and would silently degrade to "closest we
-  // managed" after the scan runs out.
+  // Raw inversion. No floor, no neutralising - if you pick a mid-grey cursor
+  // this WILL be illegible, and that is the honest behaviour of the mode.
+  if (mode === "invert") return rgb(inv);
+
   const white = [255, 255, 255], black = [0, 0, 0];
-  const pole = contrastRatio(white, box) >= contrastRatio(black, box) ? 255 : 0;
+  // Which pole gives more contrast, MEASURED rather than guessed from a
+  // luminance threshold. The usual `luminance < 0.5 ? white : black` shortcut
+  // is wrong over a wide band: the contrast formula is a ratio of (L + 0.05),
+  // so its crossover sits at L ~ 0.179, not 0.5. That shortcut picked white
+  // for #c792ea at 2.4:1 when black was available at 9.4:1.
+  const poleC = contrastRatio(white, box) >= contrastRatio(black, box) ? white : black;
+
+  // The default. A neutral, because inverting a colour rotates its HUE to the
+  // complement rather than producing something neutral - green inverts to
+  // magenta, which clears the contrast floor comfortably and still reads as
+  // the wrong colour entirely. Black on a green box measures 13:1 where the
+  // magenta scrapes 4.85:1, so this is not a trade of legibility for
+  // neutrality; it wins on both.
+  if (mode !== "tinted") return rgb(poleC);
+
+  // "tinted": keep the inverted hue when it is already legible, and slide it
+  // toward the pole only as far as the floor requires. Contrast is monotonic
+  // along that slide, so a coarse scan finds the first passing step; stopping
+  // AT the threshold rather than jumping to the pole is the whole point, as
+  // it preserves as much of the hue as legibility allows.
+  if (contrastRatio(inv, box) >= GLYPH_MIN_CONTRAST) return rgb(inv);
+
+  const pole = poleC[0];
   const STEPS = 16;
   let best = inv;
   for (let i = 1; i <= STEPS; i++) {
@@ -1928,7 +1984,7 @@ function readableGlyphColor(boxColorStr) {
     best = c;
     if (contrastRatio(c, box) >= GLYPH_MIN_CONTRAST) break;
   }
-  return `rgb(${best[0]}, ${best[1]}, ${best[2]})`;
+  return rgb(best);
 }
 
 // Candle flicker, as a multiplier on the torch's base glow strength.
@@ -4025,6 +4081,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.hotBurns.push({
         x: cx, y: markY, t: now,
         rowLeft: active.rowLeft, rowRight: active.rowRight, lh: active.h || 16,
+        // Needed to place the fire relative to the GLYPHS rather than to the
+        // line box - see topY in maybeSpawnHotHead. Stored per mark because a
+        // mark left on a previous line has to keep that line's metrics, not
+        // whatever the caret has since moved onto.
+        fs: active.fontSize || 0,
       });
       if (this.hotBurns.length > HOT_BURN_MAX) this.hotBurns.shift();
     }
@@ -4141,10 +4202,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const burn = burns[bi];
       const strength = Math.max(0, 1 - (now - burn.t) / linger);
 
-      // Fire sits on the TOP of the glyphs, not through the middle of them:
-      // the line box has leading above the cap height, so a particle at
-      // burn.y is floating in the gap above the text.
-      const topY = burn.y + lh * 0.22;
+      // Fire sits JUST ABOVE the glyphs, licking up off them - not on top of
+      // the letters, which reads as the text being overprinted rather than
+      // burning.
+      //
+      // burn.y is the top of the LINE BOX, which sits above the glyphs by the
+      // half-leading. The old offset was a flat 0.22 of the line height, and
+      // on ordinary body text that lands almost exactly on the cap height -
+      // i.e. right on the letters. Deriving it from the font size instead
+      // puts the base at the true top of the glyphs and then lifts it clear
+      // by a fraction of the type size, so the flames start in the gap and
+      // rise from there. It also adapts to headings, where the half-leading
+      // is a quite different share of the line box.
+      const fs = burn.fs || lh * 0.62;
+      const halfLeading = Math.max(0, (burn.lh || lh) - fs) / 2;
+      const topY = burn.y + halfLeading - fs * HOT_HEAD_LIFT;
+
       // Across the patch, biased toward its centre, plus the segment the caret
       // just travelled for the freshest mark.
       const across = (Math.random() + Math.random() - 1) * halfSpan;
@@ -4153,7 +4226,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const alongY = (bi === burns.length - 1) ? -dy * (1 - s) : 0;
 
       let px = burn.x + alongX + across + (Math.random() - 0.5) * FLAME_SPREAD * cw;
-      let py = topY + alongY + (Math.random() - 0.5) * lh * 0.3;
+      // Mostly up, a little down. Fully symmetric jitter put half of every
+      // batch well below the anchor and over the letters; upward-only left
+      // the whole flame floating clear of them. Weighted the way a flame
+      // actually behaves - rising, but rooted in what it is burning.
+      let py = topY + alongY
+        + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh;
 
       // Keep the fire on the text. Without this the spread band burns happily
       // out into the empty margin past the end of a line, which looks like the
@@ -6142,6 +6220,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._smoothMoving = false;
       this._smoothLastT = 0;
       this._catchUpBoost = 1;
+      this._typingBoostSm = null;
       return;
     }
 
@@ -6151,6 +6230,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.animActive = { ...this.lastActive };
       this._smoothMoving = false;
       this._catchUpBoost = 1;
+      this._typingBoostSm = null;
       return;
     }
 
@@ -6204,6 +6284,30 @@ module.exports = class CursorSmithPlugin extends Plugin {
       }
     }
 
+    // Low-pass the boost before anything uses it.
+    //
+    // The backlog drain is measured from the INSTANTANEOUS gap between the
+    // real caret and the animated one, and that gap is inherently spiky: it
+    // jumps on the frame a key lands and shrinks on the frames between. Under
+    // steady typing it settles into a sawtooth - measured, alternating
+    // between 1.55 and 2.04 every frame, locked to the keystroke cadence.
+    //
+    // That was fine as long as it only nudged a lerp, but this value is also
+    // published to Motion Smear, which uses it as a multiplier on its SPRING
+    // STIFFNESS. A spring whose constant flickers by 25% every frame does not
+    // settle smoothly; it pulses, and the pulse is exactly the stutter people
+    // see when Smooth Movement and Motion Smear are both on. With either one
+    // off the sawtooth is either never computed or never consumed, which is
+    // why it only shows up together.
+    //
+    // Smoothed on a time constant rather than a fixed per-frame fraction, so
+    // the damping is the same at 60, 120 and 144Hz.
+    const boostK = 1 - Math.exp(-CATCHUP_BOOST_RATE * dt);
+    this._typingBoostSm = this._typingBoostSm == null
+      ? typingBoost
+      : this._typingBoostSm + (typingBoost - this._typingBoostSm) * boostK;
+    typingBoost = this._typingBoostSm;
+
     // Exponential approach with a time constant, so the feel is identical at
     // 60/120/144 Hz. RATE_SCALE maps the existing setting ranges
     // (catchUpSpeed 0.30-0.80, smoothness 0.05-0.30) onto visible settle
@@ -6234,9 +6338,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // non-null for as long as a caret exists at all. Testing its truthiness
     // pinned `animating` (and therefore the hot gear) on permanently, which
     // made the warm/idle gears and the whole draw-skip path below unreachable.
+    // Size counts as arrival too, not just position.
+    //
+    // This tested x/top only and then SNAPPED w and h to the target. Normally
+    // harmless, because all four lerp at the same rate and land together. But
+    // when position barely changes while size does - the line under the caret
+    // becoming a heading, an embed resizing the row - x and top arrive on the
+    // first frame, `arrived` fires, and the height is snapped the whole way
+    // in one go. Measured, a 24 -> 60 change popped 36px in a single frame,
+    // with _smoothMoving already false so the frame governor never even
+    // counted it as motion.
     const arrived =
       Math.abs(this.lastActive.x - this.animActive.x) < 0.25 &&
-      Math.abs(this.lastActive.top - this.animActive.top) < 0.25;
+      Math.abs(this.lastActive.top - this.animActive.top) < 0.25 &&
+      Math.abs(this.lastActive.w - this.animActive.w) < 0.25 &&
+      Math.abs(this.lastActive.h - this.animActive.h) < 0.25;
     if (arrived) {
       this.animActive.x = this.lastActive.x;
       this.animActive.top = this.lastActive.top;
@@ -7774,8 +7890,24 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (this.settings.smoothEnabled && this.settings.smoothStopBlinking) holdMs = 450;
     const delayMs = Math.max(0, this.settings.blinkDelayMs ?? 0);
     if (delayMs > holdMs) holdMs = delayMs;
-    if (holdMs > 0 && now - this.lastMoveTime < holdMs) return 1;
-    return blinkAlphaAt(now, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5, this.settings.blinkFade ?? 0.15);
+    // Phase is measured from the END of the hold window, not from the wall
+    // clock.
+    //
+    // blinkAlphaAt used to take `now` directly and do `now % period`, so the
+    // cycle was anchored to nothing at all. The hold pins alpha at 1 and then
+    // handed straight back to whatever phase absolute time happened to be at
+    // - which, sweeping stop-times across one cycle, snapped 1.00 -> 0.00 in a
+    // single frame about half the time. You stop typing, the caret sits solid
+    // for the delay, then vanishes with no fade at all, precisely when your
+    // eye goes looking for it. The blinkFade easing never applied at that
+    // boundary because it only exists inside the cycle.
+    //
+    // Anchoring here means the cycle always STARTS fully on and eases down on
+    // schedule, which is also what every other editor does: move the caret and
+    // the blink restarts from solid rather than resuming mid-cycle.
+    const elapsed = now - (this.lastMoveTime + holdMs);
+    if (!(elapsed > 0)) return 1;
+    return blinkAlphaAt(elapsed, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5, this.settings.blinkFade ?? 0.15);
   }
 
   // What the blink does to opacity. Breathing swaps the fade out for a size
@@ -10012,29 +10144,27 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // multiplied over a light theme), so it would mostly disappear anyway.
       const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
 
-      // The glyph is the box's tenant: it exists only because the box is
-      // covering the real character, so it has to leave when the box does.
+      // The glyph fades WITH the box, at the same rate.
       //
-      // This was `0.3 + blinkAlpha * 0.7`, which floors at 0.3 and never
-      // reaches zero. At the bottom of a blink the box was fully gone but an
-      // inverted-colour copy of the letter was still sitting at 30% on top of
-      // the real one - so the blink never actually revealed the character, it
-      // revealed the character wearing a grey ghost of itself. It also had no
-      // opacity term at all, so Cursor Opacity could take the box to nothing
-      // while the glyph stayed at full strength.
+      // Two wrong answers preceded this one. It was originally
+      // `0.3 + blinkAlpha * 0.7`, which floors at 0.3 and never reaches zero,
+      // so a blinked-off box still had an inverted ghost of the letter lying
+      // on top of the real character. Cubing it fixed that but overshot
+      // badly in the other direction: the letter was down to 0.13 while the
+      // box was still at 0.46, so for most of every fade the cursor was a
+      // solid block with nothing in it. That is only easy to miss when
+      // Smooth Movement is on, because its 450ms stop-blink hold keeps the
+      // caret lit right after a keystroke - which is exactly why the letter
+      // looked like it only existed with smooth movement enabled.
       //
-      // Cubed rather than linear because the two have to hand off cleanly.
-      // The box paints at 0.9 * blinkAlpha, so the real character starts
-      // reading through it around blinkAlpha 0.55 - and a linear glyph would
-      // still be at 0.55 there, putting two copies of the same letter on
-      // screen at once. Cubed, it is down to 0.17 by that point: gone before
-      // it has anything to compete with.
-      //
-      // Gated in the condition rather than by an early return, because at
-      // this point the box's own save/restore pair has already closed - a
-      // return that "tidied up" with a restore here would pop a level of
-      // state that belongs to the caller.
-      const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha * blinkAlpha * blinkAlpha);
+      // Tracking the box linearly is right because the box and the letter
+      // are ONE object. They fade together, and the real character emerges
+      // underneath as they go. There is no double image to avoid: the
+      // inverted glyph and the real one occupy the same pixels in the same
+      // shape, so a partial blend reads as the letter changing colour, not
+      // as two letters. And it still reaches zero, which was the whole point
+      // of the first fix.
+      const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha);
       if (!hollow && !translucent && !gsBox && settings.showChar && displayChar
           && glyphAlpha >= 0.01) {
         ctx.save();
@@ -10048,9 +10178,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // Cached on the colour string: this runs every frame, the input
         // changes only when the cursor colour or heat does, and the scan
         // inside is a handful of pow() calls per step.
-        if (this._glyphColorFor !== color) {
+        const glyphMode = this.styleFor("glyphColorMode") || "contrast";
+        if (this._glyphColorFor !== color || this._glyphColorMode !== glyphMode) {
           this._glyphColorFor = color;
-          this._glyphColorVal = readableGlyphColor(color);
+          this._glyphColorMode = glyphMode;
+          this._glyphColorVal = readableGlyphColor(color, glyphMode);
         }
         ctx.fillStyle = this._glyphColorVal;
         // Route through the same builder measureCharWidth uses, so the glyph
@@ -11058,6 +11190,16 @@ class CursorSmithSettingTab extends PluginSettingTab {
             ? `Shows the letter inside the block, colors flipped. Does nothing while ${get("boxHollow") ? "Hollow" : "Translucent"} is on.`
             : "Shows the letter inside the block, with the colors flipped.")
           .addToggle((toggle) => toggle.setValue(get("showChar")).onChange(set("showChar")));
+
+        if (get("showChar")) {
+          new Setting(this.subGroup(g))
+            .setName("Letter Color")
+            .setDesc("Contrast: neutral black or white. Tinted: the flipped colour, kept legible. Inverted: raw flip.")
+            .addDropdown((dd) => dd
+              .addOptions({ contrast: "Contrast", tinted: "Tinted", invert: "Inverted" })
+              .setValue(get("glyphColorMode") || "contrast")
+              .onChange(set("glyphColorMode")));
+        }
 
         new Setting(g)
           .setName("Hollow")

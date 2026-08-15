@@ -167,6 +167,20 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
   caret-color: transparent;
 }
 
+/* Plugins that draw their own caret onto a CSS-transformed surface, where we
+   deliberately decline to draw one (see isExcalidrawCaretHost in main.js).
+   Excalidraw edits text in a <textarea> scaled and rotated to match the shape,
+   which our measuring code cannot follow, so suppressing our cursor there is
+   the fix - but the body rule above works purely by INHERITANCE, so without
+   this carve-out the textarea would inherit `transparent` and end up with no
+   caret from either source. A declaration on the element itself always beats
+   an inherited value, so no doubled class is needed here. */
+body.retro-box-cursor-hide-native .excalidraw textarea,
+body.retro-box-cursor-hide-native .excalidraw-wrapper textarea,
+body.retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
+  caret-color: auto;
+}
+
 /* --- Torch Spotlight Effect ---
    All of the torch overlay's CSS (positioning, gradient, blend mode) lives
    entirely in the dynamically-injected stylesheet in main.js (injectStyles),

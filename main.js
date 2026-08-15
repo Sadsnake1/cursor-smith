@@ -310,6 +310,34 @@ const JUMP_TRAIL_MAX_PUFFS = 40;
 // it, so the global slider keeps working the same way everywhere.
 const TRANSLUCENT_ALPHA = 0.95;
 
+// Rounded Corners. See cornerRadius(): a shape whose narrow axis is at or
+// under ROUNDED_THIN_PX is treated as a bar and goes fully round (capsule
+// ends), anything wider is a block and takes the gentler fraction. 6px is
+// comfortably above the widest Line caret the width slider offers, so every
+// Line and Underline caret capsules and every Box softens.
+const ROUNDED_THIN_PX = 6;
+const ROUNDED_BLOCK_FRACTION = 0.25;
+
+// I-beam serifs.
+//
+// Thickness is the smaller of a multiple of the stem and a fraction of the
+// LINE HEIGHT. The stem term alone (all this used to have) meant a 6px caret
+// put two 5px slabs on a ~24px line - 42% of the caret's height was serif,
+// which reads as a bracket rather than an I-beam.
+const SERIF_STEM_RATIO = 0.9;
+const SERIF_HEIGHT_RATIO = 0.08;
+// Span is driven by the character under the caret, with a small ABSOLUTE
+// floor rather than a stem-relative one. A stem-relative floor grew the
+// serifs past the width of the glyph they were marking as the stem widened.
+const SERIF_MIN_SPAN_PX = 5;
+const SERIF_MAX_SPAN_RATIO = 1.25;
+// How far each serif narrows from its outer edge to where it meets the stem.
+// A real I-beam's serifs are brackets, not slabs: they thin as they approach
+// the stem instead of butting into it at full weight. Kept modest - past
+// about a third the shape stops reading as a serif and starts reading as an
+// arrowhead.
+const SERIF_TAPER = 0.3;
+
 const DEFAULT_SETTINGS = {
   enabled: true,
   cursorStyle: "Box", // "Line" | "Box" | "Underline"
@@ -513,6 +541,14 @@ const DEFAULT_SETTINGS = {
   // a sticker over it - but it does mean this toggle changes more than the
   // caret body alone.
   cursorTranslucent: false,
+
+  // Rounds the caret's corners. A toggle rather than a slider: the radius
+  // that looks right depends on which style you're using, so cornerRadius()
+  // derives it from the shape's own narrow axis instead of asking. Applies
+  // to every style - Line and Underline capsule, Box softens - and to the
+  // trail, the neon tube and the secondary carets, so nothing drags a tail
+  // of sharp boxes behind a rounded head.
+  cursorRounded: false,
 
   // --- Speed Demon: cursor heats up with typing speed ---
   speedDemon: false,
@@ -724,6 +760,11 @@ const LOOK_KEYS = [
   "overlayFlickerAmount",
   // Speed Demon tinting Hot-head's fire. Appended, like everything else here.
   "hotHeadSpeedHeat",
+  // Rounded Corners. Appended, like everything else here - inserting anywhere
+  // above would reindex every share code in the wild. Defaults to false, so a
+  // code written before this existed imports as sharp, which is exactly what
+  // it looked like when it was written.
+  "cursorRounded",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1790,6 +1831,106 @@ function invertColor(colorStr) {
   return `rgb(${255 - r}, ${255 - g}, ${255 - b})`;
 }
 
+// Parse either form the engine deals in - "#rgb"/"#rrggbb" from the settings,
+// or "rgb(r, g, b)" from getComputedStyle and from heatColor - into [r,g,b].
+//
+// invertColor above only ever handled the second form (its regex finds no
+// digits worth having in a hex string), which is fine for its one caller but
+// makes it useless as a building block. Returns null rather than a guess when
+// it can't parse, so callers can fall back deliberately.
+function parseColorTuple(colorStr) {
+  if (!colorStr || typeof colorStr !== "string") return null;
+  const s = colorStr.trim();
+  if (s[0] === "#") {
+    let h = s.slice(1);
+    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+    if (h.length < 6) return null;
+    const n = parseInt(h.slice(0, 6), 16);
+    if (!Number.isFinite(n)) return null;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const nums = s.match(/[\d.]+/g);
+  if (!nums || nums.length < 3) return null;
+  const t = nums.slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(Number(v)))));
+  return t.some((v) => !Number.isFinite(v)) ? null : t;
+}
+
+// WCAG relative luminance. Note this is NOT the same as "average brightness":
+// green weighs ten times what blue does, which is exactly why a naive
+// mid-channel test picks the wrong glyph colour over saturated blues.
+function relLuminance(rgb) {
+  const f = (v) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+
+function contrastRatio(a, b) {
+  const la = relLuminance(a), lb = relLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+const GLYPH_MIN_CONTRAST = 4.5;
+
+// The colour for the character drawn inside a FILLED Box cursor.
+//
+// This used to be invertColor(textColor): the inverse of whatever the editor
+// was painting the text under the caret. That reference is wrong twice over.
+// It never looks at the box the glyph is landing on, so legibility was pure
+// coincidence - a Catppuccin Latte note (text #4c4f69) on a blue box gave a
+// sludge-grey glyph at 3.4:1, and the same text on the yellow Vim-visual box
+// gave 1.3:1, i.e. invisible. And because the reference is the *syntax
+// highlighted* colour at the caret, the glyph changed hue as you moved across
+// tokens for no reason a user could see.
+//
+// So: invert the BOX, which is the thing the glyph actually sits on, then
+// enforce a contrast floor. Plain inversion alone isn't enough - it fails flat
+// on anything near mid-grey (#808080 inverts to itself) - so when the inverse
+// doesn't clear the floor we slide it toward whichever pole the box isn't
+// until it does. Contrast is monotonic along that slide, so a coarse scan
+// finds the first passing step; stopping AT the threshold rather than jumping
+// straight to black/white is the whole point, since it keeps as much of the
+// inverted hue as legibility allows.
+function readableGlyphColor(boxColorStr) {
+  const box = parseColorTuple(boxColorStr);
+  if (!box) return "#000000";
+
+  const inv = [255 - box[0], 255 - box[1], 255 - box[2]];
+  if (contrastRatio(inv, box) >= GLYPH_MIN_CONTRAST) {
+    return `rgb(${inv[0]}, ${inv[1]}, ${inv[2]})`;
+  }
+
+  // Which way is "out" is decided by MEASURING both poles, not by the usual
+  // `luminance < 0.5 ? white : black` shortcut - that shortcut is wrong over
+  // a wide band of ordinary cursor colours. The contrast formula is a ratio
+  // of (L + 0.05), so its crossover sits at L ≈ 0.179, not 0.5; every colour
+  // between those two figures gets sent the wrong way by the naive test.
+  // Concretely, it picked white for #c792ea (2.4:1) when black was available
+  // at 9.4:1, and did the same to #3182ed, #ed3131 and mid-grey.
+  //
+  // Worth knowing for the threshold above: the hardest possible box sits at
+  // that crossover, where both poles tie at ~4.58:1. So 4.5 is very nearly
+  // the highest floor that is universally reachable - asking for 5 would be
+  // unsatisfiable for some colours and would silently degrade to "closest we
+  // managed" after the scan runs out.
+  const white = [255, 255, 255], black = [0, 0, 0];
+  const pole = contrastRatio(white, box) >= contrastRatio(black, box) ? 255 : 0;
+  const STEPS = 16;
+  let best = inv;
+  for (let i = 1; i <= STEPS; i++) {
+    const t = i / STEPS;
+    const c = [
+      Math.round(inv[0] + (pole - inv[0]) * t),
+      Math.round(inv[1] + (pole - inv[1]) * t),
+      Math.round(inv[2] + (pole - inv[2]) * t),
+    ];
+    best = c;
+    if (contrastRatio(c, box) >= GLYPH_MIN_CONTRAST) break;
+  }
+  return `rgb(${best[0]}, ${best[1]}, ${best[2]})`;
+}
+
 // Candle flicker, as a multiplier on the torch's base glow strength.
 //
 // Returns 1 with amount 0, and swings within 1 ± amount otherwise - so at the
@@ -2273,6 +2414,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
          where both stylesheets are loaded. */
       body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
         caret-color: transparent;
+      }
+      /* ...except in plugins that draw their own caret on a transformed
+         surface, where we deliberately don't draw one (see
+         isExcalidrawCaretHost). The rule above works by INHERITANCE from
+         body, so any direct declaration on the field itself outranks it
+         without needing a specificity war or !important. Without this the
+         Excalidraw fix would be half-done: no drawn cursor, and no native
+         one either, so typing into a shape would show no caret at all. */
+      .retro-box-cursor-hide-native .excalidraw textarea,
+      .retro-box-cursor-hide-native .excalidraw-wrapper textarea,
+      .retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
+        caret-color: auto;
       }
       /* Hide the primary cursor by BOTH position (first child of the
          cursor layer) and class (.cm-cursor-primary), so this works whether
@@ -4475,6 +4628,52 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return false;
   }
 
+  // True when `el` is Excalidraw's own text editor.
+  //
+  // Excalidraw edits text through a <textarea> absolutely positioned over its
+  // canvas and CSS-transformed to match the shape - scaled with the zoom, and
+  // rotated with the element. isTextCaretHost says yes to any <textarea>, so
+  // that editor fell straight through to genericCaretCoords and we drew on it.
+  //
+  // Which cannot work, because formFieldCaretCoords measures the caret offset
+  // in an offscreen mirror div that carries none of those transforms, then
+  // adds getBoundingClientRect() as the origin. Untransformed offsets on a
+  // transformed origin: near-enough on the first character, drifting further
+  // with every one after it, and meaningless the moment the shape is rotated.
+  //
+  // Excalidraw draws its own caret anyway, so there is nothing here for us to
+  // replace - we just get out of the way. See also the caret-color carve-out
+  // in injectStyles and styles.css: suppressing our drawing is only half the
+  // job, because our global hide-native rule would otherwise leave the
+  // textarea with no visible caret at all.
+  //
+  // The DOM check is the load-bearing one, NOT the view-type check below it:
+  // Excalidraw also renders through a markdown post-processor, so a drawing
+  // embedded in a note lives inside a leaf whose view type is "markdown", and
+  // a view-type test alone would miss every embed.
+  isExcalidrawCaretHost(el) {
+    if (!el) return false;
+    try {
+      // Cached against the focused element rather than on a timer: focus is
+      // the only thing that can change the answer, which makes this exact and
+      // free on every repeat frame. Same convention as _clipChainFor.
+      if (this._excaliHostFor !== el) {
+        this._excaliHostFor = el;
+        this._excaliHostVal = !!(
+          el.closest?.(".excalidraw, .excalidraw-wrapper, .excalidraw-view") ||
+          el.classList?.contains("excalidraw-wysiwyg")
+        );
+      }
+      if (this._excaliHostVal) return true;
+
+      // Cheap belt-and-braces for a full Excalidraw leaf, in case a future
+      // release renames the container classes out from under the selector.
+      return this.app.workspace.activeLeaf?.view?.getViewType?.() === "excalidraw";
+    } catch {
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // THE pool/state reset. Called from three places - onload, enableCanvasEngine
   // and disableCanvasEngine - which is exactly why it is a function: those
@@ -4989,6 +5188,28 @@ module.exports = class CursorSmithPlugin extends Plugin {
               eff.gradientDark3, eff.gradientDark4,
               eff.gradientLight1, eff.gradientLight2,
               eff.gradientLight3, eff.gradientLight4,
+              // The smear quad's own corners. Everything else here is a
+              // property of the caret or of the settings; the quad is neither.
+              // It is a spring with its own state, and it keeps deforming for
+              // as long as it takes to settle AFTER the caret has stopped -
+              // during which `la` is frozen and every other term is unchanged,
+              // so the signature matched, the frame was skipped, and whatever
+              // the last drawn frame painted stayed on screen as a stale
+              // stretched ghost. On a slow trailing stiffness that is ~45
+              // skipped frames with the quad up to 50px off its target.
+              //
+              // This was always latent. It only became visible once the
+              // trailing corners started keeping their trailing stiffness
+              // through the settle: before that they snapped in at LEADING
+              // stiffness the instant the caret stopped, so the quad was back
+              // on target within a frame or two and there was nothing left to
+              // strand.
+              //
+              // Uses smearCorners() rather than smearQuad, because the taper
+              // is what actually gets painted. Rounded to half-pixels, the
+              // same quantisation `la` uses - the point is to notice movement
+              // that changes painted pixels, not to wake for float noise.
+              this._smearSig(),
             ].join("|");
             if (sig === this._drawSig) doDraw = false;
             else this._drawSig = sig;
@@ -5643,6 +5864,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // controls when they gain focus (e.g. clicking a setting toggle box).
       if (!isTextCaretHost(active)) return null;
 
+      // Plugins that draw their own caret onto a transformed surface. See
+      // isExcalidrawCaretHost for why measuring one is not merely redundant
+      // but actively wrong. Returning null here (rather than gating further
+      // down) keeps the whole thing off the CodeMirror path, which never
+      // reaches this function at all.
+      if (this.isExcalidrawCaretHost(active)) return null;
+
       const c = this.selectionFallbackCoords(null);
       if (!c) return null;
 
@@ -6276,6 +6504,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
 
     this._smearMoving = moving;
+
     this.applySmearTaper(targets, center);
     if (moving) {
       this.smearQuadLastMoveT = now;
@@ -6371,6 +6600,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
   smearCorners() {
     if (!this.settings.smear) return null;
     return this.smearShape || this.smearQuad;
+  }
+
+  // The painted quad reduced to a short string, for the draw-skip signature.
+  // See the call site for why the quad has to be in that signature at all.
+  _smearSig() {
+    const q = this.settings.smear ? this.smearCorners() : null;
+    if (!q) return "nosmear";
+    let s = "";
+    for (const k of ["tl", "tr", "br", "bl"]) {
+      const c = q[k];
+      if (!c) return "nosmear";
+      s += Math.round(c.x * 2) + ":" + Math.round(c.y * 2) + ",";
+    }
+    return s;
   }
 
   // Record `point` (the position being left) as a CRT trail ghost. If `dest` is
@@ -7706,6 +7949,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
           if (src[k].y > y1) y1 = src[k].y;
         }
       }
+      // Serifs reach out to either side of the stem, and the left one reaches
+      // OUTSIDE the caret's own x. The base pad below covers that at ordinary
+      // font sizes, but the span follows the character width, so a large
+      // heading can push the outer edge past it - and anything painted
+      // outside the damage rect is never cleared. Widen explicitly instead of
+      // relying on the pad happening to be enough.
+      if (this.styleFor("cursorStyle") === "Line" && this.settings.lineSerifs) {
+        const halfSpan = Math.max(
+          SERIF_MIN_SPAN_PX,
+          Math.min(a.actualCharWidth || 0, (a.h || 0) * SERIF_MAX_SPAN_RATIO),
+        ) / 2;
+        const cx = a.x + (a.w || 0) / 2;
+        if (cx - halfSpan < x0) x0 = cx - halfSpan;
+        if (cx + halfSpan > x1) x1 = cx + halfSpan;
+      }
       let pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
       // The CRT glow's blur grows with Speed Demon's heat (glowHeatScale), and
       // a shadow spreads roughly its blur radius. 24 comfortably covers the
@@ -7889,31 +8147,162 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // which is basically all core already).
   drawNeonGhost(ctx, r, alpha, age, color) {
     ctx.fillStyle = this.trailPaint(ctx, r, alpha, age, color);
-    ctx.fillRect(r.x, r.y, r.w, r.h);
+    this.fillTrailRect(ctx, r.x, r.y, r.w, r.h);
     if (r.w >= 3) {
       const coreW = Math.max(1, r.w * 0.34);
       // Uses the hue trailPaint already armed as the shadow, so the white core
       // casts a coloured glow - a hot filament inside a coloured tube.
       ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1, alpha * 1.6)})`;
-      ctx.fillRect(r.x + (r.w - coreW) / 2, r.y, coreW, r.h);
+      // The core is a thin bar inside the tube, so it capsules on its own
+      // narrow axis whenever the tube is rounded - a sharp-ended filament
+      // poking out of a rounded tube is the one artifact worth avoiding here.
+      this.fillTrailRect(ctx, r.x + (r.w - coreW) / 2, r.y, coreW, r.h);
     }
   }
 
-  fillCursorShape(ctx, rx, ry, rw, rh) {
-    const q = this.smearCorners();
-    const corners = q || {
+  // The corner radius for a shape whose narrow axis is `minor` px.
+  //
+  // Rounding is a toggle, not a dial, so this decides the radius - and it is
+  // deliberately NOT one constant. "Rounded" means different things for a
+  // 3px Line stem and a 8x24 Box: a quarter of the minor axis is a pleasant
+  // soft corner on a block and invisible on a bar, while a full capsule is
+  // right for a bar and turns a block into a stadium. So thin shapes (the
+  // Line stem, the Underline bar, serifs) go fully round and blocks get the
+  // softer quarter.
+  //
+  // ROUNDED_THIN_PX is the width below which a shape reads as a bar rather
+  // than a block. Anything at or under it is basically all edge, so there is
+  // no flat middle for a partial radius to preserve.
+  cornerRadius(minor) {
+    if (!this.styleFor("cursorRounded")) return 0;
+    const m = Math.max(0, minor);
+    if (m <= 0) return 0;
+    const r = m <= ROUNDED_THIN_PX ? m / 2 : m * ROUNDED_BLOCK_FRACTION;
+    // Never more than half the narrow axis: beyond that the two corners on
+    // one side overlap and arcTo starts producing self-intersecting garbage.
+    return Math.min(r, m / 2);
+  }
+
+  // Trace a quad - optionally with rounded corners - WITHOUT filling it.
+  //
+  // Split out from fillCursorShape so the hollow outline can stroke exactly
+  // the shape the solid style fills. Those two used to be separate bodies of
+  // code with a comment admitting the duplication, which is precisely why
+  // rounding had to touch both or neither.
+  //
+  // arcTo does the rounding rather than roundRect, for two reasons. The
+  // shape is NOT always an axis-aligned rect: with Motion Smear on it is an
+  // arbitrary quad from the smear spring, which roundRect cannot express at
+  // all. And roundRect needs Chromium 99 / iOS 16.4, while this plugin ships
+  // with isDesktopOnly false - arcTo has been universal for a decade.
+  traceQuad(ctx, corners, radius = 0) {
+    const pts = [corners.tl, corners.tr, corners.br, corners.bl];
+
+    if (!(radius > 0.01)) {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      return;
+    }
+
+    // Clamp against the quad's OWN geometry - both its edge lengths AND its
+    // corner angles.
+    //
+    // Edge length alone is not enough, and that omission is what produced
+    // stray artifacts with Rounded Corners on. arcTo does not draw an arc of
+    // radius r centred on the corner: it insets the arc's tangent points
+    // along both edges by r / tan(theta/2), which for an ACUTE corner is far
+    // larger than r. A Motion Smear shears the quad into exactly that shape -
+    // measured on a 3x24 stem sheared 60px, the corner angle falls to 22
+    // degrees and a 1.5px radius reaches 7.8px along a 3px edge. The tangent
+    // point lands beyond the next corner, the traced path leaves the quad
+    // entirely, and whatever it paints out there is outside the damage rect
+    // and never cleared.
+    //
+    // Inverting that relation gives the real ceiling per corner:
+    //   r <= (shorter adjacent edge / 2) * tan(theta / 2)
+    // which for a right angle reduces to half the edge - the old rule - and
+    // tightens smoothly as the corner sharpens.
+    let r = radius;
+    for (let i = 0; i < 4; i++) {
+      const prev = pts[(i + 3) % 4], cur = pts[i], next = pts[(i + 1) % 4];
+      const v1x = prev.x - cur.x, v1y = prev.y - cur.y;
+      const v2x = next.x - cur.x, v2y = next.y - cur.y;
+      const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+      if (!(l1 > 1e-6) || !(l2 > 1e-6)) { r = 0; break; }
+      const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+      const theta = Math.acos(cos);
+      // A straight-through corner (theta ~ pi) needs no limit from the angle;
+      // a folded-back one (theta ~ 0) can take no radius at all.
+      const lim = Math.min(l1, l2) / 2 * Math.tan(theta / 2);
+      if (lim < r) r = lim;
+    }
+    if (!(r > 0.01)) {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      return;
+    }
+
+    // Start at the midpoint of the last edge - any point strictly inside an
+    // edge works as a seed, and a midpoint is guaranteed to be outside both
+    // of that edge's corner arcs after the clamp above.
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const seed = mid(pts[3], pts[0]);
+    ctx.moveTo(seed.x, seed.y);
+    for (let i = 0; i < 4; i++) {
+      const corner = pts[i];
+      const next = pts[(i + 1) % 4];
+      ctx.arcTo(corner.x, corner.y, next.x, next.y, r);
+    }
+    ctx.closePath();
+  }
+
+  // The caret's body as a set of corner points: the smear quad while Motion
+  // Smear is deforming it, otherwise the plain rect.
+  cursorCorners(rx, ry, rw, rh) {
+    return this.smearCorners() || {
       tl: { x: rx, y: ry },
       tr: { x: rx + rw, y: ry },
       br: { x: rx + rw, y: ry + rh },
       bl: { x: rx, y: ry + rh },
     };
+  }
 
+  fillCursorShape(ctx, rx, ry, rw, rh) {
+    const corners = this.cursorCorners(rx, ry, rw, rh);
     ctx.beginPath();
-    ctx.moveTo(corners.tl.x, corners.tl.y);
-    ctx.lineTo(corners.tr.x, corners.tr.y);
-    ctx.lineTo(corners.br.x, corners.br.y);
-    ctx.lineTo(corners.bl.x, corners.bl.y);
+    this.traceQuad(ctx, corners, this.cornerRadius(Math.min(rw, rh)));
+    ctx.fill();
+  }
+
+  // An axis-aligned rect as a rounded subpath, for the trail ghosts and the
+  // neon tube. These never smear (a trail ghost is a snapshot of where the
+  // caret WAS, so it has no spring state of its own), so they don't need the
+  // quad machinery - but they do need to match the live caret's rounding, or
+  // a rounded cursor drags a tail of little sharp boxes behind it.
+  traceRoundedRect(ctx, x, y, w, h, radius) {
+    const r = Math.min(Math.max(0, radius), Math.min(w, h) / 2);
+    if (!(r > 0.01)) {
+      ctx.rect(x, y, w, h);
+      return;
+    }
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+  }
+
+  fillTrailRect(ctx, x, y, w, h) {
+    const r = this.cornerRadius(Math.min(w, h));
+    if (!(r > 0.01)) {
+      ctx.fillRect(x, y, w, h);
+      return;
+    }
+    ctx.beginPath();
+    this.traceRoundedRect(ctx, x, y, w, h, r);
     ctx.fill();
   }
 
@@ -8201,6 +8590,82 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return Math.max(2, Math.round(h * 0.15));
   }
 
+  // The two serif brackets of an I-beam caret, as corner quads ready to add
+  // to the stem's path.
+  //
+  // Two things this fixes over the pair of fillRects it replaces.
+  //
+  // ANCHORING. fillCursorShape ignores the rect it is handed whenever Motion
+  // Smear is on and fills the spring's quad instead - but the serifs were
+  // positioned from `active`, the RESTING geometry. So the moment the caret
+  // moved, the stem leaned and stretched away while the serifs stayed nailed
+  // to where it had been, leaving two horizontal bars floating next to a
+  // detached stem. With smear on by default that was the common case, not an
+  // edge case. Here they take their centres from the smeared quad's own top
+  // and bottom edges, so they travel with the stem.
+  //
+  // They stay AXIS-ALIGNED while doing it. Shearing a serif with the quad
+  // makes it read as a broken glyph, which is what the original comment was
+  // rightly worried about - but the answer to that is to keep them level,
+  // not to leave them behind.
+  //
+  // SHAPE. A real I-beam's serifs are brackets: they thin as they approach
+  // the stem rather than butting into it at full weight. Each one is a
+  // trapezoid, widest at its outer edge, narrowing by SERIF_TAPER where it
+  // meets the stem. Returns the union bounds too, so the caller can size a
+  // gradient or pattern over the whole glyph rather than the stem alone.
+  serifQuads(active, rx, rw) {
+    const stem = rw;
+    const lineH = active.h;
+
+    // Clamped against BOTH the stem and the line height - see the constants.
+    const thickness = Math.max(
+      1,
+      Math.round(Math.min(stem * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO)),
+    );
+
+    const charW = active.actualCharWidth;
+    const raw = charW && charW > 0 ? charW : stem * 7;
+    const span = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO));
+
+    // Follow the smeared body's top and bottom edges. Midpoints of those two
+    // edges are where the stem actually ends this frame; without a smear they
+    // reduce to the resting rect's own edge centres.
+    const c = this.cursorCorners(rx, active.top, rw, lineH);
+    const topCx = (c.tl.x + c.tr.x) / 2, topCy = (c.tl.y + c.tr.y) / 2;
+    const botCx = (c.bl.x + c.br.x) / 2, botCy = (c.bl.y + c.br.y) / 2;
+
+    const half = span / 2;
+    const inset = half * SERIF_TAPER;
+
+    // Top bracket: full span along its outer (upper) edge, narrowed where it
+    // meets the stem. Bottom is the same shape mirrored.
+    const quads = [
+      {
+        tl: { x: topCx - half, y: topCy },
+        tr: { x: topCx + half, y: topCy },
+        br: { x: topCx + half - inset, y: topCy + thickness },
+        bl: { x: topCx - half + inset, y: topCy + thickness },
+      },
+      {
+        tl: { x: botCx - half + inset, y: botCy - thickness },
+        tr: { x: botCx + half - inset, y: botCy - thickness },
+        br: { x: botCx + half, y: botCy },
+        bl: { x: botCx - half, y: botCy },
+      },
+    ];
+
+    return {
+      quads,
+      left: Math.min(topCx, botCx) - half,
+      right: Math.max(topCx, botCx) + half,
+      // A serif is a thin bar, so it rounds on its own thickness rather than
+      // on the stem's width - otherwise a rounded Box-sized radius would eat
+      // the whole bracket.
+      radius: this.cornerRadius(thickness),
+    };
+  }
+
   drawGenericCaret(isUnderline = false) {
     const ctx = this.ctx;
     const settings = this.settings;
@@ -8239,10 +8704,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // a ramp spanning the whole line height would show only the sliver
         // of itself that happens to fall across the bar.
         ctx.fillStyle = this.trailPaint(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * bodyOpacity, age, trailColor);
-        ctx.fillRect(p.x, ty, p.w, uThickness);
+        this.fillTrailRect(ctx, p.x, ty, p.w, uThickness);
       } else {
         ctx.fillStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, trailColor);
-        ctx.fillRect(p.x, p.y, p.w, p.h);
+        this.fillTrailRect(ctx, p.x, p.y, p.w, p.h);
       }
     });
     ctx.restore();
@@ -8278,30 +8743,54 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Box style so the effect is recognisably the same feature everywhere.
     const gsGen = settings.crtEffect && settings.crtGlitch
       ? this.glitchState(now) : null;
+
+    // Line + serifs = classic I-beam. Only for the Line style: an underline
+    // is already a horizontal bar, so capping it with two more reads as a
+    // stack of lines rather than a glyph.
+    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
+    const serifs = wantSerifs ? this.serifQuads(active, rx, rw) : null;
+
     if (gsGen) {
       this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity, gsGen);
     } else {
+      // The paint is built over the union of stem and serifs, not the stem
+      // alone. With Energy Beam + Aurora the fill is a NO-REPEAT pattern
+      // sized to the rect it is handed, and a serif reaches several times the
+      // stem's width to either side - so a stem-sized pattern left most of
+      // each serif outside the bitmap, painting it fully transparent. The
+      // serifs simply did not exist in that mode.
+      let px = rx, pw = rw;
+      if (serifs) {
+        px = Math.min(rx, serifs.left);
+        pw = Math.max(rx + rw, serifs.right) - px;
+      }
       ctx.fillStyle = settings.energyEffect
-        ? this.energyPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity)
-        : this.cursorPaint(rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
-      this.fillCursorShape(ctx, rx, ry, rw, rh);
-    }
+        ? this.energyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha * bodyOpacity)
+        : this.cursorPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
 
-    // Line + serifs = classic I-beam. Only for the Line style (underline
-    // wouldn't make visual sense with serifs). Serifs are axis-aligned
-    // even when the stem smears - a smeared serif reads as a broken glyph
-    // rather than a cursor cap. Serif span follows the actual char width
-    // under the caret so it matches the text; falls back to a multiple of
-    // the stem on empty lines.
-    if (!isUnderline && settings.lineSerifs && !gsGen) {
-      const stem = rw;
-      const serifThickness = Math.max(1, Math.round(stem * 0.9));
-      const charW = active.actualCharWidth;
-      const rawSpan = charW && charW > 0 ? charW : stem * 7;
-      const serifSpan = Math.max(stem * 3, Math.min(rawSpan, stem * 10));
-      const serifX = active.x + stem / 2 - serifSpan / 2;
-      ctx.fillRect(serifX, active.top, serifSpan, serifThickness);
-      ctx.fillRect(serifX, active.top + active.h - serifThickness, serifSpan, serifThickness);
+      // Stem and serifs go into ONE path and take ONE fill.
+      //
+      // They used to be three separate fills sharing a fillStyle whose alpha
+      // is 0.9 - so every serif was painted at 90% over a stem already at
+      // 90%, compositing the overlaps to 99% and making the two crossings
+      // visibly denser than the rest of the caret. The armed glow made it
+      // worse: canvas casts a shadow per fill, so the intersections got a
+      // doubled halo too, and under Translucent the layer blend amplified
+      // the double-paint rather than hiding it.
+      //
+      // Non-zero winding fills overlapping subpaths as their union, so one
+      // fill gives uniform alpha across the whole I-beam and a single shadow
+      // cast from its combined outline.
+      ctx.beginPath();
+      this.traceQuad(
+        ctx,
+        this.cursorCorners(rx, ry, rw, rh),
+        this.cornerRadius(Math.min(rw, rh)),
+      );
+      if (serifs) {
+        for (const q of serifs.quads) this.traceQuad(ctx, q, serifs.radius);
+      }
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -8344,7 +8833,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
     ctx.save();
     ctx.lineWidth = 2;
-    ctx.lineCap = "butt";
+    // A secondary caret is a stroked segment rather than a filled shape, so
+    // its "corners" are line caps. A round cap extends the stroke by half the
+    // line width past each endpoint; at lineWidth 2 that is 1px each way,
+    // inside the 2px padding _markDirty already allows below.
+    ctx.lineCap = this.styleFor("cursorRounded") ? "round" : "butt";
     if (!ramp) ctx.strokeStyle = hexToRgba(this.getActiveColor(), strokeAlpha);
     for (const c of carets) {
       // 0.5-pixel offset so a 2px stroke lands on whole pixels rather than
@@ -9421,10 +9914,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // footprint the filled trail dot would occupy (canvas strokes
         // straddle the path centerline).
         const inset = strokeW / 2;
-        ctx.strokeRect(p.x + inset, p.y + inset, Math.max(0, p.w - strokeW), Math.max(0, p.h - strokeW));
+        const iw = Math.max(0, p.w - strokeW), ih = Math.max(0, p.h - strokeW);
+        const rr = this.cornerRadius(Math.min(iw, ih));
+        if (rr > 0.01) {
+          ctx.beginPath();
+          this.traceRoundedRect(ctx, p.x + inset, p.y + inset, iw, ih, rr);
+          ctx.stroke();
+        } else {
+          ctx.strokeRect(p.x + inset, p.y + inset, iw, ih);
+        }
       } else {
         ctx.fillStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, color);
-        ctx.fillRect(p.x, p.y, p.w, p.h);
+        this.fillTrailRect(ctx, p.x, p.y, p.w, p.h);
       }
     });
     ctx.restore();
@@ -9473,25 +9974,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
           color, 0.9 * blinkAlpha * bodyOpacity, gsBox,
         );
       } else if (hollow) {
-        // Stroke the smear quad so the outline deforms with movement the
-        // same way a filled box would. Reuses fillCursorShape's corner
-        // logic inline (we need stroke here, not fill).
-        const q = this.smearCorners();
-        const corners = q || {
-          tl: { x: active.x, y: active.top },
-          tr: { x: active.x + renderW, y: active.top },
-          br: { x: active.x + renderW, y: active.top + active.h },
-          bl: { x: active.x, y: active.top + active.h },
-        };
+        // Stroke exactly the path the solid style fills, so the outline
+        // deforms with a smear and rounds with Rounded Corners rather than
+        // staying a sharp rectangle while the filled version curves. This
+        // used to duplicate the corner logic inline, which is why the two
+        // could drift apart at all.
         ctx.strokeStyle = paintStyle;
         ctx.lineWidth = strokeW;
         ctx.lineJoin = "miter";
         ctx.beginPath();
-        ctx.moveTo(corners.tl.x, corners.tl.y);
-        ctx.lineTo(corners.tr.x, corners.tr.y);
-        ctx.lineTo(corners.br.x, corners.br.y);
-        ctx.lineTo(corners.bl.x, corners.bl.y);
-        ctx.closePath();
+        this.traceQuad(
+          ctx,
+          this.cursorCorners(active.x, active.top, renderW, active.h),
+          this.cornerRadius(Math.min(renderW, active.h)),
+        );
         ctx.stroke();
       } else {
         ctx.fillStyle = paintStyle;
@@ -9515,10 +10011,48 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // the blend (a dark glyph screened over a dark theme, a light one
       // multiplied over a light theme), so it would mostly disappear anyway.
       const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
-      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar) {
+
+      // The glyph is the box's tenant: it exists only because the box is
+      // covering the real character, so it has to leave when the box does.
+      //
+      // This was `0.3 + blinkAlpha * 0.7`, which floors at 0.3 and never
+      // reaches zero. At the bottom of a blink the box was fully gone but an
+      // inverted-colour copy of the letter was still sitting at 30% on top of
+      // the real one - so the blink never actually revealed the character, it
+      // revealed the character wearing a grey ghost of itself. It also had no
+      // opacity term at all, so Cursor Opacity could take the box to nothing
+      // while the glyph stayed at full strength.
+      //
+      // Cubed rather than linear because the two have to hand off cleanly.
+      // The box paints at 0.9 * blinkAlpha, so the real character starts
+      // reading through it around blinkAlpha 0.55 - and a linear glyph would
+      // still be at 0.55 there, putting two copies of the same letter on
+      // screen at once. Cubed, it is down to 0.17 by that point: gone before
+      // it has anything to compete with.
+      //
+      // Gated in the condition rather than by an early return, because at
+      // this point the box's own save/restore pair has already closed - a
+      // return that "tidied up" with a restore here would pop a level of
+      // state that belongs to the caller.
+      const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha * blinkAlpha * blinkAlpha);
+      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar
+          && glyphAlpha >= 0.01) {
         ctx.save();
-        ctx.globalAlpha = Math.min(1, 0.3 + blinkAlpha * 0.7);
-        ctx.fillStyle = invertColor(active.textColor);
+        ctx.globalAlpha = glyphAlpha;
+        // `color` is the box's own fill (getActiveColor, so heat- and
+        // gradient-resolved). With Gradient on this is the ramp's FIRST stop
+        // rather than the exact shade under the glyph - the fill varies across
+        // the box, so no single reference is exact - but it's in the right
+        // family, which is all the contrast floor needs to work from.
+        //
+        // Cached on the colour string: this runs every frame, the input
+        // changes only when the cursor colour or heat does, and the scan
+        // inside is a handful of pow() calls per step.
+        if (this._glyphColorFor !== color) {
+          this._glyphColorFor = color;
+          this._glyphColorVal = readableGlyphColor(color);
+        }
+        ctx.fillStyle = this._glyphColorVal;
         // Route through the same builder measureCharWidth uses, so the glyph
         // is drawn in the SAME weight/style the box was sized for. Building
         // this string without weight/style here (while the width was measured
@@ -10216,7 +10750,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
     const scrollTop = scroller ? scroller.scrollTop : 0;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "⚡ Cursor-Smith Settings" });
+    // Read the version off the manifest rather than hardcoding it here, so a
+    // release is a one-line edit in manifest.json instead of two edits that
+    // can silently drift apart.
+    containerEl.createEl("h2", {
+      text: `Cursor-Smith ${this.plugin.manifest?.version ?? ""}`.trim(),
+    });
 
     this.renderReducedMotionNotice(containerEl);
 
@@ -10576,6 +11115,10 @@ class CursorSmithSettingTab extends PluginSettingTab {
       new Setting(body).setName("Translucent")
         .setDesc("Blends the cursor into the page instead of painting over it. Overrides Show Letter Inside Cursor.")
         .addToggle((toggle) => toggle.setValue(!!get("cursorTranslucent")).onChange(setAndRedraw("cursorTranslucent")));
+
+      new Setting(body).setName("Rounded Corners")
+        .setDesc("Softens the cursor's corners. Line and Underline become fully rounded bars; Box gets a gentler curve.")
+        .addToggle((toggle) => toggle.setValue(!!get("cursorRounded")).onChange(set("cursorRounded")));
     });
 
     this.renderSection(containerEl, "Blinking", (body) => {

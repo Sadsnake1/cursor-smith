@@ -633,6 +633,12 @@ const DEFAULT_SETTINGS = {
   // the range the holds vanish entirely and the blink becomes one continuous,
   // breathing-like fade. 0.15 is the original look.
   blinkFade: 0.15,       // 0.05..0.5
+  // Blink-to-solid: how many full blinks to run after the caret settles
+  // before it stays lit. 0 is off, and off is the default - this changes
+  // long-standing behaviour, so nobody gets it without asking. The count
+  // restarts on every caret move, so it reads as "blink a few times to show
+  // me where you are, then get out of the way".
+  blinkStopAfter: 0,     // 0..20, 0 = blink forever
   // Breathing: instead of fading out, the caret shrinks and swells on the blink
   // cycle and never disappears. Same clock, same speed/balance/delay controls -
   // only what the cycle drives is different.
@@ -778,6 +784,10 @@ const LOOK_KEYS = [
   "cursorRounded",
   // Glyph colour mode. Appended, like everything else here.
   "glyphColorMode",
+  // Blink-to-solid's count. Appended, like everything else here. Defaults to
+  // 0, so a code written before this existed imports as "blink forever",
+  // which is what it meant when it was written.
+  "blinkStopAfter",
 ];
 
 // ---------------------------------------------------------------------------
@@ -842,6 +852,15 @@ function migrateLegacyKeys(src) {
   // Matrix Rain, likewise. Same reasoning as the two above.
   delete o.matrixRain;
   delete o.matrixRainDensity;
+  // Ink, likewise - except these got further than the other three did: they
+  // were left sitting in all six shipped presets long after the effect that
+  // read them was gone, so applying ANY preset wrote four orphans into the
+  // user's data file. Removed from the presets and deleted here, so an
+  // existing config sheds them on the next load.
+  delete o.inkEffect;
+  delete o.inkColor;
+  delete o.inkOpacity;
+  delete o.inkPooling;
   // Pop Effects. "Popping Letters" was itself the top-level toggle, and both
   // Thunderstrike and Backspace Disintegration were sub-options of Pixel
   // Trail; all three are now sub-options of a Pop Effects group with its own
@@ -1210,8 +1229,7 @@ const DEFAULT_PRESETS = {
     "moveDelayMs": 0, "smear": true, "smearStiffness": 0.65,
     "smearTrailingStiffness": 0.15, "smearDamping": 0.4,
     "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
-    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
-    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
   "Torch-Crt": {
     "cursorStyle": "Line", "colorDark": "#f3c258", "colorLight": "#147133",
@@ -1229,8 +1247,7 @@ const DEFAULT_PRESETS = {
     "moveDelayMs": 0, "smear": false, "smearStiffness": 0.7,
     "smearTrailingStiffness": 0.4, "smearDamping": 0.5,
     "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
-    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
-    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
   "mr.Blue": {
     "cursorStyle": "Line", "colorDark": "#3182ed", "colorLight": "#0077aa",
@@ -1248,8 +1265,7 @@ const DEFAULT_PRESETS = {
     "moveDelayMs": 0, "smear": false, "smearStiffness": 0.7,
     "smearTrailingStiffness": 0.4, "smearDamping": 0.8,
     "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
-    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
-    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
   "FairyDust": {
     "cursorStyle": "Underline", "colorDark": "#fff6bd", "colorLight": "#e9cb35",
@@ -1267,8 +1283,7 @@ const DEFAULT_PRESETS = {
     "moveDelayMs": 0, "smear": true, "smearStiffness": 0.7,
     "smearTrailingStiffness": 0.4, "smearDamping": 0.8,
     "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
-    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
-    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
   "DarkMatter": {
     "cursorStyle": "Box", "colorDark": "#3ba2e3", "colorLight": "#e15ff2",
@@ -1286,8 +1301,7 @@ const DEFAULT_PRESETS = {
     "moveDelayMs": 0, "smear": false, "smearStiffness": 0.7,
     "smearTrailingStiffness": 0.4, "smearDamping": 0.8,
     "smoothEnabled": true, "smoothStopBlinking": true, "smoothness": 0.15,
-    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
-    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
   "old_Joe": {
     "cursorStyle": "Box", "colorDark": "#c2c2c2", "colorLight": "#454545",
@@ -1305,8 +1319,7 @@ const DEFAULT_PRESETS = {
     "moveDelayMs": 0, "smear": false, "smearStiffness": 0.65,
     "smearTrailingStiffness": 0.15, "smearDamping": 0.4,
     "smoothEnabled": false, "smoothStopBlinking": true, "smoothness": 0.15,
-    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true,
-    "inkEffect": true, "inkColor": "#1a1a2e", "inkOpacity": 0.55, "inkPooling": true
+    "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
 };
 
@@ -4746,7 +4759,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
       // Cheap belt-and-braces for a full Excalidraw leaf, in case a future
       // release renames the container classes out from under the selector.
-      return this.app.workspace.activeLeaf?.view?.getViewType?.() === "excalidraw";
+      //
+      // SCOPED TO THAT LEAF'S OWN DOM, and that scoping is the whole point.
+      // This used to be a bare view-type test that never looked at `el` at
+      // all, so while a drawing was the active tab EVERY text field in the
+      // app answered yes: the rename dialog, the settings search, any modal.
+      // Those are siblings of the workspace rather than part of the drawing,
+      // so we declined to draw a caret in them AND the hide-native rule still
+      // applied to them (the caret-color carve-out only reaches Excalidraw's
+      // own textarea) - leaving them with no caret from either source.
+      // Issues #26 and #27.
+      const view = this.app.workspace.activeLeaf?.view;
+      if (view?.getViewType?.() !== "excalidraw") return false;
+      return !!(view.containerEl && view.containerEl.contains(el));
     } catch {
       return false;
     }
@@ -5825,14 +5850,42 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this._formMirror = mirror;
       }
 
+      // Anything that moves a glyph horizontally has to be on this list. The
+      // marker's offset is measured from the mirror's own left edge, so a
+      // property the mirror does not know about lays the text out somewhere
+      // the real field does not put it, and the caret lands there.
+      //
+      // textAlign was the one that got away. A right-aligned number field -
+      // Word-Smith's goal target cells are exactly this - lays its text flush
+      // against the far edge while the mirror, defaulting to left, measured
+      // from the near one. On a 160px cell that is the full width of the box
+      // in error: measured at 135px, with the caret drawn at the left of a
+      // number sitting at the right. direction is here for the same reason,
+      // one step further out.
       const props = [
-        "boxSizing", "width", "height",
+        "height",
         "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
         "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
         "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "lineHeight",
         "fontFamily", "letterSpacing", "textIndent", "textTransform", "wordSpacing", "tabSize",
+        "textAlign", "direction",
       ];
       for (const p of props) mirror.style[p] = style[p];
+
+      // boxSizing and width used to be copied straight across, and that only
+      // works while the text is left-aligned. Under border-box the copied
+      // width is the field's OUTER width, so the mirror lays out over a
+      // content box wider than the real one by its padding and border - which
+      // shifts nothing when measuring from the left edge and shifts everything
+      // once the alignment measures from the right or the centre. It also made
+      // a textarea wrap at the wrong column.
+      //
+      // clientWidth is content + padding and excludes both the border and any
+      // scrollbar, so this is the true content width in every box-sizing mode.
+      const padL = parseFloat(style.paddingLeft) || 0;
+      const padR = parseFloat(style.paddingRight) || 0;
+      mirror.style.boxSizing = "content-box";
+      mirror.style.width = Math.max(0, (el.clientWidth || 0) - padL - padR) + "px";
       mirror.style.whiteSpace = isTextarea ? "pre-wrap" : "pre";
       mirror.style.wordWrap = isTextarea ? "break-word" : "normal";
       mirror.style.overflow = "hidden";
@@ -7907,7 +7960,28 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // the blink restarts from solid rather than resuming mid-cycle.
     const elapsed = now - (this.lastMoveTime + holdMs);
     if (!(elapsed > 0)) return 1;
-    return blinkAlphaAt(elapsed, Math.max(0, this.settings.blinkSpeed), this.settings.blinkOnOffBalance ?? 0.5, this.settings.blinkFade ?? 0.15);
+
+    const speed = Math.max(0, this.settings.blinkSpeed);
+
+    // Blink-to-solid. After N full cycles the caret stops blinking and stays
+    // lit until it next moves, which resets lastMoveTime and starts the count
+    // again.
+    //
+    // Counted in whole PERIODS, and that is what makes the hand-off free: a
+    // cycle starts fully on (see the anchoring note above), so at elapsed =
+    // N * period the blink is already at alpha 1 and holding there is
+    // continuous. Testing an alpha threshold instead, or counting fades,
+    // would stop somewhere inside a cycle and snap - the same class of jump
+    // the phase anchor exists to remove.
+    //
+    // It also pays for itself in frames. The gear decision reads blinkPhase()
+    // directly, so a caret that has gone solid reports neither a fade nor a
+    // changing draw signature: the loop drops to the idle heartbeat and stops
+    // repainting entirely, instead of running two fades a second forever.
+    const stopAfter = Math.max(0, Math.round(this.settings.blinkStopAfter ?? 0));
+    if (stopAfter > 0 && speed > 0 && elapsed >= stopAfter * (2500 / speed)) return 1;
+
+    return blinkAlphaAt(elapsed, speed, this.settings.blinkOnOffBalance ?? 0.5, this.settings.blinkFade ?? 0.15);
   }
 
   // What the blink does to opacity. Breathing swaps the fade out for a size
@@ -8760,12 +8834,45 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const raw = charW && charW > 0 ? charW : stem * 7;
     const span = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO));
 
-    // Follow the smeared body's top and bottom edges. Midpoints of those two
-    // edges are where the stem actually ends this frame; without a smear they
-    // reduce to the resting rect's own edge centres.
+    // Follow the smeared body's top and bottom edges - but ride the LEADING
+    // end of each, not its midpoint.
+    //
+    // Midpoints were the first fix, and they are right for a vertical move:
+    // there the smear stretches the long side edges and leaves the top and
+    // bottom edges the caret's own width, so a midpoint IS the stem's end.
+    // On a horizontal move it is the top and bottom edges themselves that
+    // stretch, and their midpoint is then the middle of the streak while the
+    // caret is at its front. Measured on a 300px move with Smooth Movement
+    // on: the stem spanned 189 -> 348 and both brackets sat at 268, eighty
+    // pixels behind the caret. Reported as the serifs travelling at a
+    // different speed from the cursor, which is exactly what it looks like.
+    //
+    // So: find which corner of each edge leads (project the edge onto the
+    // held travel direction), then walk back along the edge by half the
+    // caret's OWN width. That lands the bracket centred on the caret's real
+    // footprint at the head of the smear. When the edge is only as long as
+    // the caret is wide - no smear, or a purely vertical one - half its width
+    // back from either corner is the midpoint, so this reduces exactly to the
+    // old behaviour everywhere it was already correct.
     const c = this.cursorCorners(rx, active.top, rw, lineH);
-    const topCx = (c.tl.x + c.tr.x) / 2, topCy = (c.tl.y + c.tr.y) / 2;
-    const botCx = (c.bl.x + c.br.x) / 2, botCy = (c.bl.y + c.br.y) / 2;
+    const dir = this._smearDir;
+    const anchor = (a, b) => {
+      const ex = b.x - a.x, ey = b.y - a.y;
+      const len = Math.hypot(ex, ey);
+      if (!(len > 0.001)) return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      // `a` leads only if the edge runs against the direction of travel.
+      const aLeads = !!dir && (ex * dir.x + ey * dir.y) < 0;
+      const lead = aLeads ? a : b;
+      const sign = aLeads ? -1 : 1;
+      const back = Math.min(len, stem) / 2;
+      return {
+        x: lead.x - sign * (ex / len) * back,
+        y: lead.y - sign * (ey / len) * back,
+      };
+    };
+    const top = anchor(c.tl, c.tr), bot = anchor(c.bl, c.br);
+    const topCx = top.x, topCy = top.y;
+    const botCx = bot.x, botCy = bot.y;
 
     const half = span / 2;
     const inset = half * SERIF_TAPER;
@@ -11285,6 +11392,9 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g).setName("Blink Delay").setDesc("How long the cursor stays lit after a keystroke, in ms.")
           .addSlider((s) => s.setLimits(0, 2000, 50).setValue(get("blinkDelayMs") ?? 0).setDynamicTooltip().onChange(set("blinkDelayMs")))
           .addExtraButton(resetSlider("blinkDelayMs"));
+        new Setting(g).setName("Stop After").setDesc("Blink this many times after each move, then stay lit. 0 blinks forever.")
+          .addSlider((s) => s.setLimits(0, 20, 1).setValue(get("blinkStopAfter") ?? 0).setDynamicTooltip().onChange(set("blinkStopAfter")))
+          .addExtraButton(resetSlider("blinkStopAfter"));
         new Setting(g).setName("Breathing").setDesc("The cursor swells and shrinks instead of fading out.")
           .addToggle((toggle) => toggle.setValue(!!get("blinkBreathing")).onChange(setAndRedraw("blinkBreathing")));
         if (get("blinkBreathing")) {

@@ -4760,18 +4760,38 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // Cheap belt-and-braces for a full Excalidraw leaf, in case a future
       // release renames the container classes out from under the selector.
       //
-      // SCOPED TO THAT LEAF'S OWN DOM, and that scoping is the whole point.
-      // This used to be a bare view-type test that never looked at `el` at
-      // all, so while a drawing was the active tab EVERY text field in the
-      // app answered yes: the rename dialog, the settings search, any modal.
-      // Those are siblings of the workspace rather than part of the drawing,
-      // so we declined to draw a caret in them AND the hide-native rule still
-      // applied to them (the caret-color carve-out only reaches Excalidraw's
-      // own textarea) - leaving them with no caret from either source.
-      // Issues #26 and #27.
+      // SCOPED TO THAT LEAF'S OWN CONTENT, and that scoping is the whole
+      // point. This used to be a bare view-type test that never looked at
+      // `el` at all, so while a drawing was the active tab EVERY text field
+      // in the app answered yes: the rename dialog, the settings search, any
+      // modal. Those are siblings of the workspace rather than part of the
+      // drawing, so we declined to draw a caret in them AND the hide-native
+      // rule still applied to them (the caret-color carve-out only reaches
+      // Excalidraw's own textarea) - leaving them with no caret from either
+      // source. Issues #26 and #27.
+      //
+      // contentEl and NOT containerEl, which is the follow-up on #26. A view's
+      // containerEl is `.view-header` + `.view-content`, so a container-wide
+      // test also claims the tab title bar - and `.view-header-title` is
+      // permanently contentEditable on desktop, because clicking it is how you
+      // rename the file from there. That is ordinary Obsidian chrome with an
+      // ordinary caret, not the drawing, and the container scope swallowed it
+      // exactly the way the bare view-type test swallowed the modals.
+      //
+      // Nothing is lost by narrowing: Excalidraw puts `.excalidraw-view` on
+      // contentEl itself, so everything the container test would add below the
+      // header is already caught by the DOM branch above.
       const view = this.app.workspace.activeLeaf?.view;
       if (view?.getViewType?.() !== "excalidraw") return false;
-      return !!(view.containerEl && view.containerEl.contains(el));
+      if (view.contentEl) return view.contentEl.contains(el);
+      // No contentEl - not an ItemView, so we cannot name the content box.
+      // Fall back to the container minus the header, that being the only
+      // caret-bearing chrome the container adds.
+      return !!(
+        view.containerEl &&
+        view.containerEl.contains(el) &&
+        !el.closest?.(".view-header")
+      );
     } catch {
       return false;
     }

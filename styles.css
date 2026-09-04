@@ -132,9 +132,33 @@
    specificity above a plausible community theme or CSS snippet that sets
    caret-color on the same or a more specific element - without reaching for
    !important, which would make this impossible for a user to override in
-   turn (e.g. to combine this plugin with their own caret tweaks). */
+   turn (e.g. to combine this plugin with their own caret tweaks).
+
+   ZERO ALPHA, NOT `transparent`. On iOS, WebKit tints the entire selection
+   UI - the highlight wash and both drag handles - with caret-color, and uses
+   only its RGB channels, discarding the alpha. `transparent` is
+   rgba(0, 0, 0, 0), so the tint it hands over is BLACK. That is issue #24: a
+   selection painted black on a dark theme with two black handles nobody can
+   see to grab. Measured off the reporter's pair of screenshots - the broken
+   highlight is rgb(16,16,16) over an rgb(20,20,20) background, the working
+   one rgb(42,31,53), i.e. the same wash at the same ~20% alpha differing
+   only in the tint - and the handles are the same colour at full alpha.
+
+   Alpha is what hides the caret, so holding it at 0 hides it exactly as
+   `transparent` did; only the channels iOS misreads change. Chromium
+   (desktop, and Android) never derives selection colours from caret-color,
+   so this is inert everywhere except the platform that has the bug - no
+   platform sniffing needed.
+
+   The accent, rather than some fixed colour, because that is what Obsidian
+   builds its own --text-selection from, so the iOS highlight lands on the
+   same hue the desktop one already uses. The literal fallback is not
+   decoration: an undefined var() makes the declaration invalid AT
+   COMPUTED-VALUE TIME, and that resolves to `unset` - inherited, i.e. a
+   fully VISIBLE caret - rather than falling back to any earlier
+   declaration. */
 body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
-  caret-color: transparent;
+  caret-color: hsla(var(--color-accent-hsl, 254, 80%, 68%), 0);
 }
 
 /* CodeMirror 6 (Obsidian's editor) draws its own cursor as a DOM element
@@ -161,10 +185,15 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-dropCursor {
    fall back to stylesheet load order (fixed here with !important); doubling
    the ancestor class instead gives this selector more specificity than a
    theme's plain `.cm-content`/`.cm-line` rule outright, so we no longer
-   depend on load order OR need !important to win the cascade. */
+   depend on load order OR need !important to win the cascade.
+
+   The same zero-alpha accent as the body rule, and it has to be: this
+   selector is the MORE specific of the two, so a `transparent` left here
+   would win inside the editor and keep issue #24 alive in the one place the
+   plugin is actually for. */
 body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-content,
 body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
-  caret-color: transparent;
+  caret-color: hsla(var(--color-accent-hsl, 254, 80%, 68%), 0);
 }
 
 /* Plugins that draw their own caret onto a CSS-transformed surface, where we
@@ -172,9 +201,10 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
    Excalidraw edits text in a <textarea> scaled and rotated to match the shape,
    which our measuring code cannot follow, so suppressing our cursor there is
    the fix - but the body rule above works purely by INHERITANCE, so without
-   this carve-out the textarea would inherit `transparent` and end up with no
-   caret from either source. A declaration on the element itself always beats
-   an inherited value, so no doubled class is needed here. */
+   this carve-out the textarea would inherit the zero-alpha caret colour and
+   end up with no caret from either source. A declaration on the element
+   itself always beats an inherited value, so no doubled class is needed
+   here. */
 body.retro-box-cursor-hide-native .excalidraw textarea,
 body.retro-box-cursor-hide-native .excalidraw-wrapper textarea,
 body.retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {

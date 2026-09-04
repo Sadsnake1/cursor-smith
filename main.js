@@ -2480,9 +2480,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
          to live here as well or the browser caret shows through under the
          drawn cursor there. Same doubled-class specificity convention as
          styles.css (outrank themes without !important); harmless duplicate
-         where both stylesheets are loaded. */
+         where both stylesheets are loaded.
+
+         ZERO ALPHA, NOT 'transparent' - the long version of why is in
+         styles.css beside the same declaration. Short version: iOS tints
+         the whole selection UI from caret-color's RGB and throws its alpha
+         away, so 'transparent' (rgba(0,0,0,0)) paints the highlight black
+         and leaves the drag handles invisible - issue #24. Alpha is what
+         hides the caret, so 0 hides it exactly as before.
+
+         Keep the two files in step. This stylesheet is the only one
+         present in a popped-out window, so a 'transparent' left here alone
+         reintroduces the bug in the one place nobody would think to look
+         for it. */
       body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
-        caret-color: transparent;
+        caret-color: hsla(var(--color-accent-hsl, 254, 80%, 68%), 0);
       }
       /* ...except in plugins that draw their own caret on a transformed
          surface, where we deliberately don't draw one (see

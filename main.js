@@ -5818,21 +5818,47 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!node || node.nodeType !== 3) return null;
     const text = node.data || "";
     const isDegenerate = (r) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
+
+    // The horizontal comes from a COLLAPSED range at the caret itself, and
+    // only the vertical from the character next to it.
+    //
+    // "The caret sits after this character, so anchor to its right edge" is
+    // true in LTR and exactly backwards in RTL, where after means to the
+    // left - and in bidi text neither is decidable from the offset alone,
+    // because which side of a glyph an offset falls on is a property of the
+    // run's resolved level. The same issue as #28 and the same shape: a
+    // position inferred from a direction we assumed rather than measured.
+    // Measured at a character's full width of error on every RTL offset in a
+    // contentEditable - the tab-title rename box is one of these.
+    //
+    // A collapsed range is the engine's own answer and needs no assumption.
+    // It is only its HEIGHT that could not be trusted, which is what this
+    // function exists to fix and what the one-character rect still supplies.
+    let caretX = null;
+    try {
+      const c = doc.createRange();
+      c.setStart(node, offset);
+      c.collapse(true);
+      const cr = c.getClientRects()[0] || c.getBoundingClientRect();
+      if (!isDegenerate(cr)) caretX = cr.left;
+    } catch {
+      /* no collapsed rect here - fall back to the character edges below */
+    }
+
     try {
       if (offset < text.length) {
         const r = doc.createRange();
         r.setStart(node, offset);
         r.setEnd(node, offset + 1);
         const rect = r.getClientRects()[0] || r.getBoundingClientRect();
-        if (!isDegenerate(rect)) return { left: rect.left, top: rect.top, bottom: rect.bottom };
+        if (!isDegenerate(rect)) return { left: caretX ?? rect.left, top: rect.top, bottom: rect.bottom };
       }
       if (offset > 0) {
         const r = doc.createRange();
         r.setStart(node, offset - 1);
         r.setEnd(node, offset);
         const rect = r.getClientRects()[0] || r.getBoundingClientRect();
-        // Caret sits after this character, so anchor to its right edge.
-        if (!isDegenerate(rect)) return { left: rect.right, top: rect.top, bottom: rect.bottom };
+        if (!isDegenerate(rect)) return { left: caretX ?? rect.right, top: rect.top, bottom: rect.bottom };
       }
     } catch {
       /* fall through to the collapsed-range approach */
@@ -5894,15 +5920,33 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // in error: measured at 135px, with the caret drawn at the left of a
       // number sitting at the right. direction is here for the same reason,
       // one step further out.
+      //
+      // unicodeBidi is one step further out again, and it is the one that
+      // matters in Obsidian specifically: app.css carries a bare
+      // `input { unicode-bidi: plaintext }`, so EVERY field in the app - Quick
+      // Switcher, Command Palette, Search, every settings box - takes its
+      // direction from its own content rather than from `direction`. Type
+      // Arabic and the real field flips to RTL and lays the text flush right,
+      // while the mirror, still a plain LTR paragraph, laid it flush left and
+      // put the marker at the run's far end. That is issue #28: a caret near
+      // the left edge of the box, hundreds of pixels from the text, tracking
+      // the text's WIDTH instead of its position.
       const props = [
         "height",
         "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
         "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
         "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "lineHeight",
         "fontFamily", "letterSpacing", "textIndent", "textTransform", "wordSpacing", "tabSize",
-        "textAlign", "direction",
+        "textAlign", "direction", "unicodeBidi",
       ];
       for (const p of props) mirror.style[p] = style[p];
+
+      // The four border widths above are inert without this. `border-style`
+      // defaults to `none`, which computes every width back to 0px, so the
+      // mirror's content box sat one border-width inside the field's and every
+      // measurement came back short by exactly that. It reads as a ~1px noise
+      // floor on a 1px border and scales with whatever the theme uses.
+      mirror.style.borderStyle = "solid";
 
       // boxSizing and width used to be copied straight across, and that only
       // works while the text is left-aligned. Under border-box the copied
@@ -5923,11 +5967,42 @@ module.exports = class CursorSmithPlugin extends Plugin {
       mirror.style.overflow = "hidden";
       if (!isTextarea) mirror.style.height = "auto";
 
+      // The text AFTER the caret has to be in the box too, and for two
+      // separate reasons.
+      //
+      // Under `plaintext` the paragraph direction is the first STRONG
+      // character of the content, so a prefix that has none - the caret at 0,
+      // or a value that opens with digits - resolves LTR while the real field,
+      // reading the whole value, resolves RTL. The mirror has to see the same
+      // string to reach the same answer.
+      //
+      // And it was wrong without any bidi at all: in a right-aligned or
+      // centred field the line is placed from the full text's width, so a
+      // prefix on its own sits somewhere the real one does not. Prefix-only
+      // put a mid-text caret in a right-aligned field at the far edge, 30px
+      // out on a 260px box.
       mirror.textContent = "";
       mirror.appendChild(doc.createTextNode(value.substring(0, selStart)));
       const marker = doc.createElement("span");
-      marker.textContent = "\u200b"; // needs a real glyph to have a box
+      // Zero-width inline-block, not a zero-width SPACE. U+200B is bidi class
+      // BN, which UAX#9 deletes outright and leaves the engine to place: next
+      // to a digit run inside an RTL paragraph it lands with the digits rather
+      // than at the caret, 17px out. An atomic inline is U+FFFC to the
+      // algorithm - an ordinary neutral, resolved against the paragraph level.
+      //
+      // verticalAlign is not decoration. An EMPTY inline-block's baseline is
+      // its own bottom margin edge, so left alone it hangs at the text
+      // baseline - 16px below the line on a 22px line box. That is invisible
+      // to an <input>, which takes its Y from the field's own box, and most of
+      // a line of drop on every <textarea>, which takes its Y from offsetY.
+      // Aligning to `top` pins it to the line box top, which is also where a
+      // caret of `height = lineHeight` should start - the ZWSP sat half the
+      // leading below it and overshot the bottom by the same.
+      marker.style.display = "inline-block";
+      marker.style.width = "0";
+      marker.style.verticalAlign = "top";
       mirror.appendChild(marker);
+      mirror.appendChild(doc.createTextNode(value.substring(selStart)));
 
       const markerRect = marker.getBoundingClientRect();
       const mirrorRect = mirror.getBoundingClientRect();

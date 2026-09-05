@@ -649,6 +649,13 @@ const DEFAULT_SETTINGS = {
   // way virtually every other writing app does. Structural (like
   // hideNativeCaret), so deliberately NOT a per-Vim-mode look key.
   hideOnWindowBlur: true,
+  // Confine the plugin to the note editor: the custom caret is drawn only
+  // while CodeMirror has focus, and the native one is left alone everywhere
+  // else - Command Palette, Quick Switcher, Search, Settings, the tab-title
+  // rename box, other plugins' modals. Off by default, because drawing
+  // everywhere is what every release so far has done. Structural (like
+  // hideNativeCaret), so deliberately NOT a per-Vim-mode look key.
+  noteEditorOnly: false,
   showChar: true, 
   moveDelayMs: 0,        
   smear: true,           
@@ -4465,6 +4472,38 @@ module.exports = class CursorSmithPlugin extends Plugin {
     });
   }
 
+  // Is the caret in the note editor itself, rather than somewhere else in the
+  // app? This is the same question caretCoords() asks to choose between its
+  // CodeMirror path and the generic interface one, asked of the same object -
+  // and deliberately not a DOM or selector test.
+  //
+  // "Note Editor Only" has to stop drawing a caret and stop hiding the native
+  // one in EXACTLY the same places, and the only way to guarantee two halves
+  // agree is to derive both from one predicate. A selector-based version is
+  // how issue #26 happened: we declined to draw in a field whose native caret
+  // we were still hiding, and it had a caret from neither source.
+  noteEditorFocused() {
+    try {
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      return !!(view && view.hasFocus);
+    } catch {
+      // Unreachable in practice, but this feeds the hide-native class, so the
+      // answer matters: "no" leaves the user with Obsidian's own caret, which
+      // is the safe way to be wrong.
+      return false;
+    }
+  }
+
+  // Whether the native caret should currently be suppressed. Every site that
+  // stamps retro-box-cursor-hide-native reads this rather than the setting,
+  // because with Note Editor Only on the answer changes with FOCUS and not
+  // only when a setting is saved.
+  hideNativeActive() {
+    if (!this.settings.hideNativeCaret) return false;
+    if (!this.settings.noteEditorOnly) return true;
+    return this.noteEditorFocused();
+  }
+
   applyBodyClasses() {
     const engineActive = !!(this.canvasEngineActive || this.torchEngineActive);
     // During a presentation the canvas clears itself and the torch hides, so
@@ -4478,7 +4517,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (doc && doc.body) {
         doc.body.classList.toggle(
           "retro-box-cursor-hide-native",
-          !!(engineActive && this.settings.hideNativeCaret && !presenting)
+          !!(engineActive && this.hideNativeActive() && !presenting)
         );
       }
     }
@@ -4613,7 +4652,22 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!targetDoc.body.classList.contains("retro-box-cursor-active")) {
       targetDoc.body.classList.add("retro-box-cursor-active");
     }
-    targetDoc.body.classList.toggle("retro-box-cursor-hide-native", !!this.settings.hideNativeCaret);
+    // Per frame, and with Note Editor Only it has to be: the value tracks
+    // focus, so the class comes off the instant the Command Palette opens and
+    // goes back on the instant the editor takes focus again. classList.toggle
+    // with an explicit force mutates nothing when the answer is unchanged, so
+    // the steady-state cost is a comparison and no style invalidation.
+    const hideNative = this.hideNativeActive();
+    targetDoc.body.classList.toggle("retro-box-cursor-hide-native", hideNative);
+    // targetDoc is the document the caret is in, so the line above is what the
+    // user sees. Every OTHER document we have stamped the class into is now
+    // potentially stale though, and a body class that means one thing in one
+    // window and something else in the next is how a pop-out-only bug starts.
+    // Deduped on the value, so this runs on transitions and not per frame.
+    if (hideNative !== this._hideNativeSig) {
+      this._hideNativeSig = hideNative;
+      try { this.applyBodyClasses(); } catch { /* never take the frame down */ }
+    }
   }
 
   ensureTorchOverlayForView(view) {
@@ -4915,6 +4969,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // letters either side of it are on, not start a second, unrelated one that
     // happens to be running at the same time.
     this._popRainbowHue = 0;
+
+    // Dedupe for the hide-native body class (see ensureCanvasForView). null
+    // rather than a boolean so the first frame after a reset always differs
+    // and re-syncs every document, instead of trusting a stamp left over from
+    // before the engine was torn down.
+    this._hideNativeSig = null;
   }
 
   enable() {
@@ -6092,6 +6152,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   genericCaretCoords() {
     try {
+      // Note Editor Only. This function IS the interface caret: every surface
+      // it serves - Command Palette, Quick Switcher, Search, Settings, modals,
+      // the tab-title rename box - is by construction not the note editor,
+      // because caretCoords() only reaches here when CodeMirror does not have
+      // focus. So the whole option is one early return, and its other half -
+      // leaving the native caret alone in those same places - falls out of
+      // hideNativeActive() instead of being a second list to keep in step.
+      if (this.settings.noteEditorOnly) return null;
+
       // Follow the canvas's document rather than hardcoding the main
       // window's - the canvas migrates to whichever window hosts the
       // active view, so this keeps interface carets working in pop-outs.
@@ -11131,6 +11200,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       this.plugin.settings[key] = v;
       await this.plugin.saveSettings();
     };
+
+    new Setting(containerEl)
+      .setName("Note Editor Only")
+      .setDesc("Draws the cursor in notes only. Search, palettes, settings and modals keep Obsidian's caret.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.noteEditorOnly === true).onChange(setGlobal("noteEditorOnly")));
 
     new Setting(containerEl)
       .setName("Hide Real Cursor")

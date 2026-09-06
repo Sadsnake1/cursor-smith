@@ -133,5 +133,12 @@ Found a bug or have an idea for a new effect? Open an issue!
 Cursor-Smith is 100% free.
 If you'd like to support the project and help me keep the updates coming, you're more than welcome to buy me a coffee. Your support means the world. Cheers!
 
+<div align="center">
+  <a href="https://www.buymeacoffee.com/sadsnake1" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
+  </a>
+</div>
+
+
 ## License
 MIT

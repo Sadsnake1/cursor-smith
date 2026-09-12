@@ -13,7 +13,7 @@
   <h1>Cursor-Smith</h1>
 
   <p><strong>Forge your own cursor!</strong><br>
-  ***The most advanced cursor engine ever. Built for desktop & mobile.***</p>
+  *** The most advanced cursor engine ever. Built for desktop & mobile. ***</p>
 
 </div>
 

@@ -1,3 +1,7 @@
+
+
+
+
 <div align="center">
 
   <a href="https://github.com/Sadsnake1/cursor-smith/stargazers"><img src="https://img.shields.io/github/stars/Sadsnake1/cursor-smith?style=flat-square&logo=github&logoColor=white&labelColor=1a1a1a&color=F5B301" alt="Stars"></a>
@@ -17,13 +21,7 @@ Most people never give their cursor a second thought. Cursor-Smith is for the on
 
 Every effect has its own switch, reduced motion is respected out of the box, and it's free.
 
-
-
-
-
-https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
-
-https://github.com/user-attachments/assets/49eb7297-97c8-4c0e-a255-bc8cff9c4bc7
+https://github.com/user-attachments/assets/7eab19cc-b7ac-4476-bc40-514b4e75cf61
 
 ## What do you get?
 

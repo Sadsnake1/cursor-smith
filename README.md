@@ -9,7 +9,7 @@
   <h1>Cursor-Smith</h1>
 
   <p><strong>Forge your own cursor!</strong><br>
-  The most advanced cursor engine for Obsidian</p>
+  The most advanced cursor engine for Obsidian (maybe).</p>
 
 </div>
 
@@ -105,6 +105,15 @@ Collapsible sections, and the panel remembers which ones you closed and where yo
 ## It pairs with Word-Smith
 
 [Word-Smith](https://github.com/Sadsnake1/word-smith) is my other plugin, a writing suite for Obsidian. Its themes can colour your caret per Vim mode, and its status bar can wear the same colour back.
+
+## Ports
+
+Cursor-Smith is MIT, and people have carried the engine to other editors. If you've ported it somewhere, open an issue and I'll add it here.
+
+| Editor | Port | By |
+|---|---|---|
+| **Thymer** | [Cursor Tweaks](https://github.com/akaready/thymer-cursor-tweaks) | [akaready](https://github.com/akaready) |
+
 
 ## Questions, ideas, bugs
 

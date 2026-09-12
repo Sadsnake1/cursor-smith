@@ -121,9 +121,9 @@ Cursor-Smith is MIT, and people have carried the engine to other editors. If you
 
 ## Questions, ideas, bugs
 
-Found a bug, or have an idea for a new effect? [Write it here](https://github.com/Sadsnake1/cursor-smith/issues). I fix things fast, and most of the effects started as somebody's comment.
+Found a bug, or have an idea for a new effect? [Write it here](https://github.com/Sadsnake1/cursor-smith/issues).
 
-Free and MIT. If it's earned a coffee, thank you. Cheers!
+Free and MIT. If it's made your writing better, a coffee helps me keep going. Cheers!
 
 <div align="center">
   <a href="https://www.buymeacoffee.com/sadsnake1" target="_blank">

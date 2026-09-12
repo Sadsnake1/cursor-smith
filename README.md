@@ -17,8 +17,12 @@ Most people never give their cursor a second thought. Cursor-Smith is for the on
 
 Every effect has its own switch, reduced motion is respected out of the box, and it's free.
 
-https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
 
+
+
+
+https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
+https://github.com/user-attachments/assets/49eb7297-97c8-4c0e-a255-bc8cff9c4bc7
 ## What do you get?
 
 ### The cursor itself
@@ -106,7 +110,7 @@ Collapsible sections, and the panel remembers which ones you closed and where yo
 
 [Word-Smith](https://github.com/Sadsnake1/word-smith) is my other plugin, a writing suite for Obsidian. Its themes can colour your caret per Vim mode, and its status bar can wear the same colour back.
 
-## Ports
+## Forged elsewhere
 
 Cursor-Smith is MIT, and people have carried the engine to other editors. If you've ported it somewhere, open an issue and I'll add it here.
 

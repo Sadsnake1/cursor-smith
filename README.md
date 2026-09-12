@@ -9,7 +9,7 @@
   <h1>Cursor-Smith</h1>
 
   <p><strong>Forge your own cursor!</strong><br>
-  The most advanced cursor engine for Obsidian (maybe).</p>
+  The most advanced cursor engine for Obsidian</p>
 
 </div>
 

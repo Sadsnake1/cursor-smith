@@ -22,7 +22,9 @@ Every effect has its own switch, reduced motion is respected out of the box, and
 
 
 https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
+
 https://github.com/user-attachments/assets/49eb7297-97c8-4c0e-a255-bc8cff9c4bc7
+
 ## What do you get?
 
 ### The cursor itself

@@ -6,87 +6,55 @@
   <a href="https://github.com/Sadsnake1/cursor-smith/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Sadsnake1/cursor-smith?style=flat-square&logo=opensourceinitiative&logoColor=white&labelColor=1a1a1a&color=3B82F6" alt="License"></a>
   <a href="https://www.buymeacoffee.com/sadsnake1" target="_blank"><img src="https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?style=flat-square&logo=buymeacoffee&logoColor=000000&labelColor=FFDD00" alt="Buy Me a Coffee"></a>
 
+  <h1>Cursor-Smith</h1>
+
+  <p><strong>Forge your own cursor!</strong><br>
+  The most advanced cursor engine for Obsidian (maybe).</p>
+
 </div>
 
-# Cursor-Smith
+Most people never give their cursor a second thought. Cursor-Smith is for the ones who do: writers who want a screen worth staring at, anyone who keeps losing the caret and needs it bigger and brighter, and people who just like to customize theengs.
 
-## Intro
-Most people never give their cursor a second thought, but I decided to change that. Cursor-Smith is more than just a tweaky-toy — it is the *MOST* advanced cursor engine ever created (maybe).
-It is designed for writers, users who need high-visibility accessibility options, and anyone who loves to customize theengs.
-Forge your cursor of choice!
+Every effect has its own switch, reduced motion is respected out of the box, and it's free.
 
-## Showcase
 https://github.com/user-attachments/assets/30b013b3-d4f4-4ed7-8f34-b20b3525e12b
 
-## Features
-- **Cursor styles** — Box, Line, Underline, each with their own shape controls (serifs, hollow, outline width, letter-inside-the-block).
-- **Smooth movement** — the cursor eases and glides between positions instead of jumping, with adjustable glide, catch-up speed, movement delay, and an optional adaptive boost while typing fast.
-- **Customizable blinking** — control both how fast the cursor blinks and how the on/off time is balanced within each cycle, fade smoothness, a don't-blink-while-typing mode, or a breathing cursor that swells and shrinks instead of fading. Or turn blinking off entirely.
-- **Appearance controls** — separate colors for dark/light themes, multi-stop gradients, adjustable thickness and opacity, glow, translucency, and MORE, MUCH-MUCH MORE.
-- **Effects** — a dozen of them, from subtle to absurd. See the table below.
-- **Torch spotlight** — darkens the page around a pool of warm light that follows your cursor, with a candle flicker.
-- **Accessibility** — respects your system's reduced-motion preference out of the box, and every effect can be switched off individually.
-- **Presets** — save any cursor configuration as a named preset, load or edit it later, and cycle through all your presets with a single command.
-- **Preset sharing** — every preset gets a compact share code. Copy it, send it to a friend, and they can paste it straight into their own vault.
-- **Vim mode** — per-mode cursors for Normal, Insert, Visual, Replace, and Command, each fully configurable. The live mode indicator sits in the status bar vim-style (`-- NORMAL --`), tinted to match the active cursor color.
+## What do you get?
 
-## Installation
-1. Download `main.js`, `styles.css`, and `manifest.json` (or clone this repo).
-2. Create a folder named `cursor-smith` inside your vault's `.obsidian/plugins/` directory.
-3. Copy the files into that folder.
-4. Reload Obsidian (or restart it), then enable **Cursor-Smith** under **Settings → Community plugins**.
+### The cursor itself
 
-## Usage
-Once enabled, the plugin activates automatically. You can:
-- Toggle it on/off anytime with the **Toggle Cursor-Smith on/off** command in the Command Palette (`Ctrl/Cmd + P`).
-- Cycle through all your saved presets with the **Cycle preset** command — assign it a hotkey in **Settings → Hotkeys** for quick switching. In CUA mode it cycles CUA presets; in Vim mode it cycles Vim presets.
-- Adjust every visual detail from **Settings → Cursor-Smith**.
+**Box, Line or Underline**, each with its own shape controls: serifs, hollow, outline width, the letter inside the block. **Smooth movement** so it glides between positions instead of jumping, with an adaptive boost when you're typing fast. **Blinking** you actually control: speed, on/off balance, fade, a don't-blink-while-typing mode, or a breathing cursor that swells and shrinks. Or no blink at all.
 
-## Settings
-The settings panel is organized into collapsible sections. Collapse the ones you don't use — Cursor-Smith remembers which sections you closed and where you were scrolled to, so the panel stays how you left it.
+Separate colors for dark and light, multi-stop gradients, thickness, opacity, glow, translucency. And more. Much, much more.
 
-| Section | What it controls |
-|---|---|
-| **Core Configuration** | Enable the plugin, hide the real cursor, hide the cursor when Obsidian isn't focused, and respect reduced motion. |
-| **Presets** | Save, load, edit, delete, and share cursor configurations. |
-| **Appearance** | Cursor style and thickness, colors and gradients, glow, opacity, translucency, and (Box style only) showing the letter inside the cursor. |
-| **Blinking** | Blink speed, the on/off balance of each blink, fade smoothness, blink delay, and breathing. |
-| **Smooth Movement** | Enable gliding motion and tune its speed, catch-up behavior, movement delay, and typing-adaptive boost. |
-| **Effects** | Everything the cursor does beyond sitting there. See below. |
+### The effects
 
-### Effects
+A dozen of them, from subtle to absurd.
 
 | Effect | What it does |
 |---|---|
-| **Pop Effects** | Popping letters, backspace disintegration, thunderstrike on Enter, and fireworks on Space/Enter. Rainbow sweeps all of them around the color wheel together. |
+| **Pop Effects** | Popping letters, backspace disintegration, thunderstrike on Enter, fireworks on Space. Rainbow sweeps them all around the color wheel together. |
 | **Pixel Trail** | A fading trail of pixels behind the cursor, with lifetime, size, gravity and jump-streak controls. |
-| **Stardust** | A slow stream of floating motes, either drifting upward or orbiting the cursor like fireflies. |
-| **Bracket Tether** | Underlines the span between matching brackets or quotes. |
-| **Motion Smear** | The cursor's corners lag on springs, stretching as it moves and snapping back when it arrives. Optional comet-tail taper. |
-| **Energy Beam** | Bands of light that slide or ripple through the cursor body, with an aurora mode. |
-| **CRT Effect** | Old-monitor phosphor ghosts trailing the cursor, with neon-tube and gradient variants, plus Signal Glitch on long jumps. |
-| **Speed Demon** | The cursor heats from grey to white-hot as you type, throwing sparks. Bring your own heat gradient if you like. |
-| **Hot-head** | The cursor sets the text on fire. The fire spreads, lingers, and burns out when you stop. |
-| **Torch Spotlight** | See below. |
+| **Stardust** | Floating motes, drifting upward or orbiting the cursor like fireflies. |
+| **Bracket Tether** | Underlines the span between matching brackets or quotes. Nice for dialogue. |
+| **Motion Smear** | The corners lag on springs, stretching as it moves and snapping back when it arrives. Optional comet tail. |
+| **Energy Beam** | Bands of light sliding or rippling through the cursor body, with an aurora mode. |
+| **CRT Effect** | Old-monitor phosphor ghosts, neon-tube and gradient variants, Signal Glitch on long jumps. |
+| **Speed Demon** | Heats from grey to white-hot as you type, throwing sparks. Bring your own heat gradient. |
+| **Hot-head** | Sets the text on fire. The fire spreads, lingers, and burns out when you stop. |
+| **Torch Spotlight** | Darkens the page except for a pool of warm light around the cursor, with a candle flicker. |
+
+Some effects unlock extra options when combined. Try Blinking with Torch and see what appears.
 
 ### Torch Spotlight
-Darkens the page except for a pool of light around the cursor, so only the part of the note you're working on stays lit.
 
-It's built as two layers: a darkness layer that dims everything outside the pool, and a separate warm glow that *adds* light inside it. **Glow Strength** controls the warm core — slide it to 0 for a pure, colorless spotlight. **Flicker** makes the light gutter like a candle, and **Flicker Depth** sets how far it swings.
+Two layers: a darkness that dims everything outside the pool, and a warm glow that adds light inside it. **Glow Strength** controls the warm core, and at 0 you get a pure colorless spotlight. **Flicker** makes it gutter like a candle. The light follows the caret, the mouse, or whichever moved last, and can pulse with your blink. On desktop, **Keep Sidebars Lit** leaves the sidebars, tabs and ribbon at normal brightness.
 
-The light can follow the caret, the mouse, or whichever moved last, and it can pulse in time with your cursor's blink. On desktop, **Keep Sidebars Lit** dims only the editor and leaves the sidebars, tabs and ribbon at normal brightness.
+### Presets and sharing
 
-## Accessibility
-Cursor-Smith is animation-heavy by design, so it takes reduced motion seriously.
+Dial in a cursor, name it, save it. Load it, edit it, cycle through all of them with one command or a hotkey. Every preset gets a compact share code: copy it, send it to a friend, they paste it into **Import preset** and they've got your cursor.
 
-**Respect Reduced Motion** is on by default. When your system asks for reduced motion, the moving effects switch themselves off — smooth movement, motion smear, pop effects, pixel trail, stardust, fire, sparks, glitch, energy beam, and the torch's pulse and flicker. Your cursor keeps the style, color, size and glow you chose; only the movement stops.
-
-Blinking is deliberately left alone. It's the standard behavior of every text caret, it's well under the flash thresholds, and it has its own switch if you want it gone.
-
-If you'd rather run the effects anyway, turn the setting off.
-
-## Presets
-Cursor-Smith ships with six starter presets so you have something to work from right away.
+Six ship with the plugin so you've got something to start from:
 
 | Preset | Style | Vibe |
 |---|---|---|
@@ -97,48 +65,55 @@ Cursor-Smith ships with six starter presets so you have something to work from r
 | **DarkMatter** | Box | Blue-purple box with CRT trail and Speed Demon sparks |
 | **old_Joe** | Box | Understated grey box, no frills |
 
-**Saving a preset** — dial in your cursor exactly how you want it, type a name in the *Save current settings as preset* field, and click **Save**. The name field stays filled while you tweak, so changing the cursor style or any other setting mid-way won't erase what you typed.
+### Vim mode
 
-**Editing a preset** — click **Edit** on any preset row. This loads its settings and pre-fills its name in the save field. Adjust whatever you like, then hit **Save** to overwrite it.
-
-**Sharing a preset** — each preset row shows a short share code next to its name. Click **Copy** to copy it, then send it to anyone. They paste it into the **Import preset** field and click **Import** — done.
-
-**Cycling presets** — run **Cursor-Smith: Cycle preset** from the Command Palette (or bind it to a hotkey) to step through all your presets one by one. A small toast notification shows the name of the preset that just loaded.
-
-## Vim Mode
-Switch to **Vim** using the CUA / Vim toggle at the top of the settings panel. Each of the five Vim modes gets its own fully independent cursor — style, color, blinking, motion effects, everything.
+Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own style, color, blink and effects, fully independent. A `-- NORMAL --` indicator sits in the status bar, Vim-style, tinted to match. Vim presets save the whole five-mode setup under one name and share with one code. Turn on **Control Obsidian's Vim key bindings** and switching modes flips Obsidian's native Vim setting for you.
 
 | Mode | When it applies |
 |---|---|
 | **Normal** | The default editing mode |
-| **Insert** | After pressing `i`, `a`, `o`, etc. |
-| **Visual** | After pressing `v`, `V`, or `Ctrl-v` |
-| **Replace** | After pressing `R` |
-| **Command** | The `:` / `/` prompt, plus the Command Palette, Quick Switcher, search boxes, and other interface fields |
+| **Insert** | After `i`, `a`, `o` and friends |
+| **Visual** | After `v`, `V`, or `Ctrl-v` |
+| **Replace** | After `R` |
+| **Command** | The `:` / `/` prompt, plus the Command Palette, Quick Switcher, search boxes and other fields |
 
-Use the **tab row** in *Per-Mode Cursors* to switch between modes — each inactive tab is tinted with that mode's own cursor color as a live preview of your setup.
+## Accessibility
 
-**Vim presets** work the same as CUA presets: save your full five-mode setup under a name, load it later, share it with a code. The **Cycle preset** command automatically cycles Vim presets when you are in Vim mode.
+Cursor-Smith is animation-heavy by design, so it takes reduced motion seriously. **Respect Reduced Motion** is on by default: when your system asks for it, every moving effect switches itself off and your cursor keeps its style, color, size and glow. Blinking is left alone, since it's the standard caret behaviour and well under flash thresholds, but it has its own switch.
 
-### Status bar
-When Vim mode is active a `-- MODE --` indicator appears on the **left side** of the status bar, styled after Vim's own `showmode`. Enable coloring in settings to tint the text with the active mode's cursor color.
+For anyone who loses the caret: thickness, glow, high-contrast colors and a bigger box are all here, and they work with every effect off.
 
-### Keybindings
-Turn on **Control Obsidian's Vim key bindings** to let the plugin own that setting: switching to Vim mode forces Obsidian's native vim keybindings on, and switching to CUA forces them off. Turn it off if you manage that setting yourself.
+## Install
 
-## Feedback
-Found a bug or have an idea for a new effect? Open an issue!
+**Settings → Community plugins → Browse**, search **Cursor-Smith**, install, enable.
 
-## Pricing
-Cursor-Smith is 100% free.
-If you'd like to support the project and help me keep the updates coming, you're more than welcome to buy me a coffee. Your support means the world. Cheers!
+It activates as soon as it's on. Two commands worth a hotkey: **Toggle Cursor-Smith on/off** and **Cycle preset**.
+
+## Settings
+
+Collapsible sections, and the panel remembers which ones you closed and where you'd scrolled.
+
+| Section | What it controls |
+|---|---|
+| **Core Configuration** | Enable, hide the real cursor, hide when Obsidian isn't focused, respect reduced motion |
+| **Presets** | Save, load, edit, delete, share |
+| **Appearance** | Style, thickness, colors and gradients, glow, opacity, translucency, letter-in-block |
+| **Blinking** | Speed, balance, fade, delay, breathing |
+| **Smooth Movement** | Glide, catch-up, delay, typing-adaptive boost |
+| **Effects** | Everything the cursor does beyond sitting there |
+
+## It pairs with Word-Smith
+
+[Word-Smith](https://github.com/Sadsnake1/word-smith) is my other plugin, a writing suite for Obsidian. Its themes can colour your caret per Vim mode, and its status bar can wear the same colour back.
+
+## Questions, ideas, bugs
+
+Found a bug, or have an idea for a new effect? [Write it here](https://github.com/Sadsnake1/cursor-smith/issues). I fix things fast, and most of the effects started as somebody's comment.
+
+Free and MIT. If it's earned a coffee, thank you. Cheers!
 
 <div align="center">
   <a href="https://www.buymeacoffee.com/sadsnake1" target="_blank">
     <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
   </a>
 </div>
-
-
-## License
-MIT

@@ -100,7 +100,18 @@ If something is off, run the **Performance report** command: it measures ten sec
 
 **Settings → Community plugins → Browse**, search **Cursor-Smith**, install, enable.
 
-It activates as soon as it's on. Two commands worth a hotkey: **Toggle Cursor-Smith on/off** and **Cycle preset**. **Note Editor Only** keeps the custom cursor to your notes, so search boxes, palettes and settings keep Obsidian's own caret.
+It activates as soon as it's on. **Note Editor Only** keeps the custom cursor to your notes, so search boxes, palettes and settings keep Obsidian's own caret.
+
+## Commands
+
+All four are in the Command Palette and can take a hotkey.
+
+| Command | What it does |
+|---|---|
+| **Toggle Cursor-Smith on/off** | Switches the whole plugin off and back on without touching your settings. |
+| **Cycle preset** | Loads the next saved preset. Bind it to a key and flip through your cursors. |
+| **Toggle CUA/Vim mode** | Switches the settings panel between the normal cursor and the five Vim cursors, and flips Obsidian's Vim key bindings with it when you've let it. |
+| **Performance report** | Measures ten seconds of normal typing and copies a short report to the clipboard. Paste it into an issue if Obsidian feels slower with the plugin on. |
 
 ## Settings
 
@@ -114,6 +125,10 @@ Collapsible sections, and the panel remembers which ones you closed and where yo
 | **Blinking** | Speed, balance, fade, delay, breathing |
 | **Smooth Movement** | Glide, catch-up, delay, typing-adaptive boost |
 | **Effects** | Everything the cursor does beyond sitting there |
+
+## Building from source
+
+The plugin is a TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js` with esbuild, `npm run check` type-checks, and `npm test` runs the test suite (a thousand assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
 
 ## It pairs with Word-Smith
 

@@ -1,104 +1,174 @@
-/* --- Settings panel: collapsible section groups --------------------------
-   Wraps each named group of settings (Presets, Appearance, Blinking, etc.)
-   in a native <details>/<summary>, so a 60+ setting panel can be collapsed
-   down to just the sections someone actually uses. Sections default open -
-   collapsibility is the point, not being hidden by default. */
-.cursor-smith-section {
+/* --- Settings panel: the sections ------------------------------------------
+   The panel is built from Obsidian 1.13's setting definitions (see
+   getSettingDefinitions in main.js): each named group of settings -
+   Presets, Appearance, Blinking, Smooth movement, Effects - is one of
+   Obsidian's setting groups. Obsidian draws a group as a card: a heading
+   over a shaded, rounded, bordered box of rows. This plugin's sections opt
+   out of the card and keep the flat look the panel always had - a bold
+   heading with a chevron in front of it, rows flush under it separated by
+   a hairline, sub-options stepped in behind a guide line. Every rule here
+   is scoped to the plugin's own groups (.cursor-smith-section, and the
+   first card, .cursor-smith-global); Obsidian's cards elsewhere are
+   untouched. */
+.cursor-smith-section,
+.cursor-smith-global {
   margin-bottom: 0.5em;
   padding-bottom: 0.3em;
   border-bottom: 1px solid var(--background-modifier-border);
 }
-
-.cursor-smith-section > summary {
-  cursor: pointer;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  padding: 0.2em 0;
+.cursor-smith-section + .cursor-smith-section,
+.cursor-smith-global + .cursor-smith-section {
+  margin-top: 0.4em;
+}
+/* No card: no box, no shading, no rounding. */
+.cursor-smith-section > .setting-items,
+.cursor-smith-global > .setting-items {
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+/* Rows flush with the heading, a hairline between them. Obsidian rounds a
+   card's first and last row to match the card; those rules outrank a plain
+   row selector, so the corners are squared off at the same specificity - a
+   rounded last row bends the guide line of a sub-option sitting there. */
+.cursor-smith-section .setting-item:not(.setting-item-heading),
+.cursor-smith-global .setting-item:not(.setting-item-heading) {
+  padding: 0.6em 0;
+}
+.cursor-smith-section .setting-item:not(.setting-item-heading),
+.cursor-smith-global .setting-item:not(.setting-item-heading),
+.cursor-smith-section .setting-item:not(.setting-item-heading):first-child,
+.cursor-smith-section .setting-item:not(.setting-item-heading):last-child,
+.cursor-smith-global .setting-item:not(.setting-item-heading):first-child,
+.cursor-smith-global .setting-item:not(.setting-item-heading):last-child {
+  border-radius: 0;
+}
+.cursor-smith-section .setting-item:not(.setting-item-heading)::before,
+.cursor-smith-global .setting-item:not(.setting-item-heading)::before {
+  left: 0;
+  right: 0;
 }
 
-.cursor-smith-section > summary::-webkit-details-marker {
+/* The heading: the chevron first, then the title, the way the old summary
+   read ("> Blinking"). The chevron is the group's extra button; the heading
+   is a flex row, so reversing it puts the control in front of the name. The
+   heading and the chevron both toggle the section (see collapseButton). */
+.cursor-smith-section > .setting-item-heading {
+  cursor: pointer;
+  user-select: none;
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  padding: 0.2em 0;
+  margin: 0 0 0.2em;
+}
+.cursor-smith-section > .setting-item-heading .setting-item-name {
+  font-size: var(--font-ui-medium);
+  font-weight: 700;
+  color: var(--text-normal);
+}
+.cursor-smith-section > .setting-item-heading .setting-item-control {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+.cursor-smith-section > .setting-item-heading .clickable-icon {
+  padding: 0 2px;
+  margin: 0;
+  color: var(--text-muted);
+}
+.cursor-smith-section > .setting-item-heading .clickable-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.cursor-smith-section.is-collapsed > .setting-items {
   display: none;
 }
 
-.cursor-smith-section > summary::before {
-  content: "▸";
-  display: inline-block;
-  margin-right: 6px;
+/* The first card's heading is the plugin's name and version: a small muted
+   line, as it was, not a section title. */
+.cursor-smith-global > .setting-item-heading {
+  padding: 0;
+  margin: 0 0 0.4em;
+}
+.cursor-smith-global > .setting-item-heading .setting-item-name {
+  font-size: var(--font-smaller);
+  font-weight: normal;
   color: var(--text-muted);
-  transition: transform 0.1s ease;
 }
 
-.cursor-smith-section[open] > summary::before {
-  transform: rotate(90deg);
+/* Small all-caps label splitting a section into sub-groups (Torch
+   spotlight's "Spotlight" vs "Environment") without a section of its own.
+   It is a row with only a name, so the name is what gets styled. */
+.cursor-smith-section .setting-item.cursor-smith-subsection-row {
+  padding: 0.9em 0 0.2em;
 }
-
-.cursor-smith-section-title {
-  font-size: var(--font-ui-medium);
-  font-weight: 700;
-}
-
-.cursor-smith-subsection-title {
+.cursor-smith-section .setting-item.cursor-smith-subsection-row .setting-item-name {
   font-size: var(--font-ui-smaller);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--text-muted);
-  margin: 0.9em 0 0.2em;
+}
+.cursor-smith-section .setting-item.cursor-smith-subsection-row::before {
+  content: none;
 }
 
-/* ...but not when it's what opens a group - the group's own top margin
-   already provides the gap. */
-.cursor-smith-sub > .cursor-smith-subsection-title:first-child {
-  margin-top: 0.2em;
-}
-
-/* --- Settings panel: indent sub-options nested under a parent toggle
-   (or style dropdown), so conditional groups - e.g. Torch Spotlight's
-   Follow/Light Size/etc., or Box style's Hollow -> Outline Width - read
-   as a visual hierarchy instead of a flat list of settings.
-
-   This is a container that WRAPS a group of settings (see subGroup() in
-   main.js), not a class stamped onto each individual setting row, which is
-   what it used to be (.cursor-smith-indent-1 / -2). One element per group
-   means one guide line with a real start and end, rather than a stack of
-   per-row segments that only read as continuous while no row had a margin;
-   and because the indent comes from the wrapper, groups nest by nesting -
-   no hardcoded class and margin per depth level.
-
-   Geometry deliberately matches Word-Smith's .ws-settings-sub so the two
-   plugins' settings panels line up visually. */
-.cursor-smith-sub {
-  border-left: 2px solid var(--background-modifier-border);
+/* Sub-options nested under a parent toggle (or the style dropdown), so
+   conditional groups - Torch spotlight's Follow/Light size/etc., or the Box
+   style's Hollow -> Outline width - read as a visual hierarchy instead of a
+   flat list. 12px in, a 2px guide line, 12px more to the text - 26px per
+   level, the geometry of the old wrapper (and of Word-Smith's
+   .ws-settings-sub, so the two panels line up). One class per depth on the
+   row itself: consecutive rows at one depth join into one line because
+   there is no vertical margin between them, and a deeper row draws the
+   outer lines too (::after, one strip per level out), so a parent's line
+   runs past its children instead of stopping where they start. */
+.cursor-smith-section .setting-item.cursor-smith-sub {
   margin-left: 12px;
+  border-left: 2px solid var(--background-modifier-border);
   padding-left: 12px;
-  margin-top: 4px;
-  margin-bottom: 8px;
+}
+.cursor-smith-section .setting-item.cursor-smith-sub-2 {
+  margin-left: 38px;
+}
+.cursor-smith-section .setting-item.cursor-smith-sub-3 {
+  margin-left: 64px;
+}
+.cursor-smith-section .setting-item.cursor-smith-sub-2::after,
+.cursor-smith-section .setting-item.cursor-smith-sub-3::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -28px;
+  width: 2px;
+  background: var(--background-modifier-border);
+}
+.cursor-smith-section .setting-item.cursor-smith-sub-3::after {
+  box-shadow: -26px 0 0 var(--background-modifier-border);
+}
+/* The hairline above a row starts after the guide line, and the first row
+   of a sub-group has none: the line and the step already mark the break. */
+.cursor-smith-section .setting-item.cursor-smith-sub::before {
+  left: 12px;
+}
+.cursor-smith-section .setting-item:not(.cursor-smith-sub) + .setting-item.cursor-smith-sub::before,
+.cursor-smith-section .setting-item.cursor-smith-sub-1 + .setting-item.cursor-smith-sub-2::before,
+.cursor-smith-section .setting-item.cursor-smith-sub-2 + .setting-item.cursor-smith-sub-3::before {
+  content: none;
 }
 
-/* Obsidian gives every .setting-item a top border to separate it from the
-   previous row. At the top of a group that separator is redundant - the
-   group's own left rule and margin already mark the break - and it reads as
-   a stray line hanging off the corner. */
-.cursor-smith-sub > .setting-item:first-child {
-  border-top: none;
-  padding-top: 0.4em;
-}
-
-/* A nested group sits directly under its parent setting rather than a
-   sibling row, so it doesn't need the extra breathing room above. */
-.cursor-smith-sub > .cursor-smith-sub {
-  margin-top: 0;
-}
-
-/* --- Settings panel: the Gradient feature's rows of color pickers --------
-   The gradient has one row of 2-4 pickers per theme (dark and light). Each
-   row's pickers are all added to a SINGLE Setting (see renderLookSettings in
-   main.js) so they lay out side by side in that row's control area rather
-   than each getting its own labelled row. Obsidian's .setting-item-control is
-   already a flex row, so all this needs to add is breathing room between the
-   swatches - without it they butt against each other and read as one wide
-   multi-colored control instead of N separate pickers. */
+/* --- Settings panel: rows of colour pickers ------------------------------
+   The gradient has one row of 2-4 pickers per theme (dark and light), and
+   the Speed demon ramp one of four. Each row's pickers are all added to a
+   SINGLE Setting (see lookDefinitions in main.js) so they lay out side by
+   side in that row's control area rather than each getting its own labelled
+   row. Obsidian's .setting-item-control is already a flex row, so all this
+   needs to add is breathing room between the swatches - without it they butt
+   against each other and read as one wide multi-coloured control instead of
+   N separate pickers. */
 .cursor-smith-color-row .setting-item-control {
   gap: 6px;
 }
@@ -110,7 +180,7 @@
    the canvas migrates into is guaranteed to have (a pop-out, the 1.13
    settings window); this copy is the main window's. Collapsed to 0x0 until
    the tick sizes them so nothing can sit over the drag surface meanwhile. */
-.retro-box-cursor-wrapper {
+.cursor-smith-wrapper {
   position: fixed;
   overflow: hidden;
   pointer-events: none;
@@ -120,7 +190,7 @@
   width: 0;
   height: 0;
 }
-.retro-box-cursor-canvas {
+.cursor-smith-canvas {
   position: absolute;
   top: 0;
   left: 0;
@@ -136,7 +206,7 @@
      • `isolation: isolate` on anything between the wrapper and
        .app-container. Isolation stops the blend reaching the editor, so the
        option silently does nothing at all.
-     • a mix-blend-mode declared on .retro-box-cursor-canvas here. The
+     • a mix-blend-mode declared on .cursor-smith-canvas here. The
        wrapper is a stacking context, so a blend on the canvas inside it
        composites against the wrapper's empty background - no visible effect,
        and it costs a blend pass every frame to achieve nothing.
@@ -172,7 +242,7 @@
    COMPUTED-VALUE TIME, and that resolves to `unset` - inherited, i.e. a
    fully VISIBLE caret - rather than falling back to any earlier
    declaration. */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
+body.cursor-smith-hide-native.cursor-smith-hide-native {
   caret-color: hsla(var(--color-accent-hsl, 254, 80%, 68%), 0);
 }
 
@@ -183,11 +253,11 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
    ancestor class is doubled for the same specificity reason as above: CM6
    themes style these cursor elements directly, so we need real specificity
    headroom rather than relying on !important or stylesheet load order. */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor-primary,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursor-secondary,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-fat-cursor,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-dropCursor {
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-cursor,
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-cursor-primary,
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-cursor-secondary,
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-fat-cursor,
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-dropCursor {
   display: none;
   opacity: 0;
   visibility: hidden;
@@ -202,7 +272,7 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-dropCursor {
    in the layer hidden above, the animation animates nothing; stopping it took
    idle style recalcs from ~25/s to 0 (measured 2026-09-17). The same rule is
    in injectStyles, which is the only stylesheet a popped-out window gets. */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursorLayer {
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-cursorLayer {
   animation: none;
 }
 
@@ -217,8 +287,8 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursorLayer {
    selector is the MORE specific of the two, so a `transparent` left here
    would win inside the editor and keep issue #24 alive in the one place the
    plugin is actually for. */
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-content,
-body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-content,
+body.cursor-smith-hide-native.cursor-smith-hide-native .cm-line {
   caret-color: hsla(var(--color-accent-hsl, 254, 80%, 68%), 0);
 }
 
@@ -231,33 +301,79 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-line {
    end up with no caret from either source. A declaration on the element
    itself always beats an inherited value, so no doubled class is needed
    here. */
-body.retro-box-cursor-hide-native .excalidraw textarea,
-body.retro-box-cursor-hide-native .excalidraw-wrapper textarea,
-body.retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
+body.cursor-smith-hide-native .excalidraw textarea,
+body.cursor-smith-hide-native .excalidraw-wrapper textarea,
+body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   caret-color: auto;
 }
 
-/* --- Torch Spotlight Effect ---
-   All of the torch overlay's CSS (positioning, gradient, blend mode) lives
-   entirely in the dynamically-injected stylesheet in main.js (injectStyles),
-   since the overlay's colors and radius are driven live from plugin settings
-   via CSS custom properties. Do NOT re-add a .torch-cursor-overlay rule here:
-   a version of this rule used to live in this file and, because its selector
-   was more specific than the one in main.js, it silently won the cascade and
-   overrode the settings-driven values. Keep all torch-cursor-overlay styling
-   in main.js only.
+/* --- Torch spotlight -----------------------------------------------------
+   Two fixed layers under .app-container, siblings of the canvas wrapper:
+   the darkness and, above it, the warm core. Both are canvases PAINTED by
+   the torch tick (paintTorchDarkness / paintTorchGlow); nothing here is a
+   gradient, and nothing here is settings-driven except through the custom
+   property the tick writes. Both are collapsed to 0x0 until the tick sizes
+   them, so neither can sit over the window's drag surface meanwhile.
 
-   The candle flicker is back, but NOT as the keyframe animation it used to be:
-   the torch tick in main.js writes --torch-intensity per frame instead. The
-   original was a CSS animation, which runs on the compositor completely outside
-   main.js's requestAnimationFrame frame governor, so it held the display at
-   full refresh rate for as long as the torch was on no matter which gear the
-   render loops selected - and because the overlay uses mix-blend-mode:
-   multiply across the editor pane, each flicker frame forced a re-composite of
-   the blended layer against its backdrop instead of being a cheap opacity
-   change. Do not re-add an animation property on this element in either file
-   to drive the flame; the tick already does it, under the governor. */
+   NO mix-blend-mode on the darkness. It used to be multiply with a warm
+   colour at the centre stop, which is why the spotlight read as a muddy
+   brown wash rather than as a dark room: multiply can only ever darken, so
+   a warm "tint" walks the page toward brown instead of lighting it. Plain
+   black with alpha, composited normally, is what the reference does - and
+   it is one less blend pass per frame. */
+.cursor-smith-torch-overlay {
+  position: fixed;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 9990;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
 
+/* The warm core, as its own layer. It CANNOT live inside
+   .cursor-smith-torch-overlay: that element carries a z-index, so it is a
+   stacking context, and a screen blend nested inside it would composite
+   against the overlay's own pixels instead of against the editor - visible
+   effect nil, cost one blend pass per frame. See ARCHITECTURE.md,
+   "Blending against the editor". Additive (screen) because multiply can
+   only darken; this sits one z-index above the darkness so it lights what
+   the overlay just dimmed. Built and destroyed by the torch tick, only
+   while Glow strength > 0 - a blended layer costs a re-composite of
+   everything beneath it whether or not it is showing anything.
+
+   Glow strength scales the whole layer through --torch-glow rather than
+   the painted falloff, so the shape stays put as the slider moves and the
+   candle flicker is one number to multiply in. */
+.cursor-smith-torch-glow {
+  position: fixed;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 9991;
+  mix-blend-mode: screen;
+  opacity: var(--torch-glow, 0);
+}
+.cursor-smith-torch-glow.cursor-smith-torch-hidden,
+.cursor-smith-torch-overlay.cursor-smith-torch-hidden {
+  opacity: 0 !important;
+  display: none !important;
+}
+
+/* The candle flicker LIVES IN THE TORCH TICK, which writes --torch-glow
+   under the frame governor. It used to be a keyframe animation here, and
+   that is why this warning exists rather than the feature: a CSS animation
+   runs on the compositor, entirely outside the rAF frame governor, so it
+   pinned the display to full refresh rate for as long as the torch was on,
+   no matter which gear the render loops chose - and on a layer blended over
+   the whole editor pane, every flicker frame forced a re-composite rather
+   than a cheap opacity change. Do NOT re-add an animation or transition
+   property on either torch layer for the flame: the effect already exists,
+   one governor-friendly custom-property write per frame. */
 
 /* Note: we used to force .titlebar/.status-bar to a very high z-index here
    to keep the cursor canvas from painting over them. That fought against
@@ -271,35 +387,25 @@ body.retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
    the titlebar or status bar - no z-index tug-of-war needed, and dragging
    the window works normally again. */
 /* --- Settings panel: the "motion effects are off" notice -----------------
-   Shown at the top of the panel only while the OS is actually asking for
-   reduced motion (see display() in main.js).
+   The first row of the panel, shown only while the OS is actually asking
+   for reduced motion (see reducedMotionNotice in main.js).
 
    It exists because the suppression is deliberately invisible everywhere
    else: applyReducedMotion() runs on the merged copy inside
    effectiveSettings(), never on this.settings, so the toggles below keep
    showing what the user chose rather than being rewritten by an OS
-   preference. Correct for the data, but it means Smooth Movement and Motion
-   Smear can read as ON while doing nothing - which is precisely the bug
+   preference. Correct for the data, but it means Smooth movement and Motion
+   smear can read as ON while doing nothing - which is precisely the bug
    report this notice is here to pre-empt.
 
    Styled off --text-warning rather than a hardcoded colour so it follows the
    user's theme, and kept as a static rule here (not injectStyles) because
    nothing about it is driven by a setting. */
-.cursor-smith-reduced-notice {
-  border: 1px solid var(--text-warning);
-  border-radius: var(--radius-s, 4px);
-  background: var(--background-secondary);
-  padding: 0.7em 0.9em;
-  margin: 0.6em 0 1em;
-  font-size: var(--font-ui-smaller);
-  line-height: 1.45;
-  color: var(--text-muted);
+.setting-item.cursor-smith-reduced-notice {
+  border-left: 3px solid var(--text-warning);
 }
-
-.cursor-smith-reduced-notice-title {
-  font-weight: 700;
+.setting-item.cursor-smith-reduced-notice .setting-item-name {
   color: var(--text-warning);
-  margin-bottom: 0.25em;
 }
 
 /* --- Settings panel and status bar bits (static, so classes not inline) --- */
@@ -320,37 +426,31 @@ body.retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
   width: 14em;
 }
 
-/* Small muted notes under a section (no presets yet, what Command mode
-   covers), and the warning variant (Vim key bindings off). */
-.cursor-smith-note {
-  font-size: var(--font-smaller);
-  color: var(--text-muted);
-  margin: 0.3em 0 1em;
+/* Small muted notes among a card's rows (no presets yet, what Command
+   mode covers): a row with no name and only a description. The warning
+   variant (Vim key bindings off) is tinted. */
+.setting-item.cursor-smith-note-row .setting-item-name:empty {
+  display: none;
 }
-.cursor-smith-note-warning {
+.setting-item.cursor-smith-note-row .setting-item-description {
+  margin-top: 0;
+}
+.setting-item.cursor-smith-note-warning .setting-item-description {
   color: var(--text-warning, var(--text-muted));
 }
 
-/* The version line at the top of the panel. */
-.cursor-smith-version {
-  font-size: var(--font-smaller);
-  color: var(--text-muted);
-  margin: 0 0 0.6em;
-}
-
-/* Segmented controls: the CUA / Vim switch at the top of the panel and the
-   five mode tabs of the Vim panel. */
+/* Segmented controls: the CUA / Vim switch in the first card and the five
+   mode tabs of the Vim panel. Each sits in its row's control area. */
 .cursor-smith-segmented {
   display: flex;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   overflow: hidden;
-  margin: 0.4em 0 1.4em;
-  max-width: 340px;
+  width: 300px;
+  max-width: 100%;
 }
 .cursor-smith-segmented-modes {
-  margin: 0.4em 0 1em;
-  max-width: 520px;
+  width: 460px;
 }
 .cursor-smith-segment {
   flex: 1;

@@ -7,8 +7,7 @@
       "es2021",
       "dom"
     ],
-    "strict": false,
-    "noImplicitAny": false,
+    "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,

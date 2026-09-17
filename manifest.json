@@ -1,8 +1,8 @@
 {
   "id": "cursor-smith",
   "name": "Cursor-Smith",
-  "version": "1.5.3",
-  "minAppVersion": "1.0.0",
+  "version": "1.5.4",
+  "minAppVersion": "1.13.7",
   "description": "Forge your cursor with the most advanced cursor engine there is.",
   "author": "SadSnake1",
   "fundingUrl": "https://buymeacoffee.com/sadsnake1",

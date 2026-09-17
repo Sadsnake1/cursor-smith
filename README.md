@@ -31,6 +31,8 @@ https://github.com/user-attachments/assets/7eab19cc-b7ac-4476-bc40-514b4e75cf61
 
 Separate colors for dark and light, multi-stop gradients, thickness, opacity, glow, translucency. And more. Much, much more.
 
+**Multiple cursors** get the full treatment. Alt-click or Ctrl-D a few carets and every one of them is drawn, styled and animated like the first: smear, trail, fire, stardust, torch, all of it, per caret.
+
 ### The effects
 
 A dozen of them, from subtle to absurd.
@@ -45,7 +47,7 @@ A dozen of them, from subtle to absurd.
 | **Energy Beam** | Bands of light sliding or rippling through the cursor body, with an aurora mode. |
 | **CRT Effect** | Old-monitor phosphor ghosts, neon-tube and gradient variants, Signal Glitch on long jumps. |
 | **Speed Demon** | Heats from grey to white-hot as you type, throwing sparks. Bring your own heat gradient. |
-| **Hot-head** | Sets the text on fire. The fire spreads, lingers, and burns out when you stop. |
+| **Hot-head** | Sets the text on fire, in chunky pixel-art flames. The fire spreads along the line, leaves a burning trail on the text you moved over, flares up around the caret when it jumps, and burns out when you stop. |
 | **Torch Spotlight** | Darkens the page except for a pool of warm light around the cursor, with a candle flicker. |
 
 Some effects unlock extra options when combined. Try Blinking with Torch and see what appears.
@@ -58,7 +60,7 @@ Two layers: a darkness that dims everything outside the pool, and a warm glow th
 
 Dial in a cursor, name it, save it. Load it, edit it, cycle through all of them with one command or a hotkey. Every preset gets a compact share code: copy it, send it to a friend, they paste it into **Import preset** and they've got your cursor.
 
-Six ship with the plugin so you've got something to start from:
+Seven ship with the plugin so you've got something to start from:
 
 | Preset | Style | Vibe |
 |---|---|---|
@@ -68,6 +70,7 @@ Six ship with the plugin so you've got something to start from:
 | **FairyDust** | Underline | Pale yellow underline with pixel trail and energy beam |
 | **DarkMatter** | Box | Blue-purple box with CRT trail and Speed Demon sparks |
 | **old_Joe** | Box | Understated grey box, no frills |
+| **FireBox** | Box | Yellow box with a tapered smear, on fire, heating up as you type faster |
 
 ### Vim mode
 
@@ -87,11 +90,17 @@ Cursor-Smith is animation-heavy by design, so it takes reduced motion seriously.
 
 For anyone who loses the caret: thickness, glow, high-contrast colors and a bigger box are all here, and they work with every effect off.
 
+## Performance
+
+The plugin only ever repaints a small area around the caret, sized to whatever effect is running, and drops to a slow heartbeat when nothing is moving. If Obsidian still feels slower with it on, or you're on battery, **Low Power Mode** halves every effect's frame rate.
+
+If something is off, run the **Performance report** command: it measures ten seconds of normal typing and copies a short report to your clipboard. Paste it into an issue and it tells me exactly where the time goes on your machine.
+
 ## Install
 
 **Settings → Community plugins → Browse**, search **Cursor-Smith**, install, enable.
 
-It activates as soon as it's on. Two commands worth a hotkey: **Toggle Cursor-Smith on/off** and **Cycle preset**.
+It activates as soon as it's on. Two commands worth a hotkey: **Toggle Cursor-Smith on/off** and **Cycle preset**. **Note Editor Only** keeps the custom cursor to your notes, so search boxes, palettes and settings keep Obsidian's own caret.
 
 ## Settings
 
@@ -99,7 +108,7 @@ Collapsible sections, and the panel remembers which ones you closed and where yo
 
 | Section | What it controls |
 |---|---|
-| **Core Configuration** | Enable, hide the real cursor, hide when Obsidian isn't focused, respect reduced motion |
+| **Core Configuration** | Enable, hide the real cursor, draw in notes only, hide when Obsidian isn't focused, Low Power Mode, respect reduced motion |
 | **Presets** | Save, load, edit, delete, share |
 | **Appearance** | Style, thickness, colors and gradients, glow, opacity, translucency, letter-in-block |
 | **Blinking** | Speed, balance, fade, delay, breathing |

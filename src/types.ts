@@ -214,11 +214,12 @@ export interface PresetRowActions {
   code?: string;
   active?: boolean;
 }
-// The look rows' options: how deep the row is indented under its parent, and
-// whether writing it rebuilds the panel (a gate).
-export interface RowOptions { depth?: number; gate?: boolean }
+// The look rows' options: how deep the row is indented under its parent,
+// whether writing it refreshes the panel (a gate), and when it shows.
+export interface SwatchOptions { depth?: number; when?: () => boolean }
+export interface RowOptions extends SwatchOptions { gate?: boolean }
 export interface SliderOptions extends RowOptions { fallback?: number }
-export interface DropdownOptions { depth?: number; value?: string; onChange?: (value: string) => unknown }
+export interface DropdownOptions extends SwatchOptions { value?: string; onChange?: (value: string) => unknown }
 // The look cards, carrying the set of gate keys for the tests.
 export type LookCards = SettingDefinitionGroup[] & { gates?: Set<keyof Look> };
 

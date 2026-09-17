@@ -30,6 +30,11 @@ npm run build     # main.js
 npm test          # `build:test` then the assertions, against the built bundle
 ```
 
+A release is built by GitHub: publishing a release runs
+`.github/workflows/release.yml`, which builds main.js from the tag with the
+committed lockfile, runs the suite on it, attests the assets and attaches
+them to the release. Nothing is uploaded by hand.
+
 The tree is fully typed - no `any`, no index signature, no non-null
 assertion, `tsc` clean under `strict` - and `npm run lint` (the review's
 rule set) reports nothing. The types are in types.ts: the settings object, the caret

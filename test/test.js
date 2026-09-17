@@ -1069,13 +1069,18 @@ section("settings panel renders");
 // The panel is declarative since 1.5.4 (getSettingDefinitions): the harness
 // plays Obsidian's part, building a row for every definition and calling its
 // render callback, so a throw inside one still shows up here the same way.
+//
+// Since 1.5.5 every row is built every time and the rows a gate controls
+// carry a `visible` predicate (a class toggle on refreshDomState(), not a
+// re-render - the re-render cost 60-80ms per press in the settings window).
+// So "the panel shows X" is "a row named X is built AND visible".
 const { renderPanel } = require("./panel_harness");
 
 function panelRows(settings) {
   try { return renderPanel(settings); }
   catch (e) { return { threw: e }; }
 }
-const named = (rows, name) => rows.some(r => r.name === name);
+const named = (rows, name) => rows.some(r => r.name === name && r.visible);
 
 {
   const rows = panelRows({});
@@ -1175,7 +1180,7 @@ const named = (rows, name) => rows.some(r => r.name === name);
 }
 
 // The Box style's Letter color hangs off Show letter inside cursor, so that
-// toggle has to rebuild the panel when pressed - it used to save without a
+// toggle has to refresh the panel when pressed - it used to save without a
 // redraw, and the row it reveals stayed hidden until something else redrew.
 {
   const rows = panelRows({ cursorStyle: "Box", showChar: false });
@@ -1183,8 +1188,9 @@ const named = (rows, name) => rows.some(r => r.name === name);
   const row = rows.find((r) => r.name === "Show letter inside cursor");
   const before = rows.length;
   row.toggles[0]._change(true);
-  ok("pressing Show letter inside cursor rebuilds the panel", rows.length > before);
-  ok("...and Letter color appears", rows.slice(before).some((r) => r.name === "Letter color"));
+  ok("pressing Show letter inside cursor refreshes the panel", rows.tab.refreshes === 1, rows.tab.refreshes);
+  ok("...without rebuilding it", rows.length === before && rows.tab.updates === 0);
+  ok("...and Letter color appears", named(rows, "Letter color"));
 }
 
 // Cursor color: one row carrying both swatches, not two labelled rows. Asserted
@@ -1351,30 +1357,41 @@ const named = (rows, name) => rows.some(r => r.name === name);
     trailLength: 27, overlayRadius: 780, fireworksQuantity: 2.8,
   };
   const rows = panelRows(moved);
-  // Presses a slider's reset and returns what it wrote plus the rows the
-  // rebuild produced (the harness's rows array is append-only).
+  // Presses a slider's reset and returns what it wrote, the row, and the
+  // rows a rebuild would have appended (the harness's rows array is
+  // append-only).
   const press = (name) => {
     const row = rows.find((r) => r.name === name && r.controls.includes("slider"));
     if (!row || !row.extras.length) return null;
     rows.writes.length = 0;
     const before = rows.length;
     row.extras[0]._click();
-    return { w: rows.writes[0] || null, added: rows.slice(before) };
+    return { w: rows.writes[0] || null, row, added: rows.slice(before) };
   };
 
   for (const [name, key] of [["Cursor thickness", "caretWidthPx"],
                              ["Cursor opacity", "cursorOpacity"],
                              ["Blink speed", "blinkSpeed"]]) {
-    const { w, added } = press(name) || {};
+    const { w, row, added } = press(name) || {};
     ok(`"${name}" resets its own key`, w && w.key === key, w);
     ok(`...to the default (${D[key]})`, w && w.value === D[key], w && w.value);
     // Not the cheaper `set` alone: a slider's handle is DOM state nothing
-    // else updates, so the panel has to be rebuilt or the number moves while
-    // the handle stays put. The rebuilt row must show the default.
-    const rebuilt = added.find((r) => r.name === name && r.controls.includes("slider"));
-    ok("...and rebuilds the row with the handle at the default",
-       rebuilt && rebuilt.sliders[0]._value === D[key],
-       rebuilt ? rebuilt.sliders[0]._value : "no rebuilt row");
+    // else updates, so the button moves the handle itself - and does NOT
+    // rebuild the panel for it, which is what made every reset cost a
+    // 60-80ms re-render.
+    ok("...and moves the slider's own handle to it",
+       row && row.sliders[0]._value === D[key], row && row.sliders[0]._value);
+    ok("...without a rebuild", added.length === 0 && rows.tab.updates === 0, rows.tab.updates);
+  }
+  // A reset on a slider that gates other rows (Gravity reveals Gravity
+  // direction) refreshes them too, through the slider's own onChange path.
+  {
+    const g = panelRows({ flameTrail: true, flameTrailGravity: 0.5 });
+    ok("Gravity direction is offered while Gravity pulls", named(g, "Gravity direction"));
+    const row = g.find((r) => r.name === "Gravity");
+    row.extras[0]._click();
+    ok("...and a reset of Gravity to 0 hides it again", !named(g, "Gravity direction") && g.tab.refreshes === 1,
+       { refreshes: g.tab.refreshes });
   }
 
   // Sweep the rest: whatever key each button writes, it must write that key's
@@ -1394,20 +1411,23 @@ const named = (rows, name) => rows.some(r => r.name === name);
 }
 
 // ---------------------------------------------------------------------------
-section("settings panel: gated toggles rebuild the panel in place");
+section("settings panel: gates refresh visibility in place");
 
-// A toggle that reveals or hides other rows calls the tab's update(), and
-// Obsidian rebuilds the panel from getSettingDefinitions() - reconciling the
-// rows by name, so the scroll position and every untouched row's element
-// survive. The rows a gate controls are simply built or not built from the
-// value in memory: a gate in one card that a row in ANOTHER card reads
-// (Gradient in Appearance, Pixel trail's Gradient colors in Effects) needs no
-// registry, because the whole tree is rebuilt.
+// Every row is built on every render; a row that depends on a gate carries a
+// `visible` predicate. A gate's write calls the tab's refreshDomState(), and
+// Obsidian re-asks every predicate and toggles a class per row - nothing is
+// re-rendered, no element is replaced, focus and scroll stay where they are.
+// A gate in one card that a row in ANOTHER card reads (Gradient in
+// Appearance, Pixel trail's Gradient colors in Effects) needs no registry,
+// because every predicate is re-asked. The one thing the predicates cannot
+// express - how many colour pickers the gradient rows carry - is the one
+// write that still rebuilds through update().
 {
   const { sectionOf } = require("./panel_harness");
   const D = T.DEFAULT_SETTINGS;
 
-  // Flip a toggle by name and return the rows the rebuild appended.
+  // Flip a toggle by name and return the rows a rebuild appended (none, for
+  // a gate).
   const flip = (rows, name) => {
     const row = rows.find((r) => r.name === name && r.toggles.length);
     if (!row) return null;
@@ -1415,51 +1435,63 @@ section("settings panel: gated toggles rebuild the panel in place");
     row.toggles[0]._change(!row.toggles[0]._value);
     return rows.slice(before);
   };
-  const sectionsOf = (list) => [...new Set(list.map(sectionOf))];
 
-  // --- A gate rebuilds the whole panel, once ------------------------------
+  // --- A gate refreshes the panel, once, without a rebuild ------------------
   {
     const rows = panelRows({ crtEffect: false });
+    ok("CRT's sub-options are built even while it is off", rows.some((r) => r.name === "Trail length"));
+    ok("...but hidden", !named(rows, "Trail length"));
     const n = rows.length;
     const added = flip(rows, "CRT effect");
-    ok("flipping an Effects gate rebuilds the panel", added && added.length > 0, added && added.length);
-    ok("...once", rows.tab.updates === 1, rows.tab.updates);
-    ok("...all four cards", added && sectionsOf(added).join() === "Appearance,Blinking,Smooth movement,Effects", added && sectionsOf(added));
-    ok("...and the rows built before the press are still there", rows.length === n + added.length);
+    ok("flipping an Effects gate refreshes the panel", rows.tab.refreshes === 1, rows.tab.refreshes);
+    ok("...and does not rebuild it", added && added.length === 0 && rows.tab.updates === 0 && rows.length === n,
+       { added: added && added.length, updates: rows.tab.updates });
     ok("...with the toggle now on", rows.settings.crtEffect === true);
-    const sub = added.find((r) => r.name === "Trail length");
-    ok("...revealing the gate's own sub-options", !!sub, added.map((r) => r.name).slice(0, 6));
+    ok("...revealing the gate's own sub-options", named(rows, "Trail length") && named(rows, "Signal glitch"));
+    flip(rows, "CRT effect");
+    ok("...and off hides them again", !named(rows, "Trail length") && rows.tab.refreshes === 2);
   }
 
-  // --- A plain toggle does not -------------------------------------------
+  // --- A plain toggle does neither -----------------------------------------
   {
     const rows = panelRows({ cursorStyle: "Line" });
     const added = flip(rows, "Serifs");
-    ok("a toggle that reveals nothing writes without a rebuild",
-       added && added.length === 0 && rows.tab.updates === 0 && rows.settings.lineSerifs === true,
-       { added: added && added.length, updates: rows.tab.updates });
+    ok("a toggle that reveals nothing writes without a refresh or a rebuild",
+       added && added.length === 0 && rows.tab.updates === 0 && rows.tab.refreshes === 0 && rows.settings.lineSerifs === true,
+       { added: added && added.length, updates: rows.tab.updates, refreshes: rows.tab.refreshes });
   }
 
   // --- A gate another card reads --------------------------------------------
   {
-    // Gradient lives in Appearance; three Effects rows exist only with it on.
+    // Gradient lives in Appearance; three Effects rows show only with it on.
     const rows = panelRows({ gradientEnabled: false, flameTrail: true, energyEffect: true, crtEffect: true, crtNeon: true });
     ok("with Gradient off, Effects offers no gradient sub-options",
        !named(rows, "Gradient colors") && !named(rows, "Aurora") && !named(rows, "Gradient trail"));
-    const added = flip(rows, "Gradient");
-    ok("flipping Gradient rebuilds Appearance and Effects alike",
-       added && sectionsOf(added).includes("Appearance") && sectionsOf(added).includes("Effects"), added && sectionsOf(added));
+    flip(rows, "Gradient");
+    ok("flipping Gradient refreshes once", rows.tab.refreshes === 1 && rows.tab.updates === 0, rows.tab);
     ok("...and the Effects rows it gates appear",
-       added.some((r) => r.name === "Gradient colors") && added.some((r) => r.name === "Aurora")
-         && added.some((r) => r.name === "Gradient trail"),
-       added.filter((r) => sectionOf(r) === "Effects").map((r) => r.name));
+       named(rows, "Gradient colors") && named(rows, "Aurora") && named(rows, "Gradient trail"),
+       rows.filter((r) => sectionOf(r) === "Effects" && r.visible).map((r) => r.name));
+    ok("...while the flat colour row goes", !named(rows, "Cursor color") && named(rows, "Colors (dark theme)"));
   }
   {
     // Blinking lives in Blinking; the torch's Sync with blink needs it.
     const rows = panelRows({ blinkingEnabled: false, torchEffect: true });
     ok("with Blinking off, the torch offers no Sync with blink", !named(rows, "Sync with blink"));
-    const added = flip(rows, "Blinking");
-    ok("...and flipping Blinking makes it appear", added && added.some((r) => r.name === "Sync with blink"));
+    flip(rows, "Blinking");
+    ok("...and flipping Blinking makes it appear", named(rows, "Sync with blink") && rows.tab.refreshes === 1);
+  }
+
+  // --- The one structural write rebuilds ------------------------------------
+  {
+    const rows = panelRows({ gradientEnabled: true, gradientCount: 2 });
+    const count = rows.find((r) => r.name === "Number of colors");
+    const before = rows.length;
+    count.dropdowns[0]._change("4");
+    ok("the colour count writes a number", rows.settings.gradientCount === 4, rows.settings.gradientCount);
+    ok("...and rebuilds the panel through update()", rows.tab.updates === 1 && rows.length > before, rows.tab.updates);
+    const rebuilt = rows.slice(before).find((r) => r.name === "Colors (dark theme)");
+    ok("...so the swatch rows carry the new count", rebuilt && rebuilt.controls.length === 4, rebuilt && rebuilt.controls);
   }
 
   // --- The gates are what the tests say they are ----------------------------
@@ -1470,14 +1502,17 @@ section("settings panel: gated toggles rebuild the panel in place");
     ok("the two caller-built controls are gates too",
        rows.gates.has("cursorStyle") && rows.gates.has("torchEffect"));
     ok("Show letter inside cursor is a gate (it reveals Letter color)", rows.gates.has("showChar"));
+    ok("the colour count is a gate", rows.gates.has("gradientCount"));
   }
 
-  // --- Completeness: every key that changes the tree is a gate -------------
-  // For every look key: flip it, build again, and see whether any row
-  // changed. If the tree changed, the key must be a gate - otherwise the
-  // row it controls would stay stale after the press, which is exactly the
-  // bug a full rebuild used to paper over. Run from two baselines so both
-  // directions of every gate are exercised.
+  // --- Completeness: every key that changes what shows is a gate ------------
+  // For every look key: flip it, build again, and see whether any row's
+  // visibility changed. If it did, the key must be a gate - otherwise the
+  // row it controls would stay stale after the press. And the other way
+  // round: no key but the colour count may change the tree itself (names,
+  // descriptions, controls), because nothing but update() would show that
+  // change - a description that reads another setting is the bug this
+  // catches. Run from two baselines so both directions are exercised.
   {
     const ALL_ON = {
       popEffects: true, popLetters: true, backspaceDisintegrate: true, thunderstrike: true,
@@ -1491,7 +1526,8 @@ section("settings panel: gated toggles rebuild the panel in place");
       popRainbow: true, glow: true, overlayIntensity: 0.5,
     };
     const ALL_OFF = Object.fromEntries(Object.keys(ALL_ON).map((k) => [k, typeof ALL_ON[k] === "number" ? 0 : false]));
-    const signature = (rows) => rows.map((r) => sectionOf(r) + "|" + r.name + "=" + r.desc + "=" + r.controls.join(",")).join("\n");
+    const shown = (rows) => rows.map((r) => sectionOf(r) + "|" + r.name + "=" + (r.visible ? 1 : 0)).join("\n");
+    const tree = (rows) => rows.map((r) => sectionOf(r) + "|" + r.name + "=" + r.desc + "=" + r.controls.join(",")).join("\n");
     const flipped = (key, v) => {
       if (typeof v === "boolean") return !v;
       if (key === "cursorStyle") return v === "Box" ? "Line" : "Box";
@@ -1500,19 +1536,45 @@ section("settings panel: gated toggles rebuild the panel in place");
       return v;
     };
     const missing = [];
+    const structural = [];
     for (const base of [ALL_ON, ALL_OFF]) {
       const rows = panelRows(base);
-      const before = signature(rows);
+      const before = shown(rows), shape = tree(rows);
       for (const key of T.LOOK_KEYS) {
-        const after = signature(panelRows(Object.assign({}, base, { [key]: flipped(key, rows.settings[key]) })));
-        if (before !== after && !rows.gates.has(key)) missing.push(key);
+        const after = panelRows(Object.assign({}, base, { [key]: flipped(key, rows.settings[key]) }));
+        if (before !== shown(after) && !rows.gates.has(key)) missing.push(key);
+        if (shape !== tree(after) && key !== "gradientCount") structural.push(key);
       }
     }
-    ok("every key that changes the tree is a gate", missing.length === 0, [...new Set(missing)]);
+    ok("every key that changes what shows is a gate", missing.length === 0, [...new Set(missing)]);
+    ok("no key but the colour count changes the tree", structural.length === 0, [...new Set(structural)]);
     // And the check has teeth: it must be able to see a change at all.
     const rows = panelRows(ALL_OFF);
     const after = panelRows(Object.assign({}, ALL_OFF, { gradientEnabled: true }));
-    ok("...and it does see the rows a gate changes", signature(rows) !== signature(after));
+    ok("...and it does see the rows a gate changes", shown(rows) !== shown(after));
+    ok("...and the rows the count changes", tree(panelRows({ gradientEnabled: true, gradientCount: 2 })) !== tree(panelRows({ gradientEnabled: true, gradientCount: 4 })));
+
+    // The pressed gate lands the panel in the same state as a fresh render
+    // from the new value: what refreshDomState() shows after the press is
+    // what update() would have built.
+    const same = [];
+    let pressed = 0;
+    for (const base of [ALL_ON, ALL_OFF]) {
+      const names = panelRows(base).filter((r) => r.toggles.length).map((r) => r.name);
+      for (const name of names) {
+        const rows = panelRows(base);
+        const row = rows.find((r) => r.name === name && r.toggles.length);
+        rows.writes.length = 0;
+        row.toggles[0]._change(!row.toggles[0]._value);
+        const w = rows.writes[0];
+        if (!w || !rows.gates.has(w.key)) continue;
+        pressed++;
+        const fresh = panelRows(Object.assign({}, base, { [w.key]: w.value }));
+        if (shown(rows) !== shown(fresh)) same.push(name);
+      }
+    }
+    ok("a pressed gate shows exactly what a fresh render would", same.length === 0, [...new Set(same)]);
+    ok("...over every gating toggle in the panel", pressed > 40, pressed);
   }
 }
 
@@ -1546,29 +1608,32 @@ section("settings panel: the two callers and their hooks");
        sectionsOf(rows).join() === "Presets,Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
 
     // Cursor style: writes to plugin.settings, restarts the engine, and
-    // rebuilds the panel so the new style's sub-options appear.
+    // refreshes the panel so the new style's sub-options appear.
+    ok("the Line style's rows are hidden under Box", !named(rows, "Cursor thickness"));
     const added = press(rows, "Cursor style", "dropdowns", "Line");
     ok("Cursor style writes the global setting", rows.settings.cursorStyle === "Line", rows.settings.cursorStyle);
     ok("...and restarts the engine", rows.plugin.enabled.includes("enable"), rows.plugin.enabled);
-    ok("...and rebuilds the panel", added && added.length > 0 && rows.tab.updates === 1, rows.tab.updates);
-    ok("...so the Line style's own rows appear", added && added.some((r) => r.name === "Cursor thickness"),
-       added && added.map((r) => r.name));
+    ok("...and refreshes the panel, no rebuild", added && added.length === 0 && rows.tab.refreshes === 1 && rows.tab.updates === 0,
+       { refreshes: rows.tab.refreshes, updates: rows.tab.updates });
+    ok("...so the Line style's own rows appear", named(rows, "Cursor thickness") && named(rows, "Serifs"));
 
-    // Torch: writes, starts the overlay, rebuilds.
+    // Torch: writes, starts the overlay, refreshes.
     const torch = press(rows, "Torch spotlight", "toggles", true);
     ok("Torch spotlight writes the global setting", rows.settings.torchEffect === true);
     ok("...and starts the torch engine", rows.plugin.enabled.includes("torch-on"), rows.plugin.enabled);
-    ok("...and rebuilds the panel", torch && torch.length > 0 && rows.tab.updates === 2, rows.tab.updates);
-    ok("...so the torch's own rows appear", torch && torch.some((r) => r.name === "Light size"), torch && torch.map((r) => r.name).slice(0, 8));
+    ok("...and refreshes the panel", torch && torch.length === 0 && rows.tab.refreshes === 2, rows.tab.refreshes);
+    ok("...so the torch's own rows appear", named(rows, "Light size") && named(rows, "Spotlight"),
+       rows.filter((r) => r.visible).map((r) => r.name).slice(-8));
     const off = press(rows, "Torch spotlight", "toggles", false);
-    ok("...and off stops it again", rows.settings.torchEffect === false && rows.plugin.enabled.includes("torch-off") && off.length > 0);
+    ok("...and off stops it again", rows.settings.torchEffect === false && rows.plugin.enabled.includes("torch-off") && off.length === 0);
+    ok("...and hides them", !named(rows, "Light size") && !named(rows, "Spotlight") && rows.tab.refreshes === 3);
 
     // With the plugin disabled the overlay is not started, but the panel
     // still responds.
     const idle = renderNormal({ enabled: false, torchEffect: false });
-    const idleAdded = press(idle, "Torch spotlight", "toggles", true);
-    ok("with the plugin off, Torch saves and rebuilds without touching the engine",
-       idle.settings.torchEffect === true && idle.plugin.enabled.length === 0 && idleAdded.length > 0,
+    press(idle, "Torch spotlight", "toggles", true);
+    ok("with the plugin off, Torch saves and refreshes without touching the engine",
+       idle.settings.torchEffect === true && idle.plugin.enabled.length === 0 && idle.tab.refreshes === 1,
        idle.plugin.enabled);
   }
 
@@ -1589,21 +1654,22 @@ section("settings panel: the two callers and their hooks");
        target.cursorStyle === "Underline" && rows.settings.cursorStyle === "Box",
        [target.cursorStyle, rows.settings.cursorStyle]);
     ok("...and reports the edit (the Vim panel clears the active preset on it)", edits === 1, edits);
-    ok("...and rebuilds the panel", added && added.length > 0, added && added.length);
-    ok("...so the Underline style's own row appears", added && added.some((r) => r.name === "Underline thickness"));
+    ok("...and refreshes the panel", added && added.length === 0 && rows.tab.refreshes === 1, rows.tab.refreshes);
+    ok("...so the Underline style's own row appears", named(rows, "Underline thickness"));
     ok("...without restarting the engine (a mode has no engine of its own)", rows.plugin.enabled.length === 0);
 
     const torch = press(rows, "Torch spotlight", "toggles", true);
     ok("Torch spotlight writes the snapshot", target.torchEffect === true && rows.settings.torchEffect === false);
     ok("...reports the edit", edits === 2, edits);
-    ok("...and rebuilds the panel", torch && torch.length > 0);
+    ok("...and refreshes the panel", torch && torch.length === 0 && rows.tab.refreshes === 2);
+    ok("...so the torch's rows appear", named(rows, "Light size"));
     ok("...without touching the torch engine", rows.plugin.enabled.length === 0);
 
     // A gated toggle inside the shared builder writes to the snapshot too.
     const g = press(rows, "Gradient", "toggles", true);
     ok("a shared gate writes the snapshot", target.gradientEnabled === true && rows.settings.gradientEnabled === false);
     ok("...reports the edit", edits === 3, edits);
-    ok("...and rebuilds the panel", g && g.length > 0);
+    ok("...and refreshes the panel", g && g.length === 0 && rows.tab.refreshes === 3);
   }
 }
 
@@ -2181,7 +2247,7 @@ section("the plugin review's rules (static styles, settings headings)");
   ok("the manifest asks for the Obsidian this needs",
      JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")).minAppVersion === "1.13.7");
   ok("...and versions.json says so for this release",
-     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.4"] === "1.13.7");
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.5"] === "1.13.7");
 }
 
 // ---------------------------------------------------------------------------
@@ -5095,6 +5161,71 @@ section("the canvas follows the caret (issue #30)");
     e._clipRect = { x: 600, y: 50, w: 500, h: 700 };
     e.setCaret(700, 300);
     ok("a region outside the new clip is refitted", e._fitCanvasRegion() === true && e._canvasRect.x >= 600, e._canvasRect);
+  }
+
+  // ...and when there is no caret left to refit it for, the store is blanked
+  // rather than left holding the last frame. The element keeps the transform
+  // the old wrapper gave it, so with the wrapper moved those pixels would
+  // show through somewhere else - frozen, since draw() never runs without a
+  // region. Seen as the caret ghost on the settings sidebar's "Options"
+  // heading after clicking from the search box to a tab.
+  {
+    const e = makeRegionEngine();
+    e.setCaret(400, 300);
+    e._fitCanvasRegion();
+    e.paintExtra = [380, 280, 40, 40];
+    e.draw();
+    const r0 = e._canvasRect;
+    ok("something is painted", !!e._dirtyPrev);
+    // Focus leaves the field: no caret, and a clip the region lies outside.
+    e.lastActive = null;
+    e.animActive = null;
+    e.paintExtra = null;
+    e._clipRect = { x: 0, y: 50, w: 250, h: 700 };
+    e._wrapperPos = { left: 0, top: 50 };
+    e.ctx.calls.length = 0;
+    ok("the region is dropped", e._fitCanvasRegion() === false && e._canvasRect === null);
+    const wipe = e.ctx.calls.find((c) => c.op === "clearRect");
+    ok("...and the whole store is blanked with it",
+       wipe && wipe.x === 0 && wipe.y === 0 && wipe.w === r0.w * 2 && wipe.h === r0.h * 2, e.ctx.calls);
+    ok("...under the identity transform", e.ctx.calls[0].op === "setTransform" && e.ctx.calls[0].m.join() === "1,0,0,1,0,0", e.ctx.calls[0]);
+    ok("...with the damage records dropped", e._dirtyPrev === null && e._dirtyRaw === null);
+  }
+
+  // A wrapper that moves while the region stays inside its clip re-places
+  // the element against the new origin, so the pixels stay where they were
+  // painted.
+  {
+    const e = makeRegionEngine();
+    e.setCaret(400, 300);
+    e._fitCanvasRegion();
+    const r0 = e._canvasRect;
+    e._clipRect = { x: 0, y: 40, w: 1200, h: 800 };
+    e._wrapperPos = { left: 0, top: 40 };
+    e._canvasPlaced = false;
+    ok("a moved wrapper keeps the region", e._fitCanvasRegion() === false && e._canvasRect === r0);
+    ok("...and re-places the element against it",
+       e.canvas.style.transform === `translate(${r0.x}px, ${r0.y - 40}px)`, e.canvas.style.transform);
+  }
+
+  // Re-enabling the engine (a cursor-style change restarts it) blanks a
+  // surviving store for the same reason: no region, no draw, no clear.
+  {
+    const e = makeRegionEngine();
+    e.setCaret(400, 300);
+    e._fitCanvasRegion();
+    e.paintExtra = [380, 280, 40, 40];
+    e.draw();
+    e.ctx.calls.length = 0;
+    e.registerWindowEvents = () => {};
+    e.app = { workspace: { activeEditor: null, on: () => ({}), getLeavesOfType: () => [] } };
+    e.registerEvent = () => {};
+    const raf = global.requestAnimationFrame;
+    global.requestAnimationFrame = () => 1;
+    try { e.enableCanvasEngine(); } catch (err) { ok("enableCanvasEngine runs on the stand-in", false, err.message); }
+    global.requestAnimationFrame = raf;
+    ok("enabling the engine blanks a surviving store",
+       e.ctx.calls.some((c) => c.op === "clearRect" && c.x === 0 && c.y === 0) && e._canvasRect === null, e.ctx.calls.slice(0, 3));
   }
 
   // The window-sized store is gone for good: resizeCanvas is the region's

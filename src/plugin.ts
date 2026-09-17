@@ -3451,7 +3451,11 @@ export default class CursorSmithPlugin extends Plugin {
     this._resetEngineState();
     this._suspendCleared = false;
     // Begin from a known-clean surface: the canvas survives enable/disable
-    // cycles, so assume nothing about what is currently painted on it.
+    // cycles, so assume nothing about what is currently painted on it. The
+    // clear has to happen here and not through _dirtyFull, because a
+    // region-less engine never reaches draw() - the flag would sit unread
+    // while the old frame stayed on screen.
+    if (this.ctx && this.canvas) this._clearCanvas();
     this._dirty = null;
     this._dirtyPrev = null;
     this._dirtyRaw = null;
@@ -4067,7 +4071,14 @@ export default class CursorSmithPlugin extends Plugin {
     }
     if (!next) {
       // Nothing to show and no region worth keeping (the clip moved out from
-      // under it). Leave the old store; the first frame with a need refits.
+      // under it). The store still holds the last frame, and the element
+      // still sits where the OLD wrapper put it: with the wrapper now
+      // somewhere else, those pixels show through displaced and frozen
+      // until the next caret refits - draw() never runs without a region,
+      // so nothing else would clear them. That was the caret ghost on the
+      // settings sidebar's "Options" heading after a click from the search
+      // box to a tab. Blank the store; the first frame with a need refits.
+      if (this._canvasRect) this._clearCanvas();
       this._canvasRect = null;
       return false;
     }

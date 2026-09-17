@@ -7,8 +7,11 @@
 // row and calls the row's `render` with it. This harness does the same with
 // a recording Setting stub and just enough of Obsidian's DOM helpers
 // (createEl / createDiv / addClass) for the render callbacks to run to
-// completion - and it plays Obsidian's part in update(): a control that adds
-// or removes rows calls tab.update(), and the harness renders the tree again.
+// completion - and it plays Obsidian's part in update() and
+// refreshDomState(): the one structural control (the gradient's colour
+// count) calls tab.update() and the harness renders the tree again; a gate
+// calls tab.refreshDomState() and the harness re-asks every row's `visible`
+// predicate in place, as Obsidian does.
 const Plugin = require("./harness");
 
 function makeEl(tag) {
@@ -49,7 +52,9 @@ function control() {
     setTooltip: (t) => { c._tooltip = t; return c; },
     setIcon: (i) => { c._icon = i; return c; },
     setDisabled: () => c,
-    onChange: (fn) => { c._change = fn; return c; },
+    // As in Obsidian: the component holds the new value by the time its
+    // onChange runs, so a second press sees the first.
+    onChange: (fn) => { c._change = (v) => { c._value = v; return fn(v); }; return c; },
     onClick: (fn) => { c._click = fn; return c; },
     inputEl: makeEl("input"),
     extraSettingsEl: makeEl("div"),
@@ -116,7 +121,7 @@ function renderGroup(group, tab, rows) {
     }
     const setting = new FakeSetting(def, section, rows);
     const row = setting.row;
-    row.visible = def.visible === undefined ? true : (typeof def.visible === "function" ? !!def.visible() : !!def.visible);
+    row.visible = askVisible(def);
     if (def.control) {
       const ctl = def.control;
       const value = tab.getControlValue(ctl.key) ?? ctl.defaultValue;
@@ -133,6 +138,11 @@ function renderGroup(group, tab, rows) {
       row.controls.push("action");
     }
   }
+}
+
+// A row's `visible` predicate, asked now. A row without one is visible.
+function askVisible(def) {
+  return def.visible === undefined ? true : (typeof def.visible === "function" ? !!def.visible() : !!def.visible);
 }
 
 // The section (card heading) a row was built inside, or null for a row
@@ -162,32 +172,35 @@ function makePlugin(settings) {
 
 // A tab whose update() renders the given definition builder again, appending
 // the new rows to the same array - so a test can read the rows a press
-// rebuilt as `rows.slice(n)`.
+// rebuilt as `rows.slice(n)` - and whose refreshDomState() re-asks every
+// row's `visible` predicate in place, counting in `refreshes`.
 function makeTab(plugin, rows, build) {
   const tab = Object.create(Plugin.__test.SettingTabPrototype);
   tab.plugin = plugin;
   tab.containerEl = makeEl("div");
   tab.updates = 0;
+  tab.refreshes = 0;
   tab.update = () => { tab.updates++; renderDefinitions(build(tab), tab, rows); };
+  tab.refreshDomState = () => { tab.refreshes++; for (const row of rows) row.visible = askVisible(row.def); };
   return tab;
 }
 
 // Render the look cards against a given settings object. Returns every row,
 // or rethrows whatever the panel threw.
 //
-// The rows array is append-only across the life of the render: a control
-// that rebuilds the panel (a gated toggle, a slider's reset button) calls
-// update(), which pushes the rebuilt rows AFTER everything built so far, so
-// a test can read them as `rows.slice(n)`. `rows.settings` is the object
-// `set` writes into, so a rebuilt row shows the value just written, as it
-// does in Obsidian.
+// Every row is in the array whether or not it is visible; `row.visible` is
+// its predicate's answer, refreshed in place when a gate's write calls
+// refreshDomState(). The array is append-only: the one control that
+// rebuilds the panel (the gradient's colour count) calls update(), which
+// pushes the rebuilt rows AFTER everything built so far, so a test can read
+// them as `rows.slice(n)`. `rows.settings` is the object `set` writes into.
 //
 // The returned array also carries `rows.writes`: every (key, value) the panel
 // handed to `set` while the test was driving it. Nothing is written during a
 // plain render - it fills in when a test presses a button on a row, which is
 // how the sliders' reset buttons are checked. `rows.gates` is the set of keys
-// whose change rebuilds the panel, as lookDefinitions reports it; `rows.tab`
-// is the tab, whose `updates` counts the rebuilds.
+// whose write refreshes or rebuilds the panel, as lookDefinitions reports
+// it; `rows.tab` is the tab, whose `refreshes` and `updates` count them.
 function renderPanel(settings) {
   const rows = [];
   const writes = [];
@@ -206,6 +219,7 @@ function renderPanel(settings) {
   });
   tab.update();
   tab.updates = 0;
+  tab.refreshes = 0;
   rows.writes = writes;
   rows.settings = merged;
   rows.gates = gates;
@@ -233,6 +247,7 @@ function renderGlobalRows(settings, { reduced = false } = {}) {
   tab.vimDefinitions = () => [];
   tab.update();
   tab.updates = 0;
+  tab.refreshes = 0;
   rows.settings = plugin.settings;
   rows.plugin = plugin;
   rows.tab = tab;
@@ -248,6 +263,7 @@ function renderWholePanel(settings, { reduced = false } = {}) {
   const tab = makeTab(plugin, rows, (t) => t.getSettingDefinitions());
   tab.update();
   tab.updates = 0;
+  tab.refreshes = 0;
   rows.settings = plugin.settings;
   rows.plugin = plugin;
   rows.tab = tab;
@@ -264,14 +280,16 @@ function renderWholePanel(settings, { reduced = false } = {}) {
 // `rows.settings`, presets and all. renderVimMode(settings, target, onEdit)
 // drives modeDefinitions: rows write into `rows.target`, the one Vim mode's
 // snapshot, and `onEdit` fires on every write the way the Vim panel uses it
-// to clear the active preset. Both return the same append-only rows array as
-// renderPanel, so a press's rebuild is `rows.slice(n)`.
+// to clear the active preset. Both return the same rows array as
+// renderPanel: `row.visible` refreshed in place by a gate, a rebuild
+// appended as `rows.slice(n)`.
 function withTab(settings, build) {
   const rows = [];
   const plugin = makePlugin(settings);
   const tab = makeTab(plugin, rows, build);
   tab.update();
   tab.updates = 0;
+  tab.refreshes = 0;
   rows.settings = plugin.settings;
   rows.plugin = plugin;
   rows.tab = tab;

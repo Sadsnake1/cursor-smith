@@ -175,11 +175,11 @@
 
 /* --- Canvas Engine Styles (Box, Line, Underline) --- */
 /* The wrapper is the fixed, clipping, inert box the tick sizes to the
-   caret's neighbourhood; the canvas sits absolutely inside it. Both rules
-   are duplicated in injectStyles, which is the stylesheet every document
-   the canvas migrates into is guaranteed to have (a pop-out, the 1.13
-   settings window); this copy is the main window's. Collapsed to 0x0 until
-   the tick sizes them so nothing can sit over the drag surface meanwhile. */
+   caret's neighbourhood; the canvas sits absolutely inside it. This one
+   stylesheet reaches every document the canvas migrates into - Obsidian
+   clones the main window's stylesheets into each pop-out and into the 1.13
+   settings window. Collapsed to 0x0 until the tick sizes them so nothing
+   can sit over the drag surface meanwhile. */
 .cursor-smith-wrapper {
   position: fixed;
   overflow: hidden;
@@ -270,8 +270,7 @@ body.cursor-smith-hide-native.cursor-smith-hide-native .cm-dropCursor {
    every rendering frame - including every frame this plugin's loop requests,
    of which an idle page would otherwise have almost none. With every cursor
    in the layer hidden above, the animation animates nothing; stopping it took
-   idle style recalcs from ~25/s to 0 (measured 2026-09-17). The same rule is
-   in injectStyles, which is the only stylesheet a popped-out window gets. */
+   idle style recalcs from ~25/s to 0 (measured 2026-09-17). */
 body.cursor-smith-hide-native.cursor-smith-hide-native .cm-cursorLayer {
   animation: none;
 }
@@ -358,10 +357,12 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   mix-blend-mode: screen;
   opacity: var(--torch-glow, 0);
 }
+/* Two classes outrank the one-class rules above; nothing sets these
+   inline, so no !important is needed to hide a layer. */
 .cursor-smith-torch-glow.cursor-smith-torch-hidden,
 .cursor-smith-torch-overlay.cursor-smith-torch-hidden {
-  opacity: 0 !important;
-  display: none !important;
+  opacity: 0;
+  display: none;
 }
 
 /* The candle flicker LIVES IN THE TORCH TICK, which writes --torch-glow
@@ -399,8 +400,7 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
    report this notice is here to pre-empt.
 
    Styled off --text-warning rather than a hardcoded colour so it follows the
-   user's theme, and kept as a static rule here (not injectStyles) because
-   nothing about it is driven by a setting. */
+   user's theme. */
 .setting-item.cursor-smith-reduced-notice {
   border-left: 3px solid var(--text-warning);
 }

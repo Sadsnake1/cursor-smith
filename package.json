@@ -7,13 +7,16 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "check": "tsc --noEmit",
+    "lint": "eslint src",
     "build:test": "node esbuild.config.mjs test",
     "test": "npm run build:test && node test/test.js"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "esbuild": "^0.28.0",
+    "eslint": "^10.0.0",
+    "eslint-plugin-obsidianmd": "^0.4.0",
     "obsidian": "^1.13.0",
-    "typescript": "^7.0.0",
-    "@types/node": "^24.0.0"
+    "typescript": "^5.9.0"
   }
 }

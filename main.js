@@ -1995,11 +1995,11 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     }
     if (!reduced) return null;
     const notice = containerEl.createDiv({ cls: "cursor-smith-reduced-notice" });
-    notice.createEl("div", {
+    notice.createDiv({
       cls: "cursor-smith-reduced-notice-title",
       text: "Motion effects are off"
     });
-    notice.createEl("div", {
+    notice.createDiv({
       text: 'Your system is set to reduce motion, so Smooth Movement, Motion Smear and the other moving effects are suppressed - the toggles below still show your own settings. Turn off "Respect Reduced Motion" to override this.'
     });
     return notice;
@@ -2017,8 +2017,9 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     const scroller = this._scrollHost();
     const scrollTop = scroller ? scroller.scrollTop : 0;
     containerEl.empty();
-    containerEl.createEl("h2", {
-      text: `Cursor-Smith ${this.plugin.manifest?.version ?? ""}`.trim()
+    containerEl.createDiv({
+      cls: "cursor-smith-version",
+      text: `v${this.plugin.manifest?.version ?? ""}`.trim()
     });
     this.renderReducedMotionNotice(containerEl);
     new import_obsidian.Setting(containerEl).setName("Enable Plugin").setDesc("Hands you back Obsidian's own caret.").addToggle(
@@ -2044,7 +2045,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       this.renderNormalSection(containerEl);
     }
     if (scroller && scrollTop) {
-      requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
         scroller.scrollTop = scrollTop;
       });
     }
@@ -2058,29 +2059,13 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   renderModeSwitch(containerEl) {
     const plugin = this.plugin;
     const current = plugin.settings.uiMode || "cua";
-    const wrap = containerEl.createDiv();
-    wrap.style.cssText = [
-      "display:flex",
-      "border:1px solid var(--background-modifier-border)",
-      "border-radius:6px",
-      "overflow:hidden",
-      "margin:0.4em 0 1.4em",
-      "max-width:340px"
-    ].join(";");
+    const wrap = containerEl.createDiv({ cls: "cursor-smith-segmented" });
     const makeBtn = (label, key) => {
-      const btn = wrap.createEl("button", { text: label });
       const active = current === key;
-      btn.style.cssText = [
-        "flex:1",
-        "padding:7px 10px",
-        "border:none",
-        "cursor:pointer",
-        "font-size:var(--font-ui-small)",
-        "font-weight:" + (active ? "600" : "400"),
-        "background:" + (active ? "var(--interactive-accent)" : "var(--background-secondary)"),
-        "color:" + (active ? "var(--text-on-accent)" : "var(--text-normal)"),
-        "transition:background 0.1s ease"
-      ].join(";");
+      const btn = wrap.createEl("button", {
+        text: label,
+        cls: active ? "cursor-smith-segment is-active" : "cursor-smith-segment"
+      });
       btn.addEventListener("click", async () => {
         if ((plugin.settings.uiMode || "cua") === key) return;
         await plugin.setVimModeEnabled(key === "vim");
@@ -2113,7 +2098,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       this._sectionOpen[title] = details.open;
     });
     const summary = details.createEl("summary");
-    summary.createEl("span", { cls: "cursor-smith-section-title", text: title });
+    summary.createSpan({ cls: "cursor-smith-section-title", text: title });
     const body = details.createDiv({ cls: "cursor-smith-section-body" });
     const rerender = () => {
       body.empty();
@@ -2157,7 +2142,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   // Spotlight's "Spotlight" vs "Environment" controls) without opening a
   // whole new collapsible section for them.
   renderSubheading(containerEl, title) {
-    containerEl.createEl("div", { cls: "cursor-smith-subsection-title", text: title });
+    containerEl.createDiv({ cls: "cursor-smith-subsection-title", text: title });
   }
   // -------------------------------------------------------------------------
   // Shared look/effect settings renderer.
@@ -2556,9 +2541,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
         text.onChange((v) => {
           importCode = v.trim();
         });
-        text.inputEl.style.fontFamily = "var(--font-monospace)";
-        text.inputEl.style.fontSize = "var(--font-smaller)";
-        text.inputEl.style.width = "14em";
+        text.inputEl.addClass("cursor-smith-code-input");
       }).addButton((btn) => {
         btn.setButtonText("Import").onClick(async () => {
           if (!importCode) return;
@@ -2567,17 +2550,19 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
             this.display();
           } else {
             btn.setButtonText(importCode.startsWith(SHARE_VERSION_VIM + "|") ? "That's a Vim code" : "Invalid code");
-            setTimeout(() => btn.setButtonText("Import"), 2e3);
+            window.setTimeout(() => {
+              btn.setButtonText("Import");
+            }, 2e3);
           }
         });
       });
       const presets = plugin.getUserPresets();
       const names = Object.keys(presets);
       if (names.length === 0) {
-        const empty = body.createEl("p", {
+        body.createEl("p", {
+          cls: "cursor-smith-note",
           text: "No saved presets yet. Configure your cursor below, then save it above."
         });
-        empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
       } else {
         for (const name of names) {
           this.renderPresetRow(body, name, presets[name], {
@@ -2646,41 +2631,13 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   renderPresetRow(containerEl, name, snap, { onLoad, onEdit, onDelete, code }) {
     if (code === void 0) code = presetToCode(name, snap);
     const setting = new import_obsidian.Setting(containerEl).setName(name);
-    const codeEl = setting.controlEl.createEl("code", { text: code });
-    codeEl.style.cssText = [
-      "font-size:10px",
-      "letter-spacing:0.01em",
-      "color:var(--text-muted)",
-      "background:var(--background-secondary)",
-      "border:1px solid var(--background-modifier-border)",
-      "border-radius:3px",
-      "padding:1px 6px",
-      "max-width:10em",
-      "overflow:hidden",
-      "text-overflow:ellipsis",
-      "white-space:nowrap",
-      "display:inline-block",
-      "vertical-align:middle",
-      "cursor:pointer",
-      "user-select:all",
-      "margin-right:4px"
-    ].join(";");
+    const codeEl = setting.controlEl.createEl("code", { text: code, cls: "cursor-smith-share-code" });
     codeEl.title = code;
-    const copyBtn = setting.controlEl.createEl("button", { text: "Copy" });
-    copyBtn.style.cssText = [
-      "font-size:10px",
-      "padding:2px 8px",
-      "margin-right:6px",
-      "border-radius:3px",
-      "cursor:pointer",
-      "border:1px solid var(--background-modifier-border)",
-      "background:var(--background-secondary)",
-      "color:var(--text-muted)"
-    ].join(";");
+    const copyBtn = setting.controlEl.createEl("button", { text: "Copy", cls: "cursor-smith-copy-button" });
     copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(code).then(() => {
+      void navigator.clipboard.writeText(code).then(() => {
         copyBtn.textContent = "Copied!";
-        setTimeout(() => {
+        window.setTimeout(() => {
           copyBtn.textContent = "Copy";
         }, 1500);
       });
@@ -2693,7 +2650,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   // -------------------------------------------------------------------------
   renderVimSection(containerEl) {
     const plugin = this.plugin;
-    containerEl.createEl("h3", { text: "\u2328 Vim Cursors" });
+    new import_obsidian.Setting(containerEl).setName("\u2328 Vim cursors").setHeading();
     new import_obsidian.Setting(containerEl).setName("Control Obsidian's Vim key bindings").setDesc("Lets this plugin turn Obsidian's Vim key bindings on and off with the mode.").addToggle(
       (toggle) => toggle.setValue(plugin.settings.vimControlObsidian).onChange(async (value) => {
         plugin.settings.vimControlObsidian = value;
@@ -2722,9 +2679,9 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       const warn = containerEl.createEl("p", {
         text: plugin.settings.vimControlObsidian ? "\u26A0 Obsidian's Vim key bindings look off right now. They should switch on automatically \u2014 reopen the editor if the mode cursors don't appear." : `\u26A0 Obsidian's Vim key bindings are off, so mode cursors won't appear. Enable them in Settings \u2192 Editor \u2192 Vim key bindings, or turn on "Control Obsidian's Vim key bindings" above.`
       });
-      warn.style.cssText = "font-size:var(--font-smaller);color:var(--text-warning, var(--text-muted));margin:0.2em 0 1em";
+      warn.addClass("cursor-smith-note", "cursor-smith-note-warning");
     }
-    containerEl.createEl("h3", { text: "Vim Presets" });
+    new import_obsidian.Setting(containerEl).setName("Vim presets").setHeading();
     if (plugin._pendingVimPresetName === void 0) plugin._pendingVimPresetName = "";
     new import_obsidian.Setting(containerEl).setName("Save current Vim setup as preset").setDesc("Give this set of per-mode cursors a name, then click Save.").addText((text) => {
       text.setPlaceholder("My vim theme");
@@ -2748,9 +2705,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       text.onChange((v) => {
         importVimCode = v.trim();
       });
-      text.inputEl.style.fontFamily = "var(--font-monospace)";
-      text.inputEl.style.fontSize = "var(--font-smaller)";
-      text.inputEl.style.width = "14em";
+      text.inputEl.addClass("cursor-smith-code-input");
     }).addButton((btn) => {
       btn.setButtonText("Import").onClick(async () => {
         if (!importVimCode) return;
@@ -2759,17 +2714,19 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
           this.display();
         } else {
           btn.setButtonText(importVimCode.startsWith(SHARE_VERSION + "|") ? "That's a regular code" : "Invalid code");
-          setTimeout(() => btn.setButtonText("Import"), 2e3);
+          window.setTimeout(() => {
+            btn.setButtonText("Import");
+          }, 2e3);
         }
       });
     });
     const presets = plugin.getVimPresets();
     const names = Object.keys(presets);
     if (names.length === 0) {
-      const empty = containerEl.createEl("p", {
+      containerEl.createEl("p", {
+        cls: "cursor-smith-note",
         text: "No saved Vim presets yet. Configure each mode below, then save it above."
       });
-      empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
     } else {
       for (const name of names) {
         const setting = this.renderPresetRow(containerEl, name, presets[name], {
@@ -2793,34 +2750,19 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
         if (name === plugin.settings.vimActivePreset) setting.setDesc("Currently active");
       }
     }
-    containerEl.createEl("h3", { text: "Per-Mode Cursors" });
+    new import_obsidian.Setting(containerEl).setName("Per-mode cursors").setHeading();
     if (!VIM_MODE_KEYS.includes(plugin._vimEditMode)) plugin._vimEditMode = "normal";
     const isDarkTheme = containerEl.ownerDocument?.body?.classList?.contains("theme-dark") ?? true;
-    const tabWrap = containerEl.createDiv();
-    tabWrap.style.cssText = [
-      "display:flex",
-      "border:1px solid var(--background-modifier-border)",
-      "border-radius:6px",
-      "overflow:hidden",
-      "margin:0.4em 0 1em",
-      "max-width:520px"
-    ].join(";");
+    const tabWrap = containerEl.createDiv({ cls: "cursor-smith-segmented cursor-smith-segmented-modes" });
     for (const m of VIM_MODE_KEYS) {
       const active = plugin._vimEditMode === m;
       const cfg = plugin.settings.vimModes[m] || {};
       const tint = isDarkTheme ? cfg.colorDark : cfg.colorLight;
-      const btn = tabWrap.createEl("button", { text: VIM_MODE_LABELS[m] });
-      btn.style.cssText = [
-        "flex:1",
-        "padding:7px 4px",
-        "border:none",
-        "cursor:pointer",
-        "font-size:var(--font-ui-small)",
-        "font-weight:" + (active ? "600" : "400"),
-        "background:" + (active ? "var(--interactive-accent)" : "var(--background-secondary)"),
-        "color:" + (active ? "var(--text-on-accent)" : tint || "var(--text-normal)"),
-        "transition:background 0.1s ease"
-      ].join(";");
+      const btn = tabWrap.createEl("button", {
+        text: VIM_MODE_LABELS[m],
+        cls: active ? "cursor-smith-segment is-active" : "cursor-smith-segment"
+      });
+      if (!active && tint) btn.setCssStyles({ color: tint });
       btn.addEventListener("click", () => {
         if (plugin._vimEditMode === m) return;
         plugin._vimEditMode = m;
@@ -2829,13 +2771,12 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     }
     const mode = plugin._vimEditMode;
     const target = plugin.settings.vimModes[mode];
-    const heading = containerEl.createEl("h4", { text: `${VIM_MODE_LABELS[mode]} mode cursor` });
-    heading.style.marginTop = "0.4em";
+    new import_obsidian.Setting(containerEl).setName(`${VIM_MODE_LABELS[mode]} mode cursor`).setHeading();
     if (mode === "command") {
       const note = containerEl.createEl("p", {
         text: 'Applies whenever the caret leaves the note editor: the built-in Vim command line (the ":" / "/" prompt) and the rest of the Obsidian interface \u2014 Command Palette, Quick Switcher, search, rename boxes, Settings fields and plugin modals. Motion effects (smear, smooth movement, CRT trail) are best left off here: these are all single-line fields, so they read as jitter rather than movement.'
       });
-      note.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.2em 0 1em";
+      note.addClass("cursor-smith-note");
     }
     this.renderModeControls(containerEl, target, () => {
       plugin.settings.vimActivePreset = "";
@@ -3051,7 +2992,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     });
     this.addCommand({
       id: "toggle-cursor-smith",
-      name: "Toggle Cursor-Smith on/off",
+      name: "Toggle on/off",
       callback: () => this.toggle()
     });
     this.addCommand({
@@ -3143,7 +3084,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
         "retro-box-cursor-hide-native",
         "torch-cursor-active"
       );
-    } catch (e) {
+    } catch {
     }
   }
   injectStyles(doc) {
@@ -3164,7 +3105,20 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
          clicks pass through, and rely on the physical rect not covering
          the drag surface (enforced by _chromeInsets in the tick loops). */
       .retro-box-cursor-canvas {
+        position: absolute;
         pointer-events: none;
+      }
+      /* The wrapper the canvas lives in: fixed, clipping, inert, and
+         collapsed until the tick sizes it inline (see ensureCanvasForView). */
+      .retro-box-cursor-wrapper {
+        position: fixed;
+        overflow: hidden;
+        pointer-events: none;
+        z-index: 10000;
+        top: 0;
+        left: 0;
+        width: 0;
+        height: 0;
       }
       /* The native caret in plain <input>/<textarea>/contenteditable fields.
          In the main window this is styles.css's job, but this stylesheet is
@@ -3503,7 +3457,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     const currentIdx = names.indexOf(current);
     const nextIdx = (currentIdx + direction + names.length) % names.length;
     const nextName = names[nextIdx];
-    this.loadUserPreset(nextName).then(() => {
+    void this.loadUserPreset(nextName).then(() => {
       this._activePresetName = nextName;
       this._pendingPresetName = nextName;
       new import_obsidian2.Notice(`Cursor-Smith: ${nextName}`);
@@ -3571,7 +3525,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     const wasActive = !!(this.canvasEngineActive || this.torchEngineActive);
     wasActive ? this.disable() : this.enable();
     this.settings.enabled = !!(this.canvasEngineActive || this.torchEngineActive);
-    this.saveSettings();
+    void this.saveSettings();
   }
   // =========================================================================
   // Vim-aware cursors
@@ -3892,8 +3846,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     if (wanted && !this.vimStatusEl) {
       this.vimStatusEl = this.addStatusBarItem();
       this.vimStatusEl.addClass?.("cursor-smith-vim-status");
-      this.vimStatusEl.style.order = "-9999";
-      this.vimStatusEl.style.marginRight = "auto";
+      this.vimStatusEl.addClass("cursor-smith-vim-status");
       this._vimStatusSig = null;
     } else if (!wanted && this.vimStatusEl) {
       this.vimStatusEl.remove();
@@ -3915,12 +3868,12 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       this._vimStatusSig = sig;
       if (!mode) {
         el.setText("");
-        el.style.color = "";
+        el.setCssStyles({ color: "" });
         return;
       }
       el.setText(`-- ${(VIM_MODE_LABELS[mode] || mode).toUpperCase()} --`);
       if (!tint) {
-        el.style.color = "";
+        el.setCssStyles({ color: "" });
         return;
       }
       const cfg = this.settings.vimModes && this.settings.vimModes[mode] || null;
@@ -3959,7 +3912,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       window.clearTimeout(this._canvasIdleT);
       this._canvasIdleT = 0;
       if (this.canvasEngineActive && this._canvasTick) {
-        this.canvasRaf = requestAnimationFrame(this._canvasTick);
+        this.canvasRaf = window.requestAnimationFrame(this._canvasTick);
       }
     }
     this._wakeTorch();
@@ -4015,7 +3968,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       window.clearTimeout(this._torchIdleT);
       this._torchIdleT = 0;
       if (this.torchEngineActive && this._torchTick) {
-        this.torchRaf = requestAnimationFrame(this._torchTick);
+        this.torchRaf = window.requestAnimationFrame(this._torchTick);
       }
     }
   }
@@ -4067,11 +4020,13 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       }
       doc.removeEventListener("keydown", onKey, true);
       const text = this.perfReportText(perf, seconds);
-      console.log(text);
       const clip = typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : Promise.reject(new Error("no clipboard"));
       clip.then(
-        () => new import_obsidian2.Notice("Cursor-Smith: report copied to the clipboard. It is in the developer console too."),
-        () => new import_obsidian2.Notice("Cursor-Smith: report is in the developer console (Ctrl+Shift+I).")
+        () => new import_obsidian2.Notice("Cursor-Smith: report copied to the clipboard."),
+        () => {
+          console.warn(text);
+          new import_obsidian2.Notice("Cursor-Smith: report is in the developer console (Ctrl+Shift+I).");
+        }
       );
     }, seconds * 1e3);
   }
@@ -4131,7 +4086,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     }
     let gpu = "unknown";
     try {
-      const c = document.createElement("canvas");
+      const c = createEl("canvas");
       const gl = c.getContext("webgl");
       const dbg = gl && gl.getExtension("WEBGL_debug_renderer_info");
       gpu = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : gl ? "webgl, no renderer info" : "no webgl";
@@ -5081,21 +5036,13 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     if (!this.canvasWrapper) {
       targetDoc.body.classList.add("retro-box-cursor-active");
       this.canvasWrapper = targetDoc.createElement("div");
-      this.canvasWrapper.style.position = "fixed";
-      this.canvasWrapper.style.overflow = "hidden";
-      this.canvasWrapper.style.pointerEvents = "none";
-      this.canvasWrapper.style.zIndex = "10000";
-      this.canvasWrapper.style.top = "0px";
-      this.canvasWrapper.style.left = "0px";
-      this.canvasWrapper.style.width = "0px";
-      this.canvasWrapper.style.height = "0px";
+      this.canvasWrapper.className = "retro-box-cursor-wrapper";
       this._lastWrapperRect = "";
       this._canvasBlend = "";
       const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
       appContainer.appendChild(this.canvasWrapper);
       this.canvas = targetDoc.createElement("canvas");
       this.canvas.className = "retro-box-cursor-canvas";
-      this.canvas.style.position = "absolute";
       this.canvasWrapper.appendChild(this.canvas);
       this.ctx = this.canvas.getContext("2d");
       this.injectStyles(targetDoc);
@@ -5134,10 +5081,6 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
       this.overlay = appContainer.createEl("canvas", { cls: "torch-cursor-overlay" });
       this._torchDarkKey = "";
-      this.overlay.style.top = "0px";
-      this.overlay.style.left = "0px";
-      this.overlay.style.width = "0px";
-      this.overlay.style.height = "0px";
       this._lastOverlayRect = "";
       this._lastTorchRadius = -1;
       this._lastGlowRect = "";
@@ -5227,8 +5170,8 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       const doc = this.canvas?.ownerDocument ?? (typeof activeDocument !== "undefined" && activeDocument) ?? document;
       const slidesContainer = doc.querySelector(".slides-container");
       if (slidesContainer && this._isVisiblyRendered(slidesContainer)) return true;
-      const activeLeaf = this.app.workspace.activeLeaf;
-      if (activeLeaf?.view?.getViewType?.() === "slides") return true;
+      const activeView = this.app.workspace.getActiveViewOfType(import_obsidian2.View);
+      if (activeView?.getViewType?.() === "slides") return true;
     } catch {
     }
     return false;
@@ -5264,7 +5207,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
         this._excaliHostVal = !!(el.closest?.(".excalidraw, .excalidraw-wrapper, .excalidraw-view") || el.classList?.contains("excalidraw-wysiwyg"));
       }
       if (this._excaliHostVal) return true;
-      const view = this.app.workspace.activeLeaf?.view;
+      const view = this.app.workspace.getActiveViewOfType(import_obsidian2.View);
       if (view?.getViewType?.() !== "excalidraw") return false;
       if (view.contentEl) return view.contentEl.contains(el);
       return !!(view.containerEl && view.containerEl.contains(el) && !el.closest?.(".view-header"));
@@ -5343,7 +5286,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
   disableCanvasEngine() {
     this.canvasEngineActive = false;
     if (this.canvasRaf) {
-      cancelAnimationFrame(this.canvasRaf);
+      window.cancelAnimationFrame(this.canvasRaf);
       this.canvasRaf = 0;
     }
     if (this._canvasIdleT) {
@@ -5393,7 +5336,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     this._lastGlowAlpha = "";
     this._torchGlowKey = "";
     if (this.torchRaf) {
-      cancelAnimationFrame(this.torchRaf);
+      window.cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
     }
     const docs = [document, ...Array.from(this.registeredDocuments)];
@@ -5430,12 +5373,12 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       const gear = this._canvasGear || "hot";
       const caps = this._frameCaps();
       if (gear === "hot") {
-        this.canvasRaf = requestAnimationFrame(tick);
+        this.canvasRaf = window.requestAnimationFrame(tick);
         return;
       }
       this._canvasIdleT = window.setTimeout(() => {
         this._canvasIdleT = 0;
-        if (this.canvasEngineActive) this.canvasRaf = requestAnimationFrame(tick);
+        if (this.canvasEngineActive) this.canvasRaf = window.requestAnimationFrame(tick);
       }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : caps.idleMs);
     };
     const tick = () => {
@@ -5454,7 +5397,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
           perf.rafPrev = n;
         }
         if (n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
-          this.canvasRaf = requestAnimationFrame(tick);
+          this.canvasRaf = window.requestAnimationFrame(tick);
           return;
         }
         this._lastHotFrameT = n;
@@ -5694,7 +5637,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     };
     this._canvasTick = tick;
     this._canvasGear = "hot";
-    this.canvasRaf = requestAnimationFrame(tick);
+    this.canvasRaf = window.requestAnimationFrame(tick);
   }
   // (Re)allocate the backing store for the current canvas region. This used
   // to size the canvas to the window; it now sizes it to this._canvasRect,
@@ -6540,12 +6483,14 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
         mirror?.remove();
         mirror = doc.createElement("div");
         mirror.setAttribute("aria-hidden", "true");
-        mirror.style.position = "absolute";
-        mirror.style.visibility = "hidden";
-        mirror.style.top = "0";
-        mirror.style.left = "0";
-        mirror.style.zIndex = "-1";
-        mirror.style.pointerEvents = "none";
+        mirror.setCssStyles({
+          position: "absolute",
+          visibility: "hidden",
+          top: "0",
+          left: "0",
+          zIndex: "-1",
+          pointerEvents: "none"
+        });
         doc.body.appendChild(mirror);
         this._formMirror = mirror;
       }
@@ -6576,21 +6521,21 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
         "unicodeBidi"
       ];
       for (const p of props) mirror.style[p] = style[p];
-      mirror.style.borderStyle = "solid";
+      mirror.setCssStyles({ borderStyle: "solid" });
       const padL = parseFloat(style.paddingLeft) || 0;
       const padR = parseFloat(style.paddingRight) || 0;
-      mirror.style.boxSizing = "content-box";
-      mirror.style.width = Math.max(0, (el.clientWidth || 0) - padL - padR) + "px";
-      mirror.style.whiteSpace = isTextarea ? "pre-wrap" : "pre";
-      mirror.style.wordWrap = isTextarea ? "break-word" : "normal";
-      mirror.style.overflow = "hidden";
-      if (!isTextarea) mirror.style.height = "auto";
+      mirror.setCssStyles({
+        boxSizing: "content-box",
+        width: Math.max(0, (el.clientWidth || 0) - padL - padR) + "px",
+        whiteSpace: isTextarea ? "pre-wrap" : "pre",
+        wordWrap: isTextarea ? "break-word" : "normal",
+        overflow: "hidden"
+      });
+      if (!isTextarea) mirror.setCssStyles({ height: "auto" });
       mirror.textContent = "";
       mirror.appendChild(doc.createTextNode(value.substring(0, selStart)));
       const marker = doc.createElement("span");
-      marker.style.display = "inline-block";
-      marker.style.width = "0";
-      marker.style.verticalAlign = "top";
+      marker.setCssStyles({ display: "inline-block", width: "0", verticalAlign: "top" });
       mirror.appendChild(marker);
       mirror.appendChild(doc.createTextNode(value.substring(selStart)));
       const markerRect = marker.getBoundingClientRect();
@@ -7666,7 +7611,6 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
       } else {
         const u = (t - fw.riseMs) / fw.fallMs;
         const el = u * fallSec;
-        const drop = 0.5 * FIREWORK_GRAVITY * el * el;
         const a = FIREWORK_ALPHA * opacity * Math.max(0, 1 - u * u);
         if (a > 0.01) {
           const tw = u > FIREWORK_TWINKLE_AT;
@@ -9666,14 +9610,14 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     const schedule = () => {
       if (!this.torchEngineActive) return;
       if (this._torchGear === "hot") {
-        this.torchRaf = requestAnimationFrame(tick);
+        this.torchRaf = window.requestAnimationFrame(tick);
         return;
       }
       const caps = this._frameCaps();
       const delay = this._torchGear === "pulse" ? caps.torchPulseMs : caps.torchIdleMs;
       this._torchIdleT = window.setTimeout(() => {
         this._torchIdleT = 0;
-        if (this.torchEngineActive) this.torchRaf = requestAnimationFrame(tick);
+        if (this.torchEngineActive) this.torchRaf = window.requestAnimationFrame(tick);
       }, delay);
     };
     const tick = () => {
@@ -9809,7 +9753,7 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
     };
     this._torchTick = tick;
     this._torchGear = "hot";
-    this.torchRaf = requestAnimationFrame(tick);
+    this.torchRaf = window.requestAnimationFrame(tick);
   }
   // True when the element is actually painted (not display:none, hidden,
   // or fully transparent). Used by _chromeInsets to decide whether the
@@ -9988,7 +9932,6 @@ var CursorSmithPlugin = class extends import_obsidian2.Plugin {
   }
   _paneRectFrom(rect, rootEl) {
     const doc = rootEl.ownerDocument;
-    const win = doc.defaultView || window;
     const { top: chromeTop } = this._chromeInsets(doc);
     const top = Math.max(rect.top, chromeTop);
     const bottom = rect.bottom;

@@ -104,12 +104,27 @@
 }
 
 /* --- Canvas Engine Styles (Box, Line, Underline) --- */
-.retro-box-cursor-canvas {
+/* The wrapper is the fixed, clipping, inert box the tick sizes to the
+   caret's neighbourhood; the canvas sits absolutely inside it. Both rules
+   are duplicated in injectStyles, which is the stylesheet every document
+   the canvas migrates into is guaranteed to have (a pop-out, the 1.13
+   settings window); this copy is the main window's. Collapsed to 0x0 until
+   the tick sizes them so nothing can sit over the drag surface meanwhile. */
+.retro-box-cursor-wrapper {
   position: fixed;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 10000;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+.retro-box-cursor-canvas {
+  position: absolute;
   top: 0;
   left: 0;
   pointer-events: none;
-  z-index: 9999;
 }
 
 /* The Translucent option works by putting a mix-blend-mode on the canvas
@@ -285,4 +300,104 @@ body.retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
   font-weight: 700;
   color: var(--text-warning);
   margin-bottom: 0.25em;
+}
+
+/* --- Settings panel and status bar bits (static, so classes not inline) --- */
+
+/* The Vim mode indicator pinned to the LEFT of the status bar: Obsidian
+   packs status items to the right in one flex row, so the lowest `order`
+   puts this one first and `margin-right: auto` absorbs the free space after
+   it - the standard flexbox left/right split. */
+.cursor-smith-vim-status {
+  order: -9999;
+  margin-right: auto;
+}
+
+/* Share-code fields. */
+.cursor-smith-code-input {
+  font-family: var(--font-monospace);
+  font-size: var(--font-smaller);
+  width: 14em;
+}
+
+/* Small muted notes under a section (no presets yet, what Command mode
+   covers), and the warning variant (Vim key bindings off). */
+.cursor-smith-note {
+  font-size: var(--font-smaller);
+  color: var(--text-muted);
+  margin: 0.3em 0 1em;
+}
+.cursor-smith-note-warning {
+  color: var(--text-warning, var(--text-muted));
+}
+
+/* The version line at the top of the panel. */
+.cursor-smith-version {
+  font-size: var(--font-smaller);
+  color: var(--text-muted);
+  margin: 0 0 0.6em;
+}
+
+/* Segmented controls: the CUA / Vim switch at the top of the panel and the
+   five mode tabs of the Vim panel. */
+.cursor-smith-segmented {
+  display: flex;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.4em 0 1.4em;
+  max-width: 340px;
+}
+.cursor-smith-segmented-modes {
+  margin: 0.4em 0 1em;
+  max-width: 520px;
+}
+.cursor-smith-segment {
+  flex: 1;
+  padding: 7px 10px;
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+  font-weight: 400;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  transition: background 0.1s ease;
+}
+.cursor-smith-segmented-modes .cursor-smith-segment {
+  padding: 7px 4px;
+}
+.cursor-smith-segment.is-active {
+  font-weight: 600;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+/* A preset's share code and its Copy button, in the preset row. */
+.cursor-smith-share-code {
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: all;
+  margin-right: 4px;
+}
+.cursor-smith-copy-button {
+  font-size: 10px;
+  padding: 2px 8px;
+  margin-right: 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
 }

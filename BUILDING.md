@@ -25,6 +25,7 @@ test/               the test suite (`npm test`) and its Obsidian stub
 ```
 npm install
 npm run check     # tsc
+npm run lint      # the plugin review's rules (eslint-plugin-obsidianmd)
 npm run build     # main.js
 npm test          # `build:test` then the assertions, against the built bundle
 ```

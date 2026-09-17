@@ -16,7 +16,7 @@ export function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-export function hexToRgb(hex: string) {
+export function hexToRgb(hex: string): string {
   let h = (hex || "#ff963c").replace("#", "");
   if (h.length === 3) {
     h = h.split("").map((c) => c + c).join("");
@@ -27,7 +27,7 @@ export function hexToRgb(hex: string) {
 
 // Lift a channel toward white by `f`. Used to keep the bolt's core brighter
 // than its halo without carrying two palettes around.
-export function lighten(c, f) {
+export function lighten(c: number, f: number): number {
   return Math.round(c + (255 - c) * f);
 }
 
@@ -42,7 +42,7 @@ export function lighten(c, f) {
 // still reads as light rather than as a coloured line. The neighbours are
 // close together on purpose - a bolt spanning half the colour wheel stops
 // looking like one discharge.
-export function thunderRamp(hue = null) {
+export function thunderRamp(hue: number | null = null): number[][] {
   if (typeof hue === "number") {
     return [
       hslToRgbTuple(hue, 0.85, 0.62),
@@ -60,7 +60,7 @@ export function thunderRamp(hue = null) {
 }
 
 // Sample a ramp at 0..1.
-export function thunderColorAt(stops, t) {
+export function thunderColorAt(stops: number[][], t: number): number[] {
   if (stops.length === 1) return stops[0];
   const p = Math.max(0, Math.min(1, t)) * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(p));
@@ -74,7 +74,7 @@ export function thunderColorAt(stops, t) {
   ];
 }
 
-export function hexToRgbTuple(hex: string) {
+export function hexToRgbTuple(hex: string): number[] {
   let h = (hex || "#ffffff").replace("#", "");
   if (h.length === 3) h = h.split("").map((c) => c + c).join("");
   const int = parseInt(h, 16) || 0;
@@ -87,7 +87,7 @@ export function hexToRgbTuple(hex: string) {
 // effects (popped letters, Thunderstrike's colour ramp, Fireworks' sparks) and
 // two of them need [r,g,b] to interpolate or nudge before anything is painted,
 // so building a string first and re-parsing it would be pure waste.
-export function hslToRgbTuple(h: number, s, l) {
+export function hslToRgbTuple(h: number, s: number, l: number): number[] {
   const hue = ((h % 360) + 360) % 360;
   const c = (1 - Math.abs(2 * l - 1)) * s;
   const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
@@ -105,7 +105,7 @@ export function hslToRgbTuple(h: number, s, l) {
     Math.round((b1 + m) * 255),
   ];
 }
-export function hslToRgbString(h: number, s, l) {
+export function hslToRgbString(h: number, s: number, l: number): string {
   const [r, g, b] = hslToRgbTuple(h, s, l);
   return `rgb(${r}, ${g}, ${b})`;
 }
@@ -117,7 +117,7 @@ export function hslToRgbString(h: number, s, l) {
 // never desaturated, so any segment that visibly greys out breaks the effect.
 // Rotating the hue instead keeps every intermediate colour fully lit, which is
 // what makes the ramp read as a temperature rather than a crossfade.
-export function rgbToHsv([r, g, b]: number[]) {
+export function rgbToHsv([r, g, b]: number[]): number[] {
   const rr = r / 255, gg = g / 255, bb = b / 255;
   const max = Math.max(rr, gg, bb);
   const min = Math.min(rr, gg, bb);
@@ -132,7 +132,7 @@ export function rgbToHsv([r, g, b]: number[]) {
   return [h, max > 1e-6 ? d / max : 0, max];
 }
 
-export function hsvToRgb([h, s, v]: number[]) {
+export function hsvToRgb([h, s, v]: number[]): number[] {
   const hue = ((h % 360) + 360) % 360;
   const sat = Math.max(0, Math.min(1, s));
   const val = Math.max(0, Math.min(1, v));
@@ -167,7 +167,7 @@ export function hsvToRgb([h, s, v]: number[]) {
 // would swing the saturated end through unrelated colours on its way to grey,
 // so when one end is colourless the other end's hue is simply held and only
 // saturation/value move.
-export function lerpHsv(a, b, f, arc = 0) {
+export function lerpHsv(a: number[], b: number[], f: number, arc = 0): number[] {
   let hue;
   if (a[1] < 0.03) hue = b[0];
   else if (b[1] < 0.03) hue = a[0];
@@ -180,8 +180,8 @@ export function lerpHsv(a, b, f, arc = 0) {
   return [hue, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
 }
 
-export function rgbTupleToHex([r, g, b]: number[]) {
-  const c = (n) => Math.max(0, Math.min(255, Math.round(n)));
+export function rgbTupleToHex([r, g, b]: number[]): string {
+  const c = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
   return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
 }
 
@@ -219,15 +219,15 @@ export function parseColorTuple(colorStr: string) {
 // WCAG relative luminance. Note this is NOT the same as "average brightness":
 // green weighs ten times what blue does, which is exactly why a naive
 // mid-channel test picks the wrong glyph colour over saturated blues.
-export function relLuminance(rgb) {
-  const f = (v) => {
+export function relLuminance(rgb: number[]): number {
+  const f = (v: number) => {
     const c = v / 255;
     return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   };
   return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
 }
 
-export function contrastRatio(a, b) {
+export function contrastRatio(a: number[], b: number[]): number {
   const la = relLuminance(a), lb = relLuminance(b);
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
@@ -268,12 +268,12 @@ export const GLYPH_COLOR_MODES = ["contrast", "tinted", "invert"];
 // finds the first passing step; stopping AT the threshold rather than jumping
 // straight to black/white is the whole point, since it keeps as much of the
 // inverted hue as legibility allows.
-export function readableGlyphColor(boxColorStr, mode = "contrast") {
+export function readableGlyphColor(boxColorStr: string, mode: string | null = "contrast"): string {
   const box = parseColorTuple(boxColorStr);
   if (!box) return "#000000";
 
   const inv = [255 - box[0], 255 - box[1], 255 - box[2]];
-  const rgb = (c) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  const rgb = (c: number[]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 
   // Raw inversion. No floor, no neutralising - if you pick a mid-grey cursor
   // this WILL be illegible, and that is the honest behaviour of the mode.

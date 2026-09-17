@@ -3,6 +3,7 @@
 // code and its comments are the bundle's.
 
 import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS } from "./constants";
+import type { CursorSmithSettings } from "./types";
 
 // Candle flicker, as a multiplier on the torch's base glow strength.
 //
@@ -15,7 +16,7 @@ import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS } from
 // implementation was a keyframe animation, which runs on the compositor
 // entirely outside the governor and therefore pinned the display at full
 // refresh rate for as long as the torch was lit, in whichever gear the loops
-// had otherwise chosen. See the notes in injectStyles and styles.css.
+// had otherwise chosen. See the notes in styles.css.
 export function torchFlickerScale(nowMs: number, amount: number) {
   const a = Math.max(0, Math.min(1, amount));
   if (a === 0) return 1;
@@ -60,14 +61,14 @@ export const REDUCED_MOTION_OFF_KEYS = [
   "blinkBreathing",      // size oscillation
   "overlayBlinkSync",    // torch radius pulse
   "overlayFlicker",      // torch candle flicker
-];
+] as const;
 
-export function applyReducedMotion(obj) {
+export function applyReducedMotion(obj: CursorSmithSettings) {
   for (const k of REDUCED_MOTION_OFF_KEYS) obj[k] = false;
   return obj;
 }
 
-export function easeInOutSine(x: number) {
+export function easeInOutSine(x: number): number {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
 
@@ -78,7 +79,7 @@ export function easeInOutSine(x: number) {
 // each frame would draw a different arrangement and the effect would smear
 // into noise instead of stepping between a few distinct broken states, which
 // is what actually reads as a mistracked signal.
-export function glitchNoise(a, b, c) {
+export function glitchNoise(a: number, b: number, c: number): number {
   let n = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(c | 0, 2246822519)) >>> 0;
   n = Math.imul(n ^ (n >>> 13), 1274126177) >>> 0;
   return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
@@ -90,7 +91,7 @@ export function glitchNoise(a, b, c) {
 // radio, range, color, button, etc. don't have a caret and must be excluded
 // so clicking an Obsidian settings toggle (which is <input type="checkbox">)
 // doesn't cause the plugin to draw a cursor on top of it.
-export function isTextCaretHost(el: Element | null) {
+export function isTextCaretHost(el: Element | null): el is HTMLElement {
   if (!el) return false;
   if ((el as HTMLElement).isContentEditable) return true;
   const tag = el.tagName;
@@ -105,7 +106,7 @@ export function isTextCaretHost(el: Element | null) {
   return false;
 }
 
-export function blinkAlphaAt(nowMs: number, speed, onOffBalance = 0.5, fade = 0.15) {
+export function blinkAlphaAt(nowMs: number, speed: number, onOffBalance = 0.5, fade = 0.15): number {
   if (speed <= 0) return 1;
   const period = 2500 / speed; 
   const phase = (nowMs % period) / period; 

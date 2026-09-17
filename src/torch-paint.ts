@@ -3,6 +3,7 @@
 // code and its comments are the bundle's.
 
 import { TORCH_CANVAS_SCALE } from "./constants";
+import type { Pt } from "./types";
 
 // The torch's two layers, painted. Both used to be DOM elements carrying a
 // CSS radial-gradient positioned by custom properties, which cost a
@@ -27,7 +28,7 @@ import { TORCH_CANVAS_SCALE } from "./constants";
 // `w`/`h` are the layer's CSS size, `spots` in its own coordinates; the
 // context is expected to carry the TORCH_CANVAS_SCALE transform
 // (torchCanvasContext). Pure so the painting can be tested on a recorder.
-export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: number, spots, radiusPx: number, darkness: number) {
+export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: number, spots: Pt[], radiusPx: number, darkness: number) {
   const d = Math.max(0, Math.min(1, darkness));
   const r = Math.max(1, radiusPx);
   ctx.globalCompositeOperation = "source-over";
@@ -47,7 +48,7 @@ export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: 
   ctx.globalCompositeOperation = "source-over";
 }
 
-export function paintTorchGlow(ctx: CanvasRenderingContext2D, w: number, h: number, spots, radiusPx: number, warmRgb) {
+export function paintTorchGlow(ctx: CanvasRenderingContext2D, w: number, h: number, spots: Pt[], radiusPx: number, warmRgb: string) {
   const r = Math.max(1, radiusPx * 0.6);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, w, h);

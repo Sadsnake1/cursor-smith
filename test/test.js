@@ -870,16 +870,14 @@ section("palette: Toggle CUA/Vim mode");
 }
 
 // refreshSettingTab is the real method here, not a stub. It exists because the
-// panel's mode switch is drawn from uiMode at build time, so toggling from the
-// palette with Settings open used to leave it showing the mode you just left -
-// and clicking the half that looked inactive then did nothing, because
-// renderModeSwitch's own guard correctly saw the mode was already current.
+// panel is built from definitions Obsidian keeps: the mode switch, the preset
+// lists and the loaded values are baked in when getSettingDefinitions() runs,
+// and Obsidian renders the last set it was handed - so a palette command that
+// changes any of them has to hand it a new set, or the panel opens showing
+// the state you just left.
 {
-  const mkTab = (attached) => {
-    const el = { ownerDocument: null };
-    const doc = { body: { contains: (x) => attached && x === el } };
-    el.ownerDocument = doc;
-    const tab = { containerEl: el, displayed: 0, display() { tab.displayed++; } };
+  const mkTab = () => {
+    const tab = { containerEl: {}, updated: 0, update() { tab.updated++; } };
     return tab;
   };
   const run = (tab) => {
@@ -889,16 +887,15 @@ section("palette: Toggle CUA/Vim mode");
     return p;
   };
 
-  const open = mkTab(true);
-  run(open);
-  ok("an on-screen panel is rebuilt", open.displayed === 1, open.displayed);
+  const tab = mkTab();
+  run(tab);
+  ok("the panel's definitions are rebuilt", tab.updated === 1, tab.updated);
 
-  // A tab that was opened once and closed keeps its containerEl; the element
-  // is simply no longer in a document. Obsidian offers no "is my tab open"
-  // flag, so that detachment IS the test.
-  const closed = mkTab(false);
-  run(closed);
-  ok("a closed panel is left alone", closed.displayed === 0, closed.displayed);
+  // Whether or not it is on screen: update() stores the definitions and only
+  // re-renders if the tab is the one showing, so there is nothing to check.
+  const again = mkTab();
+  run(again); run(again);
+  ok("...every time it is asked", again.updated === 2, again.updated);
 
   let threw = false;
   try { run(undefined); } catch { threw = true; }
@@ -907,7 +904,7 @@ section("palette: Toggle CUA/Vim mode");
   // Fails closed, like every other decorative step in this plugin: a stale
   // panel is far cheaper than a palette command that throws.
   {
-    const bad = mkTab(true);
+    const bad = mkTab();
     bad.display = () => { throw new Error("panel exploded"); };
     const realError = console.error;
     console.error = () => {};
@@ -1068,6 +1065,10 @@ section("settings panel renders");
 // which threw a ReferenceError mid-render and silently removed that row AND
 // every row after it from the panel. Nothing engine-side can see that - the
 // effect worked perfectly, you just couldn't reach its toggle.
+//
+// The panel is declarative since 1.5.4 (getSettingDefinitions): the harness
+// plays Obsidian's part, building a row for every definition and calling its
+// render callback, so a throw inside one still shows up here the same way.
 const { renderPanel } = require("./panel_harness");
 
 function panelRows(settings) {
@@ -1086,24 +1087,35 @@ const named = (rows, name) => rows.some(r => r.name === name);
 // name here means something threw before it, or a gate is wrong.
 {
   const rows = panelRows({});
-  for (const name of ["Pop Effects", "Pixel Trail", "Speed Demon", "CRT Effect"]) {
+  for (const name of ["Pop effects", "Pixel trail", "Speed demon", "CRT effect"]) {
     ok(`"${name}" is reachable`, named(rows, name), rows.map(r => r.name).filter(Boolean));
   }
   ok("Text Crawl is gone", !rows.some(r => (r.name || "").includes("Crawl")),
      rows.map(r => r.name).filter(n => n && n.includes("Crawl")));
 }
 
-// Pop Effects' five sub-options, and the rows that hang off them.
+// The four cards, in order, each a group with a heading - that is what
+// Obsidian renders as a card and indexes for settings search.
+{
+  const rows = panelRows({});
+  const { sectionOf } = require("./panel_harness");
+  const sections = [...new Set(rows.map(sectionOf))];
+  ok("the look settings are four cards", sections.join() === "Appearance,Blinking,Smooth movement,Effects", sections);
+  ok("every row has a name or a note",
+     rows.every((r) => r.name || r.def.render), rows.filter((r) => !r.name && !r.def.render).map((r) => r.def));
+}
+
+// Pop effects' five sub-options, and the rows that hang off them.
 {
   const rows = panelRows({ popEffects: true });
-  for (const name of ["Rainbow", "Popping Letters", "Backspace Disintegration",
+  for (const name of ["Rainbow", "Popping letters", "Backspace disintegration",
                       "Thunderstrike", "Fireworks"]) {
-    ok(`Pop Effects shows "${name}"`, named(rows, name), name);
+    ok(`Pop effects shows "${name}"`, named(rows, name), name);
   }
   // Built and removed; asserted absent so a half-finished revert can't put it
   // back unnoticed.
-  ok("Matrix Rain is gone", !named(rows, "Matrix Rain"));
-  ok("Rain Density is gone", !named(rows, "Rain Density"));
+  ok("Matrix Rain is gone", !named(rows, "Matrix rain") && !named(rows, "Matrix Rain"));
+  ok("Rain Density is gone", !named(rows, "Rain density") && !named(rows, "Rain Density"));
 
   const closed = panelRows({ popEffects: false });
   ok("the group gate hides its sub-options", !named(closed, "Fireworks"));
@@ -1118,7 +1130,7 @@ const named = (rows, name) => rows.some(r => r.name === name);
   ok("Quantity is hidden with Fireworks off", !named(off, "Quantity"));
 
   const bolt = panelRows({ popEffects: true, thunderstrike: true });
-  ok("Thunderstrike's sliders appear", named(bolt, "Bolt Size") && named(bolt, "Strength"));
+  ok("Thunderstrike's sliders appear", named(bolt, "Bolt size") && named(bolt, "Bolt strength"));
   ok("rows after Thunderstrike still render", named(bolt, "Fireworks"));
 }
 
@@ -1127,30 +1139,30 @@ const named = (rows, name) => rows.some(r => r.name === name);
 // out everything downstream of itself.
 {
   const on = panelRows({ blinkingEnabled: true });
-  ok("\"Stop After\" is reachable", named(on, "Stop After"), on.map(r => r.name).filter(Boolean));
-  ok("...the row before it still renders", named(on, "Blink Delay"));
+  ok("\"Stop after\" is reachable", named(on, "Stop after"), on.map(r => r.name).filter(Boolean));
+  ok("...the row before it still renders", named(on, "Blink delay"));
   ok("...and the row after it does too", named(on, "Breathing"));
   const off = panelRows({ blinkingEnabled: false });
-  ok("...and the blink gate hides it", !named(off, "Stop After"));
+  ok("...and the blink gate hides it", !named(off, "Stop after"));
 }
 
-// Speed Demon's custom ramp rows, including the Keep Cursor Color interaction.
+// Speed demon's custom ramp rows, including the Keep cursor color interaction.
 {
   const on = panelRows({ speedDemon: true, speedDemonGradient: true });
-  ok("custom heat stops render", named(on, "Stages (Dark Theme)") && named(on, "Stages (Light Theme)"));
+  ok("custom heat stops render", named(on, "Stages (dark theme)") && named(on, "Stages (light theme)"));
   const keep = panelRows({ speedDemon: true, speedDemonNoCursorHeat: true });
-  ok("Keep Cursor Color hides the custom ramp", !named(keep, "Custom Gradient"));
+  ok("Keep cursor color hides the custom ramp", !named(keep, "Custom gradient"));
 }
 
 // CRT rows. Inverted Trail was built and then removed; assert it is gone
 // rather than dropping the check, so a half-finished revert can't sneak back.
 {
   const on = panelRows({ crtEffect: true });
-  ok("CRT sub-options render", named(on, "Glow") && named(on, "Signal Glitch"));
-  ok("Inverted Trail is gone", !named(on, "Inverted Trail"));
-  ok("Inversion Strength is gone", !named(on, "Inversion Strength"));
+  ok("CRT sub-options render", named(on, "Glow") && named(on, "Signal glitch"));
+  ok("Inverted Trail is gone", !named(on, "Inverted trail") && !named(on, "Inverted Trail"));
+  ok("Inversion Strength is gone", !named(on, "Inversion strength") && !named(on, "Inversion Strength"));
   const off = panelRows({ crtEffect: false });
-  ok("CRT off hides its sub-options", !named(off, "Signal Glitch"));
+  ok("CRT off hides its sub-options", !named(off, "Signal glitch"));
 }
 
 // Flip was a Box-only row; with Text Crawl gone it must not reappear anywhere.
@@ -1162,27 +1174,40 @@ const named = (rows, name) => rows.some(r => r.name === name);
   }
 }
 
-// Cursor Color: one row carrying both swatches, not two labelled rows. Asserted
+// The Box style's Letter color hangs off Show letter inside cursor, so that
+// toggle has to rebuild the panel when pressed - it used to save without a
+// redraw, and the row it reveals stayed hidden until something else redrew.
+{
+  const rows = panelRows({ cursorStyle: "Box", showChar: false });
+  ok("Letter color is hidden while the letter is", !named(rows, "Letter color"));
+  const row = rows.find((r) => r.name === "Show letter inside cursor");
+  const before = rows.length;
+  row.toggles[0]._change(true);
+  ok("pressing Show letter inside cursor rebuilds the panel", rows.length > before);
+  ok("...and Letter color appears", rows.slice(before).some((r) => r.name === "Letter color"));
+}
+
+// Cursor color: one row carrying both swatches, not two labelled rows. Asserted
 // on the control count as well as the name, since a row that lost a picker
 // would still be named right.
 {
   const rows = panelRows({ gradientEnabled: false });
-  const color = rows.filter((r) => r.name === "Cursor Color");
-  ok("the flat cursor colors share one row", color.length === 1, rows.filter(r => /Cursor Color/.test(r.name || "")).map(r => r.name));
+  const color = rows.filter((r) => r.name === "Cursor color");
+  ok("the flat cursor colors share one row", color.length === 1, rows.filter(r => /Cursor color/.test(r.name || "")).map(r => r.name));
   ok("that row carries both swatches", color[0] && color[0].controls.length === 2,
      color[0] && color[0].controls);
   ok("the old per-theme color rows are gone",
-     !named(rows, "Cursor Color (Dark Theme)") && !named(rows, "Cursor Color (Light Theme)"));
+     !named(rows, "Cursor color (dark theme)") && !named(rows, "Cursor color (light theme)"));
 
   // Same helper builds the gradient rows, so a break in it shows up here too.
   const grad = panelRows({ gradientEnabled: true, gradientCount: 3 });
-  const dark = grad.find((r) => r.name === "Colors (Dark Theme)");
+  const dark = grad.find((r) => r.name === "Colors (dark theme)");
   ok("gradient rows still carry one swatch per color", dark && dark.controls.length === 3,
      dark && dark.controls.length);
-  ok("the flat color row is hidden while Gradient is on", !named(grad, "Cursor Color"));
+  ok("the flat color row is hidden while Gradient is on", !named(grad, "Cursor color"));
 }
 
-// Pop Effects' Rainbow: last in the group, and only once there is something for
+// Pop effects' Rainbow: last in the group, and only once there is something for
 // it to recolour. The gate is on the four effects, NOT on popEffects - the
 // group can be on with everything inside it off, and that is exactly the state
 // where the toggle would recolour nothing.
@@ -1191,9 +1216,9 @@ const named = (rows, name) => rows.some(r => r.name === name);
     popEffects: true, popLetters: false, backspaceDisintegrate: false,
     thunderstrike: false, fireworks: false,
   });
-  ok("Pop Effects with nothing on hides Rainbow", !named(allOff, "Rainbow"));
+  ok("Pop effects with nothing on hides Rainbow", !named(allOff, "Rainbow"));
   ok("...but the group's own effects are still offered",
-     named(allOff, "Popping Letters") && named(allOff, "Fireworks"));
+     named(allOff, "Popping letters") && named(allOff, "Fireworks"));
 
   // Each of the four independently reveals it. backspaceDisintegrate is the one
   // that mattered: it saved without redrawing until Rainbow's visibility came
@@ -1215,14 +1240,14 @@ const named = (rows, name) => rows.some(r => r.name === name);
   });
   const at = (n) => on.findIndex((r) => r.name === n);
   ok("Rainbow sits below all four effects",
-     at("Rainbow") > at("Popping Letters") && at("Rainbow") > at("Backspace Disintegration") &&
+     at("Rainbow") > at("Popping letters") && at("Rainbow") > at("Backspace disintegration") &&
      at("Rainbow") > at("Thunderstrike") && at("Rainbow") > at("Fireworks"),
      { rainbow: at("Rainbow"), fireworks: at("Fireworks") });
   // Its sub-options belong to their own effects, so it must not have swallowed
   // them on the way down.
   ok("the effects kept their own sub-options",
-     named(on, "Bolt Size") && named(on, "Quantity"));
-  ok("the whole group still renders past Rainbow", named(on, "Pixel Trail"));
+     named(on, "Bolt size") && named(on, "Quantity"));
+  ok("the whole group still renders past Rainbow", named(on, "Pixel trail"));
 }
 
 // Torch Flicker, restored on the key that stayed in LOOK_KEYS while it was
@@ -1230,16 +1255,44 @@ const named = (rows, name) => rows.some(r => r.name === name);
 {
   const off = panelRows({ torchEffect: true, overlayFlicker: false });
   ok("Flicker is offered with the torch on", named(off, "Flicker"));
-  ok("Flicker Depth is hidden while Flicker is off", !named(off, "Flicker Depth"));
+  ok("Flicker depth is hidden while Flicker is off", !named(off, "Flicker depth"));
 
   const on = panelRows({ torchEffect: true, overlayFlicker: true });
-  ok("Flicker Depth appears with Flicker on", named(on, "Flicker Depth"));
+  ok("Flicker depth appears with Flicker on", named(on, "Flicker depth"));
   // The panel harness exists for exactly this: a row that throws while being
   // built silently removes itself and every row after it.
-  ok("rows after Flicker still render", named(on, "Keep Sidebars Lit"));
+  ok("rows after Flicker still render", named(on, "Keep sidebars lit"));
 
   const noTorch = panelRows({ torchEffect: false });
-  ok("no torch, no Flicker", !named(noTorch, "Flicker") && !named(noTorch, "Flicker Depth"));
+  ok("no torch, no Flicker", !named(noTorch, "Flicker") && !named(noTorch, "Flicker depth"));
+}
+
+// Row names are sentence case (Obsidian's UI style, and its review's
+// obsidianmd/ui/sentence-case rule): after the first word, only proper
+// nouns and acronyms keep a capital.
+{
+  const wideOpen = {
+    popEffects: true, popLetters: true, backspaceDisintegrate: true,
+    thunderstrike: true, fireworks: true, flameTrail: true, flameTrailGravity: 0.5,
+    stardustEnabled: true, stardustOrbit: true, bracketTether: true,
+    smear: true, smearTaper: true, energyEffect: true, energyAurora: true, gradientEnabled: true,
+    crtEffect: true, crtNeon: true, crtGlitch: true, speedDemon: true, speedDemonSparks: true,
+    speedDemonGradient: true, hotHead: true, hotHeadFlat: true,
+    torchEffect: true, overlayFlicker: true, overlayBlinkSync: true,
+    blinkingEnabled: true, blinkBreathing: true, smoothEnabled: true,
+    smoothAdaptive: true, cursorStyle: "Box", boxHollow: true, showChar: true,
+  };
+  const allowed = new Set(["CRT", "Vim", "Obsidian", "Obsidian's", "CUA", "I-beam", "Hot-head", "Speed", "Rainbow"]);
+  const offenders = [];
+  for (const r of panelRows(wideOpen)) {
+    if (!r.name) continue;
+    const words = r.name.split(/[\s/]+/).slice(1);
+    for (const w of words) {
+      const bare = w.replace(/[()]/g, "");
+      if (/^[A-Z]/.test(bare) && !allowed.has(bare)) offenders.push(r.name);
+    }
+  }
+  ok("every row name is sentence case", offenders.length === 0, [...new Set(offenders)]);
 }
 
 // Every slider carries a "restore default" button. Checked as a completeness
@@ -1279,6 +1332,10 @@ const named = (rows, name) => rows.some(r => r.name === name);
   const toggleOnly = rows.filter((r) => r.controls.length === 1 && r.controls[0] === "toggle");
   ok("toggles did not get one", toggleOnly.every((r) => r.extras.length === 0),
      toggleOnly.filter((r) => r.extras.length).map((r) => r.name));
+
+  // No slider asks for the tooltip that 1.13 draws anyway (setDynamicTooltip
+  // is deprecated there); the value shows inline.
+  ok("no slider calls setDynamicTooltip", !/setDynamicTooltip/.test(require("fs").readFileSync(require("path").join(__dirname, "..", "build", "test-bundle.js"), "utf8")));
 }
 
 // Pressing reset writes that slider's DEFAULT_SETTINGS value - not the
@@ -1294,8 +1351,8 @@ const named = (rows, name) => rows.some(r => r.name === name);
     trailLength: 27, overlayRadius: 780, fireworksQuantity: 2.8,
   };
   const rows = panelRows(moved);
-  // Presses a slider's reset and returns what it wrote plus the rows its
-  // section re-rendered (the harness's rows array is append-only).
+  // Presses a slider's reset and returns what it wrote plus the rows the
+  // rebuild produced (the harness's rows array is append-only).
   const press = (name) => {
     const row = rows.find((r) => r.name === name && r.controls.includes("slider"));
     if (!row || !row.extras.length) return null;
@@ -1305,14 +1362,14 @@ const named = (rows, name) => rows.some(r => r.name === name);
     return { w: rows.writes[0] || null, added: rows.slice(before) };
   };
 
-  for (const [name, key] of [["Cursor Thickness", "caretWidthPx"],
-                             ["Cursor Opacity", "cursorOpacity"],
-                             ["Blink Speed", "blinkSpeed"]]) {
+  for (const [name, key] of [["Cursor thickness", "caretWidthPx"],
+                             ["Cursor opacity", "cursorOpacity"],
+                             ["Blink speed", "blinkSpeed"]]) {
     const { w, added } = press(name) || {};
     ok(`"${name}" resets its own key`, w && w.key === key, w);
     ok(`...to the default (${D[key]})`, w && w.value === D[key], w && w.value);
     // Not the cheaper `set` alone: a slider's handle is DOM state nothing
-    // else updates, so the row has to be rebuilt or the number moves while
+    // else updates, so the panel has to be rebuilt or the number moves while
     // the handle stays put. The rebuilt row must show the default.
     const rebuilt = added.find((r) => r.name === name && r.controls.includes("slider"));
     ok("...and rebuilds the row with the handle at the default",
@@ -1337,20 +1394,20 @@ const named = (rows, name) => rows.some(r => r.name === name);
 }
 
 // ---------------------------------------------------------------------------
-section("settings panel: gated toggles re-render their own section");
+section("settings panel: gated toggles rebuild the panel in place");
 
-// A toggle that reveals or hides other rows used to call display(), which
-// empties the whole panel and builds every row again - a full teardown of a
-// very long panel to change three rows in one section. Now it re-renders the
-// section it lives in, in place: the <details> element, its open state and
-// every other section's DOM are untouched. A section that reads a gate from
-// ANOTHER section declares it in `rerenderOn`, and the completeness check at
-// the bottom is what keeps that list honest.
+// A toggle that reveals or hides other rows calls the tab's update(), and
+// Obsidian rebuilds the panel from getSettingDefinitions() - reconciling the
+// rows by name, so the scroll position and every untouched row's element
+// survive. The rows a gate controls are simply built or not built from the
+// value in memory: a gate in one card that a row in ANOTHER card reads
+// (Gradient in Appearance, Pixel trail's Gradient colors in Effects) needs no
+// registry, because the whole tree is rebuilt.
 {
   const { sectionOf } = require("./panel_harness");
   const D = T.DEFAULT_SETTINGS;
 
-  // Flip a toggle by name and return the rows its press appended.
+  // Flip a toggle by name and return the rows the rebuild appended.
   const flip = (rows, name) => {
     const row = rows.find((r) => r.name === name && r.toggles.length);
     if (!row) return null;
@@ -1360,92 +1417,67 @@ section("settings panel: gated toggles re-render their own section");
   };
   const sectionsOf = (list) => [...new Set(list.map(sectionOf))];
 
-  // --- One section's gate re-renders that section and nothing else ---------
+  // --- A gate rebuilds the whole panel, once ------------------------------
   {
     const rows = panelRows({ crtEffect: false });
     const n = rows.length;
-    const added = flip(rows, "CRT Effect");
-    ok("flipping an Effects gate appends new rows", added && added.length > 0, added && added.length);
-    ok("...all of them in Effects", added && sectionsOf(added).join() === "Effects", added && sectionsOf(added));
+    const added = flip(rows, "CRT effect");
+    ok("flipping an Effects gate rebuilds the panel", added && added.length > 0, added && added.length);
+    ok("...once", rows.tab.updates === 1, rows.tab.updates);
+    ok("...all four cards", added && sectionsOf(added).join() === "Appearance,Blinking,Smooth movement,Effects", added && sectionsOf(added));
     ok("...and the rows built before the press are still there", rows.length === n + added.length);
     ok("...with the toggle now on", rows.settings.crtEffect === true);
-    const sub = added.find((r) => r.name === "Trail Length");
+    const sub = added.find((r) => r.name === "Trail length");
     ok("...revealing the gate's own sub-options", !!sub, added.map((r) => r.name).slice(0, 6));
   }
+
+  // --- A plain toggle does not -------------------------------------------
   {
-    const rows = panelRows({ smoothEnabled: false });
-    const added = flip(rows, "Smooth Movement");
-    ok("a Smooth Movement gate re-renders Smooth Movement only",
-       added && sectionsOf(added).join() === "Smooth Movement", added && sectionsOf(added));
+    const rows = panelRows({ cursorStyle: "Line" });
+    const added = flip(rows, "Serifs");
+    ok("a toggle that reveals nothing writes without a rebuild",
+       added && added.length === 0 && rows.tab.updates === 0 && rows.settings.lineSerifs === true,
+       { added: added && added.length, updates: rows.tab.updates });
   }
 
-  // --- The section is re-rendered IN PLACE, not rebuilt ---------------------
-  {
-    const rows = panelRows({ crtEffect: false });
-    const detailsOf = (row) => { let el = row.parent; while (el && el.tag !== "details") el = el.parent; return el; };
-    const oldEffects = detailsOf(rows.find((r) => sectionOf(r) === "Effects"));
-    const oldAppearance = detailsOf(rows.find((r) => sectionOf(r) === "Appearance"));
-    const added = flip(rows, "CRT Effect");
-    ok("the re-rendered section keeps its <details> element",
-       added.every((r) => detailsOf(r) === oldEffects));
-    ok("...so a section the user collapsed stays collapsed", oldEffects.open === detailsOf(added[0]).open);
-    const appearanceAfter = detailsOf(rows.find((r) => sectionOf(r) === "Appearance"));
-    ok("...and an untouched section's element is the same object", appearanceAfter === oldAppearance);
-    // The body under the summary is what was emptied - the summary itself
-    // was not, or the title would have gone with the rows.
-    const summary = oldEffects.children.find((c) => c.tag === "summary");
-    ok("...with its title still in place",
-       summary && summary.children[0] && summary.children[0].text === "Effects");
-  }
-
-  // --- A gate another section reads re-renders that section too ------------
+  // --- A gate another card reads --------------------------------------------
   {
     // Gradient lives in Appearance; three Effects rows exist only with it on.
     const rows = panelRows({ gradientEnabled: false, flameTrail: true, energyEffect: true, crtEffect: true, crtNeon: true });
     ok("with Gradient off, Effects offers no gradient sub-options",
-       !named(rows, "Gradient Colors") && !named(rows, "Aurora") && !named(rows, "Gradient Trail"));
+       !named(rows, "Gradient colors") && !named(rows, "Aurora") && !named(rows, "Gradient trail"));
     const added = flip(rows, "Gradient");
-    ok("flipping Gradient re-renders Appearance AND Effects",
-       added && sectionsOf(added).sort().join() === "Appearance,Effects", added && sectionsOf(added));
+    ok("flipping Gradient rebuilds Appearance and Effects alike",
+       added && sectionsOf(added).includes("Appearance") && sectionsOf(added).includes("Effects"), added && sectionsOf(added));
     ok("...and the Effects rows it gates appear",
-       added.some((r) => r.name === "Gradient Colors") && added.some((r) => r.name === "Aurora")
-         && added.some((r) => r.name === "Gradient Trail"),
+       added.some((r) => r.name === "Gradient colors") && added.some((r) => r.name === "Aurora")
+         && added.some((r) => r.name === "Gradient trail"),
        added.filter((r) => sectionOf(r) === "Effects").map((r) => r.name));
-    ok("...while Blinking and Smooth Movement were left alone",
-       !added.some((r) => sectionOf(r) === "Blinking" || sectionOf(r) === "Smooth Movement"));
   }
   {
-    // Blinking lives in Blinking; the torch's Sync With Blink needs it.
+    // Blinking lives in Blinking; the torch's Sync with blink needs it.
     const rows = panelRows({ blinkingEnabled: false, torchEffect: true });
-    ok("with Blinking off, the torch offers no Sync With Blink", !named(rows, "Sync With Blink"));
+    ok("with Blinking off, the torch offers no Sync with blink", !named(rows, "Sync with blink"));
     const added = flip(rows, "Blinking");
-    ok("flipping Blinking re-renders Blinking AND Effects",
-       added && sectionsOf(added).sort().join() === "Blinking,Effects", added && sectionsOf(added));
-    ok("...and Sync With Blink appears", added.some((r) => r.name === "Sync With Blink"));
+    ok("...and flipping Blinking makes it appear", added && added.some((r) => r.name === "Sync with blink"));
   }
 
-  // --- The registry is what the tests say it is -----------------------------
+  // --- The gates are what the tests say they are ----------------------------
   {
     const rows = panelRows({});
-    ok("every gate key is a real setting", [...rows.gates.keys()].every((k) => k in D),
-       [...rows.gates.keys()].filter((k) => !(k in D)));
-    ok("every gate has a home section",
-       [...rows.gates.values()].every((h) => ["Appearance", "Blinking", "Smooth Movement", "Effects"].includes(h)),
-       [...rows.gates.entries()].filter(([, h]) => !h));
-    ok("the two caller-built controls are registered too",
-       rows.gates.get("cursorStyle") === "Appearance" && rows.gates.get("torchEffect") === "Effects",
-       [rows.gates.get("cursorStyle"), rows.gates.get("torchEffect")]);
-    ok("Effects declares the two gates it reads from elsewhere",
-       rows.rerenderOn.get("gradientEnabled")?.has("Effects") && rows.rerenderOn.get("blinkingEnabled")?.has("Effects"));
+    ok("every gate key is a real setting", [...rows.gates].every((k) => k in D),
+       [...rows.gates].filter((k) => !(k in D)));
+    ok("the two caller-built controls are gates too",
+       rows.gates.has("cursorStyle") && rows.gates.has("torchEffect"));
+    ok("Show letter inside cursor is a gate (it reveals Letter color)", rows.gates.has("showChar"));
   }
 
-  // --- Completeness: no undeclared cross-section read -----------------------
-  // For every gated key: flip it, render again, and see which sections' rows
-  // changed. Each one must be the key's home or a section that declared it -
-  // otherwise that section would keep showing stale rows after the press,
-  // which is exactly the bug display() used to paper over by rebuilding
-  // everything. Run from two baselines so both directions of every gate are
-  // exercised.
+  // --- Completeness: every key that changes the tree is a gate -------------
+  // For every look key: flip it, build again, and see whether any row
+  // changed. If the tree changed, the key must be a gate - otherwise the
+  // row it controls would stay stale after the press, which is exactly the
+  // bug a full rebuild used to paper over. Run from two baselines so both
+  // directions of every gate are exercised.
   {
     const ALL_ON = {
       popEffects: true, popLetters: true, backspaceDisintegrate: true, thunderstrike: true,
@@ -1453,18 +1485,13 @@ section("settings panel: gated toggles re-render their own section");
       crtEffect: true, crtNeon: true, crtGlitch: true, torchEffect: true,
       overlayBlinkSync: true, overlayFlicker: true, blinkingEnabled: true, blinkBreathing: true,
       smoothEnabled: true, smoothAdaptive: true, gradientEnabled: true, boxHollow: true,
-      cursorTranslucent: true, hotHead: true, speedDemon: true, stardust: true,
-      bracketTether: true, lineSerifs: true,
+      cursorTranslucent: true, hotHead: true, hotHeadFlat: true, speedDemon: true, speedDemonSparks: true,
+      speedDemonGradient: true, stardustEnabled: true, stardustOrbit: true,
+      bracketTether: true, lineSerifs: true, showChar: true, smear: true, smearTaper: true,
+      popRainbow: true, glow: true, overlayIntensity: 0.5,
     };
-    const ALL_OFF = Object.fromEntries(Object.keys(ALL_ON).map((k) => [k, false]));
-    const signature = (rows) => {
-      const by = {};
-      for (const r of rows) {
-        const s = sectionOf(r);
-        by[s] = (by[s] || "") + "|" + r.name + "=" + r.desc + "=" + r.controls.join(",");
-      }
-      return by;
-    };
+    const ALL_OFF = Object.fromEntries(Object.keys(ALL_ON).map((k) => [k, typeof ALL_ON[k] === "number" ? 0 : false]));
+    const signature = (rows) => rows.map((r) => sectionOf(r) + "|" + r.name + "=" + r.desc + "=" + r.controls.join(",")).join("\n");
     const flipped = (key, v) => {
       if (typeof v === "boolean") return !v;
       if (key === "cursorStyle") return v === "Box" ? "Line" : "Box";
@@ -1472,37 +1499,31 @@ section("settings panel: gated toggles re-render their own section");
       if (typeof v === "number") return v ? 0 : 0.5;
       return v;
     };
-    const undeclared = [];
+    const missing = [];
     for (const base of [ALL_ON, ALL_OFF]) {
       const rows = panelRows(base);
       const before = signature(rows);
-      for (const [key, home] of rows.gates) {
+      for (const key of T.LOOK_KEYS) {
         const after = signature(panelRows(Object.assign({}, base, { [key]: flipped(key, rows.settings[key]) })));
-        const allowed = new Set([home, ...(rows.rerenderOn.get(key) || [])]);
-        for (const s of new Set([...Object.keys(before), ...Object.keys(after)])) {
-          if (before[s] !== after[s] && !allowed.has(s)) undeclared.push({ key, home, changes: s });
-        }
+        if (before !== after && !rows.gates.has(key)) missing.push(key);
       }
     }
-    ok("no gate changes a section that does not re-render on it", undeclared.length === 0, undeclared);
+    ok("every key that changes the tree is a gate", missing.length === 0, [...new Set(missing)]);
     // And the check has teeth: it must be able to see a change at all.
     const rows = panelRows(ALL_OFF);
-    const before = signature(rows);
-    const after = signature(panelRows(Object.assign({}, ALL_OFF, { gradientEnabled: true })));
-    ok("...and it does see the sections a gate changes",
-       before.Appearance !== after.Appearance && before.Effects !== after.Effects);
+    const after = panelRows(Object.assign({}, ALL_OFF, { gradientEnabled: true }));
+    ok("...and it does see the rows a gate changes", signature(rows) !== signature(after));
   }
 }
 
 // ---------------------------------------------------------------------------
 section("settings panel: the two callers and their hooks");
 
-// renderPanel enters at renderLookSettings with the caller's hooks stubbed
-// out, so the Cursor Style dropdown and the Torch toggle - built by each
-// caller, each handed a `rerender` - had no coverage at all, and neither did
-// where each caller's `set` writes. Both callers used to reach for
-// this.display() from those hooks; they now re-render the section, and the
-// only way to see that is to drive the caller whole.
+// renderPanel enters at lookDefinitions with the caller's hooks stubbed out,
+// so the Cursor style dropdown and the Torch toggle - built by each caller,
+// each handed a `rerender` - had no coverage at all, and neither did where
+// each caller's `set` writes. The only way to see that is to drive the
+// caller whole.
 {
   const { renderNormal, renderVimMode, sectionOf } = require("./panel_harness");
   const sectionsOf = (list) => [...new Set(list.map(sectionOf))];
@@ -1520,33 +1541,33 @@ section("settings panel: the two callers and their hooks");
     let threw = null;
     try { rows = renderNormal({ enabled: true, cursorStyle: "Box", torchEffect: false }); }
     catch (e) { threw = e; }
-    ok("renderNormalSection builds", !threw, threw && threw.message);
-    ok("...Presets first, then the four look sections",
-       sectionsOf(rows).join() === "Presets,Appearance,Blinking,Smooth Movement,Effects", sectionsOf(rows));
+    ok("normalDefinitions builds", !threw, threw && threw.message);
+    ok("...Presets first, then the four look cards",
+       sectionsOf(rows).join() === "Presets,Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
 
-    // Cursor Style: writes to plugin.settings, restarts the engine, and
-    // re-renders Appearance so the new style's sub-options appear.
-    const added = press(rows, "Cursor Style", "dropdowns", "Line");
-    ok("Cursor Style writes the global setting", rows.settings.cursorStyle === "Line", rows.settings.cursorStyle);
+    // Cursor style: writes to plugin.settings, restarts the engine, and
+    // rebuilds the panel so the new style's sub-options appear.
+    const added = press(rows, "Cursor style", "dropdowns", "Line");
+    ok("Cursor style writes the global setting", rows.settings.cursorStyle === "Line", rows.settings.cursorStyle);
     ok("...and restarts the engine", rows.plugin.enabled.includes("enable"), rows.plugin.enabled);
-    ok("...and re-renders Appearance only", added && sectionsOf(added).join() === "Appearance", added && sectionsOf(added));
-    ok("...so the Line style's own rows appear", added && added.some((r) => r.name === "Cursor Thickness"),
+    ok("...and rebuilds the panel", added && added.length > 0 && rows.tab.updates === 1, rows.tab.updates);
+    ok("...so the Line style's own rows appear", added && added.some((r) => r.name === "Cursor thickness"),
        added && added.map((r) => r.name));
 
-    // Torch: writes, starts the overlay, re-renders Effects.
-    const torch = press(rows, "Torch Spotlight", "toggles", true);
-    ok("Torch Spotlight writes the global setting", rows.settings.torchEffect === true);
+    // Torch: writes, starts the overlay, rebuilds.
+    const torch = press(rows, "Torch spotlight", "toggles", true);
+    ok("Torch spotlight writes the global setting", rows.settings.torchEffect === true);
     ok("...and starts the torch engine", rows.plugin.enabled.includes("torch-on"), rows.plugin.enabled);
-    ok("...and re-renders Effects only", torch && sectionsOf(torch).join() === "Effects", torch && sectionsOf(torch));
-    ok("...so the torch's own rows appear", torch && torch.some((r) => r.name === "Light Size"), torch && torch.map((r) => r.name).slice(0, 8));
-    const off = press(rows, "Torch Spotlight", "toggles", false);
+    ok("...and rebuilds the panel", torch && torch.length > 0 && rows.tab.updates === 2, rows.tab.updates);
+    ok("...so the torch's own rows appear", torch && torch.some((r) => r.name === "Light size"), torch && torch.map((r) => r.name).slice(0, 8));
+    const off = press(rows, "Torch spotlight", "toggles", false);
     ok("...and off stops it again", rows.settings.torchEffect === false && rows.plugin.enabled.includes("torch-off") && off.length > 0);
 
     // With the plugin disabled the overlay is not started, but the panel
     // still responds.
     const idle = renderNormal({ enabled: false, torchEffect: false });
-    const idleAdded = press(idle, "Torch Spotlight", "toggles", true);
-    ok("with the plugin off, Torch saves and re-renders without touching the engine",
+    const idleAdded = press(idle, "Torch spotlight", "toggles", true);
+    ok("with the plugin off, Torch saves and rebuilds without touching the engine",
        idle.settings.torchEffect === true && idle.plugin.enabled.length === 0 && idleAdded.length > 0,
        idle.plugin.enabled);
   }
@@ -1559,36 +1580,132 @@ section("settings panel: the two callers and their hooks");
     let threw = null;
     try { rows = renderVimMode({}, target, () => edits++); }
     catch (e) { threw = e; }
-    ok("renderModeControls builds", !threw, threw && threw.message);
-    ok("...the four look sections and no Presets",
-       sectionsOf(rows).join() === "Appearance,Blinking,Smooth Movement,Effects", sectionsOf(rows));
+    ok("modeDefinitions builds", !threw, threw && threw.message);
+    ok("...the four look cards and no Presets",
+       sectionsOf(rows).join() === "Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
 
-    const added = press(rows, "Cursor Style", "dropdowns", "Underline");
-    ok("Cursor Style writes the mode's snapshot, not the global settings",
+    const added = press(rows, "Cursor style", "dropdowns", "Underline");
+    ok("Cursor style writes the mode's snapshot, not the global settings",
        target.cursorStyle === "Underline" && rows.settings.cursorStyle === "Box",
        [target.cursorStyle, rows.settings.cursorStyle]);
     ok("...and reports the edit (the Vim panel clears the active preset on it)", edits === 1, edits);
-    ok("...and re-renders Appearance only", added && sectionsOf(added).join() === "Appearance", added && sectionsOf(added));
-    ok("...so the Underline style's own row appears", added && added.some((r) => r.name === "Underline Thickness"));
+    ok("...and rebuilds the panel", added && added.length > 0, added && added.length);
+    ok("...so the Underline style's own row appears", added && added.some((r) => r.name === "Underline thickness"));
     ok("...without restarting the engine (a mode has no engine of its own)", rows.plugin.enabled.length === 0);
 
-    const torch = press(rows, "Torch Spotlight", "toggles", true);
-    ok("Torch Spotlight writes the snapshot", target.torchEffect === true && rows.settings.torchEffect === false);
+    const torch = press(rows, "Torch spotlight", "toggles", true);
+    ok("Torch spotlight writes the snapshot", target.torchEffect === true && rows.settings.torchEffect === false);
     ok("...reports the edit", edits === 2, edits);
-    ok("...and re-renders Effects only", torch && sectionsOf(torch).join() === "Effects", torch && sectionsOf(torch));
+    ok("...and rebuilds the panel", torch && torch.length > 0);
     ok("...without touching the torch engine", rows.plugin.enabled.length === 0);
 
-    // A gated toggle inside the shared renderer writes to the snapshot too.
+    // A gated toggle inside the shared builder writes to the snapshot too.
     const g = press(rows, "Gradient", "toggles", true);
     ok("a shared gate writes the snapshot", target.gradientEnabled === true && rows.settings.gradientEnabled === false);
     ok("...reports the edit", edits === 3, edits);
-    ok("...and re-renders Appearance and Effects", g && sectionsOf(g).sort().join() === "Appearance,Effects", g && sectionsOf(g));
+    ok("...and rebuilds the panel", g && g.length > 0);
   }
 }
 
-// Section headings are built through renderSection, which now remembers which
-// ones the user collapsed. It must still render them from a fresh tab, where
-// there is no remembered state at all.
+// ---------------------------------------------------------------------------
+section("settings panel: the whole tree");
+
+// getSettingDefinitions() is what Obsidian renders and indexes. The first
+// card carries the plugin's name and version, the notice and the global
+// switches; the mode switch picks which panel follows.
+{
+  const { renderWholePanel, sectionOf } = require("./panel_harness");
+  const build = (settings, opts) => {
+    try { return renderWholePanel(settings, opts); } catch (e) { return { threw: e }; }
+  };
+
+  const cua = build({});
+  ok("the whole CUA panel renders", !cua.threw, cua.threw && cua.threw.message);
+  const sections = [...new Set(cua.map(sectionOf))];
+  ok("the first card is named after the plugin, with the manifest's version",
+     sections[0] === "Cursor-Smith 0.0.0-test", sections[0]);
+  ok("...then Presets and the look cards",
+     sections.slice(1).join() === "Presets,Appearance,Blinking,Smooth movement,Effects", sections);
+  const names = cua.map((r) => r.name);
+  ok("the global switches come first, in order",
+     names.indexOf("Enable plugin") < names.indexOf("Note editor only") &&
+     names.indexOf("Note editor only") < names.indexOf("Hide real cursor") &&
+     names.indexOf("Hide real cursor") < names.indexOf("Hide cursor when unfocused") &&
+     names.indexOf("Hide cursor when unfocused") < names.indexOf("Low power mode") &&
+     names.indexOf("Low power mode") < names.indexOf("Respect reduced motion") &&
+     names.indexOf("Respect reduced motion") < names.indexOf("Mode"), names.slice(0, 9));
+  ok("...as toggles Obsidian binds to the settings keys",
+     ["enabled", "noteEditorOnly", "hideNativeCaret", "hideOnWindowBlur", "lowPowerMode", "respectReducedMotion"]
+       .every((k) => cua.some((r) => r.def.control && r.def.control.type === "toggle" && r.def.control.key === k)));
+  ok("the mode switch is a segmented control in its row",
+     cua.find((r) => r.name === "Mode").controlEl.children[0].classes.includes("cursor-smith-segmented"));
+
+  // Search: every row Obsidian indexes has a name; notes and subheadings
+  // opt out.
+  ok("every unnamed row opts out of search",
+     cua.filter((r) => !r.name).every((r) => r.def.searchable === false),
+     cua.filter((r) => !r.name && r.def.searchable !== false).map((r) => r.desc));
+  ok("no two rows in one card share a name (Obsidian keys rows by it)",
+     !cua.threw);
+
+  const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"]
+    .map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
+  const vim = build({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes });
+  ok("the whole Vim panel renders", !vim.threw, vim.threw && vim.threw.message);
+  const vimSections = [...new Set(vim.map(sectionOf))];
+  ok("...its cards: Vim cursors, Vim presets, Per-mode cursors, then the look",
+     vimSections.slice(1).join() === "Vim cursors,Vim presets,Per-mode cursors,Appearance,Blinking,Smooth movement,Effects", vimSections);
+  ok("the status bar colour row hangs off the status bar toggle",
+     vim.some((r) => r.name === "Color status bar text to match the cursor"));
+  ok("the Vim warning is a row that shows only while Obsidian's Vim is off",
+     vim.some((r) => r.def.visible && /Vim key bindings/.test(r.desc)));
+  ok("the mode tabs are a segmented control in the Vim mode row",
+     vim.find((r) => r.name === "Vim mode").controlEl.children[0].classes.includes("cursor-smith-segmented-modes"));
+
+  // The reduced-motion notice is the first row, hidden unless the OS asks.
+  const quiet = build({});
+  const notice = quiet[0];
+  ok("the notice is the first row", notice.name === "Motion effects are off", notice.name);
+  ok("...hidden while the OS isn't asking", notice.visible === false);
+  const loud = build({}, { reduced: true });
+  ok("...and shown when it is", loud[0].visible === true);
+}
+
+// update() rebuilds the panel through Obsidian, which then puts keyboard
+// focus on the FIRST control of the row that had it - the CUA half of the
+// mode switch after a click on Vim, the name box of the preset row after
+// Save. That reads as a stray cursor (the plugin draws one wherever a text
+// box has focus), so the tab's update() drops any focus inside the panel
+// afterwards - the way the old full rebuild did by emptying it.
+{
+  const proto = T.SettingTabPrototype;
+  const build = (focusedInside) => {
+    const body = { blurred: 0, blur() { body.blurred++; } };
+    const inside = { blurred: 0, blur() { inside.blurred++; } };
+    const outside = { blurred: 0, blur() { outside.blurred++; } };
+    const doc = { body, activeElement: focusedInside === null ? body : (focusedInside ? inside : outside) };
+    const tab = Object.create(proto);
+    tab.containerEl = { ownerDocument: doc, contains: (el) => el === inside };
+    tab.update();
+    return { tab, body, inside, outside };
+  };
+  const a = build(true);
+  ok("update() rebuilds through Obsidian", a.tab.updates === 1, a.tab.updates);
+  ok("...and drops the focus Obsidian left inside the panel", a.inside.blurred === 1);
+  const b = build(false);
+  ok("focus outside the panel is left alone", b.outside.blurred === 0 && b.tab.updates === 1);
+  const c = build(null);
+  ok("...and so is the body", c.body.blurred === 0);
+  // Fails closed: a tab that is not on screen has no document to ask.
+  const off = Object.create(proto);
+  off.containerEl = {};
+  let threw = false;
+  try { off.update(); } catch { threw = true; }
+  ok("an off-screen panel still updates without throwing", !threw && off.updates === 1);
+}
+
+// Section headings are groups now; a fresh tab renders them with no
+// remembered collapse state at all.
 {
   const rows = panelRows({});
   ok("a fresh panel renders with no remembered section state", !rows.threw && rows.length > 25,
@@ -1856,12 +1973,16 @@ section("the hidden caret keeps a usable colour");
 // the caret, and give the RGB something to be.
 //
 // These assertions read the shipped CSS as text because that is where the bug
-// lived: there is no code path to exercise, only two stylesheets that have to
-// stay in step. They fail against 1.4.8 as shipped, which is the point.
+// lived: there is no code path to exercise, only a stylesheet. They fail
+// against 1.4.8 as shipped, which is the point. (Until 1.5.4 main.js
+// injected a second copy of these rules into every window; Obsidian clones
+// the main window's stylesheets into pop-outs and the settings window
+// itself, so styles.css is the one place now - and main.js must declare no
+// caret colour at all.)
 {
   const fs_ = require("fs"), path_ = require("path");
   const read = (f) => fs_.readFileSync(path_.join(__dirname, "..", f === "main.js" ? "build/test-bundle.js" : f), "utf8");
-  const sheets = { "styles.css": read("styles.css"), "main.js": read("main.js") };
+  const sheets = { "styles.css": read("styles.css") };
 
   // Every caret-color in the plugin, wherever it is declared.
   const decls = {};
@@ -1870,8 +1991,8 @@ section("the hidden caret keeps a usable colour");
   }
   const all = [].concat(...Object.values(decls));
 
-  ok("both stylesheets still declare a caret colour",
-     decls["styles.css"].length >= 2 && decls["main.js"].length >= 2, decls);
+  ok("the stylesheet still declares a caret colour", decls["styles.css"].length >= 2, decls);
+  ok("main.js declares none", !/caret-color\s*:/.test(read("main.js")));
 
   // The regression, stated as the thing that must never come back. `transparent`
   // is the only spelling that was ever used, but any black is the same bug.
@@ -1909,22 +2030,20 @@ section("the hidden caret keeps a usable colour");
 }
 
 // ---------------------------------------------------------------------------
-section("the two stylesheets hide every native cursor, and its blink");
+section("the stylesheet hides every native cursor, and its blink");
 
-// styles.css and the injectStyles copy in main.js (the only stylesheet a
-// popped-out window gets) have to say the same thing. They did not: the
-// injected copy hid the primary native cursor and forced the SECONDARIES
-// visible, a leftover from before the plugin drew secondaries at all, and it
-// won on !important - so a native caret sat under every drawn secondary. And
-// neither stopped the cursor layer's blink animation, which cost a style
-// recalc on every frame the plugin's loop requested (issue #30's tail).
+// styles.css has to hide every native cursor - the primary and the
+// secondaries, which the plugin draws itself - and stop the cursor layer's
+// blink animation, which otherwise costs a style recalc on every frame the
+// plugin's loop requests (issue #30's tail). Until 1.5.4 main.js injected a
+// second copy of these rules, which had drifted (it forced the secondaries
+// visible and won on !important); there is one copy now, and main.js must
+// not grow another.
 {
   const fs = require("fs");
   const path = require("path");
   const css = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
   const js = fs.readFileSync(path.join(__dirname, "..", "build", "test-bundle.js"), "utf8");
-  const injStart = js.indexOf("  injectStyles(doc) {");
-  const inj = js.slice(injStart, js.indexOf("\n  }\n", injStart));
 
   const ruleFor = (sheet, selectorPart) => {
     // The declaration block of the first rule whose selector list mentions
@@ -1936,18 +2055,23 @@ section("the two stylesheets hide every native cursor, and its blink");
   };
   ok("styles.css hides the secondary native cursor",
      /display:\s*none/.test(ruleFor(css, ".cm-cursor-secondary") || ""));
-  ok("the injected copy hides it too",
-     /display:\s*none/.test(ruleFor(inj, ".cm-cursor-secondary") || ""), ruleFor(inj, ".cm-cursor-secondary"));
-  ok("...and no longer forces any cursor visible",
-     !/display:\s*block\s*!important/.test(inj) && !/cm-cursor:not\(:first-child\)/.test(inj));
+  ok("main.js injects no stylesheet of its own",
+     !/injectStyles|createEl\("style"|cm-cursor-secondary/.test(js));
   ok("styles.css stops the cursor layer's blink animation",
      /\.cm-cursorLayer\s*\{[^}]*animation:\s*none/.test(css));
-  ok("...and so does the injected copy",
-     /\.cm-cursorLayer\s*\{[^}]*animation:\s*none/.test(inj));
-  // Both under the hide-native class only: with the native caret shown (Note
-  // Editor Only, focus in the interface) its blink must keep running.
+  // Under the hide-native class only: with the native caret shown (Note
+  // editor only, focus in the interface) its blink must keep running.
   ok("...only while the native caret is hidden",
-     /hide-native[^{]*\.cm-cursorLayer\s*\{/.test(css) && /hide-native[^{]*\.cm-cursorLayer\s*\{/.test(inj));
+     /hide-native[^{]*\.cm-cursorLayer\s*\{/.test(css));
+  // The torch layers moved here from the injected copy, collapsed like the
+  // canvas wrapper until the tick sizes them.
+  const overlay = ruleFor(css, ".cursor-smith-torch-overlay {");
+  ok("styles.css lays out the torch overlay",
+     /position:\s*fixed/.test(overlay || "") && /width:\s*0/.test(overlay || "") && /height:\s*0/.test(overlay || ""), overlay);
+  const glow = ruleFor(css, ".cursor-smith-torch-glow {");
+  ok("...and the glow layer, driven by --torch-glow",
+     /mix-blend-mode:\s*screen/.test(glow || "") && /var\(--torch-glow/.test(glow || ""), glow);
+  ok("...with no animation on either", !/cursor-smith-torch-(overlay|glow)[^{]*\{[^}]*animation:/.test(css));
 }
 
 // ---------------------------------------------------------------------------
@@ -1970,7 +2094,7 @@ section("the two stylesheets hide every native cursor, and its blink");
     const tab = Object.create(Plugin.__test.SettingTabPrototype);
     tab.plugin = plugin;
     tab.displayed = 0;
-    tab.display = () => { tab.displayed++; };
+    tab.update = () => { tab.displayed++; };
     const root = mkEl();
     tab.renderModeSwitch(root);
     const wrap = root.children[0];
@@ -1986,7 +2110,7 @@ section("the two stylesheets hide every native cursor, and its blink");
     ok("the switch is a segmented control with both modes", a.wrap.cls === "cursor-smith-segmented" && a.wrap.children.length === 2, a.wrap);
     ok("...the current one marked active", a.wrap.children[0].cls === "cursor-smith-segment is-active" && a.wrap.children[1].cls === "cursor-smith-segment");
     ok("pressing the other tab switches the mode", a.calls.length === 1 && a.calls[0] === true, a.calls);
-    ok("...and re-displays the panel afterwards", a.displayed === 1, a.displayed);
+    ok("...and rebuilds the panel afterwards", a.displayed === 1, a.displayed);
     ok("...through a listener that returns nothing", a.ret === undefined, a.ret);
     const b = await press("vim", "Vim");
     ok("pressing the current tab does nothing", b.calls.length === 0 && b.displayed === 0, b);
@@ -2010,8 +2134,6 @@ section("the plugin review's rules (static styles, settings headings)");
   const path = require("path");
   const css = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
   const js = fs.readFileSync(path.join(__dirname, "..", "build", "test-bundle.js"), "utf8");
-  const injStart = js.indexOf("  injectStyles(doc) {");
-  const inj = js.slice(injStart, js.indexOf("\n  }\n", injStart));
   const ruleFor = (sheet, sel) => {
     const i = sheet.indexOf(sel);
     if (i < 0) return null;
@@ -2019,20 +2141,23 @@ section("the plugin review's rules (static styles, settings headings)");
     return sheet.slice(open, sheet.indexOf("}", open));
   };
   const has = (rule, decl) => !!rule && rule.replace(/\s+/g, " ").includes(decl);
-  for (const [name, sheet] of [["styles.css", css], ["the injected stylesheet", inj]]) {
-    const w = ruleFor(sheet, ".retro-box-cursor-wrapper {");
+  for (const [name, sheet] of [["styles.css", css]]) {
+    const w = ruleFor(sheet, ".cursor-smith-wrapper {");
     ok(`${name} lays out the canvas wrapper`,
        has(w, "position: fixed") && has(w, "overflow: hidden") && has(w, "pointer-events: none") && has(w, "z-index: 10000"), w);
     ok(`${name} collapses it until the tick sizes it`,
        has(w, "width: 0") && has(w, "height: 0") && has(w, "top: 0") && has(w, "left: 0"));
-    const c = ruleFor(sheet, ".retro-box-cursor-canvas {");
+    const c = ruleFor(sheet, ".cursor-smith-canvas {");
     ok(`${name} places the canvas inside the wrapper`, has(c, "position: absolute") && has(c, "pointer-events: none"), c);
   }
-  const ov = ruleFor(inj, ".torch-cursor-overlay {");
-  ok("the injected overlay rule collapses the overlay too", has(ov, "width: 0") && has(ov, "height: 0") && has(ov, "position: fixed"));
-  for (const cls of ["cursor-smith-vim-status", "cursor-smith-code-input", "cursor-smith-note", "cursor-smith-note-warning", "cursor-smith-version",
+  const ov = ruleFor(css, ".cursor-smith-torch-overlay {");
+  ok("styles.css collapses the torch overlay too", has(ov, "width: 0") && has(ov, "height: 0") && has(ov, "position: fixed"));
+  ok("the first card names the plugin, with the manifest's version",
+     /heading: `Cursor-Smith \$\{plugin\.manifest\?\.version/.test(js));
+  for (const cls of ["cursor-smith-vim-status", "cursor-smith-code-input", "cursor-smith-note-row", "cursor-smith-note-warning",
+                     "cursor-smith-section", "cursor-smith-sub", "cursor-smith-subsection-row", "cursor-smith-reduced-notice",
                      "cursor-smith-segmented", "cursor-smith-segment", "cursor-smith-share-code", "cursor-smith-copy-button"]) {
-    ok(`styles.css has .${cls}`, css.includes("." + cls + " {"));
+    ok(`styles.css has .${cls}`, new RegExp("\\." + cls + "(?![\\w-])").test(css));
     ok(`...which main.js uses`, js.includes(cls));
   }
   // The review rule, as a regex: a literal string assigned to a style
@@ -2046,7 +2171,17 @@ section("the plugin review's rules (static styles, settings headings)");
   // same suite runs against does not keep the class statement as written.
   const tab = js;
   ok("the settings tab builds no <h1>-<h6> of its own", !/createEl\("h[1-6]"/.test(tab));
-  ok("...its section headings are Settings", (tab.match(/\.setHeading\(\)/g) || []).length >= 4);
+  ok("...its headings are setting groups", (tab.match(/type: "group"/g) || []).length >= 2 && !/\.setHeading\(\)/.test(tab));
+  // The 1.13 declarative panel, and none of the API it replaced.
+  ok("the tab implements getSettingDefinitions", /^  getSettingDefinitions\(\) \{/m.test(tab));
+  ok("...and no display()", !/^  display\(\) \{/m.test(tab) && !/\.display\(\)/.test(tab));
+  ok("no setWarning (setDestructive since 1.13)", !/setWarning/.test(tab));
+  ok("no createElement (Obsidian's createEl / createDiv / createSpan)", !/\.createElement\(/.test(tab));
+  ok("the command ids do not repeat the plugin id", !/id: "[^"]*cursor-smith/.test(tab));
+  ok("the manifest asks for the Obsidian this needs",
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")).minAppVersion === "1.13.7");
+  ok("...and versions.json says so for this release",
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.4"] === "1.13.7");
 }
 
 // ---------------------------------------------------------------------------
@@ -2081,9 +2216,9 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
   {
     const { renderGlobalRows } = require("./panel_harness");
     const rows = renderGlobalRows({});
-    const row = rows.find((r) => r.name === "Low Power Mode");
-    ok("the panel has the Low Power Mode row", !!row);
-    ok("...among the global options, not the look", rows.map((r) => r.name).indexOf("Low Power Mode") < rows.map((r) => r.name).indexOf("Respect Reduced Motion"));
+    const row = rows.find((r) => r.name === "Low power mode");
+    ok("the panel has the Low power mode row", !!row);
+    ok("...among the global options, not the look", rows.map((r) => r.name).indexOf("Low power mode") < rows.map((r) => r.name).indexOf("Respect reduced motion"));
     if (row) { row.toggles[0]._change(true); ok("...and it writes lowPowerMode", rows.settings.lowPowerMode === true); }
   }
 
@@ -2272,8 +2407,28 @@ section("settings descriptions stay short");
 // clause saying what it does, plus whatever tells you what an endpoint means -
 // a slider cannot tell you what its own 0 does.
 {
-  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "build", "test-bundle.js"), "utf8");
-  const descs = [...src.matchAll(/\.setDesc\("((?:[^"\\]|\\.)*)"\)/g)].map((m) => m[1]);
+  // Read off the rendered panel, both modes, every gate open: a row's
+  // description is what its definition says (that is what search indexes).
+  // Notes - rows with no name of their own - are prose, not descriptions.
+  const { renderWholePanel } = require("./panel_harness");
+  const wideOpen = {
+    popEffects: true, popLetters: true, backspaceDisintegrate: true, thunderstrike: true,
+    fireworks: true, flameTrail: true, flameTrailGravity: 0.5, stardustEnabled: true, stardustOrbit: true,
+    bracketTether: true, smear: true, smearTaper: true, energyEffect: true, energyAurora: true,
+    gradientEnabled: true, crtEffect: true, crtNeon: true, crtGlitch: true, speedDemon: true,
+    speedDemonSparks: true, speedDemonGradient: true, hotHead: true, hotHeadFlat: true,
+    torchEffect: true, overlayFlicker: true, overlayBlinkSync: true, blinkingEnabled: true,
+    blinkBreathing: true, smoothEnabled: true, smoothAdaptive: true, cursorStyle: "Box",
+    boxHollow: true, showChar: true,
+  };
+  const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"]
+    .map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
+  const rows = [
+    ...renderWholePanel(wideOpen),
+    ...renderWholePanel({ cursorStyle: "Underline" }),
+    ...renderWholePanel({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes }),
+  ];
+  const descs = rows.filter((r) => r.name && r.desc && r.def.searchable !== false).map((r) => r.desc);
   ok("the panel still has its descriptions", descs.length > 90, descs.length);
 
   const avg = descs.reduce((a, d) => a + d.length, 0) / descs.length;
@@ -2580,69 +2735,56 @@ section("reduced motion: the user can find out why");
      chosen.smear === true && chosen.smoothEnabled === true);
 
   // --- the notice itself --------------------------------------------------
-  const makeEl = (tag) => {
-    const el = {
-      tag, children: [], classes: [], text: undefined,
-      createEl(t, opts = {}) {
-        const c = makeEl(t);
-        c.text = opts.text;
-        if (opts.cls) c.classes.push(opts.cls);
-        el.children.push(c);
-        return c;
-      },
-      createDiv(opts = {}) { return el.createEl("div", opts); },
-      createSpan(opts = {}) { return el.createEl("span", opts); },
-      addClass(...cs) { el.classes.push(...cs); },
-      setCssStyles(styles) { Object.assign(el.style, styles); },
-      style: {},
-    };
-    return el;
-  };
+  // A row in the first card, always built and shown or hidden by its
+  // `visible` predicate - which Obsidian re-evaluates after every control
+  // change, so it appears and disappears with the OS preference without a
+  // rebuild.
+  const { makeEl } = require("./panel_harness");
   const proto = T.SettingTabPrototype;
-  const render = (reduced) => {
+  const build = (reduced) => {
     const tab = Object.create(proto);
-    tab.plugin = { reducedMotion: () => reduced };
-    const host = makeEl("div");
-    const out = tab.renderReducedMotionNotice(host);
-    return { out, host };
+    tab.plugin = { reducedMotion: () => reduced, registerWindowEvents: () => {} };
+    const def = tab.reducedMotionNotice();
+    const settingEl = makeEl("div");
+    def.render({ settingEl, controlEl: settingEl.createDiv() }, {});
+    return { def, settingEl, visible: def.visible() };
   };
 
   {
-    const { out, host } = render(false);
-    ok("no notice when the OS isn't asking", out === null);
-    ok("...and nothing is added to the panel", host.children.length === 0);
+    const { visible } = build(false);
+    ok("no notice when the OS isn't asking", visible === false);
   }
   {
-    const { out, host } = render(true);
-    ok("a notice appears when the OS is asking", out !== null);
-    ok("...and it is attached to the panel", host.children.length === 1);
-    const text = out.children.map((c) => c.text || "").join(" ");
+    const { def, settingEl, visible } = build(true);
+    ok("a notice appears when the OS is asking", visible === true);
+    const text = def.name + " " + def.desc;
     // Name both features the report was about, so searching the text for
     // either one finds it.
-    ok("it names Smooth Movement", /Smooth Movement/.test(text), text);
-    ok("it names Motion Smear", /Motion Smear/.test(text), text);
+    ok("it names Smooth movement", /Smooth movement/.test(text), text);
+    ok("it names Motion smear", /Motion smear/.test(text), text);
     // And point at the control that turns it off, by its exact panel label.
     ok("it names the toggle that overrides it",
-       /Respect Reduced Motion/.test(text), text);
+       /Respect reduced motion/.test(text), text);
     ok("it says the toggles below are still the user's own",
        /still show your own settings/.test(text), text);
     ok("it carries its styling hook",
-       out.classes.includes("cursor-smith-reduced-notice"), out.classes);
+       settingEl.classes.includes("cursor-smith-reduced-notice"), settingEl.classes);
+    ok("it is not a search result of its own", def.searchable === false);
   }
   {
     // The rule panel_harness.js exists to enforce: a row that throws takes
-    // every row after it out of the panel. The notice runs FIRST in display(),
-    // so if it threw it would take the entire settings panel with it.
+    // every row after it out of the panel. The notice is FIRST, so if its
+    // check threw it would take the entire settings panel with it.
     const tab = Object.create(proto);
-    tab.plugin = { reducedMotion: () => { throw new Error("no matchMedia"); } };
+    tab.plugin = { reducedMotion: () => { throw new Error("no matchMedia"); }, registerWindowEvents: () => {} };
     let threw = false;
-    let out = "sentinel";
+    let visible = "sentinel";
     const realError = console.error;
     console.error = () => {};   // the guard logs; that's expected here
-    try { out = tab.renderReducedMotionNotice(makeEl("div")); } catch { threw = true; }
+    try { visible = tab.reducedMotionNotice().visible(); } catch { threw = true; }
     finally { console.error = realError; }
     ok("a broken reduced-motion check cannot abort the panel", threw === false);
-    ok("...it just renders no notice", out === null);
+    ok("...it just hides the notice", visible === false);
   }
 }
 
@@ -3139,6 +3281,8 @@ section("form-field mirror: what the caret's position is measured against");
       setCssStyles(styles) { for (const k in styles) this.style[k] = styles[k]; },
       setAttribute() {}, remove() {},
       appendChild(node) { appended.push(node); },
+      // Obsidian's createSpan: the marker, appended where it is made.
+      createSpan() { appended.push(marker); return marker; },
       getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 20 }),
       set textContent(v) { this._t = v; },
       get textContent() { return this._t; },
@@ -3157,9 +3301,9 @@ section("form-field mirror: what the caret's position is measured against");
       getBoundingClientRect: () => ({ left: 40, top: 0 }),
     };
     const doc = {
-      createElement: (tag) => (tag === "span" ? marker : mirror),
       createTextNode: (t) => ({ t }),
-      body: { appendChild() {} },
+      // Obsidian's createDiv on the body: the mirror, made attached.
+      body: { createDiv() { return mirror; } },
       defaultView: { getComputedStyle: () => style },
     };
     const el = Object.assign({
@@ -3584,18 +3728,16 @@ function makePathCtx() {
 {
   for (const style of ["Line", "Box", "Underline"]) {
     const names = renderPanel({ cursorStyle: style }).map((r) => r.name);
-    const i = names.indexOf("Rounded Corners");
+    const i = names.indexOf("Rounded corners");
     ok(`the row renders for ${style}`, i > 0, names.slice(-4));
     ok(`...directly under Translucent for ${style}`, names[i - 1] === "Translucent", names[i - 1]);
   }
-  // It's style-agnostic, so it must not be trapped inside a style's subgroup.
-  // Both rows have to come from the SAME render - the harness builds a fresh
-  // element tree per call, so comparing across two renders compares two
-  // different objects and can never match.
+  // It's style-agnostic, so it must not be trapped inside a style's
+  // sub-group: no indent class on its row, same as Translucent.
   const one = renderPanel({ cursorStyle: "Box" });
-  ok("it sits at the same level as Translucent",
-     one.find((r) => r.name === "Rounded Corners").parent
-       === one.find((r) => r.name === "Translucent").parent);
+  const depthOf = (name) => one.find((r) => r.name === name).settingEl.classes.filter((c) => /^cursor-smith-sub/.test(c)).join();
+  ok("it sits at the same level as Translucent", depthOf("Rounded corners") === "" && depthOf("Translucent") === "",
+     [depthOf("Rounded corners"), depthOf("Translucent")]);
   // The arc must never escape the quad. arcTo insets its tangent points by
   // r / tan(theta/2), which for an acute corner is far larger than r - so a
   // radius clamped only by edge LENGTH runs past the next corner on a sheared
@@ -3651,6 +3793,56 @@ function makePathCtx() {
        radiusUsed(shapes.sheared60) > 0 && radiusUsed(shapes.sheared60) < 1.5,
        radiusUsed(shapes.sheared60));
   }
+}
+
+// ---------------------------------------------------------------------------
+section("the letter in the box sits on device pixels");
+
+// The caret's coordinates are fractional (coordsAtPos), and canvas text laid
+// down at a fractional baseline is resampled across two rows of pixels: the
+// letter inside the Box cursor looked soft next to the real one, which the
+// browser snaps. The glyph is snapped to the canvas's device pixels - which
+// are 1/dpr CSS pixels from the canvas REGION's origin, since resizeCanvas
+// scales and offsets the context - so the snap has to know both.
+{
+  const drawGlyph = (dpr, region, caret) => {
+    const e = makeEngine({ cursorStyle: "Box", showChar: true, blinkingEnabled: false, crtEffect: false, smoothEnabled: false });
+    e.styleFor = (k) => e.settings[k];
+    e._canvasDpr = dpr;
+    e._canvasRect = region;
+    e.trail = [];
+    e.forEachTrailPoint = () => {};
+    e.blinkAlpha = () => 1;
+    e.glitchState = () => null;
+    e.smearCorners = () => null;
+    e.smearQuad = null;
+    e.animActive = Object.assign({ w: 9, h: 22, actualCharWidth: 9, letterSpacing: 0, char: "t",
+      fontSize: 16, fontFamily: "monospace", fontWeight: "normal", fontStyle: "normal" }, caret);
+    e.lastActive = e.animActive;
+    e.pending = null;
+    const texts = [];
+    e.ctx = Object.assign(makePathCtx(), {
+      measureText: () => ({ fontBoundingBoxAscent: 12, fontBoundingBoxDescent: 4 }),
+      fillText(ch, x, y) { texts.push({ ch, x, y }); },
+    });
+    e.drawBoxCursor();
+    return texts;
+  };
+  const onDevicePixel = (v, origin, dpr) => Math.abs(((v - origin) * dpr) - Math.round((v - origin) * dpr)) < 1e-9;
+
+  const t1 = drawGlyph(1, { x: 0, y: 0, w: 300, h: 100 }, { x: 10.37, top: 20.61, bottom: 42.61 });
+  ok("the glyph is drawn", t1.length === 1 && t1[0].ch === "t", t1);
+  ok("...on a whole pixel at dpr 1", onDevicePixel(t1[0].x, 0, 1) && onDevicePixel(t1[0].y, 0, 1), t1[0]);
+  ok("...within half a pixel of where the caret puts it",
+     Math.abs(t1[0].x - (10.37 + 4.5)) <= 0.5 && Math.abs(t1[0].y - (20.61 + 12 + (22 - 16) / 2)) <= 0.5, t1[0]);
+
+  // A fractional ratio with an offset region: the device grid does not
+  // pass through CSS-pixel zero, and a snap that assumed it would land
+  // between device rows again.
+  const t2 = drawGlyph(1.25, { x: 13, y: 7, w: 300, h: 100 }, { x: 40.2, top: 30.3, bottom: 52.3 });
+  ok("at dpr 1.25 with an offset region it lands on that grid",
+     onDevicePixel(t2[0].x, 13, 1.25) && onDevicePixel(t2[0].y, 7, 1.25), t2[0]);
+  ok("...and not on the CSS-pixel grid", !Number.isInteger(t2[0].x) || !Number.isInteger(t2[0].y), t2[0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -3904,6 +4096,119 @@ section("glyph alpha follows the blink");
   // Cursor Opacity reaches the glyph; it previously had no opacity term at all.
   ok("Cursor Opacity scales the glyph", glyph(1, 0.2) === 0.2, glyph(1, 0.2));
   ok("...and a near-zero opacity falls under the skip threshold", glyph(1, 0.005) < 0.01);
+}
+
+// ---------------------------------------------------------------------------
+section("motion smear: max length and conserved volume (after smear-cursor.nvim)");
+
+// Two things taken from smear-cursor.nvim in 1.5.4. Max length caps how far
+// the tail trails the head, written into the spring's state so the tail
+// arrives sooner rather than just being drawn shorter. Conserve volume
+// thins a diagonal streak across its direction of travel so its area stays
+// near the caret's own, and is a shape pass like the taper: derived per
+// frame, never written back. Both are off by default, so every look and
+// share code from before reads as it did.
+{
+  const fresh = (over) => {
+    const e = makeEngine(Object.assign({ smear: true, smearTaper: false, cursorStyle: "Line",
+      smearStiffness: 0.65, smearTrailingStiffness: 0.15, smearDamping: 0.45, blinkingEnabled: false }, over));
+    e.styleFor = (k) => e.settings[k];
+    e.renderWidth = (a) => a.w;
+    e.underlineThickness = () => 3;
+    e._catchUpBoost = 1;
+    e.smearQuad = null; e.smearShape = null; e.smearCenterPrev = null;
+    e._smearDtT = 0; e._smearDir = null;
+    return e;
+  };
+  // Rest at (100, 40), then jump the caret to (x, y) and run `frames` frames.
+  const jump = (e, x, y, frames, caret = { w: 3, h: 24 }) => {
+    const real = performance.now;
+    let t = 1000;
+    const out = [];
+    try {
+      for (let i = 0; i < 5 + frames; i++) {
+        e.animActive = Object.assign({ x: i < 5 ? 100 : x, top: i < 5 ? 40 : y }, caret);
+        performance.now = () => t;
+        e.updateSmearQuad();
+        t += 16.7;
+        if (i >= 5) out.push({ q: JSON.parse(JSON.stringify(e.smearQuad)), s: JSON.parse(JSON.stringify(e.smearShape)) });
+      }
+    } finally { performance.now = real; }
+    return out;
+  };
+  const longest = (q) => {
+    const pts = Object.values(q);
+    let m = 0;
+    for (const a of pts) for (const b of pts) m = Math.max(m, Math.hypot(a.x - b.x, a.y - b.y));
+    return m;
+  };
+  const area = (q) => {
+    const pts = [q.tl, q.tr, q.br, q.bl];
+    let a2 = 0;
+    for (let i = 0; i < 4; i++) { const a = pts[i], b = pts[(i + 1) % 4]; a2 += a.x * b.y - b.x * a.y; }
+    return Math.abs(a2) / 2;
+  };
+
+  // --- Max length ----------------------------------------------------------
+  ok("Max length is off by default", T.DEFAULT_SETTINGS.smearMaxLength === 0);
+  {
+    const free = jump(fresh({}), 700, 40, 20);
+    const capped = jump(fresh({ smearMaxLength: 60 }), 700, 40, 20);
+    const peak = (frames) => Math.max(...frames.map((f) => longest(f.q)));
+    ok("an uncapped jump stretches the quad past the cap", peak(free) > 60, peak(free).toFixed(1));
+    // The cap is per corner: no corner may lag its own target by more.
+    const lagOf = (q, x, y) => Math.max(
+      Math.hypot(q.tl.x - x, q.tl.y - y), Math.hypot(q.tr.x - (x + 3), q.tr.y - y),
+      Math.hypot(q.br.x - (x + 3), q.br.y - (y + 24)), Math.hypot(q.bl.x - x, q.bl.y - (y + 24)));
+    ok("the cap holds every frame", capped.every((f) => lagOf(f.q, 700, 40) <= 60 + 1e-6),
+       Math.max(...capped.map((f) => lagOf(f.q, 700, 40))).toFixed(1));
+    ok("...and the head still reaches the target",
+       Math.abs(capped[19].q.tr.x - 703) < 30, capped[19].q.tr.x);
+    // Per corner: the caret keeps its shape, the tail sits the cap behind it.
+    const tiny = jump(fresh({ smearMaxLength: 5 }), 700, 40, 2);
+    ok("a tiny cap leaves the caret its own shape, five pixels behind at most",
+       Math.abs(longest(tiny[1].q) - Math.hypot(3, 24)) <= 10 && Math.abs(tiny[1].q.tl.x - tiny[1].q.tr.x) <= 3 + 10, longest(tiny[1].q));
+    // The cap pulls a corner in along its own line of travel, so a capped
+    // quad is still a parallelogram: the tail is not pinched to a point.
+    const capped80 = jump(fresh({ smearMaxLength: 80 }), 700, 40, 6);
+    const pinch = Math.min(...capped80.map((f) => Math.abs(f.q.bl.y - f.q.tl.y)));
+    ok("...and the tail keeps the caret's height rather than pinching to a corner", pinch > 20, pinch);
+    // Settles like before: the cap only ever shortens.
+    const settled = jump(fresh({ smearMaxLength: 60 }), 700, 40, 200);
+    const q = settled[settled.length - 1].q;
+    ok("...and the quad still settles exactly on target", Math.abs(q.tl.x - 700) < 1e-9 && Math.abs(q.br.x - 703) < 1e-9, q);
+  }
+
+  // --- Conserve volume -------------------------------------------------------
+  ok("Conserve volume is off by default", T.DEFAULT_SETTINGS.smearConserveVolume === false);
+  {
+    // A diagonal jump: down-left, the Enter move.
+    const plain = jump(fresh({}), 30, 200, 4);
+    const thin = jump(fresh({ smearConserveVolume: true, smearVolumeStrength: 1 }), 30, 200, 4);
+    ok("with it off the painted shape is the spring's quad", plain.every((f) => JSON.stringify(f.s) === JSON.stringify(f.q)));
+    const f = thin[1];
+    ok("with it on the painted shape is derived, not the state", JSON.stringify(f.s) !== JSON.stringify(f.q));
+    ok("...smaller in area than the stretched quad", area(f.s) < area(f.q) * 0.8, [area(f.s).toFixed(0), area(f.q).toFixed(0)]);
+    ok("...and the state itself is untouched", JSON.stringify(f.q) === JSON.stringify(plain[1].q));
+    // The floor: never thinner than SMEAR_VOLUME_MIN_FACTOR of the width.
+    ok("...but never below the floor", area(f.s) > area(f.q) * 0.3, [area(f.s).toFixed(0), area(f.q).toFixed(0)]);
+    // A horizontal move is left alone: thinning a typing smear would shrink
+    // the caret's height.
+    const flat = jump(fresh({ smearConserveVolume: true, smearVolumeStrength: 1 }), 400, 40, 4);
+    ok("an axis-aligned move is not thinned", flat.every((x) => JSON.stringify(x.s) === JSON.stringify(x.q)));
+    const weak = jump(fresh({ smearConserveVolume: true, smearVolumeStrength: 0.3 }), 30, 200, 4);
+    ok("a lower strength thins less", area(weak[1].s) > area(f.s) && area(weak[1].s) < area(weak[1].q), [area(weak[1].s).toFixed(0), area(f.s).toFixed(0)]);
+  }
+
+  // --- Share codes: appended, so nothing else moved ----------------------
+  ok("the three new keys are the last LOOK_KEYS entries",
+     T.LOOK_KEYS.slice(-3).join() === "smearMaxLength,smearConserveVolume,smearVolumeStrength", T.LOOK_KEYS.slice(-3));
+  {
+    const code = T.presetToCode("Capped", { smearMaxLength: 240, smearConserveVolume: true, smearVolumeStrength: 0.5 });
+    const back = T.codeToPreset(code);
+    ok("they round-trip through a share code",
+       back && back.snap.smearMaxLength === 240 && back.snap.smearConserveVolume === true && back.snap.smearVolumeStrength === 0.5, back && back.snap);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -4193,8 +4498,8 @@ section("blink-to-solid: blink N times, then stay lit");
   }
 
   // Share codes: appended, so it cannot have moved anything else.
-  ok("blinkStopAfter is the last LOOK_KEYS entry",
-     T.LOOK_KEYS[T.LOOK_KEYS.length - 1] === "blinkStopAfter", T.LOOK_KEYS[T.LOOK_KEYS.length - 1]);
+  ok("blinkStopAfter was appended after every earlier key",
+     T.LOOK_KEYS.indexOf("blinkStopAfter") > T.LOOK_KEYS.indexOf("glyphColorMode"), T.LOOK_KEYS.indexOf("blinkStopAfter"));
   {
     const code = T.presetToCode("Solid", { blinkStopAfter: 4 });
     const back = T.codeToPreset(code);
@@ -4529,20 +4834,20 @@ section("Note Editor Only: the plugin stays out of the interface");
     const { renderGlobalRows } = require("./panel_harness");
     const rows = renderGlobalRows({});
     const names = rows.map((r) => r.name).filter(Boolean);
-    ok("the row is in the panel", names.includes("Note Editor Only"), names);
+    ok("the row is in the panel", names.includes("Note editor only"), names);
     // It belongs above the CUA/Vim switch with the other structural options.
     // In Vim mode the whole Look panel below that switch is replaced, so a row
     // rendered down there is unreachable for half the plugin's users - which
     // is exactly what once happened to Hide Real Cursor.
     ok("...above the mode switch, among the global options",
-       names.indexOf("Note Editor Only") > names.indexOf("Enable Plugin") &&
-       names.indexOf("Note Editor Only") < names.indexOf("Respect Reduced Motion"), names);
+       names.indexOf("Note editor only") > names.indexOf("Enable plugin") &&
+       names.indexOf("Note editor only") < names.indexOf("Respect reduced motion"), names);
     // The rule panel_harness.js exists to enforce: a row that throws takes out
     // every row after it, and this one is now second of five.
     ok("...and the rows after it still render",
-       names.includes("Hide Real Cursor") && names.includes("Hide Cursor When Unfocused"), names);
+       names.includes("Hide real cursor") && names.includes("Hide cursor when unfocused"), names);
 
-    const row = rows.find((r) => r.name === "Note Editor Only");
+    const row = rows.find((r) => r.name === "Note editor only");
     ok("it is one toggle", row.controls.join() === "toggle", row.controls);
     ok("it shows the saved value", row.toggles[0]._value === false);
     row.toggles[0]._change(true);
@@ -4550,8 +4855,8 @@ section("Note Editor Only: the plugin stays out of the interface");
     // The row it was copied from writes a different key. Wiring both to the
     // same one is the likeliest way to get this wrong and would look, from the
     // panel, like the new toggle simply did nothing.
-    rows.find((r) => r.name === "Hide Real Cursor").toggles[0]._change(false);
-    ok("Hide Real Cursor still writes its own key",
+    rows.find((r) => r.name === "Hide real cursor").toggles[0]._change(false);
+    ok("Hide real cursor still writes its own key",
        rows.settings.hideNativeCaret === false && rows.settings.noteEditorOnly === true,
        { hideNativeCaret: rows.settings.hideNativeCaret, noteEditorOnly: rows.settings.noteEditorOnly });
   }
@@ -4652,7 +4957,7 @@ section("the canvas follows the caret (issue #30)");
     // Painters: none paint, except what a test hangs on `paintExtra`.
     for (const f of ["drawLettersParticles", "drawBracketTether", "drawStardust",
                      "drawFlamePixels", "drawHotHead", "drawThunderbolts",
-                     "drawFireworks", "drawGenericCaret", "drawRetroBox",
+                     "drawFireworks", "drawGenericCaret", "drawBoxCursor",
                      "drawSecondaryCarets", "applyCanvasBlend"]) {
       e[f] = () => { if (f === "drawFlamePixels" && e.paintExtra) e._markDirty(...e.paintExtra); };
     }
@@ -5051,7 +5356,7 @@ section("multi-cursor: full effects on secondary carets");
     e.ctx = { save() {}, restore() {}, translate() {}, scale() {}, setTransform() {}, clearRect() {} };
     e._clipRect = { x: 0, y: 0, w: 1000, h: 700 }; e._wrapperPos = { left: 0, top: 0 };
     const drawn = [];
-    e.drawRetroBox = () => drawn.push(e.animActive.x);
+    e.drawBoxCursor = () => drawn.push(e.animActive.x);
     for (const f of ["drawLettersParticles", "drawBracketTether", "drawStardust", "drawFlamePixels", "drawHotHead", "drawThunderbolts", "drawFireworks", "drawGenericCaret", "drawSecondaryCarets", "applyCanvasBlend"]) e[f] = () => {};
     e.breathScale = () => 1; e.glowHeatScale = () => 1;
     e.lastActive = rec(100, 20, 10); e.animActive = Object.assign({}, e.lastActive);

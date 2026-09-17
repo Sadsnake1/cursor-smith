@@ -110,7 +110,7 @@ export const HOT_BLOCK_SHAPES = [
 ];
 // How the shade stage is read off a shape's area, for the per-stage alpha
 // below: the biggest chunks are the most solid.
-export const hotShapeStage = (area) => (area >= 6 ? 3 : area >= 4 ? 2 : area >= 2 ? 1.5 : 1);
+export const hotShapeStage = (area: number) => (area >= 6 ? 3 : area >= 4 ? 2 : area >= 2 ? 1.5 : 1);
 // The palette, kept small on purpose ("less gradients"): a chunk's colour is
 // one of HOT_COLOR_LEVELS steps along the ramp, and the ramp is only used up
 // to HOT_TEMP_MAX of its length - from the base colour into the first warm
@@ -119,7 +119,7 @@ export const hotShapeStage = (area) => (area >= 6 ? 3 : area >= 4 ? 2 : area >= 
 export const HOT_COLOR_LEVELS = 3;
 export const HOT_TEMP_MAX = 0.5;
 export const HOT_ALPHA_LEVELS = 3;
-export const hotQuant = (v, levels) => Math.round(Math.max(0, Math.min(1, v)) * levels) / levels;
+export const hotQuant = (v: number, levels: number) => Math.round(Math.max(0, Math.min(1, v)) * levels) / levels;
 // Sparks: the tiny particles. Every chunk spawns this many alongside it -
 // short-lived specks that rise faster and higher than the chunks, drawn at
 // their own positions off the lattice. They are the haze above the flame.

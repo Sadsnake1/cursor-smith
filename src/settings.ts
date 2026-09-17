@@ -3,6 +3,7 @@
 // code and its comments are the bundle's.
 
 import { VIM_MODE_STARTERS } from "./presets";
+import type { CursorSmithSettings, LegacySettings, Look, SettingKey } from "./types";
 
 export const DEFAULT_SETTINGS = {
   enabled: true,
@@ -334,6 +335,15 @@ export const DEFAULT_SETTINGS = {
   // exactly what they did.
   smearTaper: false,
   smearTaperAmount: 0.7,   // 0..1; at 1 the tail closes to a point
+  // Motion Smear sub-options, after smear-cursor.nvim. A cap on how far the
+  // tail can trail the head, in pixels (0 = no cap): a page-down otherwise
+  // drags a streak the height of the pane. And conserving the smear's area,
+  // so a long diagonal streak gets thinner as it stretches instead of
+  // sweeping a full-width parallelogram; the strength is the exponent on the
+  // area ratio (0 = no thinning, 1 = the area held exactly).
+  smearMaxLength: 0,
+  smearConserveVolume: false,
+  smearVolumeStrength: 0.3,
 
   // --- smooth cursor global category ---
   smoothEnabled: false,
@@ -356,13 +366,13 @@ export const DEFAULT_SETTINGS = {
   vimActivePreset: "",        // name of the vim preset last applied (for the UI)
   vimStatusBar: true,         // show the live Vim mode in Obsidian's status bar
   vimStatusBarColor: true,    // ...tinted with that mode's cursor color
-  vimModes: {},               // filled in below with full per-mode snapshots
+  vimModes: {} as Record<string, Look>, // filled in below with full per-mode snapshots
 };
 
 // Housekeeping keys belonging to the Vim system. A regular (CUA) cursor preset
 // must never carry or clobber these — they're listed once here so saving and
 // loading a preset can't drift apart as new vim keys get added.
-export const VIM_STATE_KEYS = [
+export const VIM_STATE_KEYS: SettingKey[] = [
   "vimPresets", "vimModes", "vimModeEnabled", "vimActivePreset",
   "vimControlObsidian", "vimStatusBar", "vimStatusBarColor",
 ];
@@ -371,7 +381,7 @@ export const VIM_STATE_KEYS = [
 // prompt that @replit/codemirror-vim (the engine Obsidian bundles) opens as a
 // CodeMirror panel at the bottom of the editor — see isVimCommandLineActive().
 export const VIM_MODE_KEYS = ["normal", "insert", "visual", "replace", "command"];
-export const VIM_MODE_LABELS = {
+export const VIM_MODE_LABELS: Record<string, string> = {
   normal: "Normal", insert: "Insert", visual: "Visual",
   replace: "Replace", command: "Command",
 };
@@ -380,7 +390,7 @@ export const VIM_MODE_LABELS = {
 // affects how the cursor looks or behaves. Structural/housekeeping keys
 // (enabled, hideNativeCaret, presets, the vim-control keys) are intentionally
 // excluded. A per-mode config is a snapshot containing exactly these keys.
-export const LOOK_KEYS = [
+export const LOOK_KEYS: (keyof Look)[] = [
   "cursorStyle", "colorDark", "colorLight",
   "gradientEnabled", "gradientCount",
   "gradientDark1", "gradientDark2", "gradientDark3", "gradientDark4",
@@ -458,6 +468,9 @@ export const LOOK_KEYS = [
   // 0, so a code written before this existed imports as "blink forever",
   // which is what it meant when it was written.
   "blinkStopAfter",
+  // Motion Smear's cap and volume conservation (1.5.4). Appended; the defaults
+  // are "off", so an older code imports as the smear it described.
+  "smearMaxLength", "smearConserveVolume", "smearVolumeStrength",
 ];
 
 // ---------------------------------------------------------------------------
@@ -476,7 +489,9 @@ export const LOOK_KEYS = [
 // touches keys that are actually present, and never clobbers a new-style key
 // that already holds a value.
 // ---------------------------------------------------------------------------
-export function migrateLegacyKeys(src: any): any {
+export function migrateLegacyKeys(src: LegacySettings): LegacySettings;
+export function migrateLegacyKeys(src: LegacySettings | null | undefined): LegacySettings | null | undefined;
+export function migrateLegacyKeys(src: LegacySettings | null | undefined): LegacySettings | null | undefined {
   if (!src || typeof src !== "object") return src;
   const o = Object.assign({}, src);
   // The old single ramp becomes the dark-theme ramp; the light-theme one is
@@ -491,7 +506,7 @@ export function migrateLegacyKeys(src: any): any {
     }
   }
   if ("idleStardust" in o) {
-    if (o.stardustEnabled === undefined) o.stardustEnabled = o.idleStardust;
+    if (o.stardustEnabled === undefined) o.stardustEnabled = o.idleStardust as boolean;
     delete o.idleStardust;
   }
   // Translucency shipped for a moment as a Box-only toggle with three dials
@@ -500,7 +515,7 @@ export function migrateLegacyKeys(src: any): any {
   // they held (an arbitrary alpha, a blend mode, a lens strength) no longer
   // have anywhere to go.
   if ("boxTranslucent" in o) {
-    if (o.cursorTranslucent === undefined) o.cursorTranslucent = o.boxTranslucent;
+    if (o.cursorTranslucent === undefined) o.cursorTranslucent = o.boxTranslucent as boolean;
     delete o.boxTranslucent;
   }
   delete o.boxTranslucency;
@@ -570,18 +585,19 @@ export function migrateLegacyKeys(src: any): any {
 }
 
 // Copy only the look keys out of an arbitrary settings-shaped object.
-export function pickLook(src) {
-  const o = {};
+export function pickLook(src: Partial<CursorSmithSettings> | null | undefined): Partial<Look> {
+  const o: Partial<Look> = {};
   if (!src) return o;
   const from = migrateLegacyKeys(src);
-  for (const k of LOOK_KEYS) if (k in from) o[k] = from[k];
+  const dst = o as unknown as Record<string, unknown>, fromRec = from as unknown as Record<string, unknown>;
+  for (const k of LOOK_KEYS) if (k in from) dst[k] = fromRec[k];
   return o;
 }
 
 // Build a complete per-mode snapshot: the global defaults for every look key,
 // with the given overrides applied on top. Guarantees no key is ever missing.
-export function fullVimMode(overrides) {
-  return Object.assign(pickLook(DEFAULT_SETTINGS), pickLook(overrides));
+export function fullVimMode(overrides: Partial<Look> | null): Look {
+  return Object.assign(pickLook(DEFAULT_SETTINGS), pickLook(overrides)) as Look;
 }
 
 // Build one mode's snapshot, falling back to that mode's starter look when the
@@ -589,7 +605,7 @@ export function fullVimMode(overrides) {
 // people had already saved Vim presets: without the fallback an older preset
 // would expand to the plain global defaults for Command and every preset would
 // end up with an identical, uncustomised command-line cursor.
-export function vimModeSnapshot(modeKey: string, overrides) {
+export function vimModeSnapshot(modeKey: string, overrides: Partial<Look> | null): Look {
   return fullVimMode(overrides || VIM_MODE_STARTERS[modeKey]);
 }
 
@@ -602,14 +618,14 @@ export function vimModeSnapshot(modeKey: string, overrides) {
 // must pass through untouched. Without this, loading an older or built-in
 // preset silently left newly-added settings at whatever value happened to
 // be set before the preset was loaded, rather than the preset's own look.
-export function presetWithDefaults(preset) {
+export function presetWithDefaults(preset: Partial<CursorSmithSettings> | null) {
   return Object.assign({}, pickLook(DEFAULT_SETTINGS), migrateLegacyKeys(preset));
 }
 
 // Clone a whole vimModes map (or preset) into fresh, complete snapshots so
 // callers never share nested references with this.settings.
-export function cloneVimModes(modes) {
-  const out = {};
+export function cloneVimModes(modes: Record<string, Partial<Look>> | null): Record<string, Look> {
+  const out: Record<string, Look> = {};
   for (const k of VIM_MODE_KEYS) out[k] = vimModeSnapshot(k, modes && modes[k]);
   return out;
 }

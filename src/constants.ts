@@ -43,26 +43,29 @@
 //    per frame makes the effect boil, and ties its shape to whichever gear
 //    the frame governor picked.
 //
-//  • NO CSS ANIMATIONS on cursor layers, in styles.css or injectStyles. They
+//  • NO CSS ANIMATIONS on cursor layers, in styles.css. They
 //    run on the compositor, outside the frame governor, and hold the display
 //    at full refresh regardless of what the governor decided. Anything that
 //    must pulse is written as a custom property from a tick instead - the
 //    torch's blink pulse and its candle flicker are both done that way.
 //
 //  • ANYTHING PUT INTO A DOCUMENT MUST COME BACK OUT in unregisterDocument -
-//    listeners, body classes, and the injected stylesheet. Obsidian updates a
-//    plugin by unloading and reloading it WITHOUT a window reload, so anything
-//    left behind outlives the version that created it.
+//    listeners and body classes. Obsidian updates a plugin by unloading and
+//    reloading it WITHOUT a window reload, so anything left behind outlives
+//    the version that created it.
 //
 //  • A BLEND INSIDE THE CURSOR WRAPPER composites against the wrapper, not the
 //    editor - the wrapper is a stacking context. Anything that must blend with
 //    the editor needs its own sibling layer under .app-container. See
 //    ARCHITECTURE.md, "Blending against the editor".
 //
-//  • TORCH OVERLAY CSS LIVES HERE ONLY (injectStyles), never in styles.css —
-//    its values are settings-driven custom properties, and a styles.css rule
-//    outranked them once already. Same for mix-blend-mode on the canvas
-//    wrapper: see applyCanvasBlend.
+//  • ALL CSS IS styles.css. Obsidian clones every stylesheet in the main
+//    window's head into each pop-out and into the 1.13 settings window, so
+//    the one file reaches every document the canvas migrates into; the
+//    review forbids a plugin creating <style> elements, and the injected
+//    copy this used to keep is gone. Whatever a tick drives per frame is a
+//    custom property on the element (the torch's --torch-glow), never a
+//    rule. mix-blend-mode on the canvas wrapper is set from applyCanvasBlend.
 //
 //  • THE CANVAS IS CLIPPED, NOT Z-INDEXED, to the editor pane (editorClip).
 //    A full-viewport layer over the titlebar breaks Electron window dragging
@@ -350,6 +353,11 @@ export const TORCH_FLICKER_WEIGHTS = [0.5, 0.3, 0.2];
 // the smear's leading corners. See updateSmearQuad.
 export const SMEAR_LEAD_BOOST_CAP = 6;
 
+// Motion Smear / Conserve volume: the narrowest the smear is ever thinned
+// to, as a share of its resting width. A floor, so a very long streak thins
+// into a line and not into nothing.
+export const SMEAR_VOLUME_MIN_FACTOR = 0.35;
+
 // Motion Smear / Tapered Trail: the band of smear-quad stretch, in pixels, over
 // which the taper ramps from off to full.
 //
@@ -454,7 +462,7 @@ export const CARET_STATE_FIELDS = [
   "_lastStardustT", "_lastSparkT", "_lastFireworkT",
   "_tetherKey", "_tetherFrom", "_tetherTo", "_tetherSegs", "_tetherSegKey",
   "_tetherAnchorA", "_tetherAnchorB",
-];
+] as const;
 // Stardust keeps this many motes alive per caret; the pool is shared, so the
 // cap scales with the caret count or ten carets would starve each other.
 export const STARDUST_MAX_PER_CARET = 60;

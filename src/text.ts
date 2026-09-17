@@ -9,8 +9,8 @@
 // <> pair up too. They are depth-matched like the others, so a `<` used as a
 // less-than sign (or a `>` blockquote marker) can occasionally pair with a
 // stray partner; that's an accepted cost of a decorative guide.
-export const BRACKET_OPEN = { "(": ")", "[": "]", "{": "}", "<": ">" };
-export const BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{", ">": "<" };
+export const BRACKET_OPEN: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">" };
+export const BRACKET_CLOSE: Record<string, string> = { ")": "(", "]": "[", "}": "{", ">": "<" };
 export const BRACKET_SCAN_LIMIT = 20000;
 
 // A structural block cuts the tether: a pair with one end inside a code block,
@@ -58,7 +58,7 @@ export const BLOCK_LINE_LOOKBACK = 1024;
 // The blockquote depth of one line, and whether what remains after stripping
 // that prefix opens a code fence. Callouts need no special case: "> [!note]"
 // is a blockquote line like any other, and its body lines carry the same ">".
-export function blockLineInfo(line) {
+export function blockLineInfo(line: string) {
   let i = 0;
   let depth = 0;
   for (;;) {
@@ -84,7 +84,7 @@ export function blockLineInfo(line) {
 //
 // `textStart` is the document offset of text[0], so a slice that begins
 // mid-document isn't mistaken for the start of a line.
-export function isBlockquoteMarker(text, i, textStart) {
+export function isBlockquoteMarker(text: string, i: number, textStart: number): boolean {
   const floor = Math.max(0, i - BLOCK_PREFIX_MAX);
   for (let j = i - 1; j >= floor; j--) {
     const c = text[j];
@@ -110,13 +110,13 @@ export const QUOTE_CHARS = ['"', "'", "`"];
 // pairing (see quoteSpanAt). They still get the apostrophe guard, because ’ is
 // also the correct character for a typographic apostrophe - "don’t" - and must
 // not be read as a closing quote when it sits between two letters.
-export const CURLY_QUOTE_OPEN = { "\u201C": "\u201D", "\u2018": "\u2019" };  // “ → ”, ‘ → ’
+export const CURLY_QUOTE_OPEN: Record<string, string> = { "\u201C": "\u201D", "\u2018": "\u2019" };  // “ → ”, ‘ → ’
 export const QUOTE_LINE_SCAN = 4000;
 export const WORD_CHAR = /[\p{L}\p{N}_]/u;
 // A quote wedged between two word characters is an apostrophe, not a
 // delimiter - "don't", "it's", "rock'n'roll", "don’t". Skipping those is what
 // stops the tether pairing the apostrophe in "don't" with the one in "it's" and
 // drawing a line across the sentence between them.
-export function isQuoteDelimiter(text, i) {
+export function isQuoteDelimiter(text: string, i: number): boolean {
   return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
 }

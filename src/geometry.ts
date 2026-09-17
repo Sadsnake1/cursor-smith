@@ -7,6 +7,7 @@ import {
   CANVAS_REGION_MARGIN_X,
   CANVAS_REGION_SHRINK_RATIO,
 } from "./constants";
+import type { Bounds, Rect } from "./types";
 
 // ---------------------------------------------------------------------------
 // Canvas region fitting (issue #30)
@@ -28,7 +29,7 @@ import {
 // otherwise a region that grew for an effect would snap back the frame the
 // effect ended.
 // ---------------------------------------------------------------------------
-export function fitCanvasRegion(need: any, clip: any, current: any, opts: { marginX?: number; marginY?: number; grid?: number; allowShrink?: boolean } = {}) {
+export function fitCanvasRegion(need: Bounds | null, clip: Rect | null, current: Rect | null, opts: { marginX?: number; marginY?: number; grid?: number; allowShrink?: boolean } = {}): Rect | null {
   const marginX = opts.marginX ?? CANVAS_REGION_MARGIN_X;
   const marginY = opts.marginY ?? 32;
   const grid = opts.grid ?? CANVAS_REGION_GRID;
@@ -85,7 +86,7 @@ export function fitCanvasRegion(need: any, clip: any, current: any, opts: { marg
 // begins. Heights are floored, since a fractional wrapper height forces
 // compositor re-uploads (see the clip block in the canvas tick).
 // ---------------------------------------------------------------------------
-export function wrapperClipForStatusBar(wrapper, bar) {
+export function wrapperClipForStatusBar(wrapper: { top: number; left: number; width: number; height: number }, bar: { top: number; left: number; right: number }): { height: number; clipPath: string } {
   const { top, left, width } = wrapper;
   const height = wrapper.height;
   const maxBottom = bar.top;

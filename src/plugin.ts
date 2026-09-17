@@ -63,6 +63,7 @@ import {
   SERIF_STEM_RATIO,
   SERIF_TAPER,
   SMEAR_LEAD_BOOST_CAP,
+  SMEAR_VOLUME_MIN_FACTOR,
   SPEED_RAMP_LIFTOFF,
   STARDUST_MAX_PER_CARET,
   TAPER_FULL_LAG,
@@ -174,50 +175,183 @@ import {
 } from "./text";
 import { paintTorchDarkness, paintTorchGlow, torchCanvasContext } from "./torch-paint";
 import type { Text } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
-import type { BurnMark, CaretRecord, CaretState, CursorSmithSettings, Ember, Firework, FlamePixel, LetterParticle, StardustMote, Thunderbolt, TrailPoint } from "./types";
+import type { Rect as CMRect, EditorView } from "@codemirror/view";
+import type { Bounds, Box, BurnMark, CaretCoords, CaretGeoCache, CaretRecord, CaretState, CaretStyleCache, ChromeInsets, CoordsLTB, CursorSmithSettings, EffCache, Ember, Firework, FireworkSpark, FlamePixel, Glitch, GlitchState, HotScroll, HotShift, KeyFlags, LegacySettings, LetterParticle, LineStyle, Look, PaneRectCache, PerfCounters, Pt, Quad, QuadKey, Rect, ReportApp, ReportNavigator, ReportWindow, SettingKey, SmearQuad, StardustMote, TetherSeg, ThunderBand, Thunderbolt, TrailPoint, TrailPointCallback } from "./types";
 
 export default class CursorSmithPlugin extends Plugin {
   // The engine keeps its working state as instance fields set where they
-  // are first needed - hundreds of them, swapped in and out per caret (see
-  // CARET_STATE_FIELDS). They are typed loosely here on purpose; the
-  // settings object is the one field every method reads and it is typed.
-  [key: string]: any;
-  settings: CursorSmithSettings;
-  // Per-document registries (pop-out windows), created in onload.
-  _docCleanups: Map<Document, () => void>;
-  registeredDocuments: Set<Document>;
+  // are first needed - a hundred and sixty of them, some swapped in and out
+  // per caret (see CARET_STATE_FIELDS). The generator declares every one of
+  // them from the assignments in this class and its FIELD_TYPES table. They
+  // are assigned in onload() (most through _resetEngineState) rather than in
+  // a constructor, which is what the definite-assignment marks say.
   // The engine's state, declared from _resetEngineState by the generator.
-  trail: TrailPoint[];
-  particles: LetterParticle[];
-  flamePixels: FlamePixel[];
-  flameEmbers: Ember[];
-  hotBurns: BurnMark[];
-  _hotPrev: { x: number; y: number; t: number } | null;
-  _hotVel: { x: number; y: number };
-  thunderbolts: Thunderbolt[];
-  fireworks: Firework[];
-  _lastFireworkT: number;
-  stardust: StardustMote[];
-  _lastStardustT: number;
-  _tetherFrom: number;
-  _tetherTo: number;
-  secondaryCarets: CaretRecord[];
-  _secondaries: CaretState[];
-  lastActive: CaretRecord | null;
-  pending: { caret: CaretRecord; since: number; holdChar: string | null } | null;
-  _smearMoving: boolean;
-  _smearDtT: number;
-  smearQuadLastMoveT: number;
-  animActive: CaretRecord | null;
-  lastMoveTime: number;
-  typingSpeedMod: number;
-  _catchUpBoost: number;
-  heat: number;
-  _lastSparkT: number;
-  _popRainbowHue: number;
+  _activePresetName!: string;
+  _appliedVimMode!: string | null;
+  _auroraCanvas!: HTMLCanvasElement | null;
+  _auroraCtx!: CanvasRenderingContext2D | null;
+  _auroraImg!: ImageData | null;
+  _auroraLut!: Float32Array | null;
+  _canvasBlend!: string;
+  _canvasDpr!: number;
+  _canvasGear!: string;
+  _canvasIdleT!: number;
+  _canvasPlaced!: boolean;
+  _canvasRect!: Rect | null;
+  _canvasTick!: FrameRequestCallback | null;
+  _caretGeoCache!: CaretGeoCache | null;
+  _caretOwner!: CaretState | null;
+  _caretPass!: "primary" | "secondary";
+  _caretStyleCache!: CaretStyleCache | null;
+  _catchUpBoost!: number;
+  _chromeCache!: ChromeInsets | null;
+  _clipChain!: Element[] | null;
+  _clipChainFor!: Element | null;
+  _clipRect!: Rect | null;
+  _clipTop!: number;
+  _deletePending!: number;
+  _dirty!: Bounds | null;
+  _dirtyFull!: boolean;
+  _dirtyPrev!: Rect | null;
+  _dirtyRaw!: Bounds | null;
+  _docCleanups!: Map<Document, () => void>;
+  _drawSig!: string | null;
+  _effCache!: EffCache | null;
+  _enterPending!: number;
+  _excaliHostFor!: Element | null;
+  _excaliHostVal!: boolean;
+  _formMirror!: HTMLDivElement | null;
+  _glyphColorFor!: string | null;
+  _glyphColorMode!: string | null;
+  _glyphColorVal!: string;
+  _heatKeyT!: number;
+  _hideNativeSig!: boolean | null;
+  _hotActiveT!: number;
+  _hotDrawT!: number;
+  _hotEmitFrom!: Pt | null;
+  _hotEngulfUntil!: number;
+  _hotPalette!: number[][] | null;
+  _hotPaletteKey!: string | null;
+  _hotPrev!: (Pt & { t: number }) | null;
+  _hotScroll!: HotScroll | null;
+  _hotShift!: HotShift | null;
+  _hotShiftTick!: number;
+  _hotSparkCap!: number;
+  _hotSparks!: number;
+  _hotVel!: Pt;
+  _lastActivityT!: number;
+  _lastFireworkT!: number;
+  _lastGlowAlpha!: string;
+  _lastGlowRect!: string;
+  _lastHotFrameT!: number;
+  _lastHotT!: number;
+  _lastOverlayRect!: string;
+  _lastSparkT!: number;
+  _lastStardustT!: number;
+  _lastTorchRadius!: number;
+  _lastWrapperRect!: string;
+  _layoutGen!: number;
+  _measureCtx!: CanvasRenderingContext2D | null;
+  _nodeIdSeq!: number;
+  _nodeIds!: WeakMap<Node, number> | null;
+  _overlayBox!: { top: number; left: number; width: number; height: number } | null;
+  _overlaySig!: string;
+  _paneRectCache!: PaneRectCache | null;
+  _pendingPresetName!: string;
+  _pendingVimPresetName!: string;
+  _perf!: PerfCounters | null;
+  _popKeyPending!: number;
+  _popRainbowHue!: number;
+  _presCacheT!: number;
+  _presCacheV!: boolean;
+  _realKeyT!: number;
+  _reduceMQ!: MediaQueryList | null;
+  _regionOversizedT!: number;
+  _ro!: ResizeObserver | null;
+  _roView!: EditorView | null;
+  _secondaries!: CaretState[];
+  _selShape!: { count: number; mainIndex: number } | null;
+  _settingsSwapped!: boolean;
+  _smearDir!: Pt | null;
+  _smearDtT!: number;
+  _smearMoving!: boolean;
+  _smoothLastT!: number;
+  _smoothMoving!: boolean;
+  _suspendCleared!: boolean;
+  _swapDepth!: number;
+  _swapPool!: Partial<CaretState>[] | null;
+  _taperBuf!: Quad | null;
+  _tetherAnchorA!: Pt | null;
+  _tetherAnchorB!: Pt | null;
+  _tetherFrom!: number;
+  _tetherKey!: string | null;
+  _tetherSegKey!: string | null;
+  _tetherSegs!: TetherSeg[] | null;
+  _tetherTo!: number;
+  _tickErrorLogged!: boolean;
+  _tickNo!: number;
+  _torchDarkKey!: string;
+  _torchErrorLogged!: boolean;
+  _torchGear!: string;
+  _torchGlowKey!: string;
+  _torchIdleT!: number;
+  _torchTick!: FrameRequestCallback | null;
+  _typingBoostSm!: number | null;
+  _uiModeSwitching!: boolean;
+  _vimEditMode!: string;
+  _vimModeCache!: string | null;
+  _vimModeCacheT!: number;
+  _vimNormalRetryT!: number;
+  _vimStatusSig!: string | null;
+  _volumeBuf!: Quad | null;
+  _wrapperPos!: { left: number; top: number } | null;
+  animActive!: CaretRecord | null;
+  bracketTether!: TetherSeg[] | null;
+  canvas!: HTMLCanvasElement | null;
+  canvasEngineActive!: boolean;
+  canvasRaf!: number;
+  canvasWrapper!: HTMLDivElement | null;
+  ctx!: CanvasRenderingContext2D | null;
+  fireworks!: Firework[];
+  flameEmbers!: Ember[];
+  flamePixels!: FlamePixel[];
+  glitch!: Glitch | null;
+  glowEl!: HTMLCanvasElement | null;
+  heat!: number;
+  hotBurns!: BurnMark[];
+  lastActive!: CaretRecord | null;
+  lastCaret!: CaretRecord | null;
+  lastCaretMove!: number;
+  lastMouseMove!: number;
+  lastMoveTime!: number;
+  modalObserver!: MutationObserver | null;
+  modalOpen!: boolean;
+  mouseX!: number;
+  mouseY!: number;
+  overlay!: HTMLCanvasElement | null;
+  particles!: LetterParticle[];
+  pending!: { caret: CaretRecord; since: number; holdChar: string | null } | null;
+  registeredDocuments!: Set<Document>;
+  secondaryCarets!: CaretCoords[];
+  settingTab!: CursorSmithSettingTab | null;
+  settings!: CursorSmithSettings;
+  smearCenterPrev!: Pt | null;
+  smearQuad!: SmearQuad | null;
+  smearQuadLastMoveT!: number;
+  smearShape!: Quad | null;
+  stardust!: StardustMote[];
+  thunderbolts!: Thunderbolt[];
+  torchEngineActive!: boolean;
+  torchRaf!: number;
+  trail!: TrailPoint[];
+  tx!: number;
+  ty!: number;
+  typingSpeedMod!: number;
+  vimStatusEl!: HTMLElement | null;
+  x!: number;
+  y!: number;
   async onload() {
-    const rawSaved = await this.loadData();
+    const rawSaved = (await this.loadData()) as LegacySettings | null;
     const saved = migrateLegacyKeys(rawSaved);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 
@@ -270,9 +404,9 @@ export default class CursorSmithPlugin extends Plugin {
         this.settings.vimModes && typeof this.settings.vimModes === "object"
           ? this.settings.vimModes
           : {};
-      const fresh = {};
+      const fresh: Record<string, Look> = {};
       for (const mode of VIM_MODE_KEYS) {
-        const saved = Object.assign({}, savedModes[mode] || {});
+        const saved: Partial<Look> & { useCustomColors?: boolean } = Object.assign({}, savedModes[mode] || {});
         if (saved.useCustomColors === false) {
           saved.colorDark = this.settings.colorDark;
           saved.colorLight = this.settings.colorLight;
@@ -423,15 +557,18 @@ export default class CursorSmithPlugin extends Plugin {
       callback: () => this.cycleActivePreset(1),
     });
 
+    // "toggle", not "toggle-cursor-smith": Obsidian prefixes every command
+    // id with the plugin id, and the review rejects repeating it. Renamed
+    // in 1.5.4, so a hotkey bound to the old id has to be bound again.
     this.addCommand({
-      id: "toggle-cursor-smith",
+      id: "toggle",
       name: "Toggle on/off",
       callback: () => this.toggle(),
     });
 
     this.addCommand({
       id: "toggle-cua-vim-mode",
-      name: "Toggle CUA/Vim mode",
+      name: "Toggle CUA / Vim mode",
       callback: () => this.toggleUiMode(),
     });
 
@@ -468,9 +605,10 @@ export default class CursorSmithPlugin extends Plugin {
     // Layout can move without any input: a theme or snippet change, a pane
     // opening or closing, a leaf change. Each invalidates the geometry
     // caches; none needs a frame on its own (the heartbeat repaints).
+    // The four events share one handler signature; the overload is picked by name.
     for (const ev of ["css-change", "layout-change", "active-leaf-change", "resize"]) {
       try {
-        this.registerEvent(this.app.workspace.on(ev as any, () => this._invalidateLayout()));
+        this.registerEvent(this.app.workspace.on(ev as "layout-change", () => this._invalidateLayout()));
       } catch { /* an event this Obsidian does not have */ }
     }
 
@@ -513,19 +651,15 @@ export default class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // Detach everything this plugin put into one document: its listeners and its
-  // injected stylesheet. Called per pop-out window as it closes, and for every
-  // registered document on unload.
+  // Detach everything this plugin put into one document: its listeners, its
+  // body classes, its layers. Called per pop-out window as it closes, and for
+  // every registered document on unload.
   //
-  // The stylesheet removal is the part that matters beyond tidiness. Obsidian
-  // updates a plugin by unloading and reloading it WITHOUT reloading the
-  // window, so a stylesheet left behind by the previous version survives into
-  // the new one - and injectStyles() keys on a fixed element id, so the new
-  // version would find the old element, return early, and quietly run its
-  // settings-driven torch values against the previous release's CSS until the
-  // user restarted Obsidian. That is the same silent-cascade failure the torch
-  // rules are already covered in warnings about, just arriving by a different
-  // route.
+  // Thorough on purpose. Obsidian updates a plugin by unloading and reloading
+  // it WITHOUT reloading the window, so anything left behind survives into
+  // the new version - which is how the stylesheet versions before 1.5.4
+  // injected once outlived the release that wrote it, and why this still
+  // removes one.
   unregisterDocument(doc: Document) {
     const cleanup = this._docCleanups.get(doc);
     if (cleanup) {
@@ -548,223 +682,20 @@ export default class CursorSmithPlugin extends Plugin {
       this._canvasRect = null;
     }
     try {
+      // Versions before 1.5.4 injected a stylesheet; an update in place
+      // unloads one of them into this same window.
       doc.getElementById("cursor-smith-dynamic-styles")?.remove();
-      doc.querySelector(".torch-cursor-glow")?.remove();
+      doc.querySelector(".cursor-smith-torch-glow")?.remove();
       doc.body?.classList.remove(
-        "retro-box-cursor-active", "retro-box-cursor-hide-native", "torch-cursor-active");
+        "cursor-smith-active", "cursor-smith-hide-native", "cursor-smith-torch-active");
     } catch { /* document already torn down with its window */ }
-  }
-
-  injectStyles(doc: Document) {
-    const id = "cursor-smith-dynamic-styles";
-    // Replace, never skip. This used to `return` when an element with this id
-    // already existed, which is correct for the every-frame case it was written
-    // for and wrong for the one that matters: Obsidian updates a plugin by
-    // unloading and reloading it in place, without a window reload. The old
-    // version's stylesheet was never removed (nothing removed it - see
-    // unregisterDocument, which does now), so the NEW version found it, took
-    // this early return, and ran with the previous release's torch CSS until
-    // Obsidian was restarted. Rewriting the element is cheap and this only
-    // runs when a canvas or overlay is (re)built, not per frame.
-    doc.getElementById(id)?.remove();
-
-    const styleEl = doc.createElement("style");
-    styleEl.id = id;
-    styleEl.textContent = `
-      /* NO -webkit-app-region declaration on any of our layers.
-         Electron composes drag regions by unioning elements with
-         app-region:drag, then SUBTRACTING elements with app-region:no-drag
-         (alias: none). An element with NO declaration is completely neutral
-         - Electron ignores it for hit-testing. Setting app-region:none on
-         our layers was actively punching holes in the tab bar's drag rects
-         (confirmed: wrapper computed as "no-drag", killed dragging entirely
-         even though the wrapper rect was already below the tab bar). The
-         correct approach is: declare nothing, keep pointer-events:none so
-         clicks pass through, and rely on the physical rect not covering
-         the drag surface (enforced by _chromeInsets in the tick loops). */
-      .retro-box-cursor-canvas {
-        position: absolute;
-        pointer-events: none;
-      }
-      /* The wrapper the canvas lives in: fixed, clipping, inert, and
-         collapsed until the tick sizes it inline (see ensureCanvasForView). */
-      .retro-box-cursor-wrapper {
-        position: fixed;
-        overflow: hidden;
-        pointer-events: none;
-        z-index: 10000;
-        top: 0;
-        left: 0;
-        width: 0;
-        height: 0;
-      }
-      /* The native caret in plain <input>/<textarea>/contenteditable fields.
-         In the main window this is styles.css's job, but this stylesheet is
-         the one thing guaranteed to be present in EVERY document the canvas
-         migrates into - including the 1.13 settings window - so the rule has
-         to live here as well or the browser caret shows through under the
-         drawn cursor there. Same doubled-class specificity convention as
-         styles.css (outrank themes without !important); harmless duplicate
-         where both stylesheets are loaded.
-
-         ZERO ALPHA, NOT 'transparent' - the long version of why is in
-         styles.css beside the same declaration. Short version: iOS tints
-         the whole selection UI from caret-color's RGB and throws its alpha
-         away, so 'transparent' (rgba(0,0,0,0)) paints the highlight black
-         and leaves the drag handles invisible - issue #24. Alpha is what
-         hides the caret, so 0 hides it exactly as before.
-
-         Keep the two files in step. This stylesheet is the only one
-         present in a popped-out window, so a 'transparent' left here alone
-         reintroduces the bug in the one place nobody would think to look
-         for it. */
-      body.retro-box-cursor-hide-native.retro-box-cursor-hide-native {
-        caret-color: hsla(var(--color-accent-hsl, 254, 80%, 68%), 0);
-      }
-      /* ...except in plugins that draw their own caret on a transformed
-         surface, where we deliberately don't draw one (see
-         isExcalidrawCaretHost). The rule above works by INHERITANCE from
-         body, so any direct declaration on the field itself outranks it
-         without needing a specificity war or !important. Without this the
-         Excalidraw fix would be half-done: no drawn cursor, and no native
-         one either, so typing into a shape would show no caret at all. */
-      .retro-box-cursor-hide-native .excalidraw textarea,
-      .retro-box-cursor-hide-native .excalidraw-wrapper textarea,
-      .retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
-        caret-color: auto;
-      }
-      /* Hide EVERY native cursor - primary and secondaries alike, by class
-         and by position - because the plugin draws all of them now (the
-         secondaries with the primary's full pipeline, see
-         drawFullSecondaries, or as its own 2px line past the cap). This copy
-         used to hide only the primary and force the secondaries VISIBLE, a
-         leftover from before the plugin drew secondaries at all; since
-         styles.css hid them and this copy won on !important, a native caret
-         has been sitting under every drawn secondary. Invisible under a
-         filled box, a doubled line under Line or Underline. The two
-         stylesheets say the same thing again. */
-      .retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor,
-      .retro-box-cursor-hide-native .cm-cursor-primary,
-      .retro-box-cursor-hide-native .cm-cursor-secondary,
-      .retro-box-cursor-hide-native .cm-fat-cursor,
-      .retro-box-cursor-hide-native .cm-dropCursor {
-        display: none !important;
-        opacity: 0 !important;
-        visibility: hidden !important;
-        border-color: transparent !important;
-        background-color: transparent !important;
-        animation: none !important;
-      }
-      /* The cursor LAYER carries CodeMirror's blink as a CSS animation
-         (cm-blink, steps(1)), and a running main-thread animation has its
-         style recalculated on every rendering frame - including every frame
-         this plugin's loop requests, of which an idle page would otherwise
-         have almost none. With every cursor in the layer hidden the
-         animation animates nothing, so stop it: measured, that took idle
-         style recalcs from ~25/s to 0 and typing's from ~130/s to ~10/s. */
-      .retro-box-cursor-hide-native .cm-cursorLayer {
-        animation: none !important;
-      }
-      .torch-cursor-overlay {
-        position: fixed;
-        pointer-events: none;
-        /* Collapsed by default: the tick loop sizes this inline every
-           frame; these defaults only cover the gap between DOM insertion
-           and the first frame, so the overlay can never sit over the
-           drag surface during that window. */
-        top: 0;
-        left: 0;
-        width: 0;
-        height: 0;
-        z-index: 9990;
-        /* NO mix-blend-mode. This used to be multiply with a warm colour at the
-           centre stop, which is why the spotlight read as a muddy brown wash
-           rather than as a dark room: multiply can only ever darken, so a warm
-           "tint" walks the page toward brown instead of lighting it. Plain
-           black with alpha, composited normally, is what the reference does -
-           and it is one less blend pass per frame.
-
-           Four stops, not two. The centre is fully transparent, then the
-           darkness ramps 0.52 / 0.91 / 1.0 of the setting across 40% / 70% /
-           100% of the radius. A two-stop ramp puts the halfway point of the
-           fade at the halfway point of the circle, which reads as a soft
-           vignette; this holds the middle of the pool nearly clear and then
-           closes fast, which is what makes it read as a pool of light with an
-           edge. */
-        /* The darkness itself is PAINTED: this element is a canvas at
-           TORCH_CANVAS_SCALE of its CSS size, filled by paintTorchDarkness
-           from the torch tick (the ramp described above lives there). No
-           background here - a gradient on the element would be a second,
-           full-resolution raster underneath the painted one. */
-        opacity: 1;
-        transition: opacity 0.2s ease;
-      }
-      /* The warm core, as its own layer. It CANNOT live inside
-         .torch-cursor-overlay: that element carries mix-blend-mode: multiply
-         and a z-index, so it is a stacking context, and a screen blend nested
-         inside it would composite against the overlay's own gradient instead
-         of against the editor - visible effect nil, cost one blend pass per
-         frame. See ARCHITECTURE.md, "Blending against the editor".
-
-         multiply can only ever darken: multiplying by a warm colour walks the
-         page toward brown, it does not add light. Actual glow needs an
-         additive pass, which is what this is, sitting one z-index above the
-         darkness so it lights what the overlay just dimmed.
-
-         Built and destroyed by the torch tick, only while Glow Strength > 0 -
-         a blended layer costs a re-composite of everything beneath it whether
-         or not it is showing anything. */
-      .torch-cursor-glow {
-        position: fixed;
-        pointer-events: none;
-        top: 0;
-        left: 0;
-        width: 0;
-        height: 0;
-        z-index: 9991;
-        mix-blend-mode: screen;
-        /* Glow Strength scales the whole layer rather than the gradient's
-           stops, so the falloff shape stays put as the slider moves and the
-           flicker is one number to multiply in. */
-        opacity: var(--torch-glow, 0);
-        /* 0.6x the spotlight radius: the warm core sits INSIDE the lit circle.
-           A halo wider than the pool was the wrong shape - it put light where
-           the overlay had already gone dark, which just greyed the edge.
-           Painted, like the darkness: see paintTorchGlow. */
-      }
-      .torch-cursor-glow.torch-cursor-hidden {
-        opacity: 0 !important;
-        display: none !important;
-      }
-      .torch-cursor-overlay.torch-cursor-hidden {
-        opacity: 0 !important;
-        display: none !important;
-      }
-      /* Candle flicker LIVES IN THE TORCH TICK, which writes --torch-intensity
-         under the frame governor. It used to be a keyframe animation here, and
-         that is why the warning below exists rather than the feature.
-
-         A CSS animation is driven by the compositor, entirely outside the rAF
-         frame governor - so it pinned the display to full refresh rate forever
-         whenever the torch was on, no matter what gear the render loops chose.
-         The overlay is also the worst possible element to animate that way: it
-         carries mix-blend-mode: multiply over the whole editor pane, so every
-         flicker frame forced the blended layer to be recomposited against its
-         backdrop rather than being a cheap compositor-only opacity change.
-
-         So: do NOT re-add an animation or transition property on
-         .torch-cursor-overlay for the flame, here or in styles.css - the
-         effect you would be reaching for already exists, one governor-friendly
-         custom-property write per frame, quantised so most frames skip it. */
-    `;
-    doc.head.appendChild(styleEl);
   }
 
   registerWindowEvents(doc: Document) {
     if (this.registeredDocuments.has(doc)) return;
     this.registeredDocuments.add(doc);
     
-    const onMouseMove = (e) => {
+    const onMouseMove = (e: MouseEvent) => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
       this.lastMouseMove = performance.now();
@@ -790,7 +721,7 @@ export default class CursorSmithPlugin extends Plugin {
     // So the logical keystroke is recorded here, and both keydown (desktop,
     // and mobile's real keys) and beforeinput (mobile's character input) call
     // it. `kind` is what the keystroke MEANS, not which key produced it.
-    const noteKeystroke = (kind: string, opts: any = {}) => {
+    const noteKeystroke = (kind: string, opts: { repeat?: boolean } = {}) => {
       const now = performance.now();
       if (kind === "delete") this._deletePending = now;
       if (kind === "enter") this._enterPending = now;
@@ -833,13 +764,13 @@ export default class CursorSmithPlugin extends Plugin {
     // knows it was caused by deletion (and can invert direction + color).
     // Timestamped so a stale flag from ~200ms ago doesn't wrongly colour a
     // burst caused by unrelated caret movement that arrived late.
-    const onKeyDown = (e) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       this._markActivity();
       const k = e.key;
       // The IME sentinel. Nothing useful here - beforeinput will carry the
       // actual edit - and acting on it would charge every mobile keystroke as
       // an unknown character.
-      if (k === "Unidentified" || e.keyCode === 229 || e.isComposing) return;
+      if (k === "Unidentified" || k === "Process" || e.isComposing) return;
 
       // A real key came through, so this platform reports keydown properly.
       // beforeinput uses this to stay out of the way rather than double-count
@@ -876,7 +807,7 @@ export default class CursorSmithPlugin extends Plugin {
     // events arrive for the same keystroke and counting it twice would double
     // every heat bump. 60ms is comfortably longer than the keydown ->
     // beforeinput gap and far shorter than any plausible second keystroke.
-    const onBeforeInput = (e) => {
+    const onBeforeInput = (e: InputEvent) => {
       this._markActivity();
       if (performance.now() - (this._realKeyT || 0) < 60) return;
       const t = e.inputType || "";
@@ -927,7 +858,7 @@ export default class CursorSmithPlugin extends Plugin {
     // preview, another plugin's panel - none of those move the caret, and
     // each used to buy 1.2s of the hot gear. A plugin that scrolls something
     // continuously used to pin it forever.
-    const onScrollLike = (e) => { if (this._scrollMovesCaret(e.target, doc)) this._markActivity(); };
+    const onScrollLike = (e: Event) => { if (this._scrollMovesCaret(e.target, doc)) this._markActivity(); };
     doc.addEventListener("selectionchange", onActivity);
     doc.addEventListener("mousedown", onActivity, true);
     doc.addEventListener("focusin", onActivity, true);
@@ -1036,10 +967,10 @@ export default class CursorSmithPlugin extends Plugin {
     return this.settings.userPresets;
   }
 
-  async saveUserPreset(name) {
+  async saveUserPreset(name: string) {
     // Snapshot cursor settings only - exclude housekeeping keys that must
     // not be restored when the preset is loaded later.
-    const snap = Object.assign({}, this.settings);
+    const snap: Partial<CursorSmithSettings> = Object.assign({}, this.settings);
     delete snap.enabled;
     delete snap.userPresets;
     // Vim theming is its own independent system with its own presets — a
@@ -1049,15 +980,16 @@ export default class CursorSmithPlugin extends Plugin {
     await this.saveSettings();
   }
 
-  async loadUserPreset(name) {
+  async loadUserPreset(name: string) {
     const preset = this.getUserPresets()[name];
     if (!preset) return;
     const wasEnabled = this.settings.enabled;
     const presets = this.getUserPresets();   // hold ref before overwrite
     // Snapshot the independent vim state so an old/imported preset can't wipe
     // it (normal snapshots exclude these, but share codes are untrusted).
-    const vimState = {};
-    for (const k of VIM_STATE_KEYS) vimState[k] = this.settings[k];
+    const vimState: Partial<CursorSmithSettings> = {};
+    const dst = vimState as unknown as Record<string, unknown>, src = this.settings as unknown as Record<string, unknown>;
+    for (const k of VIM_STATE_KEYS) dst[k] = src[k];
     // Backfill first: an older/built-in preset saved before some setting
     // existed should land on that setting's default, not on whatever this
     // vault happened to have set beforehand (see presetWithDefaults).
@@ -1071,7 +1003,7 @@ export default class CursorSmithPlugin extends Plugin {
     this._activePresetName = name;
   }
 
-  async deleteUserPreset(name) {
+  async deleteUserPreset(name: string) {
     delete this.getUserPresets()[name];
     await this.saveSettings();
   }
@@ -1080,7 +1012,7 @@ export default class CursorSmithPlugin extends Plugin {
   // uiMode is the user-facing switch and vimModeEnabled is the feature flag;
   // renderModeSwitch and setVimModeEnabled keep them in step, but an install that
   // predates uiMode can have only the latter, so treat either as Vim.
-  isVimUiMode() {
+  isVimUiMode(): boolean {
     return (this.settings.uiMode || "cua") === "vim" || !!this.settings.vimModeEnabled;
   }
 
@@ -1108,6 +1040,9 @@ export default class CursorSmithPlugin extends Plugin {
       // Persist the pending name so the settings tab reflects the active preset.
       this._pendingPresetName = nextName;
       new Notice(`Cursor-Smith: ${nextName}`);
+      // The panel shows the loaded values and the pending name: hand it
+      // new definitions (see refreshSettingTab).
+      this.refreshSettingTab();
     });
   }
 
@@ -1153,26 +1088,21 @@ export default class CursorSmithPlugin extends Plugin {
     }
   }
 
-  // Re-render the settings panel, but only if it is actually on screen.
+  // Rebuild the settings panel's definitions after something outside the
+  // panel changed what it shows.
   //
-  // The mode switch is a segmented control there, drawn from uiMode at build
-  // time, so toggling from the palette with Settings open used to leave the
-  // panel showing the mode you just left - and clicking the half that looked
-  // inactive then did nothing, because renderModeSwitch's own guard correctly
-  // saw the mode was already current.
-  //
-  // Obsidian gives no "is my tab open" flag, so ask the DOM: a tab that was
-  // built and then closed keeps its containerEl, but that element is no longer
-  // attached to a document. Fails closed - a stale panel is much cheaper than
-  // a command that throws.
+  // The panel is declarative (getSettingDefinitions): Obsidian renders the
+  // LAST set of definitions it was handed and does not ask again when the
+  // tab is opened, so a command that switches the mode or cycles a preset
+  // has to hand it a new set or the panel opens showing the state you just
+  // left. update() re-renders in place if the panel is on screen and just
+  // stores the definitions otherwise. Fails closed - a stale panel is much
+  // cheaper than a command that throws.
   refreshSettingTab() {
     try {
       const tab = this.settingTab;
-      const el = tab && tab.containerEl;
-      if (!el) return;
-      const doc = el.ownerDocument;
-      if (!doc || !doc.body || !doc.body.contains(el)) return;
-      tab.display();
+      if (!tab || typeof tab.update !== "function") return;
+      tab.update();
     } catch (e) {
       console.error("[cursor-smith] could not refresh the settings panel:", e);
     }
@@ -1196,7 +1126,7 @@ export default class CursorSmithPlugin extends Plugin {
   //  • drives Obsidian's own Vim keybindings when vimControlObsidian is set
   //    (remembering the prior state so turning the feature off restores it),
   //  • creates/removes the status bar mode indicator.
-  async setVimModeEnabled(value) {
+  async setVimModeEnabled(value: boolean) {
     value = !!value;
 
     // 1. Flip and PERSIST the core state before any side effect runs, so the
@@ -1296,9 +1226,9 @@ export default class CursorSmithPlugin extends Plugin {
   // pop-out windows), not just the focused one — switching modes should settle
   // every editor, otherwise a background tab stays in insert until you visit
   // it and press Escape yourself.
-  allEditorViews() {
-    const views = [];
-    const push = (v) => { if (v && !views.includes(v)) views.push(v); };
+  allEditorViews(): EditorView[] {
+    const views: EditorView[] = [];
+    const push = (v: EditorView | null | undefined) => { if (v && !views.includes(v)) views.push(v); };
     try {
       push(this.app.workspace.activeEditor?.editor?.cm);
       this.app.workspace.iterateAllLeaves?.((leaf) => {
@@ -1313,7 +1243,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Turn Obsidian's built-in Vim keybindings on/off. setConfig is semi-internal
   // (guarded); updateOptions asks the workspace to re-derive editor extensions
   // so the change can take effect without a reload where that's supported.
-  setObsidianVim(on) {
+  setObsidianVim(on: boolean) {
     try {
       if (this.app.vault.setConfig) this.app.vault.setConfig("vimMode", !!on);
       this.app.workspace.updateOptions?.();
@@ -1324,7 +1254,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   // Whether Obsidian's own Vim keybindings are turned on (Settings → Editor →
   // Vim key bindings). getConfig is a semi-internal API, so it's fully guarded.
-  isObsidianVimOn() {
+  isObsidianVimOn(): boolean {
     try {
       return !!(this.app.vault.getConfig && this.app.vault.getConfig("vimMode"));
     } catch {
@@ -1351,12 +1281,12 @@ export default class CursorSmithPlugin extends Plugin {
   // the .cm-fat-cursor class on the content element for block-cursor modes
   // (normal/visual/replace). Insert mode uses a thin caret. This is the
   // fallback signal when the adapter isn't reachable.
-  _vimBlockCursorShown(view: EditorView) {
+  _vimBlockCursorShown(view: EditorView): boolean {
     try {
       const content = view.contentDOM;
       if (content && content.classList && content.classList.contains("cm-fat-cursor")) return true;
       const root = view.dom;
-      return !!(root && root.querySelector && root.querySelector(".cm-fat-cursor"));
+      return !!(root && "querySelector" in root && root.querySelector(".cm-fat-cursor"));
     } catch {
       return false;
     }
@@ -1366,7 +1296,7 @@ export default class CursorSmithPlugin extends Plugin {
   // can't be determined. Prefers the adapter's authoritative state (the only
   // way to reliably see "replace"); falls back to selection + block-cursor
   // heuristics, which cover normal/insert/visual but report replace as normal.
-  detectVimMode(view: EditorView) {
+  detectVimMode(view: EditorView): string | null {
     const cm = this.getVimAdapter(view);
     if (cm) {
       const v = cm.state.vim || {};
@@ -1426,7 +1356,7 @@ export default class CursorSmithPlugin extends Plugin {
   // vim theming shouldn't apply (feature off, Obsidian vim off, or no caret
   // anywhere). Memoized for a frame so the several styleFor()/color reads per
   // draw don't each re-run detection.
-  currentVimMode() {
+  currentVimMode(): string | null {
     if (!this.settings.vimModeEnabled) return null;
     const now = performance.now();
     if (this._vimModeCacheT && now - this._vimModeCacheT < 15) return this._vimModeCache;
@@ -1465,7 +1395,7 @@ export default class CursorSmithPlugin extends Plugin {
   // is a plain property read, and a cached copy would need its own change
   // listener and would be one more thing that can desync. Guarded because
   // matchMedia is absent from the test harness's stubbed environment.
-  reducedMotion() {
+  reducedMotion(): boolean {
     if (this.settings.respectReducedMotion === false) return false;
     try {
       if (!this._reduceMQ) {
@@ -1478,7 +1408,7 @@ export default class CursorSmithPlugin extends Plugin {
     }
   }
 
-  effectiveSettings(mode) {
+  effectiveSettings(mode: string | null): CursorSmithSettings {
     if (mode === undefined) mode = this.currentVimMode();
     const cfg = (mode && this.settings.vimModes && this.settings.vimModes[mode]) || null;
     const reduce = this.reducedMotion();
@@ -1503,14 +1433,14 @@ export default class CursorSmithPlugin extends Plugin {
   // Thin passthrough kept so existing draw-path reads keep working. Because the
   // tick swaps this.settings to the effective (mode-merged) object, reading
   // this.settings[key] here already yields the active mode's value.
-  styleFor(key) {
+  styleFor<K extends SettingKey>(key: K): CursorSmithSettings[K] {
     return this.settings[key];
   }
 
   // Whether the torch overlay engine might be needed: either the global cursor
   // uses it, or Vim cursors are on and some mode uses it. The torch tick then
   // shows/hides + restyles the overlay per the effective (per-mode) settings.
-  torchPossible() {
+  torchPossible(): boolean {
     if (this.settings.torchEffect) return true;
     if (this.settings.vimModeEnabled && this.settings.vimModes) {
       for (const m of VIM_MODE_KEYS) {
@@ -1670,10 +1600,10 @@ export default class CursorSmithPlugin extends Plugin {
   // loads - anything that changes the content's size moves the caret without
   // an input event, and bumps the layout generation here. Re-pointed when
   // the active editor changes; disconnected on unload.
-  _observeEditorLayout(view: EditorView) {
+  _observeEditorLayout(view: EditorView | null | undefined) {
     if (this._roView === view) return;
     if (this._ro) { try { this._ro.disconnect(); } catch { /* gone */ } this._ro = null; }
-    this._roView = view;
+    this._roView = view || null;
     if (!view || typeof ResizeObserver === "undefined") return;
     try {
       this._ro = new ResizeObserver(() => this._invalidateLayout());
@@ -1689,13 +1619,14 @@ export default class CursorSmithPlugin extends Plugin {
   // document itself (a window scroll), the active editor's scroller or an
   // ancestor of it, or any element containing the focused field. Everything
   // else scrolls something the caret is not in. See registerWindowEvents.
-  _scrollMovesCaret(target, doc: Document) {
+  _scrollMovesCaret(target: EventTarget | null, doc: Document) {
     if (!target) return true;
     if (target === doc || target === (doc && doc.documentElement) || target === (doc && doc.defaultView)) return true;
-    const contains = typeof target.contains === "function" ? (el) => !!el && target.contains(el) : () => false;
+    const node = target as Node | null;
+    const contains = node && typeof node.contains === "function" ? (el: Node | null) => !!el && node.contains(el) : () => false;
     let scroller = null;
     try { scroller = this.app.workspace.activeEditor?.editor?.cm?.scrollDOM || null; } catch { scroller = null; }
-    if (scroller && (target === scroller || contains(scroller) || (typeof scroller.contains === "function" && scroller.contains(target)))) return true;
+    if (scroller && (target === scroller || contains(scroller) || (typeof scroller.contains === "function" && scroller.contains(node)))) return true;
     const active = doc && doc.activeElement;
     if (active && active !== doc.body && contains(active)) return true;
     return false;
@@ -1717,7 +1648,7 @@ export default class CursorSmithPlugin extends Plugin {
   // two loops that's ~500 DOM queries a second for a state that changes maybe
   // twice per session. Cache it for 500ms — a half-second delay in noticing a
   // presentation started/ended is invisible.
-  presentationActive() {
+  presentationActive(): boolean {
     const now = performance.now();
     if (now - (this._presCacheT || 0) < 500) return !!this._presCacheV;
     this._presCacheT = now;
@@ -1763,10 +1694,10 @@ export default class CursorSmithPlugin extends Plugin {
     }, seconds * 1000);
   }
 
-  _freshPerf() {
+  _freshPerf(): PerfCounters {
     return {
-      t0: performance.now(), ticks: 0, draws: 0, gears: {} as Record<string, number>, tickMs: 0, caretMs: 0, drawMs: 0,
-      reanchors: 0, longTasks: 0, longTaskMs: 0, rafGaps: {} as Record<string, number>, rafPrev: 0, keys: 0,
+      t0: performance.now(), ticks: 0, draws: 0, gears: {}, tickMs: 0, caretMs: 0, drawMs: 0,
+      reanchors: 0, longTasks: 0, longTaskMs: 0, rafGaps: {}, rafPrev: 0, keys: 0,
     };
   }
 
@@ -1774,18 +1705,18 @@ export default class CursorSmithPlugin extends Plugin {
   // shape can be tested with a synthetic counter object. Everything in it is
   // either a number the tick counted or a fact about the machine and the
   // configuration; nothing that identifies the vault or its contents.
-  perfReportText(perf: any, seconds: number) {
-    const s: any = this.settings || {};
+  perfReportText(perf: PerfCounters, seconds: number): string {
+    const s = this.settings || ({} as CursorSmithSettings);
     const secs = Math.max(0.001, seconds);
-    const gearTotal = Object.values(perf.gears as Record<string, number>).reduce((a, b) => a + b, 0) || 1;
-    const gears = Object.entries(perf.gears as Record<string, number>).sort((a, b) => b[1] - a[1])
+    const gearTotal = Object.values(perf.gears).reduce((a, b) => a + b, 0) || 1;
+    const gears = Object.entries(perf.gears).sort((a, b) => b[1] - a[1])
       .map(([g, n]) => `${g} ${Math.round(100 * n / gearTotal)}%`).join(", ") || "none";
     const on = [];
     for (const k of ["gradientEnabled", "crtEffect", "glow", "crtNeon", "crtGlitch", "cursorTranslucent", "cursorRounded",
                      "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "flameTrail",
                      "fireworks", "thunderstrike", "backspaceDisintegrate", "hotHead", "stardustEnabled", "speedDemon",
                      "bracketTether", "torchEffect", "vimModeEnabled"]) {
-      if (s[k]) on.push(k);
+      if (s[k as SettingKey]) on.push(k);
     }
     let gpu = "unknown";
     try {
@@ -1796,16 +1727,16 @@ export default class CursorSmithPlugin extends Plugin {
     } catch { /* leave unknown */ }
     let code = "";
     try { code = presetToCode("report", s); } catch { code = "(unavailable)"; }
-    const nav: any = typeof navigator !== "undefined" ? navigator : {};
-    const win: any = typeof window !== "undefined" ? window : {};
+    const nav: ReportNavigator = typeof navigator !== "undefined" ? navigator : {};
+    const win: ReportWindow = typeof window !== "undefined" ? window : {};
     const clip = this._clipRect;
     const region = this._canvasRect;
-    const app: any = this.app || {};
+    const app = (this.app || {}) as ReportApp;
     const themeName = (app.customCss && (app.customCss.theme || app.customCss.currentTheme)) || "default";
     const snippets = app.customCss && app.customCss.enabledSnippets ? app.customCss.enabledSnippets.size : 0;
     const plugins = app.plugins && app.plugins.enabledPlugins ? app.plugins.enabledPlugins.size : 0;
     let gap = 0, gapN = 0;
-    for (const [g, n] of Object.entries((perf.rafGaps || {}) as Record<string, number>)) { if (n > gapN) { gapN = n; gap = Number(g); } }
+    for (const [g, n] of Object.entries(perf.rafGaps || {})) { if (n > gapN) { gapN = n; gap = Number(g); } }
     const hz = gap > 0 ? Math.round(1000 / gap) : null;
     const lines = [
       `Cursor-Smith performance report (${(this.manifest && this.manifest.version) || "?"}), ${secs.toFixed(0)}s`,
@@ -1850,7 +1781,7 @@ export default class CursorSmithPlugin extends Plugin {
   //
   // It's cheap: hasFocus() reads a flag on the frame, forcing no layout, so
   // polling it once per frame costs nothing measurable.
-  windowFocused() {
+  windowFocused(): boolean {
     if (!this.settings.hideOnWindowBlur) return true;
     try {
       // Not just the canvas's own document. Since Obsidian 1.13 the Settings
@@ -1898,13 +1829,13 @@ export default class CursorSmithPlugin extends Plugin {
     return this.settings.vimPresets;
   }
 
-  async saveVimPreset(name) {
+  async saveVimPreset(name: string) {
     this.getVimPresets()[name] = cloneVimModes(this.settings.vimModes);
     this.settings.vimActivePreset = name;
     await this.saveSettings();
   }
 
-  async loadVimPreset(name) {
+  async loadVimPreset(name: string) {
     const preset = this.getVimPresets()[name];
     if (!preset) return;
     // Expand each mode to a complete snapshot so a preset saved before some key
@@ -1918,7 +1849,7 @@ export default class CursorSmithPlugin extends Plugin {
     await this.saveSettings();
   }
 
-  async deleteVimPreset(name) {
+  async deleteVimPreset(name: string) {
     delete this.getVimPresets()[name];
     if (this.settings.vimActivePreset === name) this.settings.vimActivePreset = "";
     await this.saveSettings();
@@ -1927,7 +1858,7 @@ export default class CursorSmithPlugin extends Plugin {
   async cycleVimPreset(direction: number) {
     const names = Object.keys(this.getVimPresets());
     if (names.length === 0) {
-      new Notice("Cursor-Smith: no Vim presets saved");
+      new Notice("Cursor-Smith: no Vim presets are saved");
       return;
     }
     const currentIdx = names.indexOf(this.settings.vimActivePreset);
@@ -1938,6 +1869,7 @@ export default class CursorSmithPlugin extends Plugin {
     if (!this.settings.vimModeEnabled) await this.setVimModeEnabled(true);
     await this.loadVimPreset(nextName);
     new Notice(`Cursor-Smith: Vim preset — ${nextName}`);
+    this.refreshSettingTab();
   }
 
   // Returns the name it was saved under, or null if the code was invalid.
@@ -1956,7 +1888,7 @@ export default class CursorSmithPlugin extends Plugin {
     return result.name;
   }
 
-  getActiveColor() {
+  getActiveColor(): string {
     const baseColor = this.getBaseColor();
     if (!this.settings.speedDemon) return baseColor;
     // "Keep cursor color": the caret stays exactly the colour it's configured
@@ -1987,7 +1919,7 @@ export default class CursorSmithPlugin extends Plugin {
   // colour in spawnSparks - was heating a gradient cursor twice and landing
   // way up the ramp for the actual heat level. Callers that want the heated
   // colour go through getActiveColor.
-  getBaseColor() {
+  getBaseColor(): string {
     if (this.settings.gradientEnabled) return this.gradientStops(false)[0];
     return this.isDarkTheme() ? this.settings.colorDark : this.settings.colorLight;
   }
@@ -1995,7 +1927,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Which theme the cursor is being drawn against. Read off the document that
   // actually owns the canvas, not the main one, so a popped-out window with a
   // different theme still picks the right colours.
-  isDarkTheme() {
+  isDarkTheme(): boolean {
     const doc = this.canvas ? this.canvas.ownerDocument : document;
     return doc.body.classList.contains("theme-dark");
   }
@@ -2006,7 +1938,7 @@ export default class CursorSmithPlugin extends Plugin {
   // `applyHeat` exists for the callers that need the stops as the user
   // configured them - anything that is about to run them through heatColor
   // itself, and would otherwise apply the ramp twice.
-  gradientStops(applyHeat = true) {
+  gradientStops(applyHeat = true): string[] {
     const s = this.settings;
     const n = Math.max(2, Math.min(4, Math.round(s.gradientCount || 2)));
     // One ramp per theme, same as colorDark/colorLight: a ramp tuned for a
@@ -2016,7 +1948,7 @@ export default class CursorSmithPlugin extends Plugin {
     const out = [];
     for (let i = 1; i <= n; i++) {
       const key = prefix + i;
-      let hex = s[key] || DEFAULT_SETTINGS[key];
+      let hex = (s[key as SettingKey] || (DEFAULT_SETTINGS as CursorSmithSettings)[key as SettingKey]) as string;
       // Speed Demon drives the whole cursor along a cold → white-hot ramp as
       // you type. Running every stop through it keeps a gradient cursor
       // heating up like a flat one does, instead of sitting frozen at its
@@ -2049,12 +1981,12 @@ export default class CursorSmithPlugin extends Plugin {
   // hard seam travelling through the cursor, where a cyclic one has no seam to
   // show. Note it costs one segment: a cyclic 2-stop ramp is A→B→A, so the
   // colour returned for a given pos differs between the two modes by design.
-  sampleRamp(pos: number, cyclic: boolean = false) {
+  sampleRamp(pos: number, cyclic: boolean = false): number[] {
     if (!this.settings.gradientEnabled) {
       return hexToRgbTuple(this.getActiveColor() || "#39ff14");
     }
     const stops = this.gradientStops();
-    const lerp = (a, b, f) => [
+    const lerp = (a: number[], b: number[], f: number) => [
       a[0] + (b[0] - a[0]) * f,
       a[1] + (b[1] - a[1]) * f,
       a[2] + (b[2] - a[2]) * f,
@@ -2078,15 +2010,15 @@ export default class CursorSmithPlugin extends Plugin {
   // bar. A fixed axis would be wrong for half the styles - a vertical ramp
   // squeezed into a 3px-tall underline is just a muddy average, and a
   // horizontal one across a 2px-wide line cursor is the same in reverse.
-  createCursorGradient(x: number, y: number, w: number, h: number, alpha: number) {
+  createCursorGradient(x: number, y: number, w: number, h: number, alpha: number): string | CanvasGradient {
     const ctx = this.ctx;
     const stops = this.gradientStops();
     const horizontal = w > h;
     const span = horizontal ? w : h;
     // A zero-length gradient line paints nothing at all (per the canvas spec),
     // which would silently blank the cursor rather than degrade. Fall back to
-    // the first stop as a flat fill.
-    if (!(span > 0)) return hexToRgba(stops[0], alpha);
+    // the first stop as a flat fill. Same answer with no canvas to draw on.
+    if (!ctx || !(span > 0)) return hexToRgba(stops[0], alpha);
 
     const grad = horizontal
       ? ctx.createLinearGradient(x, y, x + w, y)
@@ -2111,7 +2043,7 @@ export default class CursorSmithPlugin extends Plugin {
   // "flame column" that briefly lived here was replaced by the fire that now
   // rises off the top of the whole text line (see maybeSpawnSpeedDemonSparks) -
   // the caret just glows its heat colour, the line above it is what burns.
-  cursorPaint(x: number, y: number, w: number, h: number, color: string, alpha: number) {
+  cursorPaint(x: number, y: number, w: number, h: number, color: string, alpha: number): string | CanvasGradient {
     if (!this.settings.gradientEnabled) return hexToRgba(color, alpha);
     return this.createCursorGradient(x, y, w, h, alpha);
   }
@@ -2136,7 +2068,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Reads `speedDemonNoCursorHeat` too: someone who has explicitly said the
   // cursor should keep its own colour as it heats up has said they don't want
   // the caret reacting to speed, and a pulsing halo is exactly that.
-  glowHeatScale() {
+  glowHeatScale(): number {
     if (!this.settings.speedDemon) return 1;
     if (this.styleFor("speedDemonNoCursorHeat")) return 1;
     const h = Math.max(0, Math.min(1, this.heat || 0));
@@ -2144,11 +2076,11 @@ export default class CursorSmithPlugin extends Plugin {
   }
 
   // The active theme's four custom heat stops, cold → hot, as hex strings.
-  speedHeatStops() {
+  speedHeatStops(): string[] {
     const prefix = this.isDarkTheme() ? "speedHeatDark" : "speedHeatLight";
-    const out = [];
+    const out: string[] = [];
     for (let i = 1; i <= 4; i++) {
-      out.push(this.settings[prefix + i] || DEFAULT_SETTINGS[prefix + i]);
+      out.push((this.settings[(prefix + i) as SettingKey] || (DEFAULT_SETTINGS as CursorSmithSettings)[(prefix + i) as SettingKey]) as string);
     }
     return out;
   }
@@ -2158,7 +2090,7 @@ export default class CursorSmithPlugin extends Plugin {
   // user picked deliberately, and easing would mean each chosen colour is only
   // hit exactly at one instant while the time is spent in between. Linear makes
   // each quarter of the speed range read as "that stage".
-  sampleHeatRamp(h: number) {
+  sampleHeatRamp(h: number): string {
     const stops = this.speedHeatStops();
     const t = Math.max(0, Math.min(1, h)) * 3;
     const i = Math.min(2, Math.floor(t));
@@ -2171,7 +2103,7 @@ export default class CursorSmithPlugin extends Plugin {
     return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
   }
 
-  heatColor(heat, baseHex: string) {
+  heatColor(heat: number, baseHex: string): string {
     const h = Math.max(0, Math.min(1, heat));
     // Custom ramp: ignores baseHex entirely and hands back the sampled stop.
     //
@@ -2458,13 +2390,13 @@ export default class CursorSmithPlugin extends Plugin {
   // enough to count as working. Shared by the emitter and the frame governor:
   // the governor has to agree, or a fire that has burnt out would still pin the
   // render loop at full rate forever on the grounds that the effect is enabled.
-  hotHeadFeeding(nowT: number) {
+  hotHeadFeeding(nowT: number): boolean {
     return this._hotFeedingAt(this._hotActiveT, nowT);
   }
 
   // The same test for a caret whose state is not swapped in (a secondary's
   // bundle, read from _isAnimating without a swap).
-  _hotFeedingAt(activeT: number, nowT: number) {
+  _hotFeedingAt(activeT: number, nowT: number): boolean {
     const idleMs = Math.max(0, this.styleFor("hotHeadIdleMs") ?? 0);
     if (idleMs <= 0) return true;
     return (nowT - (activeT || 0)) <= idleMs;
@@ -2754,6 +2686,7 @@ export default class CursorSmithPlugin extends Plugin {
     this._lastSparkT = now;
 
     const active = this.animActive;
+    if (!active) return;
     const anchorW = active.w || active.actualCharWidth || 8;
     const baseCount = 1 + Math.floor(this.heat * 3); // 1..4 sparks per burst
     // Spark Quantity: 0..3 multiplier on the base burst size, so 1 is the
@@ -2803,7 +2736,7 @@ export default class CursorSmithPlugin extends Plugin {
   // maybeSpawnStardust() because the frame governor needs the same answer: an
   // armed-but-not-yet-emitting cursor still has to be woken often enough to
   // emit on time, or the first mote would wait out a 100ms idle heartbeat.
-  stardustArmed() {
+  stardustArmed(): boolean {
     const s = this.settings;
     if (!s.stardustEnabled) return false;
     if (!this.animActive) return false;
@@ -2836,12 +2769,13 @@ export default class CursorSmithPlugin extends Plugin {
     this._lastStardustT = now;
 
     const active = this.animActive;
+    if (!active) return;
     const anchorW = active.w || active.actualCharWidth || 8;
     // Sample the ramp at a random position so a gradient cursor sheds motes in
     // every one of its colours; with Gradient off this is the flat cursor
     // colour at every position, so behaviour is unchanged.
     const [sr, sg, sb] = this.sampleRamp(Math.random());
-    const vary = (c) => Math.max(0, Math.min(255, Math.round(c + (Math.random() - 0.5) * 50)));
+    const vary = (c: number) => Math.max(0, Math.min(255, Math.round(c + (Math.random() - 0.5) * 50)));
 
     // Orbit mode is captured per mote rather than read at draw time, so
     // flipping the toggle lets the motes already in flight finish the way they
@@ -2910,7 +2844,7 @@ export default class CursorSmithPlugin extends Plugin {
   }
 
   // Whether the native caret should currently be suppressed. Every site that
-  // stamps retro-box-cursor-hide-native reads this rather than the setting,
+  // stamps cursor-smith-hide-native reads this rather than the setting,
   // because with Note Editor Only on the answer changes with FOCUS and not
   // only when a setting is saved.
   hideNativeActive() {
@@ -2931,7 +2865,7 @@ export default class CursorSmithPlugin extends Plugin {
     for (const doc of docs) {
       if (doc && doc.body) {
         doc.body.classList.toggle(
-          "retro-box-cursor-hide-native",
+          "cursor-smith-hide-native",
           !!(engineActive && this.hideNativeActive() && !presenting)
         );
       }
@@ -2968,11 +2902,11 @@ export default class CursorSmithPlugin extends Plugin {
   // that other document offered as the migration target. Candidates are
   // Obsidian's activeDocument global (which tracks the focused Obsidian
   // window) plus every document we've registered, which includes the
-  // settings window itself via CursorSmithSettingTab.display(). A fully
+  // settings window itself via the settings tab (registerPanelDocument). A fully
   // backgrounded app matches nothing here and returns null, so the old
   // fallback chain - and windowFocused()'s parking - behave exactly as
   // before.
-  _focusedForeignDoc(view: EditorView) {
+  _focusedForeignDoc(view: EditorView | null | undefined) {
     try {
       const viewDoc = view && view.dom.ownerDocument;
       if (viewDoc && viewDoc.hasFocus()) return null;
@@ -2991,7 +2925,7 @@ export default class CursorSmithPlugin extends Plugin {
     return null;
   }
 
-  ensureCanvasForView(view: EditorView) {
+  ensureCanvasForView(view: EditorView | null | undefined) {
     // CRASH FIX: this used to read `this.overlay.ownerDocument` when there
     // was no view - but this.overlay belongs to the torch engine and is
     // null whenever the torch is off (and even briefly when it's on). On
@@ -3022,37 +2956,33 @@ export default class CursorSmithPlugin extends Plugin {
       this._canvasRect = null;
     }
     if (!this.canvasWrapper) {
-      targetDoc.body.classList.add("retro-box-cursor-active");
+      targetDoc.body.classList.add("cursor-smith-active");
       
       // The wrapper creates a strict physical bounding box to unblock window
       // dragging. See _chromeInsets / getFullViewportRect for the sizing
       // logic - the wrapper is never sized to overlap the tab bar.
       // Its fixed/clipped/inert/collapsed defaults are the
-      // .retro-box-cursor-wrapper rule in injectStyles (and styles.css); the
+      // .cursor-smith-wrapper rule in styles.css; the
       // tick sizes it inline from there.
-      this.canvasWrapper = targetDoc.createElement("div");
-      this.canvasWrapper.className = "retro-box-cursor-wrapper";
+      //
+      // Inside .app-container rather than directly on body.
+      // Obsidian's app.css has: body.is-frameless > .app-container ~ * { app-region: no-drag }
+      // which targets every direct-body-child sibling of .app-container —
+      // exactly what we were. Inside .app-container that rule doesn't match
+      // and our elements stay neutral (no app-region) as intended.
+      const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
+      this.canvasWrapper = appContainer.createDiv({ cls: "cursor-smith-wrapper" });
       this._lastWrapperRect = "";
       // A fresh wrapper carries no mix-blend-mode, so the value cached from
       // the old one would suppress the write that puts it back - which is
       // exactly what happens when a pop-out window moves the canvas to another
       // document while Translucent is on. See applyCanvasBlend.
       this._canvasBlend = "";
-      // Append inside .app-container rather than directly on body.
-      // Obsidian's app.css has: body.is-frameless > .app-container ~ * { app-region: no-drag }
-      // which targets every direct-body-child sibling of .app-container —
-      // exactly what we were. Inside .app-container that rule doesn't match
-      // and our elements stay neutral (no app-region) as intended.
-      const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
-      appContainer.appendChild(this.canvasWrapper);
 
-      this.canvas = targetDoc.createElement("canvas");
-      this.canvas.className = "retro-box-cursor-canvas";
       // NO app-region declaration (same rationale as wrapper above).
-      this.canvasWrapper.appendChild(this.canvas);
+      this.canvas = this.canvasWrapper.createEl("canvas", { cls: "cursor-smith-canvas" });
 
       this.ctx = this.canvas.getContext("2d");
-      this.injectStyles(targetDoc);
       // No backing store yet: the canvas is sized to the caret's neighbourhood
       // by _fitCanvasRegion on the first frame that has something to show,
       // never to the window. See fitCanvasRegion.
@@ -3061,8 +2991,8 @@ export default class CursorSmithPlugin extends Plugin {
       this._wrapperPos = null;
       this._dirtyRaw = null;
     }
-    if (!targetDoc.body.classList.contains("retro-box-cursor-active")) {
-      targetDoc.body.classList.add("retro-box-cursor-active");
+    if (!targetDoc.body.classList.contains("cursor-smith-active")) {
+      targetDoc.body.classList.add("cursor-smith-active");
     }
     // Per frame, and with Note Editor Only it has to be: the value tracks
     // focus, so the class comes off the instant the Command Palette opens and
@@ -3070,7 +3000,7 @@ export default class CursorSmithPlugin extends Plugin {
     // with an explicit force mutates nothing when the answer is unchanged, so
     // the steady-state cost is a comparison and no style invalidation.
     const hideNative = this.hideNativeActive();
-    targetDoc.body.classList.toggle("retro-box-cursor-hide-native", hideNative);
+    targetDoc.body.classList.toggle("cursor-smith-hide-native", hideNative);
     // targetDoc is the document the caret is in, so the line above is what the
     // user sees. Every OTHER document we have stamped the class into is now
     // potentially stale though, and a body class that means one thing in one
@@ -3082,7 +3012,7 @@ export default class CursorSmithPlugin extends Plugin {
     }
   }
 
-  ensureTorchOverlayForView(view: EditorView) {
+  ensureTorchOverlayForView(view: EditorView | null | undefined) {
     if (!this.settings.torchEffect) {
       this.disableTorchOverlay();
       return;
@@ -3104,13 +3034,13 @@ export default class CursorSmithPlugin extends Plugin {
       this.modalObserver = null;
     }
     if (!this.overlay) {
-      targetDoc.body.classList.add("torch-cursor-active");
+      targetDoc.body.classList.add("cursor-smith-torch-active");
       // Same as canvas wrapper: append inside .app-container to avoid
       // Obsidian's body.is-frameless > .app-container ~ * { no-drag } rule.
       const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
-      this.overlay = appContainer.createEl("canvas", { cls: "torch-cursor-overlay" });
+      this.overlay = appContainer.createEl("canvas", { cls: "cursor-smith-torch-overlay" });
       this._torchDarkKey = "";
-      // Collapsed to 0x0 at 0,0 by the .torch-cursor-overlay rule until the
+      // Collapsed to 0x0 at 0,0 by the .cursor-smith-torch-overlay rule until the
       // tick sizes it.
       this._lastOverlayRect = "";
       // A brand new element carries none of the old one's inline custom
@@ -3120,7 +3050,6 @@ export default class CursorSmithPlugin extends Plugin {
       this._lastGlowRect = "";      // glow layer dedupe stamps; see the torch tick
     this._lastGlowAlpha = "";
     this._torchGlowKey = "";
-      this.injectStyles(targetDoc);
       this.applyOverlayStyle();
       
       this.modalOpen = !!targetDoc.querySelector(".modal-container");
@@ -3134,7 +3063,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Paint the darkness layer for these lights, if anything about the picture
   // changed since the last paint: a moved light, a new radius, a new size,
   // a new setting. A parked torch does not touch the bitmap.
-  _torchPaintDarkness(spots, radiusPx: number, darkness: number, w: number, h: number) {
+  _torchPaintDarkness(spots: Pt[], radiusPx: number, darkness: number, w: number, h: number) {
     const el = this.overlay;
     if (!el || typeof el.getContext !== "function") return;
     const key = w + "x" + h + "|" + radiusPx + "|" + darkness + "|" +
@@ -3146,7 +3075,7 @@ export default class CursorSmithPlugin extends Plugin {
     paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness);
   }
 
-  _torchPaintGlow(spots, radiusPx: number, warmRgb, w: number, h: number) {
+  _torchPaintGlow(spots: Pt[], radiusPx: number, warmRgb: string, w: number, h: number) {
     const el = this.glowEl;
     if (!el || typeof el.getContext !== "function") return;
     const key = w + "x" + h + "|" + radiusPx + "|" + warmRgb + "|" +
@@ -3181,8 +3110,8 @@ export default class CursorSmithPlugin extends Plugin {
     }
     if (!this.glowEl) {
       const appContainer = doc.querySelector(".app-container") || doc.body;
-      // Sibling of the overlay, deliberately - see the CSS note in injectStyles.
-      this.glowEl = appContainer.createEl("canvas", { cls: "torch-cursor-glow" });
+      // Sibling of the overlay, deliberately - see the CSS note in styles.css.
+      this.glowEl = appContainer.createEl("canvas", { cls: "cursor-smith-torch-glow" });
       this._torchGlowKey = "";
       this._lastGlowRect = "";
       this._lastGlowAlpha = "";
@@ -3210,7 +3139,7 @@ export default class CursorSmithPlugin extends Plugin {
       //    into the active leaf while presenting. It's removed when the
       //    presentation ends, so presence + visibility = presenting now.
       const doc = (this.canvas?.ownerDocument) ??
-        (typeof activeDocument !== "undefined" && activeDocument) ?? document;
+        (typeof activeDocument !== "undefined" ? activeDocument : null) ?? document;
       const slidesContainer = doc.querySelector(".slides-container");
       if (slidesContainer && this._isVisiblyRendered(slidesContainer)) return true;
 
@@ -3239,7 +3168,7 @@ export default class CursorSmithPlugin extends Plugin {
   //
   // Excalidraw draws its own caret anyway, so there is nothing here for us to
   // replace - we just get out of the way. See also the caret-color carve-out
-  // in injectStyles and styles.css: suppressing our drawing is only half the
+  // in styles.css: suppressing our drawing is only half the
   // job, because our global hide-native rule would otherwise leave the
   // textarea with no visible caret at all.
   //
@@ -3247,7 +3176,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Excalidraw also renders through a markdown post-processor, so a drawing
   // embedded in a note lives inside a leaf whose view type is "markdown", and
   // a view-type test alone would miss every embed.
-  isExcalidrawCaretHost(el: HTMLElement) {
+  isExcalidrawCaretHost(el: Element) {
     if (!el) return false;
     try {
       // Cached against the focused element rather than on a timer: focus is
@@ -3381,6 +3310,7 @@ export default class CursorSmithPlugin extends Plugin {
     // the taper would fight the very lag it's drawn from.
     this.smearShape = null;
     this._taperBuf = null;
+    this._volumeBuf = null;
     // Unit vector of the last real caret movement, held between frames so the
     // tail keeps pointing the right way while the quad catches up after a stop.
     this._smearDir = null;
@@ -3451,8 +3381,8 @@ export default class CursorSmithPlugin extends Plugin {
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
-        doc.body.classList.remove("retro-box-cursor-active", "retro-box-cursor-hide-native");
-        const canvas = doc.querySelector(".retro-box-cursor-canvas");
+        doc.body.classList.remove("cursor-smith-active", "cursor-smith-hide-native");
+        const canvas = doc.querySelector(".cursor-smith-canvas");
         if (canvas) {
           if (canvas.parentElement && canvas.parentElement.style.overflow === "hidden") {
             canvas.parentElement.remove();
@@ -3497,9 +3427,9 @@ export default class CursorSmithPlugin extends Plugin {
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
-        doc.body.classList.remove("torch-cursor-active");
-        doc.querySelector(".torch-cursor-overlay")?.remove();
-        doc.querySelector(".torch-cursor-glow")?.remove();
+        doc.body.classList.remove("cursor-smith-torch-active");
+        doc.querySelector(".cursor-smith-torch-overlay")?.remove();
+        doc.querySelector(".cursor-smith-torch-glow")?.remove();
       }
     }
     this.overlay = null;
@@ -3964,7 +3894,7 @@ export default class CursorSmithPlugin extends Plugin {
   // stays in absolute client coordinates: the context transform subtracts
   // the region's origin, so nothing that paints had to change.
   resizeCanvas() {
-    if (!this.canvas) return;
+    if (!this.canvas || !this.ctx) return;
     const r = this._canvasRect;
     if (!r) return;
     const win = this.canvas.ownerDocument.defaultView || window;
@@ -4034,13 +3964,13 @@ export default class CursorSmithPlugin extends Plugin {
   // as long as they are live: a thunderbolt starts above the pane on purpose
   // (see spawnThunderbolt) and a firework shell climbs out of any region
   // fitted round the caret. Both are rare and short.
-  _frameNeed(clip) {
+  _frameNeed(clip: Rect): Bounds | null {
     if ((this.thunderbolts && this.thunderbolts.length) ||
         (this.fireworks && this.fireworks.length)) {
       return { x0: clip.x, y0: clip.y, x1: clip.x + clip.w, y1: clip.y + clip.h };
     }
-    let b = null;
-    const add = (x0, y0, x1, y1) => {
+    let b: Bounds | null = null;
+    const add = (x0: number, y0: number, x1: number, y1: number) => {
       if (!b) { b = { x0, y0, x1, y1 }; return; }
       if (x0 < b.x0) b.x0 = x0;
       if (y0 < b.y0) b.y0 = y0;
@@ -4157,7 +4087,7 @@ export default class CursorSmithPlugin extends Plugin {
     return true;
   }
 
-  caretCoords() {
+  caretCoords(): CaretRecord | null {
     const view = this.app.workspace.activeEditor?.editor?.cm;
 
     // The note editor (CodeMirror) itself has focus - use the precise,
@@ -4176,7 +4106,7 @@ export default class CursorSmithPlugin extends Plugin {
     return this.genericCaretCoords();
   }
 
-  cmCaretCoords(view: EditorView) {
+  cmCaretCoords(view: EditorView): CaretRecord | null {
     try {
       const main = view.state.selection.main;
       const pos = main.head;
@@ -4462,8 +4392,8 @@ export default class CursorSmithPlugin extends Plugin {
   // updateSecondaryCarets; an off-screen entry there clears its caret the
   // way the primary clears when it scrolls out). Returns [] when there is
   // only one range or the view isn't focused.
-  secondaryCaretCoords(view: EditorView, states) {
-    const out = [];
+  secondaryCaretCoords(view: EditorView | null | undefined, states: CaretState[]): CaretCoords[] {
+    const out: CaretCoords[] = [];
     if (!view || !view.hasFocus) return out;
     const gen = this._layoutGen | 0;
     const now = performance.now();
@@ -4503,7 +4433,7 @@ export default class CursorSmithPlugin extends Plugin {
         }
         // pos/assoc are for the full-effect path; the plain line ignores them.
         const empty = !!ranges[i].empty;
-        out.push(visible
+        out.push(visible && c
           ? { x: c.left, top: c.top, bottom: c.bottom, pos: head, assoc: ranges[i].assoc || 0, empty, visible: true }
           : { x: 0, top: 0, bottom: 0, pos: head, assoc: ranges[i].assoc || 0, empty, visible: false });
       }
@@ -4532,22 +4462,25 @@ export default class CursorSmithPlugin extends Plugin {
 
   // Copy the caret fields out of `this` into `into` (a bundle), and back.
   // References, not clones: the bundle IS the state while it is swapped out.
-  _saveCaretState(into) {
-    for (const k of CARET_STATE_FIELDS) into[k] = this[k];
+  _saveCaretState(into: Partial<CaretState>): Partial<CaretState> {
+    const dst = into as unknown as Record<string, unknown>, src = this as unknown as Record<string, unknown>;
+    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
     return into;
   }
 
-  _loadCaretState(from) {
-    for (const k of CARET_STATE_FIELDS) this[k] = from[k];
+  _loadCaretState(from: Partial<CaretState>) {
+    const dst = this as unknown as Record<string, unknown>, src = from as unknown as Record<string, unknown>;
+    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
   }
 
   // A bundle in the state a fresh engine has. Taken from _resetEngineState
   // itself, on a scratch object, so the two cannot drift.
-  _freshCaretState() {
-    const scratch = Object.create(Object.getPrototypeOf(this));
+  _freshCaretState(): CaretState {
+    const scratch = Object.create(Object.getPrototypeOf(this) as object) as CursorSmithPlugin;
     scratch._resetEngineState();
-    const out = {};
-    for (const k of CARET_STATE_FIELDS) out[k] = scratch[k];
+    const out = {} as CaretState;
+    const dst = out as unknown as Record<string, unknown>, src = scratch as unknown as Record<string, unknown>;
+    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
     return out;
   }
 
@@ -4559,7 +4492,7 @@ export default class CursorSmithPlugin extends Plugin {
   // indexed by nesting depth, not a fresh object: with forty fields and a
   // handful of swaps per secondary per frame, allocating one each time was
   // measurable GC churn at ten carets.
-  _withCaret(state, fn) {
+  _withCaret<T>(state: CaretState, fn: () => T): T {
     const depth = this._swapDepth | 0;
     const pool = this._swapPool || (this._swapPool = []);
     const saved = pool[depth] || (pool[depth] = {});
@@ -4589,7 +4522,7 @@ export default class CursorSmithPlugin extends Plugin {
   // the old primary's state follows its range down into the secondaries and
   // the new caret starts fresh, so nothing streaks across the page. Ranges
   // cannot cross without merging, so while the shape holds, index order does.
-  rematchCaretStates(view: EditorView) {
+  rematchCaretStates(view: EditorView | null | undefined) {
     const sel = view && view.hasFocus ? view.state.selection : null;
     const count = sel ? sel.ranges.length : 1;
     const mainIndex = sel ? sel.mainIndex : 0;
@@ -4599,24 +4532,23 @@ export default class CursorSmithPlugin extends Plugin {
     if (!sel) { this._secondaries = []; return; }
 
     // Candidates: the primary's live state, then every secondary bundle.
-    const candidates = [{ state: this._saveCaretState({}), pos: this.lastActive ? this.lastActive.pos : null }];
-    for (const c of this._secondaries) candidates.push({ state: c, pos: c.lastActive ? c.lastActive.pos : null });
-    const take = (head) => {
-      let best = -1, bestD = SECONDARY_MATCH_WINDOW + 1;
+    const candidates: ({ state: CaretState; pos: number | null } | null)[] = [{ state: this._saveCaretState({}) as CaretState, pos: this.lastActive ? this.lastActive.pos as number : null }];
+    for (const c of this._secondaries) candidates.push({ state: c, pos: c.lastActive ? c.lastActive.pos as number : null });
+    const take = (head: number) => {
+      let best = -1, bestD = SECONDARY_MATCH_WINDOW + 1, bestCand = null;
       for (let i = 0; i < candidates.length; i++) {
         const cand = candidates[i];
         if (!cand || cand.pos == null) continue;
         const d = Math.abs(cand.pos - head);
-        if (d < bestD) { bestD = d; best = i; }
+        if (d < bestD) { bestD = d; best = i; bestCand = cand; }
       }
-      if (best < 0) return null;
-      const st = candidates[best].state;
+      if (!bestCand) return null;
       candidates[best] = null;
-      return st;
+      return bestCand.state;
     };
     const main = take(sel.ranges[mainIndex].head) || this._freshCaretState();
     this._loadCaretState(main);
-    const next = [];
+    const next: CaretState[] = [];
     for (let i = 0; i < sel.ranges.length && next.length < SECONDARY_FULL_MAX; i++) {
       if (i === mainIndex) continue;
       next.push(take(sel.ranges[i].head) || this._freshCaretState());
@@ -4633,7 +4565,7 @@ export default class CursorSmithPlugin extends Plugin {
   // line's metrics instead. Cached on the bundle the way the primary's
   // style is (doc identity + pos + a short TTL), and shared per line within
   // a frame through `lineStyles`.
-  secondaryCaretRecord(view: EditorView, c, state, lineStyles) {
+  secondaryCaretRecord(view: EditorView, c: CaretCoords, state: CaretState, lineStyles: Map<Element, LineStyle>): CaretRecord | null {
     const doc = view.state.doc;
     const pos = c.pos;
     const now = performance.now();
@@ -4693,7 +4625,7 @@ export default class CursorSmithPlugin extends Plugin {
   // rest in this.secondaryCarets for the plain line. `flags` holds the
   // Backspace/Enter/Space flags as they stood before the primary consumed
   // them, so each secondary's commitMove sees the same keystroke.
-  updateSecondaryCarets(view: any, flags: any = {}) {
+  updateSecondaryCarets(view: EditorView | null | undefined, flags: KeyFlags = {}) {
     const raw = this.secondaryCaretCoords(view, this._secondaries);
     const full = raw.slice(0, SECONDARY_FULL_MAX);
     // The plain line only ever draws what is on screen.
@@ -4705,8 +4637,8 @@ export default class CursorSmithPlugin extends Plugin {
     // not see it (no focus that frame): the extras start fresh.
     while (states.length < full.length) states.push(this._freshCaretState());
     if (states.length > full.length) states.length = full.length;
-    if (full.length === 0) return;
-    const lineStyles = new Map();
+    if (full.length === 0 || !view) return;
+    const lineStyles: Map<Element, LineStyle> = new Map();
     const primaryFlags = { del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending };
     try {
       for (let i = 0; i < full.length; i++) {
@@ -4745,7 +4677,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   // The primary's tether segments plus every secondary's, as one list for
   // drawBracketTether; null when nobody has one.
-  mergeTethers(primary) {
+  mergeTethers(primary: TetherSeg[] | null): TetherSeg[] | null {
     let out = primary && primary.length ? primary : null;
     const states = this._secondaries;
     if (states && states.length) {
@@ -4780,14 +4712,16 @@ export default class CursorSmithPlugin extends Plugin {
   // the effects-only union).
   drawFullSecondaries() {
     const states = this._secondaries;
-    const bounds = [];
+    const bounds: Bounds[] = [];
     if (!states || states.length === 0) return bounds;
     const ctx = this.ctx;
+    if (!ctx) return bounds;
     const style = this.styleFor("cursorStyle");
     for (const st of states) {
       if (!st.animActive) continue;
       this._withCaret(st, () => {
         const a = this.animActive;
+        if (!a) return;
         const cb = this._cursorBounds();
         if (cb) bounds.push(cb);
         // Breathing, as in draw(): a transform round the whole caret draw.
@@ -4804,7 +4738,7 @@ export default class CursorSmithPlugin extends Plugin {
         switch (style) {
           case "Line": this.drawGenericCaret(false); break;
           case "Underline": this.drawGenericCaret(true); break;
-          case "Box": this.drawRetroBox(); break;
+          case "Box": this.drawBoxCursor(); break;
         }
         if (breathing) ctx.restore();
       });
@@ -4812,7 +4746,7 @@ export default class CursorSmithPlugin extends Plugin {
     return bounds;
   }
 
-  selectionFallbackCoords(view: EditorView) {
+  selectionFallbackCoords(view: EditorView | null): CoordsLTB | null {
     const doc = view ? view.dom.ownerDocument : this.canvas?.ownerDocument ?? document;
     const active = doc.activeElement;
     if (!active) return null;
@@ -4836,8 +4770,8 @@ export default class CursorSmithPlugin extends Plugin {
 
     const win = doc.defaultView || window;
     const sel = win.getSelection();
-    if (sel && sel.rangeCount > 0 && active.isContentEditable) {
-      const isDegenerate = (r) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
+    if (sel && sel.rangeCount > 0 && sel.focusNode && active.isContentEditable) {
+      const isDegenerate = (r: DOMRect | null) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
 
       // Prefer measuring an actual adjacent character over a collapsed
       // point. A *collapsed* range's client rect is inconsistent across
@@ -4881,7 +4815,7 @@ export default class CursorSmithPlugin extends Plugin {
         // itself (e.g. a fully empty editor) - that's handled by the
         // size-clamped fallback further down instead.
         if (lineEl && lineEl !== active) {
-          const lineRect = lineEl.getBoundingClientRect();
+          const lineRect = (lineEl as Element).getBoundingClientRect();
           if (!isDegenerate(lineRect)) rect = lineRect;
         }
       }
@@ -4908,10 +4842,10 @@ export default class CursorSmithPlugin extends Plugin {
   // than a collapsed point) so the resulting rect uses the browser's actual
   // line-box metrics - the same metrics it uses to paint text and selection
   // highlights - instead of a font's tight glyph metrics.
-  adjacentCharRect(doc, node: Node, offset: number) {
+  adjacentCharRect(doc: Document, node: Node, offset: number): CoordsLTB | null {
     if (!node || node.nodeType !== 3) return null;
     const text = (node as CharacterData).data || "";
-    const isDegenerate = (r) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
+    const isDegenerate = (r: DOMRect | null) => !r || (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0);
 
     // The horizontal comes from a COLLAPSED range at the caret itself, and
     // only the vertical from the character next to it.
@@ -4965,7 +4899,7 @@ export default class CursorSmithPlugin extends Plugin {
   // element with identical font/box metrics, then reading the position of a
   // marker placed at the caret. This is the standard technique for this
   // problem since native form fields expose no coordinate API for the caret.
-  formFieldCaretCoords(el: HTMLInputElement | HTMLTextAreaElement) {
+  formFieldCaretCoords(el: HTMLInputElement | HTMLTextAreaElement): CoordsLTB | null {
     try {
       const doc = el.ownerDocument;
       const win = doc.defaultView || window;
@@ -4990,8 +4924,7 @@ export default class CursorSmithPlugin extends Plugin {
       let mirror = this._formMirror;
       if (!mirror || mirror.ownerDocument !== doc) {
         mirror?.remove();
-        mirror = doc.createElement("div");
-        mirror.setAttribute("aria-hidden", "true");
+        mirror = doc.body.createDiv({ attr: { "aria-hidden": "true" } });
         // Inline on purpose: this is a measuring element that has to be
         // invisible and out of flow in whatever document the field is in,
         // stylesheet or no stylesheet.
@@ -4999,7 +4932,6 @@ export default class CursorSmithPlugin extends Plugin {
           position: "absolute", visibility: "hidden", top: "0", left: "0",
           zIndex: "-1", pointerEvents: "none",
         });
-        doc.body.appendChild(mirror);
         this._formMirror = mirror;
       }
 
@@ -5034,7 +4966,8 @@ export default class CursorSmithPlugin extends Plugin {
         "fontFamily", "letterSpacing", "textIndent", "textTransform", "wordSpacing", "tabSize",
         "textAlign", "direction", "unicodeBidi",
       ];
-      for (const p of props) mirror.style[p] = style[p];
+      const dst = mirror.style as unknown as Record<string, string>, src = style as unknown as Record<string, string>;
+    for (const p of props) dst[p] = src[p];
 
       // The four border widths above are inert without this. `border-style`
       // defaults to `none`, which computes every width back to 0px, so the
@@ -5080,7 +5013,7 @@ export default class CursorSmithPlugin extends Plugin {
       // out on a 260px box.
       mirror.textContent = "";
       mirror.appendChild(doc.createTextNode(value.substring(0, selStart)));
-      const marker = doc.createElement("span");
+      const marker = mirror.createSpan();
       // Zero-width inline-block, not a zero-width SPACE. U+200B is bidi class
       // BN, which UAX#9 deletes outright and leaves the engine to place: next
       // to a digit run inside an RTL paragraph it lands with the digits rather
@@ -5096,7 +5029,6 @@ export default class CursorSmithPlugin extends Plugin {
       // caret of `height = lineHeight` should start - the ZWSP sat half the
       // leading below it and overshot the bottom by the same.
       marker.setCssStyles({ display: "inline-block", width: "0", verticalAlign: "top" });
-      mirror.appendChild(marker);
       mirror.appendChild(doc.createTextNode(value.substring(selStart)));
 
       const markerRect = marker.getBoundingClientRect();
@@ -5144,7 +5076,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Stable opaque id for a DOM node, so a caret's location can be compared
   // across frames without holding a reference that would keep a detached node
   // alive (WeakMap - entries vanish with the node).
-  _nodeKey(node: Node) {
+  _nodeKey(node: Node): string {
     if (!node) return "0";
     if (!this._nodeIds) {
       this._nodeIds = new WeakMap();
@@ -5164,13 +5096,14 @@ export default class CursorSmithPlugin extends Plugin {
   //
   // Deliberately built from the caret's position WITHIN its field, never from
   // its coordinates - coordinates are the very thing being tested against.
-  genericCaretPos(active, doc: Document) {
+  genericCaretPos(active: Element, doc: Document): string | null {
     try {
       const el = this._nodeKey(active);
       if (active.tagName === "TEXTAREA" || active.tagName === "INPUT") {
         // Form fields keep their caret in selectionStart, outside the DOM
         // Selection API entirely.
-        return el + ":" + (active.selectionStart ?? 0) + ":" + (active.selectionEnd ?? 0);
+        const field = active as HTMLInputElement;
+        return el + ":" + (field.selectionStart ?? 0) + ":" + (field.selectionEnd ?? 0);
       }
       const win = (doc && doc.defaultView) || window;
       const sel = win.getSelection();
@@ -5185,7 +5118,7 @@ export default class CursorSmithPlugin extends Plugin {
     }
   }
 
-  genericCaretCoords() {
+  genericCaretCoords(): CaretRecord | null {
     try {
       // Note Editor Only. This function IS the interface caret: every surface
       // it serves - Command Palette, Quick Switcher, Search, Settings, modals,
@@ -5297,7 +5230,7 @@ export default class CursorSmithPlugin extends Plugin {
   // italic text.
   // Build a canvas ctx.font string from resolved CSS font values. This lives
   // in ONE place on purpose: the character-in-box drift bug came from
-  // drawRetroBox building this string WITHOUT weight/style while
+  // drawBoxCursor building this string WITHOUT weight/style while
   // measureCharWidth built it WITH them - so the box was sized for a
   // bold/italic glyph and a regular upright one was drawn inside it. Every
   // site that measures OR draws a glyph must route through here so the two can
@@ -5308,14 +5241,14 @@ export default class CursorSmithPlugin extends Plugin {
     return `${s}${w}${fontSize}px ${fontFamily}`;
   }
 
-  measureCharWidth(char: string, fontFamily: string, fontSize: number, fontWeight: string, fontStyle: string) {
+  measureCharWidth(char: string, fontFamily: string, fontSize: number, fontWeight: string, fontStyle: string): number | null {
     try {
-      if (!this._measureCtx) {
-        const canvas = (this.canvas?.ownerDocument ?? document).createElement("canvas");
-        this._measureCtx = canvas.getContext("2d");
-      }
-      this._measureCtx.font = this.fontString(fontSize, fontFamily, fontWeight, fontStyle);
-      const w = this._measureCtx.measureText(char).width;
+      // Detached, and in no particular window: a measuring context only
+      // needs the fonts, which every window of the process shares.
+      const ctx = this._measureCtx || (this._measureCtx = createEl("canvas").getContext("2d"));
+      if (!ctx) return null;
+      ctx.font = this.fontString(fontSize, fontFamily, fontWeight, fontStyle);
+      const w = ctx.measureText(char).width;
       return w > 0 ? w : null;
     } catch {
       return null;
@@ -5325,15 +5258,16 @@ export default class CursorSmithPlugin extends Plugin {
   // The character sitting immediately after the caret, for elements outside
   // the note editor - mirrors what cmCaretCoords does for CodeMirror. Used
   // to draw the "letter inside the cursor" effect in non-editor fields too.
-  genericCaretChar(active) {
+  genericCaretChar(active: Element) {
     try {
       if (active.tagName === "INPUT" || active.tagName === "TEXTAREA") {
-        const value = active.value != null ? String(active.value) : "";
+        const field = active as HTMLInputElement;
+        const value = field.value != null ? String(field.value) : "";
         let selStart = value.length;
         try {
-          const s = active.selectionStart, e = active.selectionEnd;
+          const s = field.selectionStart, e = field.selectionEnd;
           if (typeof s === "number" && typeof e === "number") {
-            selStart = active.selectionDirection === "backward" ? s : e;
+            selStart = field.selectionDirection === "backward" ? s : e;
           }
         } catch {
           /* input types without selectionStart support */
@@ -5342,12 +5276,12 @@ export default class CursorSmithPlugin extends Plugin {
         return ch && ch !== "\n" ? ch : "";
       }
 
-      if (active.isContentEditable) {
+      if ((active as HTMLElement).isContentEditable) {
         const doc = active.ownerDocument;
         const win = doc.defaultView || window;
         const sel = win.getSelection();
         if (sel && sel.focusNode && sel.focusNode.nodeType === 3) {
-          const text = sel.focusNode.data || "";
+          const text = (sel.focusNode as CharacterData).data || "";
           const ch = text.charAt(sel.focusOffset);
           return ch && ch !== "\n" ? ch : "";
         }
@@ -5358,7 +5292,7 @@ export default class CursorSmithPlugin extends Plugin {
     return "";
   }
 
-  resolveHoldChar(newCaret) {
+  resolveHoldChar(newCaret: CaretRecord): string | null {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
       if (
@@ -5386,7 +5320,7 @@ export default class CursorSmithPlugin extends Plugin {
   // With no argument this is the primary and measures itself. A secondary
   // hands its own record in, with its state bundle swapped into `this`
   // (see _withCaret), and everything below then runs for that caret.
-  updateActivePoint(caret: any = this.caretCoords()) {
+  updateActivePoint(caret: CaretRecord | null = this.caretCoords()) {
     if (!caret || !caret.focused) {
       this.lastActive = null;
       this.pending = null;
@@ -5427,7 +5361,7 @@ export default class CursorSmithPlugin extends Plugin {
         this.animActive.h = caret.h;
         
         if (this.smearQuad) {
-          for (const key in this.smearQuad) {
+          for (const key of Object.keys(this.smearQuad) as QuadKey[]) {
             this.smearQuad[key].x += dx;
             this.smearQuad[key].y += dy;
           }
@@ -5437,7 +5371,7 @@ export default class CursorSmithPlugin extends Plugin {
           // Only when it IS a copy: untapered it's the same object, already
           // shifted by the loop above.
           if (this.smearShape && this.smearShape !== this.smearQuad) {
-            for (const key in this.smearShape) {
+            for (const key of Object.keys(this.smearShape) as QuadKey[]) {
               this.smearShape[key].x += dx;
               this.smearShape[key].y += dy;
             }
@@ -5472,11 +5406,11 @@ export default class CursorSmithPlugin extends Plugin {
       return;
     }
 
-    const targetChanged = !this.pending || this.pending.caret.x !== caret.x || this.pending.caret.top !== caret.top;
-    if (targetChanged) {
+    const pending = this.pending;
+    if (!pending || pending.caret.x !== caret.x || pending.caret.top !== caret.top) {
       this.pending = { caret, since: performance.now(), holdChar: this.resolveHoldChar(caret) };
-    } else if (performance.now() - this.pending.since >= delay) {
-      this.commitMove(this.pending.caret);
+    } else if (performance.now() - pending.since >= delay) {
+      this.commitMove(pending.caret);
     }
   }
 
@@ -5688,11 +5622,11 @@ export default class CursorSmithPlugin extends Plugin {
       // Both gates, like every other pop effect: the group, then the option.
       // Pixel Trail is deliberately absent - a deletion burst no longer needs
       // the ambient trail to be switched on.
-      const disintegrate =
+      const disintegrate = !!(
         this.settings.popEffects &&
         this.settings.backspaceDisintegrate &&
         this._deletePending &&
-        now - this._deletePending < 250;
+        now - this._deletePending < 250);
       this.spawnFlamePixels(this.lastActive, disintegrate);
       // Trail On Jump: if this move was a genuine leap (not typing/arrowing) and
       // wasn't a deletion burst, lay puffs along the path the caret skipped so a
@@ -5802,8 +5736,8 @@ export default class CursorSmithPlugin extends Plugin {
     };
 
     if (!this.smearQuad) {
-      this.smearQuad = {};
-      for (const key in targets) {
+      this.smearQuad = {} as SmearQuad;
+      for (const key of Object.keys(targets) as QuadKey[]) {
         this.smearQuad[key] = { x: targets[key].x, y: targets[key].y, vx: 0, vy: 0 };
       }
       this.smearCenterPrev = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
@@ -5868,10 +5802,20 @@ export default class CursorSmithPlugin extends Plugin {
     const h = dt / steps;
 
     let moving = false;
-    for (const key in targets) {
+    for (const key of Object.keys(targets) as QuadKey[]) {
       const c = this.smearQuad[key];
       const t = targets[key];
 
+      // Lead or trail by the direction of travel. A fifth way of deciding this
+      // was tried in 1.5.4, after smear-cursor.nvim: every corner's stiffness
+      // from its distance to the target's centre, the nearest at lead, the
+      // farthest at trail, the two between on a curve. Continuous, and it
+      // sweeps beautifully on a fat terminal cell drawn in block characters -
+      // and on a 3x24 Line stem at 5 degrees it had three corners rushing
+      // and one trailing (probes/smear-angle-sweep.js: edgeSkew 60, paraErr
+      // 25px, from 0 and 0), a triangular sliver rather than a lean. The
+      // known twist at atan(w/h) stays (HANDOFF.md, "Motion smear"); the
+      // cure is the two-rect hull described there, not a per-corner curve.
       const offX = t.x - center.x;
       const offY = t.y - center.y;
       const offLen = Math.hypot(offX, offY) || 1;
@@ -5908,7 +5852,9 @@ export default class CursorSmithPlugin extends Plugin {
 
     this._smearMoving = moving;
 
+    this.applySmearMaxLength(rect);
     this.applySmearTaper(targets, center);
+    this.applySmearVolume(targets, rect);
     if (moving) {
       this.smearQuadLastMoveT = now;
     } else {      // Snap exactly onto the targets once settled, and kill the residual
@@ -5916,7 +5862,7 @@ export default class CursorSmithPlugin extends Plugin {
       // next long idle frame re-amplifies into visible motion - the other half
       // of the oscillation described above. Mirrors what updateSmoothCursor
       // does for the caret itself.
-      for (const key in targets) {
+      for (const key of Object.keys(targets) as QuadKey[]) {
         const c = this.smearQuad[key];
         c.x = targets[key].x;
         c.y = targets[key].y;
@@ -5924,6 +5870,111 @@ export default class CursorSmithPlugin extends Plugin {
         c.vy = 0;
       }
     }
+  }
+
+  // Cap how far the tail trails the caret. A page-down or a click across the
+  // pane otherwise stretches the quad the whole way - a streak the height of
+  // the pane that then takes its time contracting. With a cap, no corner may
+  // lag its own target by more than the cap: a corner further out is pulled
+  // in along its own line of travel until it is exactly the cap behind. The
+  // caret keeps its shape - the leading corners are at their targets, the
+  // trailing ones the cap behind them - and the taper does its own job on
+  // what is left. This is written into the spring's STATE, deliberately:
+  // the tail is meant to arrive sooner, not just to be drawn shorter.
+  //
+  // Not smear-cursor.nvim's version, which scales every corner toward the
+  // one nearest its target: on a 9x24 box that collapses the tail to a point
+  // at that corner's height, and the smear read as tapered the wrong way
+  // round, narrow at the front (1.5.4, seen live).
+  applySmearMaxLength(rect: Rect) {
+    const cap = this.settings.smearMaxLength;
+    const q = this.smearQuad;
+    if (!q || !(cap > 0)) return;
+    const targets = {
+      tl: { x: rect.x, y: rect.y }, tr: { x: rect.x + rect.w, y: rect.y },
+      br: { x: rect.x + rect.w, y: rect.y + rect.h }, bl: { x: rect.x, y: rect.y + rect.h },
+    };
+    for (const k of Object.keys(q) as QuadKey[]) {
+      const c = q[k], t = targets[k];
+      const dx = c.x - t.x, dy = c.y - t.y;
+      const d = Math.hypot(dx, dy);
+      if (d <= cap) continue;
+      const f = cap / d;
+      c.x = t.x + dx * f;
+      c.y = t.y + dy * f;
+      // Velocity that was carrying the corner further out is spent against
+      // the cap; what remains is the part along the pull back in. Without
+      // this the spring keeps throwing the corner past the cap every frame
+      // and it sits there jittering instead of trailing cleanly.
+      const away = (c.vx * dx + c.vy * dy) / d;
+      if (away > 0) { c.vx -= (dx / d) * away; c.vy -= (dy / d) * away; }
+    }
+  }
+
+  // Conserve the smear's area: a long streak gets thin. The quad's area is
+  // compared with the caret's resting area and every corner is pulled toward
+  // the centre ACROSS its own direction of travel by (rest / area) to the
+  // strength, floored at SMEAR_VOLUME_MIN_FACTOR - so the stretch along the
+  // move is untouched and only the width across it gives. After
+  // smear-cursor.nvim's shrink_volume, with one change: the pull is weighted
+  // by each corner's share of the lag, as the taper's is, so the leading
+  // edge - the caret itself - keeps its full size and only the tail thins.
+  // Their cursor IS the smear; ours has a caret at the front of it.
+  //
+  // Skipped on an axis-aligned move. A horizontal smear is a rectangle that
+  // is wider than the caret, so conserving its area would thin the caret's
+  // height while you type - the effect is for the diagonal streak of a
+  // jump, where the parallelogram sweeps far more area than the caret has.
+  //
+  // Like the taper, this derives the painted corners and is never written
+  // back into smearQuad: the spring integrates forward from its own state.
+  applySmearVolume(targets: Quad, rect: Rect) {
+    const shape = this.smearShape;
+    const strength = Math.max(0, Math.min(1, this.settings.smearVolumeStrength ?? 0.3));
+    if (!shape || !this.settings.smearConserveVolume || strength <= 0) return;
+    const cx = (shape.tl.x + shape.tr.x + shape.br.x + shape.bl.x) / 4;
+    const cy = (shape.tl.y + shape.tr.y + shape.br.y + shape.bl.y) / 4;
+    const tx = rect.x + rect.w / 2, ty = rect.y + rect.h / 2;
+    // Axis-aligned: the centre has not moved off the target's row or column.
+    if (Math.abs(tx - cx) < 1 || Math.abs(ty - cy) < 1) return;
+    // Shoelace, over tl -> tr -> br -> bl.
+    const pts = [shape.tl, shape.tr, shape.br, shape.bl];
+    let area2 = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = pts[i], b = pts[(i + 1) % 4];
+      area2 += a.x * b.y - b.x * a.y;
+    }
+    const area = Math.abs(area2) / 2;
+    const rest = rect.w * rect.h;
+    if (!(area > rest) || !(rest > 0)) return;
+    const factor = Math.max(SMEAR_VOLUME_MIN_FACTOR, Math.pow(rest / area, strength / 2));
+    if (factor >= 0.999) return;
+
+    if (!this._volumeBuf) {
+      this._volumeBuf = { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } };
+    }
+    const out = this._volumeBuf;
+    let maxLag = 0;
+    const lag: Record<string, number> = {};
+    for (const k of Object.keys(targets) as QuadKey[]) {
+      lag[k] = Math.hypot(targets[k].x - shape[k].x, targets[k].y - shape[k].y);
+      if (lag[k] > maxLag) maxLag = lag[k];
+    }
+    if (maxLag < 0.01) return;
+    for (const k of Object.keys(targets) as QuadKey[]) {
+      const c = shape[k];
+      // The corner's own direction of travel, and the normal to it.
+      const mx = targets[k].x - c.x, my = targets[k].y - c.y;
+      const ml = lag[k];
+      if (ml < 0.01) { out[k].x = c.x; out[k].y = c.y; continue; }
+      const nx = -my / ml, ny = mx / ml;
+      // How far the corner sits from the centre across that direction.
+      const proj = (c.x - cx) * nx + (c.y - cy) * ny;
+      const shift = proj * (1 - factor) * (ml / maxLag);
+      out[k].x = c.x - nx * shift;
+      out[k].y = c.y - ny * shift;
+    }
+    this.smearShape = out;
   }
 
   // Derive the corners to PAINT from the corners the spring is holding.
@@ -5939,7 +5990,7 @@ export default class CursorSmithPlugin extends Plugin {
   // springs from, so the corners would chase the narrowed shape and the taper
   // would eat the very lag it is drawn from. Derived fresh each frame and
   // thrown away.
-  applySmearTaper(targets, center) {
+  applySmearTaper(targets: Quad, center: Pt) {
     const q = this.smearQuad;
     const amount = Math.max(0, Math.min(1, this.settings.smearTaperAmount ?? 0.7));
     const dir = this._smearDir;
@@ -5954,8 +6005,8 @@ export default class CursorSmithPlugin extends Plugin {
     // edge keeps its full width - so there's no need to work out which corner
     // is which, or to special-case diagonal movement.
     let maxLag = 0;
-    const lag = {};
-    for (const k in targets) {
+    const lag: Record<string, number> = {};
+    for (const k of Object.keys(targets) as QuadKey[]) {
       const l = Math.hypot(q[k].x - targets[k].x, q[k].y - targets[k].y);
       lag[k] = l;
       if (l > maxLag) maxLag = l;
@@ -5981,7 +6032,7 @@ export default class CursorSmithPlugin extends Plugin {
     }
     const out = this._taperBuf;
 
-    for (const k in targets) {
+    for (const k of Object.keys(targets) as QuadKey[]) {
       const c = q[k];
       const ox = c.x - center.x;
       const oy = c.y - center.y;
@@ -6000,7 +6051,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   // The four corners to paint the cursor through, or null when Motion Smear is
   // off and callers should use the plain caret rect instead.
-  smearCorners() {
+  smearCorners(): Quad | null {
     if (!this.settings.smear) return null;
     return this.smearShape || this.smearQuad;
   }
@@ -6011,7 +6062,7 @@ export default class CursorSmithPlugin extends Plugin {
     const q = this.settings.smear ? this.smearCorners() : null;
     if (!q) return "nosmear";
     let s = "";
-    for (const k of ["tl", "tr", "br", "bl"]) {
+    for (const k of ["tl", "tr", "br", "bl"] as const) {
       const c = q[k];
       if (!c) return "nosmear";
       s += Math.round(c.x * 2) + ":" + Math.round(c.y * 2) + ",";
@@ -6025,7 +6076,7 @@ export default class CursorSmithPlugin extends Plugin {
   // of two dots with a gap. `dest` itself is NOT recorded here - it becomes the
   // live caret and gets its own ghost on the next move - only the bridge between
   // them is filled.
-  pushTrail(point: CaretRecord, dest: CaretRecord = null) {
+  pushTrail(point: CaretRecord | null, dest: CaretRecord | null = null) {
     if (!point) return;
     const now = performance.now();
     const max = Math.max(0, Math.round(this.settings.trailLength));
@@ -6113,7 +6164,7 @@ export default class CursorSmithPlugin extends Plugin {
   // entirely. It's set when Pop Effects' Rainbow is driving a deletion burst:
   // Rainbow outranks Gradient throughout Pop Effects, and without this the
   // gradient branch would quietly win for anyone running both.
-  flamePixelColor(baseRGB, disintegrate: boolean, forceBase = false) {
+  flamePixelColor(baseRGB: number[], disintegrate: boolean, forceBase = false): string {
     let r, g, b;
     if (!forceBase && this.settings.flameTrailGradientColors && this.settings.gradientEnabled) {
       [r, g, b] = this.sampleRamp(Math.random());
@@ -6286,7 +6337,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Resolve the live glitch into per-frame drawing parameters, or null when no
   // burst is running. Also retires an expired burst, which is what lets the
   // frame governor drop back out of the hot gear.
-  glitchState(now: number) {
+  glitchState(now: number): GlitchState | null {
     const g = this.glitch;
     if (!g) return null;
     const p = (now - g.start) / g.dur;
@@ -6339,7 +6390,7 @@ export default class CursorSmithPlugin extends Plugin {
   // quad sliced and channel-split at the same time is visual mud, and the
   // glitch is brief enough that dropping the smear for its duration reads as
   // part of the effect.
-  paintGlitchRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, baseColor: string, alpha: number, gs) {
+  paintGlitchRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, baseColor: string, alpha: number, gs: GlitchState) {
     const rgb = hexToRgbTuple(baseColor) || [255, 255, 255];
     const R = Math.round(rgb[0]), G = Math.round(rgb[1]), B = Math.round(rgb[2]);
 
@@ -6478,7 +6529,7 @@ export default class CursorSmithPlugin extends Plugin {
   //
   // 33° is coprime-ish with 360 (they share only 3), so the sweep takes ~120
   // pops to repeat a hue rather than cycling visibly every handful of keys.
-  nextRainbowHue(step = 33) {
+  nextRainbowHue(step = 33): number {
     const hue = this._popRainbowHue;
     this._popRainbowHue = (hue + step) % 360;
     return hue;
@@ -6497,7 +6548,7 @@ export default class CursorSmithPlugin extends Plugin {
   // The nudge afterwards is what "slight variations" means: enough that no two
   // sparks in a burst are the same pixel colour, small enough that the burst
   // still reads as the gradient (or the hue) it came from.
-  fireworkSparkRGB(base) {
+  fireworkSparkRGB(base: number[] | null): number[] {
     const [r, g, b] = base || this.sampleRamp(Math.random());
     return [
       Math.max(0, Math.min(255, Math.round(r + (Math.random() - 0.5) * 76))),
@@ -6711,6 +6762,7 @@ export default class CursorSmithPlugin extends Plugin {
   drawFireworks() {
     if (!this.fireworks.length) return;
     const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
     const cell = FIREWORK_CELL;
@@ -6718,7 +6770,7 @@ export default class CursorSmithPlugin extends Plugin {
     // at spawn because the positions themselves are continuous - it's the
     // painted blocks that must line up, and quantising the maths instead would
     // make the arcs step sideways as well as visually.
-    const snap = (v) => Math.round(v / cell) * cell;
+    const snap = (v: number) => Math.round(v / cell) * cell;
     const fallSec = FIREWORK_FALL_MS / 1000;
 
     this.fireworks = this.fireworks.filter((fw) => {
@@ -6776,7 +6828,7 @@ export default class CursorSmithPlugin extends Plugin {
           // piece of physics here that makes the effect CHEAPER: a guttering
           // spark simply isn't drawn.
           const tw = u > FIREWORK_TWINKLE_AT;
-          const drawSet = (list, ox, oy, sc, alpha) => {
+          const drawSet = (list: FireworkSpark[], ox: number, oy: number, sc: number, alpha: number) => {
             let ci = -1;
             for (const s of list) {
               if (tw && Math.sin(s.tw + u * s.tr) < -0.35) continue;
@@ -6901,7 +6953,7 @@ export default class CursorSmithPlugin extends Plugin {
     // not the same absolute wobble.
     const jitter = reach * 0.09;
 
-    const seen = new Set();
+    const seen: Set<string> = new Set();
     const main = this.boltPath(ox, oy, tx, ty, jitter);
     // Each block carries how far along the strike it sits, 0 at the sky end and
     // 1 at the caret. That's what the colour ramp is sampled against below.
@@ -6946,7 +6998,7 @@ export default class CursorSmithPlugin extends Plugin {
     // about the bolt: reading it in the draw call would re-roll the colour on
     // every frame of the strike's life.
     const ramp = thunderRamp(this.styleFor("popRainbow") ? this.nextRainbowHue() : null);
-    const bands = [];
+    const bands: ThunderBand[] = [];
     for (let i = 0; i < THUNDER_BANDS; i++) {
       const [br, bg, bb] = thunderColorAt(ramp, i / (THUNDER_BANDS - 1));
       // Core and halo are the same hue at different lightnesses: the channel
@@ -7024,7 +7076,7 @@ export default class CursorSmithPlugin extends Plugin {
   // sideways by a shrinking random amount. Displacement is across the segment
   // rather than in a fixed axis, so the jaggedness looks the same whatever
   // angle the bolt comes in at.
-  boltPath(x0: number, y0: number, x1: number, y1: number, jitter) {
+  boltPath(x0: number, y0: number, x1: number, y1: number, jitter: number) {
     let pts = [{ x: x0, y: y0 }, { x: x1, y: y1 }];
     let amp = jitter;
     for (let pass = 0; pass < THUNDER_PASSES; pass++) {
@@ -7062,7 +7114,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Each block also records `t`, its position along the ramp: t0 at the start of
   // this path and t1 at the end. The trunk spans the whole ramp; a fork spans
   // only the part of it from where the fork branched off.
-  pixelateBolt(pts, cell, seen, t0: number, t1: number) {
+  pixelateBolt(pts: Pt[], cell: number, seen: Set<string>, t0: number, t1: number) {
     const out = [];
     const segs = pts.length - 1;
     for (let i = 1; i < pts.length; i++) {
@@ -7092,6 +7144,7 @@ export default class CursorSmithPlugin extends Plugin {
   drawThunderbolts() {
     if (!this.thunderbolts.length) return;
     const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
     const strength = Math.max(0.1, Math.min(1, this.settings.thunderstrikeStrength ?? 0.5));
@@ -7164,7 +7217,7 @@ export default class CursorSmithPlugin extends Plugin {
   // opacity alone; the torch's Blink Sync follows it whichever of those is on.
   // Splitting the two apart is what lets Breathing stop the caret vanishing
   // without also stopping everything else that keys off the blink.
-  blinkPhase(now: number) {
+  blinkPhase(now: number): number {
     if (!this.settings.blinkingEnabled) return 1;
     // Build the effective hold window from two independent sources:
     //   • smoothStopBlinking (existing): 450 ms hold, only active when smooth
@@ -7220,7 +7273,7 @@ export default class CursorSmithPlugin extends Plugin {
   // What the blink does to opacity. Breathing swaps the fade out for a size
   // change, so the caret keeps full opacity throughout - never disappearing is
   // the entire point of that option.
-  blinkAlpha(now: number) {
+  blinkAlpha(now: number): number {
     if (this.settings.blinkBreathing) return 1;
     return this.blinkPhase(now);
   }
@@ -7338,10 +7391,10 @@ export default class CursorSmithPlugin extends Plugin {
   // fast move), any held character and the serifs, padded for glow
   // (shadowBlur maxes at 10), outline width, antialiasing and a Signal Glitch
   // throw. Marked dirty once from draw() rather than threaded through every
-  // branch of drawRetroBox/drawGenericCaret - and read by _frameNeed to place
+  // branch of drawBoxCursor/drawGenericCaret - and read by _frameNeed to place
   // the canvas, so the region and the damage rect cannot disagree.
   // Null when there is no caret.
-  _cursorBounds() {
+  _cursorBounds(): Bounds | null {
     const a = this.animActive;
     if (!a) return null;
     let x0 = a.x, y0 = a.top;
@@ -7358,7 +7411,7 @@ export default class CursorSmithPlugin extends Plugin {
     // second pass is a cheap no-op then.
     for (const src of [this.smearQuad, this.smearShape]) {
       if (!src) continue;
-      for (const k in src) {
+      for (const k of Object.keys(src) as QuadKey[]) {
         if (src[k].x < x0) x0 = src[k].x;
         if (src[k].y < y0) y0 = src[k].y;
         if (src[k].x > x1) x1 = src[k].x;
@@ -7465,7 +7518,7 @@ export default class CursorSmithPlugin extends Plugin {
     // caret blinked.
     const breath = a ? this.breathScale(performance.now()) : 1;
     const breathing = breath < 0.999;
-    if (breathing) {
+    if (breathing && a) {
       const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
       const cy = a.top + (a.h || 0) / 2;
       ctx.save();
@@ -7475,7 +7528,7 @@ export default class CursorSmithPlugin extends Plugin {
     }
     // Before the dispatch, not inside the Box branch: this both sets the
     // blend for a highlighter-translucent box AND clears it for every other
-    // style, and the other styles don't call drawRetroBox.
+    // style, and the other styles don't call drawBoxCursor.
     this.applyCanvasBlend();
     switch (this.styleFor("cursorStyle")) {
       case "Line":
@@ -7485,7 +7538,7 @@ export default class CursorSmithPlugin extends Plugin {
         this.drawGenericCaret(true);
         break;
       case "Box":
-        this.drawRetroBox();
+        this.drawBoxCursor();
         break;
     }
     if (breathing) ctx.restore();
@@ -7507,7 +7560,7 @@ export default class CursorSmithPlugin extends Plugin {
     // blanks the surface, and inside the region _dirtyPrev clears it. With
     // the cursor in here a caret jump dragged its old position into the
     // need, and the region grew to span the jump instead of sliding.
-    const e = this._dirty;
+    const e = this._dirty as Bounds | null;
     this._dirtyRaw = e ? { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 } : null;
     // Now the cursor, for the clear: see _cursorBounds for what it spans.
     // The full-effect secondaries are cursors too, and out of _dirtyRaw for
@@ -7517,7 +7570,7 @@ export default class CursorSmithPlugin extends Plugin {
 
     // Freeze this frame's union for the next frame to clear, clamped to the
     // surface so an off-screen particle can't inflate the cleared region.
-    const d = this._dirty;
+    const d = this._dirty as Bounds | null;
     if (!d) {
       this._dirtyPrev = null;
       return;
@@ -7530,7 +7583,7 @@ export default class CursorSmithPlugin extends Plugin {
       cx1 > cx0 && cy1 > cy0 ? { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 } : null;
   }
 
-  renderWidth(active: CaretRecord) {
+  renderWidth(active: CaretRecord): number {
     return active.w;
   }
 
@@ -7560,7 +7613,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.trail = this.trail.filter((p) => now - p.t < fade);
   }
 
-  forEachTrailPoint(cb) {
+  forEachTrailPoint(cb: TrailPointCallback) {
     if (!this.settings.crtEffect) return;
     const now = performance.now();
     const fade = Math.max(50, this.settings.trailFadeMs);
@@ -7593,7 +7646,7 @@ export default class CursorSmithPlugin extends Plugin {
   //
   // Returns the style string; arming the glow is a side effect on ctx, so the
   // caller must ctx.save()/restore() around a run of trail points.
-  trailPaint(ctx: CanvasRenderingContext2D, p, alpha: number, age: number, flatColor: string) {
+  trailPaint(ctx: CanvasRenderingContext2D, p: Rect, alpha: number, age: number, flatColor: string): string | CanvasGradient {
     if (!this.settings.crtNeon) {
       ctx.shadowBlur = 0;
       return this.cursorPaint(p.x, p.y, p.w, p.h, flatColor, alpha);
@@ -7628,7 +7681,7 @@ export default class CursorSmithPlugin extends Plugin {
   // spill - the thing that actually makes it look like neon. The core is
   // skipped once the ghost is too narrow to have an inside (e.g. a Line cursor,
   // which is basically all core already).
-  drawNeonGhost(ctx: CanvasRenderingContext2D, r, alpha: number, age: number, color: string) {
+  drawNeonGhost(ctx: CanvasRenderingContext2D, r: Rect, alpha: number, age: number, color: string) {
     ctx.fillStyle = this.trailPaint(ctx, r, alpha, age, color);
     this.fillTrailRect(ctx, r.x, r.y, r.w, r.h);
     if (r.w >= 3) {
@@ -7656,7 +7709,7 @@ export default class CursorSmithPlugin extends Plugin {
   // ROUNDED_THIN_PX is the width below which a shape reads as a bar rather
   // than a block. Anything at or under it is basically all edge, so there is
   // no flat middle for a partial radius to preserve.
-  cornerRadius(minor) {
+  cornerRadius(minor: number): number {
     if (!this.styleFor("cursorRounded")) return 0;
     const m = Math.max(0, minor);
     if (m <= 0) return 0;
@@ -7678,7 +7731,7 @@ export default class CursorSmithPlugin extends Plugin {
   // arbitrary quad from the smear spring, which roundRect cannot express at
   // all. And roundRect needs Chromium 99 / iOS 16.4, while this plugin ships
   // with isDesktopOnly false - arcTo has been universal for a decade.
-  traceQuad(ctx: CanvasRenderingContext2D, corners, radius: number = 0) {
+  traceQuad(ctx: CanvasRenderingContext2D, corners: Quad, radius: number = 0) {
     const pts = [corners.tl, corners.tr, corners.br, corners.bl];
 
     if (!(radius > 0.01)) {
@@ -7730,7 +7783,7 @@ export default class CursorSmithPlugin extends Plugin {
     // Start at the midpoint of the last edge - any point strictly inside an
     // edge works as a seed, and a midpoint is guaranteed to be outside both
     // of that edge's corner arcs after the clamp above.
-    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const mid = (a: Pt, b: Pt) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
     const seed = mid(pts[3], pts[0]);
     ctx.moveTo(seed.x, seed.y);
     for (let i = 0; i < 4; i++) {
@@ -7743,7 +7796,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   // The caret's body as a set of corner points: the smear quad while Motion
   // Smear is deforming it, otherwise the plain rect.
-  cursorCorners(rx: number, ry: number, rw: number, rh: number) {
+  cursorCorners(rx: number, ry: number, rw: number, rh: number): Quad {
     return this.smearCorners() || {
       tl: { x: rx, y: ry },
       tr: { x: rx + rw, y: ry },
@@ -7833,7 +7886,7 @@ export default class CursorSmithPlugin extends Plugin {
       let x0 = x, y0 = y, x1 = x + w, y1 = y + h;
       const q = this.smearCorners();
       if (q) {
-        for (const k of ["tl", "tr", "br", "bl"]) {
+        for (const k of ["tl", "tr", "br", "bl"] as const) {
           const c = q[k];
           if (!c) continue;
           if (c.x < x0) x0 = c.x;
@@ -7862,8 +7915,8 @@ export default class CursorSmithPlugin extends Plugin {
       // times a second for no reason.
       let ac = this._auroraCanvas;
       if (!ac || ac.width !== pw || ac.height !== ph) {
-        const docRef = this.canvas?.ownerDocument ?? document;
-        ac = this._auroraCanvas = docRef.createElement("canvas");
+        // Detached scratch canvas; it is only ever drawn FROM.
+        ac = this._auroraCanvas = createEl("canvas");
         ac.width = pw;
         ac.height = ph;
         this._auroraCtx = ac.getContext("2d");
@@ -7974,6 +8027,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   createEnergyGradient(x: number, y: number, w: number, h: number, baseColor: string, alpha: number) {
     const ctx = this.ctx;
+    if (!ctx) return hexToRgba(baseColor, alpha);
     const speed = this.settings.energySpeed ?? 1;
     const t = (performance.now() / 1000) * speed;
     const base = hexToRgbTuple(baseColor);
@@ -8066,7 +8120,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Anything else is a literal pixel thickness, clamped to the line height so
   // a large value on a small font degrades to a filled block rather than
   // painting outside the line.
-  underlineThickness(lineHeight) {
+  underlineThickness(lineHeight: number): number {
     const h = Math.max(1, Math.round(lineHeight || 0));
     const px = this.settings.underlineWidthPx || 0;
     if (px > 0) return Math.max(1, Math.min(Math.round(px), h));
@@ -8133,7 +8187,7 @@ export default class CursorSmithPlugin extends Plugin {
     // old behaviour everywhere it was already correct.
     const c = this.cursorCorners(rx, active.top, rw, lineH);
     const dir = this._smearDir;
-    const anchor = (a, b) => {
+    const anchor = (a: Pt, b: Pt) => {
       const ex = b.x - a.x, ey = b.y - a.y;
       const len = Math.hypot(ex, ey);
       if (!(len > 0.001)) return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -8184,12 +8238,13 @@ export default class CursorSmithPlugin extends Plugin {
 
   drawGenericCaret(isUnderline = false) {
     const ctx = this.ctx;
+    if (!ctx) return;
     const settings = this.settings;
     const active = this.animActive;
     const now = performance.now();
     const trailColor = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
-    // Same single alpha term the Box style uses (see drawRetroBox): the blend
+    // Same single alpha term the Box style uses (see drawBoxCursor): the blend
     // that does the visible work is layer-level, in applyCanvasBlend, and this
     // just takes the paint fractionally off full so the caret sits in the text
     // rather than on it. Applied to the trail as well as the live caret, so
@@ -8334,6 +8389,7 @@ export default class CursorSmithPlugin extends Plugin {
     const carets = this.secondaryCarets;
     if (!carets || carets.length === 0) return;
     const ctx = this.ctx;
+    if (!ctx) return;
     const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
     const alpha = this.blinkAlpha(performance.now()) * opacity;
     if (alpha <= 0.01) return;
@@ -8386,6 +8442,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   drawLettersParticles() {
     const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     
     this.particles = this.particles.filter(p => {
@@ -8421,6 +8478,7 @@ export default class CursorSmithPlugin extends Plugin {
 
   drawFlamePixels() {
     const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     // Only Speed Demon sparks (tagged `spark: true` when spawned) ever grow a
     // trail - Pixel Trail and backspace-disintegration particles share this
@@ -8518,7 +8576,7 @@ export default class CursorSmithPlugin extends Plugin {
   // blue or violet cursor reddens on its way to yellow through magenta rather
   // than flashing lime through cyan and green - shortest is not the same as
   // most like fire.
-  hotFireColor(temp, baseHex: string) {
+  hotFireColor(temp: number, baseHex: string): string {
     const h = Math.max(0, Math.min(1, temp));
     const base = rgbToHsv(hexToRgbTuple(baseHex));
 
@@ -8558,6 +8616,7 @@ export default class CursorSmithPlugin extends Plugin {
   drawHotHead() {
     if (!this.flameEmbers.length) return;
     const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     const active = this.animActive;
     const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1))
@@ -8597,9 +8656,10 @@ export default class CursorSmithPlugin extends Plugin {
       ? this.heatColor(heatQ / 32, this.getBaseColor())
       : this.getBaseColor();
     const paletteKey = base + (flatMode ? "|flat" : "");
-    if (this._hotPaletteKey !== paletteKey) {
+    let palette = this._hotPalette;
+    if (!palette || this._hotPaletteKey !== paletteKey) {
       this._hotPaletteKey = paletteKey;
-      this._hotPalette = [];
+      palette = this._hotPalette = [];
       const baseHsv = rgbToHsv(hexToRgbTuple(base));
       for (let j = 0; j <= FLAME_LEVELS; j++) {
         const u = j / FLAME_LEVELS;
@@ -8608,17 +8668,16 @@ export default class CursorSmithPlugin extends Plugin {
           // toward white with heat. Never darker than the cursor.
           const tinted = hsvToRgb([baseHsv[0] + u * HOT_FLAT_HUE_SPAN * 0.5, baseHsv[1], baseHsv[2]]);
           const k = u * HOT_FLAT_LIGHTEN;
-          this._hotPalette.push([
+          palette.push([
             Math.round(tinted[0] + (255 - tinted[0]) * k),
             Math.round(tinted[1] + (255 - tinted[1]) * k),
             Math.round(tinted[2] + (255 - tinted[2]) * k),
           ]);
         } else {
-          this._hotPalette.push(hexToRgbTuple(this.hotFireColor(u, base)));
+          palette.push(hexToRgbTuple(this.hotFireColor(u, base)));
         }
       }
     }
-    const palette = this._hotPalette;
 
     // ---- Advance and paint -----------------------------------------------------------
     // Oldest first (the array is in spawn order), so a fresh bright chunk
@@ -8628,7 +8687,7 @@ export default class CursorSmithPlugin extends Plugin {
     // per-square shading was the grid. Chunks of the same colour that touch
     // merge seamlessly; different shades meet at an edge, which is a chunk.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const grow = (x0, y0, w, h) => {
+    const grow = (x0: number, y0: number, w: number, h: number) => {
       if (x0 < minX) minX = x0;
       if (y0 < minY) minY = y0;
       if (x0 + w > maxX) maxX = x0 + w;
@@ -8683,7 +8742,8 @@ export default class CursorSmithPlugin extends Plugin {
       // life is gone, anchored at the particle's lattice square, growing up
       // and right, mirrored if `flip`. One path, one fill.
       const gone = 1 - Math.max(0, Math.min(1, p.life / (p.life0 || p.maxLife || maxLife)));
-      const idx = Math.min(shapeN - 1, (p.shape0 | 0) + Math.floor(gone * (shapeN - (p.shape0 | 0))));
+      const shape0 = p.shape0 ?? 0;
+      const idx = Math.min(shapeN - 1, shape0 + Math.floor(gone * (shapeN - shape0)));
       const rows = HOT_BLOCK_SHAPES[idx];
       const h = rows.length;
       let area = 0;
@@ -8782,8 +8842,9 @@ export default class CursorSmithPlugin extends Plugin {
 
   // Shared tail of drawStardust for both motion modes: paint one mote and
   // report the pixels it touched.
-  paintMote(p, x: number, y: number, alpha: number) {
+  paintMote(p: StardustMote, x: number, y: number, alpha: number) {
     const ctx = this.ctx;
+    if (!ctx) return;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
@@ -8809,7 +8870,7 @@ export default class CursorSmithPlugin extends Plugin {
   // callout offers a fresh false partner to any "<" above it, which is the
   // most visible way this goes wrong in a real vault - and no boundary check
   // catches it, because the marker sits at the same quote depth as the "<".
-  matchingBracketPos(doc: Text, at: number, ch) {
+  matchingBracketPos(doc: Text, at: number, ch: string): number {
     const open = BRACKET_OPEN[ch] ? ch : BRACKET_CLOSE[ch];
     if (!open) return -1;
     const close = BRACKET_OPEN[open];
@@ -8869,7 +8930,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Capped rather than using doc.lineAt so this works on any doc-like object
   // exposing length/sliceString, and so a pathological single-line file can't
   // turn one frame into a megabyte read.
-  lineBoundsAt(doc: Text, pos: number) {
+  lineBoundsAt(doc: Text, pos: number): { start: number; text: string } {
     const from = Math.max(0, pos - QUOTE_LINE_SCAN);
     const to = Math.min(doc.length, pos + QUOTE_LINE_SCAN);
     const chunk = doc.sliceString(from, to);
@@ -8884,11 +8945,11 @@ export default class CursorSmithPlugin extends Plugin {
   // caret. Straight quotes are taken left to right - 1st with 2nd, 3rd with
   // 4th - among the quotes that qualify as delimiters. Curly quotes are
   // directional, so an opener is matched to its own nearest closer instead.
-  quoteSpanAt(doc, pos: number) {
+  quoteSpanAt(doc: Text, pos: number): { from: number; to: number } | null {
     const { start, text } = this.lineBoundsAt(doc, pos);
     const rel = pos - start;
-    let best = null;
-    const consider = (a, b) => {
+    let best: { from: number; to: number } | null = null;
+    const consider = (a: number, b: number) => {
       // Inclusive of both edges: the caret counts as "in" the run whether it's
       // inside it or parked just outside either quote.
       if (rel < a || rel > b + 1) return;
@@ -8932,7 +8993,7 @@ export default class CursorSmithPlugin extends Plugin {
     const text = doc.sliceString(start, pos);
     // One counter per closer, built from the pair table so every bracket type
     // (including angle brackets) is tracked without hardcoding the list here.
-    const depth = {};
+    const depth: Record<string, number> = {};
     for (const closer in BRACKET_CLOSE) depth[closer] = 0;
     for (let i = text.length - 1; i >= 0; i--) {
       const c = text[i];
@@ -8962,7 +9023,7 @@ export default class CursorSmithPlugin extends Plugin {
   // The line the span BEGINS on sets the baseline depth and is exempt from the
   // fence test: a bracket sitting on a fence line must not cut its own tether,
   // and only lines that actually begin inside the span can introduce a fence.
-  crossesBlockBoundary(doc: Text, from, to) {
+  crossesBlockBoundary(doc: Text, from: number, to: number): boolean {
     if (!(to > from)) return false;
     // Reach back for the start of `from`'s line, and slightly past `to` so a
     // fence opening the final line is still matchable when the span stops
@@ -9039,7 +9100,7 @@ export default class CursorSmithPlugin extends Plugin {
   // With no head this is the primary's tether, at the main selection. A
   // secondary passes its own head (and whether its range is empty), with its
   // bundle swapped in so the caches below are its own.
-  bracketTetherCoords(view: any, head?: number, empty?: boolean) {
+  bracketTetherCoords(view: EditorView | null | undefined, head?: number, empty?: boolean): TetherSeg[] | null {
     if (!view || !view.hasFocus) return null;
     try {
       const state = view.state;
@@ -9111,7 +9172,7 @@ export default class CursorSmithPlugin extends Plugin {
   // rather than a chord cut across it.
   //
   // `a` and `b` are the already-resolved coordinates of the two brackets.
-  tetherSegments(view: EditorView, from, to, a, b) {
+  tetherSegments(view: EditorView, from: number, to: number, a: CMRect, b: CMRect): TetherSeg[] {
     // The rules run *under* the text rather than through it, so each sits just
     // below its line box. The closing end gets a glyph width added so the span
     // covers that character instead of stopping at its left edge.
@@ -9178,9 +9239,9 @@ export default class CursorSmithPlugin extends Plugin {
   // middle line would measure as a full-width rule running way past the end of
   // its text. Keeping each Range strictly inside one line means only the text
   // within it is ever measured.
-  rangeLineRects(view: EditorView, from, to) {
+  rangeLineRects(view: EditorView, from: number, to: number): { left: number; right: number; bottom: number }[] {
     const doc = view.state.doc;
-    const out = [];
+    const out: { left: number; right: number; bottom: number }[] = [];
     if (to <= from) return out;
     const first = doc.lineAt(from);
     const last = doc.lineAt(to);
@@ -9245,7 +9306,7 @@ export default class CursorSmithPlugin extends Plugin {
   // points where fractions 0 and 1 would land on this rule's own axis, so
   // consecutive lines pick up consecutive slices of one ramp and the tether
   // still reads as a single object, the way it does with the cursor.
-  tetherStroke(ctx: CanvasRenderingContext2D, s, t0: number, t1: number, alpha: number) {
+  tetherStroke(ctx: CanvasRenderingContext2D, s: TetherSeg, t0: number, t1: number, alpha: number) {
     if (!this.settings.gradientEnabled) return hexToRgba(this.getActiveColor(), alpha);
     const span = Math.max(1e-4, t1 - t0);
     const ux = (s.x2 - s.x1) / span;
@@ -9266,6 +9327,7 @@ export default class CursorSmithPlugin extends Plugin {
     const segs = this.bracketTether;
     if (!segs || !segs.length) return;
     const ctx = this.ctx;
+    if (!ctx) return;
     const opacity = Math.max(0, Math.min(1, this.settings.cursorOpacity ?? 1));
     const strength = Math.max(0, Math.min(1, this.settings.bracketTetherStrength ?? 0.35));
     const alpha = strength * opacity;
@@ -9372,8 +9434,9 @@ export default class CursorSmithPlugin extends Plugin {
     el.style.mixBlendMode = want;
   }
 
-  drawRetroBox() {
+  drawBoxCursor() {
     const ctx = this.ctx;
+    if (!ctx) return;
     const settings = this.settings;
     const now = performance.now();
     const color = this.getActiveColor();
@@ -9452,16 +9515,16 @@ export default class CursorSmithPlugin extends Plugin {
       const gsBox = settings.crtEffect && settings.crtGlitch
         ? this.glitchState(now) : null;
 
-      const paintStyle = gsBox ? null : (settings.energyEffect
-        ? this.energyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity)
-        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity));
-
       if (gsBox) {
         this.paintGlitchRect(
           ctx, active.x, active.top, renderW, active.h,
           color, 0.9 * blinkAlpha * bodyOpacity, gsBox,
         );
-      } else if (hollow) {
+      } else {
+      const paintStyle = settings.energyEffect
+        ? this.energyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity)
+        : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity);
+      if (hollow) {
         // Stroke exactly the path the solid style fills, so the outline
         // deforms with a smear and rounds with Rounded Corners rather than
         // staying a sharp rectangle while the filled version curves. This
@@ -9480,6 +9543,7 @@ export default class CursorSmithPlugin extends Plugin {
       } else {
         ctx.fillStyle = paintStyle;
         this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
+      }
       }
       ctx.restore();
 
@@ -9572,9 +9636,21 @@ export default class CursorSmithPlugin extends Plugin {
         // back out lines our glyph up with where the real one renders. Zero
         // letter-spacing (the common case) makes this identical to before.
         const glyphAdvance = Math.max(1, (active.actualCharWidth ?? renderW) - (active.letterSpacing || 0));
+        // On whole device pixels. The caret's coordinates are fractional
+        // (coordsAtPos), and canvas text laid down at a fractional baseline
+        // is resampled across two rows of pixels - the letter looked soft
+        // next to the real one, which the browser snaps. The canvas is
+        // scaled by the device pixel ratio and offset by the region's
+        // origin (resizeCanvas), so a device pixel is 1/dpr CSS pixels from
+        // that origin, not from zero.
+        const dpr = this._canvasDpr || 1;
+        const region = this._canvasRect;
+        const ox = region ? region.x : 0, oy = region ? region.y : 0;
+        const snapX = (v: number) => Math.round((v - ox) * dpr) / dpr + ox;
+        const snapY = (v: number) => Math.round((v - oy) * dpr) / dpr + oy;
         ctx.textAlign = "center";
         ctx.textBaseline = "alphabetic";
-        ctx.fillText(displayChar, active.x + glyphAdvance / 2, baselineY);
+        ctx.fillText(displayChar, snapX(active.x + glyphAdvance / 2), snapY(baselineY));
         ctx.restore();
       }
     }
@@ -9618,12 +9694,12 @@ export default class CursorSmithPlugin extends Plugin {
         try {
           if (this.presentationActive()) {
             // Same presentation-mode guard as the canvas engine.
-            if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
+            if (this.overlay) this.overlay.classList.add("cursor-smith-torch-hidden");
           } else if (!this.settings.torchEffect) {
             // This mode (or the global cursor) doesn't want the spotlight — just
             // hide it. Don't disable the engine: another mode may want it, and
             // switching back should be instant.
-            if (this.overlay) this.overlay.classList.add("torch-cursor-hidden");
+            if (this.overlay) this.overlay.classList.add("cursor-smith-torch-hidden");
           } else if (
             !this.windowFocused() &&
             this.settings.overlayBlinkSync && this.settings.blinkingEnabled
@@ -9662,7 +9738,7 @@ export default class CursorSmithPlugin extends Plugin {
             const view = this.app.workspace.activeEditor?.editor?.cm;
             this.ensureTorchOverlayForView(view);
             if (this.overlay) {
-              this.overlay.classList.remove("torch-cursor-hidden");
+              this.overlay.classList.remove("cursor-smith-torch-hidden");
               const from = this._lastTorchRadius > 0 ? this._lastTorchRadius : this.settings.overlayRadius;
               // Geometric approach to 1px: at ~28%/frame a 300px light closes
               // in roughly a dozen pulse-cadence frames (~0.5s), quick enough to
@@ -9757,7 +9833,7 @@ export default class CursorSmithPlugin extends Plugin {
               // full size while the caret is lit and closing as it fades out.
               //
               // Driven from this tick, never from a CSS animation - see the
-              // long note in injectStyles about the candle flicker that used to
+              // long note in styles.css about the candle flicker that used to
               // live there. blinkPhase() rather than blinkAlphaAt() on purpose:
               // it already accounts for the post-move hold, so the light holds
               // steady for exactly as long as the caret does after you type,
@@ -9850,7 +9926,7 @@ export default class CursorSmithPlugin extends Plugin {
                 this._torchPaintGlow(local, rKey, hexToRgb(this.settings.overlayColor), width, height);
               }
 
-              this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
+              this.overlay.classList.toggle("cursor-smith-torch-hidden", !!hideForModal);
             }
           }
         } finally {
@@ -9877,7 +9953,7 @@ export default class CursorSmithPlugin extends Plugin {
   // shouldn't leave a dead unshaded strip. Deliberately NOT used for the
   // titlebar - see _chromeInsets for why the titlebar clamps regardless
   // of visibility.
-  _isVisiblyRendered(el: HTMLElement) {
+  _isVisiblyRendered(el: Element) {
     if (!el) return false;
     const win = el.ownerDocument.defaultView || window;
     const cs = win.getComputedStyle(el);
@@ -9905,7 +9981,7 @@ export default class CursorSmithPlugin extends Plugin {
   // for an invisible-but-in-flow status bar the clamp would just leave a
   // dead unshaded strip for no benefit (the concern _isVisiblyRendered was
   // originally written for).
-  _chromeInsets(doc: Document) {
+  _chromeInsets(doc: Document): ChromeInsets {
     // performance.now() like every other timestamp in this file. Both this and
     // its cache stamp were Date.now(), which was self-consistent but is a wall
     // clock: an NTP correction or a DST jump can move it backwards, and this
@@ -10011,7 +10087,7 @@ export default class CursorSmithPlugin extends Plugin {
   // scroll container - the DOM clips the element, the geometry doesn't - so
   // the cursor was still drawn at that position: outside the settings frame,
   // over the main window, and over the titlebar.
-  getCaretClipRect(doc: Document) {
+  getCaretClipRect(doc: Document): Box | null {
     const active = doc && doc.activeElement;
     if (!active || active === doc.body) return null;
 
@@ -10061,8 +10137,8 @@ export default class CursorSmithPlugin extends Plugin {
   // by nothing above it, and an absolutely-positioned one is only clipped by
   // ancestors that are themselves positioned (its containing block and up).
   // Popovers, suggestion dropdowns and tooltips all rely on exactly this.
-  _resolveClipChain(el: HTMLElement) {
-    const chain = [];
+  _resolveClipChain(el: HTMLElement): Element[] {
+    const chain: Element[] = [];
     try {
       const doc = el.ownerDocument;
       const win = doc.defaultView || window;
@@ -10090,7 +10166,7 @@ export default class CursorSmithPlugin extends Plugin {
     return chain;
   }
 
-  getPaneRect(view: EditorView) {
+  getPaneRect(view: EditorView | null | undefined): Box | null {
     if (!view) return null;
     // Called twice a frame (the clip window and the caret's out-of-view
     // test); a getBoundingClientRect each time. Cached on the layout
@@ -10108,7 +10184,7 @@ export default class CursorSmithPlugin extends Plugin {
     return out;
   }
 
-  _paneRectFrom(rect, rootEl) {
+  _paneRectFrom(rect: DOMRect, rootEl: Element): Box | null {
 
     // Clipping to the pane's own rect assumes the titlebar/status bar take
     // up real space in flow, pushing the pane to stop short of them. Some
@@ -10166,7 +10242,7 @@ export default class CursorSmithPlugin extends Plugin {
   // caret at the same easing. Returns [{x, y}] in client coordinates, and
   // sets this._torchGear hot while any secondary is still en route. With
   // the torch on the mouse there is one light, so only the primary's.
-  torchSpotlights(useMouse: boolean, lerp) {
+  torchSpotlights(useMouse: boolean, lerp: number): Pt[] {
     const spots = [{ x: this.x, y: this.y }];
     const states = this._secondaries;
     if (useMouse || !states || !states.length) return spots;

@@ -3,11 +3,12 @@
 // code and its comments are the bundle's.
 
 import { DEFAULT_SETTINGS, cloneVimModes, presetWithDefaults } from "./settings";
+import type { CursorSmithSettings, Look } from "./types";
 
 // Starter per-mode looks seeded into new installs. Each lists only what it
 // changes from the global defaults; fullVimMode() fills in the rest. They
 // double as a showcase — every mode looks distinctly different.
-export const VIM_MODE_STARTERS = {
+export const VIM_MODE_STARTERS: Record<string, Partial<Look>> = {
   normal:  { cursorStyle: "Box", colorDark: "#4aa3ff", colorLight: "#1e6fd0",
              blinkingEnabled: true, speedDemon: false, crtEffect: false },       // blue blinking box
   insert:  { cursorStyle: "Line", colorDark: "#39ff14", colorLight: "#2a7d2e",
@@ -304,7 +305,7 @@ export const DEFAULT_PRESET_NAME = "Jell-O";
 // the live look and the preset entry are guaranteed to be the same snapshot -
 // the same reasoning that sets vimActivePreset to "Preset1" in onload(). Call
 // it AFTER the preset-seeding loop.
-export function applyStarterPreset(settings) {
+export function applyStarterPreset(settings: CursorSmithSettings) {
   const starter = settings && settings.userPresets && settings.userPresets[DEFAULT_PRESET_NAME];
   if (!starter) return false;
   // presetWithDefaults, not a bare Object.assign: a starter written before

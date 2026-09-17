@@ -87,6 +87,40 @@ const { Plugin, PluginSettingTab, Setting, Notice } = require("obsidian");
 // Flip to false to restore full-surface clears if you ever see ghost pixels.
 const DIRTY_RECT_CLEAR = true;
 
+// The canvas element follows the caret rather than covering the window - see
+// fitCanvasRegion() and _fitCanvasRegion(). Issue #30: with hardware
+// acceleration off, Chromium's software compositor re-composites the whole
+// ON-SCREEN AREA of the canvas element every frame it changes, whatever the
+// damage rect says; measured, a full-window canvas took an idle editor from 6%
+// to 24% of a core and typing from 19% to 75%, and a 320x160 canvas around the
+// caret halved both. The backing-store size made no difference - only the
+// element's footprint does.
+//
+// How far past what must be visible the region extends, so an ordinary
+// keystroke or a caret moving down a line does not re-anchor the canvas every
+// frame. Re-anchoring is a blank-and-repaint of the (small) surface, and it is
+// cheap: measured, 96px of horizontal margin re-anchored three times in ten
+// seconds of typing. Every pixel of margin is composited every frame, so the
+// margins are kept as small as that allows.
+const CANVAS_REGION_MARGIN_X = 96;    // px either side
+const CANVAS_REGION_MARGIN_Y = 1.5;   // line heights above and below
+// Sizes are rounded up to this grid so a region that moves without growing
+// keeps its backing store instead of reallocating one a few pixels larger.
+const CANVAS_REGION_GRID = 64;
+// A region more than CANVAS_REGION_SHRINK_RATIO times the area it is showing
+// is shrunk back, but only after it has been that oversized for this long, so
+// a volley of fireworks or a run of Enter strikes does not thrash the
+// allocation between the pane and the caret. The ratio is 2, not 4: with 4 a
+// region that had grown to the pane's full width for a line wrap sat at 3.4x
+// its need for as long as the caret stayed on that line, and that was most
+// of the idle cost this whole mechanism exists to remove.
+const CANVAS_REGION_SHRINK_MS = 2000;
+const CANVAS_REGION_SHRINK_RATIO = 2;
+// How much of last frame's painted rect to pad for the motion of whatever was
+// in it: particles move a few px a frame, and anything that escapes this is
+// clipped for exactly one frame before the region grows to include it.
+const CANVAS_REGION_MOTION_PAD = 32;
+
 // How much Speed Demon's heat inflates the CRT glow, as a multiplier on top of
 // the base blur: 1 + GLOW_HEAT_GAIN at full heat. Only applies when Speed Demon
 // and the CRT glow are BOTH on - see glowHeatScale. Raising this past ~2 starts
@@ -138,12 +172,56 @@ function keystrokeHeatWeight(kind, repeat) {
   return repeat ? 0 : 1;
 }
 
-// Frame interval for the energy shimmer when it is the only thing animating.
-// The gradient's pulse has roughly a 1.7s period at speed 1, so 33ms gives
-// ~50 samples per cycle (visually identical to 60fps). Raise this to trade
-// smoothness for GPU: 66 is ~25 samples/cycle, 100 is ~17 and will start to
-// show visible stepping in the travelling wave.
-const ENERGY_FRAME_MS = 33;
+// Frame intervals for the render loops' gears, normal and Low Power. One
+// table, read through _frameCaps(), so the setting is one comparison.
+//
+//   hotMinMs      the hot gear's cap: frames closer than this are skipped.
+//                 14 caps a 120Hz display near 60fps; 30 is ~30fps.
+//   warmMs        blink fades. 33 covers a ~300ms ease smoothly.
+//   energyMs      the energy shimmer when it is the only thing animating. The
+//                 gradient's pulse has roughly a 1.7s period at speed 1, so
+//                 50ms is ~33 samples per cycle - looked at next to 33ms
+//                 (~50 samples) and told apart by nobody; 100 is ~17 and
+//                 starts to show stepping in the travelling wave.
+//   idleMs        the idle heartbeat: re-check state and repaint only if the
+//                 picture changed. 200, up from 100: every wake source
+//                 (input, scroll, focus, resize) snaps the loop to hot
+//                 instantly, so the heartbeat only ever catches what has no
+//                 event - a theme toggle, a layout shift - and 200ms is fine
+//                 for those. Halves the idle tick count.
+//   torchPulseMs  the torch's blink-sync pulse and candle flicker: the radius
+//                 only moves during the blink's two short fades, and a flame
+//                 is turbulence, not motion.
+//   torchIdleMs   the torch's parked heartbeat.
+//
+// Low Power halves the hot gear and slows the rest, for a laptop on battery
+// or a machine where Obsidian feels slower with the plugin on. Measured with
+// hardware acceleration off (issue #30), typing draws ~62 frames a second at
+// the normal caps because every keystroke's particles outlive the gap to the
+// next; the hot cap is the lever that halves that, and it is the one visible
+// change here - the smear and particles step more coarsely.
+// How long a cached caret geometry (coordsAtPos) or pane rect is trusted
+// without any invalidation event, in ms. The caches are keyed on a layout
+// generation that every wake source bumps (input, scroll, focus, resize,
+// css-change, layout-change, a ResizeObserver on the editor content), so
+// this only backstops what has no event at all - an image finishing its
+// load inside a line, say - and bounds how stale the caret can briefly be.
+const GEOMETRY_TTL_MS = 400;
+
+// The torch's two layers are canvases painted at this fraction of the pane's
+// size and scaled up by the compositor. The darkness is a soft radial ramp
+// and the glow a softer one: at a quarter of the resolution a 140px light's
+// edge is still a 10px-wide fade in the bitmap, and the bilinear upscale
+// blurs it by about two screen pixels, which on a gradient is nothing. What
+// it buys is sixteen times less to rasterise on every frame a light moves or
+// the radius pulses - and with hardware acceleration off that raster was the
+// torch's cost: a pane-sized radial gradient on the CPU per frame.
+const TORCH_CANVAS_SCALE = 0.25;
+
+const FRAME_CAPS = {
+  normal:   { hotMinMs: 14, warmMs: 33, energyMs: 50, idleMs: 200, torchPulseMs: 33, torchIdleMs: 150 },
+  lowPower: { hotMinMs: 30, warmMs: 50, energyMs: 80, idleMs: 250, torchPulseMs: 50, torchIdleMs: 250 },
+};
 
 // Thunderstrike (Pop Effects sub-option) tuning.
 //
@@ -251,11 +329,6 @@ const FIREWORK_SECOND_MAX = 3;
 const FIREWORK_SECOND_SPARKS = 5;
 const FIREWORK_SECOND_AT = [0.30, 0.55];   // range of fall fraction to pop at
 
-// Frame interval for the torch's blink-sync pulse. The spotlight's radius only
-// moves during the blink's two short fades - the long holds either side are a
-// constant value - so this doesn't need display rate, and 33ms across a fade of
-// a few hundred ms is far more steps than a slow radius change can show.
-const TORCH_PULSE_FRAME_MS = 33;
 
 // Candle flicker. Three sine terms at deliberately incommensurate rates (in
 // rad/s) so the sum never repeats on any period a reader could notice; their
@@ -337,6 +410,52 @@ const SERIF_HEIGHT_RATIO = 0.08;
 // serifs past the width of the glyph they were marking as the stem widened.
 const SERIF_MIN_SPAN_PX = 5;
 const SERIF_MAX_SPAN_RATIO = 1.25;
+
+// Multi-cursor: how many non-primary carets get the primary's full pipeline -
+// their own smoothing and smear springs, trail, letter pop, pixel trail,
+// disintegration, glitch, and the cursor's own style, glow, gradient and
+// glyph. Carets past this many are drawn as the plain 2px line they always
+// were. The cap is cost, not taste: measured in a live Obsidian, 200 carets
+// with glow, gradient and glyph draw in 1.7ms, so drawing is not the limit -
+// the per-keystroke style read is (every caret's line is re-read after every
+// edit), and the region the canvas has to cover, which for carets spread down
+// a page is the whole pane. See HANDOFF.md, "Multi-cursor with full effects".
+const SECONDARY_FULL_MAX = 64;
+// When the selection's shape changes (a caret added or removed, or the main
+// one reassigned), every caret's saved state is re-matched to the new ranges
+// by document position. A state further than this from every new head is
+// dropped rather than mis-assigned, which would draw a smear from nowhere.
+const SECONDARY_MATCH_WINDOW = 32;
+// The engine fields that make up one caret's animation state. The primary's
+// live in `this`; each full-effect secondary keeps a bundle of them and the
+// tick swaps a bundle in to run the primary's own update and draw code on it
+// (_withCaret). Same trick as the per-Vim-mode settings swap.
+//
+// Every effect that has per-caret state is here: the caret itself, the
+// smooth and smear springs, the trail, a glitch burst, the hot-head's
+// inertia and burn marks, and the rate stamps that pace stardust, sparks and
+// fireworks per caret (a global stamp would let one caret's volley block
+// the rest). The tether's caches too, so each caret's scan is its own.
+//
+// Two things are deliberately NOT here. lastMoveTime: the blink reads it,
+// and every caret blinks on the primary's clock so the gear decision stays
+// right for all of them. heat: Speed Demon is one gauge for the editor -
+// every caret shows it, only the primary's moves feed it.
+const CARET_STATE_FIELDS = [
+  "lastActive", "pending", "animActive",
+  "smearQuad", "smearShape", "smearCenterPrev", "_taperBuf", "_smearDir",
+  "_smearMoving", "_smearDtT", "smearQuadLastMoveT",
+  "trail", "glitch",
+  "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod",
+  "_hotPrev", "_hotEmitFrom", "_hotVel", "_hotActiveT", "_lastHotT", "hotBurns", "_hotShiftTick",
+  "_hotEngulfUntil",
+  "_lastStardustT", "_lastSparkT", "_lastFireworkT",
+  "_tetherKey", "_tetherFrom", "_tetherTo", "_tetherSegs", "_tetherSegKey",
+  "_tetherAnchorA", "_tetherAnchorB",
+];
+// Stardust keeps this many motes alive per caret; the pool is shared, so the
+// cap scales with the caret count or ten carets would starve each other.
+const STARDUST_MAX_PER_CARET = 60;
 // How far each serif narrows from its outer edge to where it meets the stem.
 // A real I-beam's serifs are brackets, not slabs: they thin as they approach
 // the stem instead of butting into it at full weight. Kept modest - past
@@ -649,6 +768,9 @@ const DEFAULT_SETTINGS = {
   // way virtually every other writing app does. Structural (like
   // hideNativeCaret), so deliberately NOT a per-Vim-mode look key.
   hideOnWindowBlur: true,
+  // Halves the render loops' frame rates (FRAME_CAPS). A device preference,
+  // not a look: not in LOOK_KEYS, so never in a preset or a share code.
+  lowPowerMode: false,
   // Confine the plugin to the note editor: the custom caret is drawn only
   // while CodeMirror has focus, and the native one is left alone everywhere
   // else - Command Palette, Quick Switcher, Search, Settings, the tab-title
@@ -1015,7 +1137,6 @@ const QUOTE_CHARS = ['"', "'", "`"];
 // also the correct character for a typographic apostrophe - "don’t" - and must
 // not be read as a closing quote when it sits between two letters.
 const CURLY_QUOTE_OPEN = { "\u201C": "\u201D", "\u2018": "\u2019" };  // “ → ”, ‘ → ’
-const CURLY_QUOTE_CLOSE = { "\u201D": "\u201C", "\u2019": "\u2018" };
 const QUOTE_LINE_SCAN = 4000;
 const WORD_CHAR = /[\p{L}\p{N}_]/u;
 // A quote wedged between two word characters is an apostrophe, not a
@@ -1328,6 +1449,29 @@ const DEFAULT_PRESETS = {
     "smoothEnabled": false, "smoothStopBlinking": true, "smoothness": 0.15,
     "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
+  // Added 2026-09-17 from a share code the user posted, decoded with
+  // codeToPreset and written out as the sparse delta the code carries: every
+  // key it omits inherits from DEFAULT_SETTINGS through presetWithDefaults,
+  // which is how a share code is meant to be read. A box caret in the
+  // cursor's colour, Hot-head in that colour and heated by Speed Demon, a
+  // tapered smear, smooth movement, no blink.
+  "FireBox": {
+    "colorDark": "#f7e259", "colorLight": "#f3a65e",
+    "gradientDark1": "#d9e4d8", "gradientDark2": "#ffbb00",
+    "gradientLight1": "#f4c066", "gradientLight2": "#eb402d",
+    "overlayDarkness": 0.7, "overlayIntensity": 0.1, "overlayFlicker": false,
+    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
+    "lineSerifs": true, "speedDemon": true,
+    "hotHead": true, "hotHeadQuantity": 1.6, "hotHeadSpread": 3,
+    "hotHeadTrail": 19, "hotHeadFade": 1180, "hotHeadFlat": true,
+    "hotHeadIdleMs": 500, "hotHeadSpeedHeat": true,
+    "energySpeed": 1.4,
+    "blinkingEnabled": false, "blinkSpeed": 1.5, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 1200,
+    "smearStiffness": 0.85, "smearTrailingStiffness": 0.15, "smearTaper": true,
+    "smoothEnabled": true, "smoothness": 0.05, "catchUpSpeed": 0.6,
+    "maxCatchUpSpeed": 0.9, "popEffects": false
+  },
 };
 
 // Which of the above a brand-new install opens on.
@@ -1558,6 +1702,102 @@ function codeToVimPreset(code) {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Canvas region fitting (issue #30)
+//
+// Pure: decides where the canvas element sits this frame. `need` is the
+// bounding box {x0,y0,x1,y1} of everything that must be visible, or null when
+// nothing is; `clip` {x,y,w,h} is the wrapper's clip window, which is the hard
+// limit; `current` is the region in force, or null. Returns `current` itself
+// (identity) when it already covers the need and is not oversized, so the
+// caller can test `=== current` for "nothing to do".
+//
+// Grow: the need expanded by the margins, clamped to the clip, size rounded up
+// to the grid. When the grown rect fits inside the current allocation the
+// current SIZE is kept and only the position moves, so a caret walking along a
+// line slides one backing store rather than allocating a new one per step.
+//
+// Shrink: only when `allowShrink` (the caller times it) and the current region
+// is more than CANVAS_REGION_SHRINK_RATIO times the area the need wants -
+// otherwise a region that grew for an effect would snap back the frame the
+// effect ended.
+// ---------------------------------------------------------------------------
+function fitCanvasRegion(need, clip, current, opts = {}) {
+  const marginX = opts.marginX ?? CANVAS_REGION_MARGIN_X;
+  const marginY = opts.marginY ?? 32;
+  const grid = opts.grid ?? CANVAS_REGION_GRID;
+  if (!need || !clip || clip.w <= 0 || clip.h <= 0) return current;
+  // The need, clamped to the clip: whatever lies outside the wrapper is
+  // clipped by it anyway, so it must not drag the region's size along.
+  const cx1 = clip.x + clip.w, cy1 = clip.y + clip.h;
+  const nx0 = Math.max(clip.x, Math.floor(need.x0));
+  const ny0 = Math.max(clip.y, Math.floor(need.y0));
+  const nx1 = Math.min(cx1, Math.ceil(need.x1));
+  const ny1 = Math.min(cy1, Math.ceil(need.y1));
+  if (nx1 <= nx0 || ny1 <= ny0) return current;
+
+  const contains = current &&
+    nx0 >= current.x && ny0 >= current.y &&
+    nx1 <= current.x + current.w && ny1 <= current.y + current.h;
+
+  // The rect the need would get if fitted fresh.
+  let w = Math.min(clip.w, Math.ceil((nx1 - nx0 + 2 * marginX) / grid) * grid);
+  let h = Math.min(clip.h, Math.ceil((ny1 - ny0 + 2 * marginY) / grid) * grid);
+  if (contains) {
+    if (!opts.allowShrink) return current;
+    if (current.w * current.h <= CANVAS_REGION_SHRINK_RATIO * w * h) return current;
+  } else if (current && w <= current.w && h <= current.h) {
+    // Slide the existing allocation rather than replacing it.
+    w = current.w; h = current.h;
+  }
+  // Centre on the need, then push back inside the clip.
+  let x = Math.round((nx0 + nx1) / 2 - w / 2);
+  let y = Math.round((ny0 + ny1) / 2 - h / 2);
+  if (x + w > cx1) x = cx1 - w;
+  if (y + h > cy1) y = cy1 - h;
+  if (x < clip.x) x = clip.x;
+  if (y < clip.y) y = clip.y;
+  if (current && x === current.x && y === current.y && w === current.w && h === current.h) return current;
+  return { x, y, w, h };
+}
+
+// ---------------------------------------------------------------------------
+// Keeping the cursor canvas off the status bar.
+//
+// The wrapper clips the canvas to the editor pane, and the pane's rect can
+// extend under the status bar (a floating one, or while scrolling, when the
+// pane briefly reaches the window edge). The clamp used to shorten the
+// wrapper to the bar's top across the FULL WIDTH - right for an in-flow bar
+// that spans the window, wrong for the floating pill most themes put at the
+// bottom right: every caret on the bottom line was cut to a sliver, even
+// ones nowhere near the bar (reported with a screenshot, 2026-09-17).
+//
+// So: a bar that spans the pane still shortens the wrapper; a bar that does
+// not keeps the wrapper's height and cuts out only its own rectangle, with
+// an L-shaped clip-path (a compositor clip, no paint cost). Pure; `wrapper`
+// and `bar` in client coordinates, the bar's `top` being where the cut
+// begins. Heights are floored, since a fractional wrapper height forces
+// compositor re-uploads (see the clip block in the canvas tick).
+// ---------------------------------------------------------------------------
+function wrapperClipForStatusBar(wrapper, bar) {
+  const { top, left, width } = wrapper;
+  const height = wrapper.height;
+  const maxBottom = bar.top;
+  if (top + height <= maxBottom) return { height, clipPath: "" };
+  const spansPane = bar.left <= left + 2 && bar.right >= left + width - 2;
+  if (spansPane || !(bar.right > bar.left)) {
+    return { height: Math.max(0, Math.floor(maxBottom - top)), clipPath: "" };
+  }
+  const ny = Math.max(0, Math.floor(maxBottom - top));
+  const nx0 = Math.max(0, Math.floor(bar.left - left));
+  const nx1 = Math.min(width, Math.ceil(bar.right - left));
+  if (nx1 <= nx0) return { height, clipPath: "" };
+  // The wrapper minus the notch [nx0, nx1] x [ny, height], as a polygon.
+  const W = width, H = height;
+  const clipPath = `polygon(0 0, ${W}px 0, ${W}px ${H}px, ${nx1}px ${H}px, ${nx1}px ${ny}px, ${nx0}px ${ny}px, ${nx0}px ${H}px, 0 ${H}px)`;
+  return { height, clipPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -1804,17 +2044,102 @@ const HOT_TEMP_GAMMA = 0.55;
 // colour from the particles in it. Same big-to-small-to-gone progression, none
 // of the character-cell banding.
 //
+// 2026-09-17: this renderer was replaced twice in one day - by a renderer of
+// individual squares, then by upstream's own cell lattice - and brought back
+// on the user's instruction, "as it was", with one change asked for by name:
+// MORE BLOCK TYPES. Every fresh particle used to be the same 2x2 patch, so
+// the mass was a checkerboard of one shape. Upstream's octant glyphs give a
+// cell any of 256 shapes, and that variety is what reads as fire rather than
+// as tiling. So a particle now carries a SHAPE from the table below, chosen
+// at spawn - the longer it will live, the bigger the shape, and the recording's
+// 2-wide 4-tall column is the biggest - mirrored at random, and stepping down
+// the table as the particle ages, until the pixel and the dot the original
+// had. Everything else - the lattice, the rates, the physics, the shading,
+// the cell union - is the original.
+//
 // Size stages, in grid squares:
-const HOT_PX_DIVISOR = 5.6;   // font size / this = grid square, in px
+// 4.5 (from 5.6) and a cap of 5: a 5px square at body size. Chunks are drawn
+// in these squares, so the whole fire scales with this number. Settled by
+// eye on 2026-09-17: 5.6 (4px) left a speck no size between the full square
+// and one pixel less, 3.8 (6px) was too big a fire, 4.5 is where the user
+// stopped.
+const HOT_PX_DIVISOR = 4.5;   // font size / this = grid square, in px
 const HOT_PX_MIN = 2;
-const HOT_PX_MAX = 4;
-// A fresh particle covers a 2x2 patch of grid squares; past this fraction of
-// its life it drops to a single square, and past the next it becomes a small
-// dot inside one. Two thresholds instead of upstream's one, because with a
-// finer grid a single block/dot switch is too abrupt a jump.
-const HOT_STAGE_BLOCK = 0.55;  // above this: 2x2 block
-const HOT_STAGE_PIXEL = 0.22;  // above this: 1x1 pixel; below: small dot
-const HOT_DOT_SCALE = 0.55;    // dot size as a fraction of one grid square
+const HOT_PX_MAX = 5;
+// Below this fraction of its life a particle is a small dot inside one grid
+// square whatever its shape; above it, its shape (shrinking with age).
+const HOT_STAGE_PIXEL = 0.22;
+// The block shapes, biggest first, as rows of grid squares top to bottom;
+// the bottom-left square is the particle's own and the shape grows up and
+// right (fire rises), mirrored left-right at random per particle. A particle
+// spawns partway down this list by how long it will live - a long-lived one
+// at the top, a short-lived one near the single square - and walks the rest
+// of the way down as it ages, so every chunk shrinks through several shapes
+// before it is a dot. Areas: 8, 6, 5, 5, 6, 4, 3, 3, 3, 2, 2, 1.
+const HOT_BLOCK_SHAPES = [
+  ["11", "11", "11", "11"],   // 2x4 column, the recording's chunk
+  ["011", "111", "111"],      // 3x3 notched, the widest
+  ["110", "111", "111"],
+  ["11", "11", "11"],         // 2x3
+  ["01", "11", "11"],         // 2x3 notched at the top
+  ["10", "11", "11"],
+  ["111", "111"],             // 3x2 wide
+  ["1", "1", "1", "1"],       // 1x4 thin column
+  ["11", "11"],               // 2x2, the original's fresh block
+  ["1", "1", "1"],            // 1x3 tall
+  ["01", "11"],               // small L
+  ["10", "11"],
+  ["111"],                    // 3x1
+  ["11"],                     // 2x1 wide
+  ["1", "1"],                 // 1x2 tall
+  ["1"],                      // 1x1, the original's pixel
+];
+// How the shade stage is read off a shape's area, for the per-stage alpha
+// below: the biggest chunks are the most solid.
+const hotShapeStage = (area) => (area >= 6 ? 3 : area >= 4 ? 2 : area >= 2 ? 1.5 : 1);
+// The palette, kept small on purpose ("less gradients"): a chunk's colour is
+// one of HOT_COLOR_LEVELS steps along the ramp, and the ramp is only used up
+// to HOT_TEMP_MAX of its length - from the base colour into the first warm
+// stops, never on to white-hot. Alpha likewise steps through
+// HOT_ALPHA_LEVELS. Three colours, three alphas: pixel art, not a gradient.
+const HOT_COLOR_LEVELS = 3;
+const HOT_TEMP_MAX = 0.5;
+const HOT_ALPHA_LEVELS = 3;
+const hotQuant = (v, levels) => Math.round(Math.max(0, Math.min(1, v)) * levels) / levels;
+// Sparks: the tiny particles. Every chunk spawns this many alongside it -
+// short-lived specks that rise faster and higher than the chunks, drawn at
+// their own positions off the lattice. They are the haze above the flame.
+// Their own budget, so they never starve the chunks.
+const HOT_SPARKS_PER_CHUNK = 1;
+const HOT_SPARK_MAX = 60;
+// A speck - a spark, or a spent chunk's dot - is a square this fraction of a
+// grid square, still snapped to the lattice (centred in its square, whole
+// pixels). 1.0 was a full square, 0.6 rounded to half of one at body size
+// and was "way too small"; 0.85 is where the user stopped. A speck is whole
+// pixels: on the 5px square at body size 0.85 rounds to 4px, one under the
+// full square; on a 4px square (smaller fonts) to 3px; on 3px to 3px.
+const HOT_SPECK_SCALE = 0.85;
+// A third, finer population: half-size specks (HOT_FINE_SCALE of a square),
+// dimmer, spawned with a chunk only HOT_FINE_CHANCE of the time so they
+// stay a hint - "not too much, so the effect is subtle". They rise like
+// sparks and count against the sparks' cap.
+const HOT_FINE_SCALE = 0.5;
+const HOT_FINE_CHANCE = 0.45;
+// A jump - a committed caret move of JUMP_TRAIL_MIN_DIST or more, the same
+// test the jump trail and the glitch use - puts the caret in fire for
+// HOT_ENGULF_MS: while it lands and settles, chunks and sparks spawn all
+// around its box, below and beside it as well as above, the way the steady
+// fire already does at the edge of a line. A first cut threw a burst outward
+// from a ring around the drawn caret instead; it never showed, because with
+// Smooth Movement the drawn caret eases across a jump and never travels far
+// in one frame.
+const HOT_ENGULF_MS = 260;
+const HOT_ENGULF_RATE = 320;           // particles per second around the caret, at Quantity 1
+const HOT_ENGULF_PAD_X = 1.1;          // how far beside the caret, in character widths
+const HOT_ENGULF_ABOVE = 0.35;         // above the caret's top, in line heights
+const HOT_ENGULF_BELOW = 0.25;         // below its bottom
+const HOT_SPARK_LIFT = 1.9;     // times the chunk's buoyancy
+const HOT_SPARK_RISE = 5;       // cw/s of extra upward start
 // Discrete shade steps (upstream color_levels). Quantising keeps edges crunchy.
 const FLAME_LEVELS = 16;
 
@@ -1822,15 +2147,24 @@ const FLAME_LEVELS = 16;
 // character widths per second) exactly as upstream expresses them, multiplied
 // by the measured character width at spawn - so the fire scales with font size
 // instead of being tuned for one zoom level.
-const FLAME_MAX_NUM = 260;
+// 72, up from 50: the trail behind a moving caret needs its own budget (see
+// HOT_TRAIL_* below), or it only ever gets what the head leaves over.
+const FLAME_MAX_NUM = 72;
 const FLAME_MAX_LIFETIME = 620;         // ms, default fade time
 // Upstream particle_lifetime_distribution_exponent. lifetime = max * rand^n
 // skews toward zero, so most particles are short-lived specks and a minority
 // are long-lived blocks. That ratio is what gives the fire a few solid chunks
 // in a haze of sparks.
 const FLAME_LIFETIME_EXP = 3.4;
-const FLAME_PER_SECOND = 1350;          // steady emission while burning
-const FLAME_PER_LENGTH = 1.4;           // extra particles per cw of caret travel
+// A quarter of what the original emitted (1350, 1.4, capped at 260 alive).
+// With every particle a different shape the mass has to break into chunks
+// to show them, and the original filled its cap and packed 180 particles
+// into two characters' width - a wall, and a wall has no shapes. At this
+// rate a few dozen are alive: distinct chunks, a column above the caret,
+// specks at the top. Quantity scales it back up for anyone who wants the
+// wall.
+const FLAME_PER_SECOND = 220;           // steady emission while burning
+const FLAME_PER_LENGTH = 0.8;           // extra particles per cw of caret travel
 const FLAME_SPREAD = 0.5;               // cw, lateral scatter at the emit point
 const FLAME_INITIAL_VELOCITY = 6;       // cw/s, upstream particle_max_initial_velocity
 const FLAME_VELOCITY_FROM_CURSOR = 0.2; // share of caret velocity inherited
@@ -1845,14 +2179,14 @@ const FLAME_BUOYANCY = -120;            // cw/s^2
 // How long a patch of text keeps burning after the caret has moved off it, at
 // Fire Spread = 1. Scaled by the setting. This is what makes the fire linger
 // over what you just wrote instead of tracking the caret like a spotlight.
-// "Use cursor color" variance. The fire stays recognisably the cursor's colour
-// - the hue swing is small enough that it reads as one flame rather than as a
-// gradient - but shade and saturation move enough to give it texture.
-const HOT_FLAT_HUE_SPAN = 26;   // degrees, total spread across the ramp
-const HOT_FLAT_SAT_LO = 0.55;   // coolest embers: duller
-const HOT_FLAT_SAT_HI = 1.05;   // hottest: fully saturated (clamped at 1)
-const HOT_FLAT_VAL_LO = 0.45;   // coolest embers: darker
-const HOT_FLAT_VAL_HI = 1.15;   // hottest: blown out toward white (clamped)
+// "Use cursor color" variance. The ramp STARTS at exactly the cursor's colour
+// and only lightens with heat - a mix toward white, with a small hue swing -
+// so the fire is never darker than the cursor. It used to run the colour's
+// value from 0.45x up to 1.15x, which with the temperature range capped at
+// half the ramp (HOT_TEMP_MAX) left every chunk below the cursor's
+// brightness: on a light theme, whose cursor is dark, that was a black fire.
+const HOT_FLAT_HUE_SPAN = 26;    // degrees, total swing across the ramp
+const HOT_FLAT_LIGHTEN = 0.55;   // how far toward white the hottest end goes
 
 // Where the base of the fire sits relative to the top of the glyphs, as a
 // fraction of the font size. NEGATIVE means below that line, i.e. overlapping
@@ -1871,8 +2205,22 @@ const HOT_HEAD_LIFT = -0.06;
 const HOT_HEAD_JITTER_UP = 0.16;
 const HOT_HEAD_JITTER_DOWN = 0.05;
 
-const HOT_BURN_LINGER_MS = 150;
+const HOT_BURN_LINGER_MS = 200;
 const HOT_BURN_MAX = 26;                // most burn marks kept alive at once
+// The trail. In the recording the cursor's PATH burns: fire is left on the
+// text it passed over and goes on burning there for a moment, fading. Three
+// things make that here. The marks behind the caret share the emission by
+// their remaining strength to the power HOT_TRAIL_FADE_POW - 1 is linear,
+// the 2 it used to be starved a mark of fire as soon as it was a little old
+// and the trail was gone before it read as one. The total emission scales
+// with how much is alight up to HOT_TRAIL_EMIT_MAX times the single-mark
+// rate (was 1.6), so a trail does not just thin the head out. And fire off
+// a mark behind the caret is jittered DOWN over the glyphs by up to
+// HOT_TRAIL_DOWN of the line height - on the text, where the recording has
+// it - while the head itself stays licking up off the letters.
+const HOT_TRAIL_FADE_POW = 1;
+const HOT_TRAIL_EMIT_MAX = 2.4;
+const HOT_TRAIL_DOWN = 0.5;
 
 function invertColor(colorStr) {
   const nums = (colorStr || "").match(/[\d.]+/g);
@@ -2284,9 +2632,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._canvasBlend = "";   // last mix-blend-mode written (see applyCanvasBlend)
     this._lastOverlayRect = "";
     this._lastTorchRadius = -1;
-    this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
-    this._lastGlowRect = "";
-    this._lastGlowPos = "";
+    this._lastGlowRect = "";      // glow layer dedupe stamps; see the torch tick
+    this._lastGlowAlpha = "";
+    this._torchGlowKey = "";
     this._chromeCache = null;
     // Per-caret computed-style/metric cache for cmCaretCoords (see there).
     this._caretStyleCache = null;
@@ -2351,6 +2699,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
       callback: () => this.toggleUiMode(),
     });
 
+    // Issue #30's reporter had a fast machine and a slow Obsidian, and the
+    // only way to see why was a profile from THEIR machine. This is the
+    // one-click version: ten seconds of counting what the loop does, the
+    // environment it does it in, and a report on the clipboard to paste
+    // into an issue.
+    this.addCommand({
+      id: "performance-report",
+      name: "Performance report (10 seconds, copied to the clipboard)",
+      callback: () => this.performanceReport(10),
+    });
+
     // Held so toggleUiMode can refresh the panel when the mode is switched
     // from the palette while Settings happens to be open (refreshSettingTab).
     this.settingTab = new CursorSmithSettingTab(this.app, this);
@@ -2370,6 +2729,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // `document` and `window`, and applyBodyClasses / disableCanvasEngine /
     // disableTorchOverlay went on iterating detached documents for the rest of
     // the session.
+    // Layout can move without any input: a theme or snippet change, a pane
+    // opening or closing, a leaf change. Each invalidates the geometry
+    // caches; none needs a frame on its own (the heartbeat repaints).
+    for (const ev of ["css-change", "layout-change", "active-leaf-change", "resize"]) {
+      try {
+        this.registerEvent(this.app.workspace.on(ev, () => this._invalidateLayout()));
+      } catch { /* an event this Obsidian does not have */ }
+    }
+
     this.registerEvent(
       this.app.workspace.on("window-close", (_leaf, win) => {
         const doc = (win && win.document) || (_leaf && _leaf.doc) || null;
@@ -2441,6 +2809,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.canvasWrapper = null;
       this.canvas = null;
       this.ctx = null;
+      this._canvasRect = null;
     }
     try {
       doc.getElementById("cursor-smith-dynamic-styles")?.remove();
@@ -2515,11 +2884,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
       .retro-box-cursor-hide-native textarea.excalidraw-wysiwyg {
         caret-color: auto;
       }
-      /* Hide the primary cursor by BOTH position (first child of the
-         cursor layer) and class (.cm-cursor-primary), so this works whether
-         Obsidian's CM6 uses per-cursor class distinctions or not. */
-      .retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor:first-child,
+      /* Hide EVERY native cursor - primary and secondaries alike, by class
+         and by position - because the plugin draws all of them now (the
+         secondaries with the primary's full pipeline, see
+         drawFullSecondaries, or as its own 2px line past the cap). This copy
+         used to hide only the primary and force the secondaries VISIBLE, a
+         leftover from before the plugin drew secondaries at all; since
+         styles.css hid them and this copy won on !important, a native caret
+         has been sitting under every drawn secondary. Invisible under a
+         filled box, a doubled line under Line or Underline. The two
+         stylesheets say the same thing again. */
+      .retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor,
       .retro-box-cursor-hide-native .cm-cursor-primary,
+      .retro-box-cursor-hide-native .cm-cursor-secondary,
       .retro-box-cursor-hide-native .cm-fat-cursor,
       .retro-box-cursor-hide-native .cm-dropCursor {
         display: none !important;
@@ -2529,13 +2906,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
         background-color: transparent !important;
         animation: none !important;
       }
-      /* Force every subsequent cursor visible for multi-cursor editing,
-         matched by both position and class name. */
-      .retro-box-cursor-hide-native .cm-cursorLayer > .cm-cursor:not(:first-child),
-      .retro-box-cursor-hide-native .cm-cursor-secondary {
-        display: block !important;
-        visibility: visible !important;
-        opacity: 1 !important;
+      /* The cursor LAYER carries CodeMirror's blink as a CSS animation
+         (cm-blink, steps(1)), and a running main-thread animation has its
+         style recalculated on every rendering frame - including every frame
+         this plugin's loop requests, of which an idle page would otherwise
+         have almost none. With every cursor in the layer hidden the
+         animation animates nothing, so stop it: measured, that took idle
+         style recalcs from ~25/s to 0 and typing's from ~130/s to ~10/s. */
+      .retro-box-cursor-hide-native .cm-cursorLayer {
+        animation: none !important;
       }
       .torch-cursor-overlay {
         position: fixed;
@@ -2563,13 +2942,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
            vignette; this holds the middle of the pool nearly clear and then
            closes fast, which is what makes it read as a pool of light with an
            edge. */
-        background: radial-gradient(
-          circle var(--torch-radius, 250px) at var(--torch-x, 50%) var(--torch-y, 50%),
-          transparent 0%,
-          rgba(0, 0, 0, calc(var(--torch-darkness, 0.92) * 0.52)) 40%,
-          rgba(0, 0, 0, calc(var(--torch-darkness, 0.92) * 0.91)) 70%,
-          rgba(0, 0, 0, var(--torch-darkness, 0.92)) 100%
-        );
+        /* The darkness itself is PAINTED: this element is a canvas at
+           TORCH_CANVAS_SCALE of its CSS size, filled by paintTorchDarkness
+           from the torch tick (the ramp described above lives there). No
+           background here - a gradient on the element would be a second,
+           full-resolution raster underneath the painted one. */
         opacity: 1;
         transition: opacity 0.2s ease;
       }
@@ -2603,13 +2980,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
         opacity: var(--torch-glow, 0);
         /* 0.6x the spotlight radius: the warm core sits INSIDE the lit circle.
            A halo wider than the pool was the wrong shape - it put light where
-           the overlay had already gone dark, which just greyed the edge. */
-        background: radial-gradient(
-          circle calc(var(--torch-radius, 250px) * 0.6) at var(--torch-x, 50%) var(--torch-y, 50%),
-          rgba(var(--torch-warm, 255, 150, 60), 0.4),
-          rgba(var(--torch-warm, 255, 150, 60), 0.12) 45%,
-          transparent 75%
-        );
+           the overlay had already gone dark, which just greyed the edge.
+           Painted, like the darkness: see paintTorchGlow. */
       }
       .torch-cursor-glow.torch-cursor-hidden {
         opacity: 0 !important;
@@ -2778,7 +3150,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._chromeCache = null;
       this._lastWrapperRect = "";
       this._lastOverlayRect = "";
-      this.resizeCanvas();
+      // The region was fitted for the old viewport (and possibly the old
+      // DPR): drop it and let the next frame's _fitCanvasRegion reallocate.
+      // A resize usually rides along with a zoom, DPR, or theme change, any
+      // of which can move the caret's font metrics without moving pos - so
+      // drop the cached style read too rather than wait out its TTL.
+      this._canvasRect = null;
+      this._caretStyleCache = null;
       this._markActivity();
     };
     
@@ -2793,11 +3171,19 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // fields. All capture-phase (or document-level) so nothing that
     // stopPropagation()s can starve the render loops. Passive where
     // applicable so they can't add scroll latency.
+    //
+    // Scroll and wheel are filtered: a scroll only moves the caret when it
+    // is the editor's own scroller (or an ancestor of it), or the container
+    // of whatever field has focus. The file explorer scrolling, a hover
+    // preview, another plugin's panel - none of those move the caret, and
+    // each used to buy 1.2s of the hot gear. A plugin that scrolls something
+    // continuously used to pin it forever.
+    const onScrollLike = (e) => { if (this._scrollMovesCaret(e.target, doc)) this._markActivity(); };
     doc.addEventListener("selectionchange", onActivity);
     doc.addEventListener("mousedown", onActivity, true);
     doc.addEventListener("focusin", onActivity, true);
-    doc.addEventListener("wheel", onActivity, { capture: true, passive: true });
-    doc.addEventListener("scroll", onActivity, { capture: true, passive: true });
+    doc.addEventListener("wheel", onScrollLike, { capture: true, passive: true });
+    doc.addEventListener("scroll", onScrollLike, { capture: true, passive: true });
     // Window-level focus changes: with hideOnWindowBlur on, the picture
     // changes the instant the window goes to or comes back from the
     // background, so wake the loop instead of waiting out the idle heartbeat
@@ -3393,9 +3779,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._overlaySig = "";
     this._lastOverlayRect = "";
     this._lastTorchRadius = -1;
-    this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
-    this._lastGlowRect = "";
-    this._lastGlowPos = "";
+    this._lastGlowRect = "";      // glow layer dedupe stamps; see the torch tick
+    this._lastGlowAlpha = "";
+    this._torchGlowKey = "";
     // Repaint the status bar label on the same frame as the cursor, so the two
     // never disagree about which mode you're in.
     this.updateVimStatusBar();
@@ -3510,8 +3896,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   // Called from input events. Timestamps the activity and wakes any dozing
   // loop right now instead of letting it sleep out its timeout.
+  // Anything that can move the caret on screen bumps this; the geometry
+  // caches (cmCaretCoords, getPaneRect, the secondaries') are keyed on it.
+  _invalidateLayout() {
+    this._layoutGen = (this._layoutGen | 0) + 1;
+  }
+
   _markActivity() {
     this._lastActivityT = performance.now();
+    this._invalidateLayout();
     if (this._canvasIdleT) {
       window.clearTimeout(this._canvasIdleT);
       this._canvasIdleT = 0;
@@ -3520,6 +3913,42 @@ module.exports = class CursorSmithPlugin extends Plugin {
       }
     }
     this._wakeTorch();
+  }
+
+  // A ResizeObserver on the active editor's content and scroller: an embed
+  // or image finishing its load, a line wrapping differently after a font
+  // loads - anything that changes the content's size moves the caret without
+  // an input event, and bumps the layout generation here. Re-pointed when
+  // the active editor changes; disconnected on unload.
+  _observeEditorLayout(view) {
+    if (this._roView === view) return;
+    if (this._ro) { try { this._ro.disconnect(); } catch { /* gone */ } this._ro = null; }
+    this._roView = view;
+    if (!view || typeof ResizeObserver === "undefined") return;
+    try {
+      this._ro = new ResizeObserver(() => this._invalidateLayout());
+      // border-box: a padding change on the content moves every line too,
+      // and the default content-box would not report it.
+      if (view.contentDOM) this._ro.observe(view.contentDOM, { box: "border-box" });
+      if (view.scrollDOM) this._ro.observe(view.scrollDOM, { box: "border-box" });
+    } catch { this._ro = null; }
+    this._invalidateLayout();
+  }
+
+  // Whether a scroll or wheel event on `target` can move the caret: the
+  // document itself (a window scroll), the active editor's scroller or an
+  // ancestor of it, or any element containing the focused field. Everything
+  // else scrolls something the caret is not in. See registerWindowEvents.
+  _scrollMovesCaret(target, doc) {
+    if (!target) return true;
+    if (target === doc || target === (doc && doc.documentElement) || target === (doc && doc.defaultView)) return true;
+    const contains = typeof target.contains === "function" ? (el) => !!el && target.contains(el) : () => false;
+    let scroller = null;
+    try { scroller = this.app.workspace.activeEditor?.editor?.cm?.scrollDOM || null; } catch { scroller = null; }
+    if (scroller && (target === scroller || contains(scroller) || (typeof scroller.contains === "function" && scroller.contains(target)))) return true;
+    const active = doc && doc.activeElement;
+    if (active && active !== doc.body && contains(active)) return true;
+    return false;
   }
 
   // Torch-only wake: mouse movement retargets the spotlight but shouldn't
@@ -3544,6 +3973,108 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._presCacheT = now;
     this._presCacheV = this.isPresentationModeActive();
     return this._presCacheV;
+  }
+
+  // Count what the loop does for `seconds`, then put a report on the
+  // clipboard (and in the console). The counters live on this._perf and
+  // the tick adds to them only while that is set; see the tick.
+  performanceReport(seconds = 10) {
+    if (this._perf) {
+      new Notice("Cursor-Smith: a performance report is already running.");
+      return;
+    }
+    const perf = this._perf = this._freshPerf();
+    let po = null;
+    try {
+      po = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) { perf.longTasks++; perf.longTaskMs += e.duration; }
+      });
+      po.observe({ entryTypes: ["longtask"] });
+    } catch { po = null; }
+    const onKey = () => { perf.keys++; };
+    const doc = (this.canvas && this.canvas.ownerDocument) || document;
+    doc.addEventListener("keydown", onKey, true);
+    new Notice(`Cursor-Smith: measuring for ${seconds} seconds - keep using Obsidian as you normally would.`);
+    window.setTimeout(() => {
+      this._perf = null;
+      if (po) { try { po.disconnect(); } catch { /* gone */ } }
+      doc.removeEventListener("keydown", onKey, true);
+      const text = this.perfReportText(perf, seconds);
+      console.log(text);
+      const clip = (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText)
+        ? navigator.clipboard.writeText(text) : Promise.reject(new Error("no clipboard"));
+      clip.then(
+        () => new Notice("Cursor-Smith: report copied to the clipboard. It is in the developer console too."),
+        () => new Notice("Cursor-Smith: report is in the developer console (Ctrl+Shift+I)."));
+    }, seconds * 1000);
+  }
+
+  _freshPerf() {
+    return {
+      t0: performance.now(), ticks: 0, draws: 0, gears: {}, tickMs: 0, caretMs: 0, drawMs: 0,
+      reanchors: 0, longTasks: 0, longTaskMs: 0, rafGaps: {}, rafPrev: 0, keys: 0,
+    };
+  }
+
+  // The report's text. Pure apart from reading the environment, so the
+  // shape can be tested with a synthetic counter object. Everything in it is
+  // either a number the tick counted or a fact about the machine and the
+  // configuration; nothing that identifies the vault or its contents.
+  perfReportText(perf, seconds) {
+    const s = this.settings || {};
+    const secs = Math.max(0.001, seconds);
+    const gearTotal = Object.values(perf.gears).reduce((a, b) => a + b, 0) || 1;
+    const gears = Object.entries(perf.gears).sort((a, b) => b[1] - a[1])
+      .map(([g, n]) => `${g} ${Math.round(100 * n / gearTotal)}%`).join(", ") || "none";
+    const on = [];
+    for (const k of ["gradientEnabled", "crtEffect", "glow", "crtNeon", "crtGlitch", "cursorTranslucent", "cursorRounded",
+                     "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "flameTrail",
+                     "fireworks", "thunderstrike", "backspaceDisintegrate", "hotHead", "stardustEnabled", "speedDemon",
+                     "bracketTether", "torchEffect", "vimModeEnabled"]) {
+      if (s[k]) on.push(k);
+    }
+    let gpu = "unknown";
+    try {
+      const c = document.createElement("canvas");
+      const gl = c.getContext("webgl");
+      const dbg = gl && gl.getExtension("WEBGL_debug_renderer_info");
+      gpu = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : (gl ? "webgl, no renderer info" : "no webgl");
+    } catch { /* leave unknown */ }
+    let code = "";
+    try { code = presetToCode("report", s); } catch { code = "(unavailable)"; }
+    const nav = typeof navigator !== "undefined" ? navigator : {};
+    const win = typeof window !== "undefined" ? window : {};
+    const clip = this._clipRect;
+    const region = this._canvasRect;
+    const app = this.app || {};
+    const themeName = (app.customCss && (app.customCss.theme || app.customCss.currentTheme)) || "default";
+    const snippets = app.customCss && app.customCss.enabledSnippets ? app.customCss.enabledSnippets.size : 0;
+    const plugins = app.plugins && app.plugins.enabledPlugins ? app.plugins.enabledPlugins.size : 0;
+    let gap = 0, gapN = 0;
+    for (const [g, n] of Object.entries(perf.rafGaps || {})) { if (n > gapN) { gapN = n; gap = Number(g); } }
+    const hz = gap > 0 ? Math.round(1000 / gap) : null;
+    const lines = [
+      `Cursor-Smith performance report (${(this.manifest && this.manifest.version) || "?"}), ${secs.toFixed(0)}s`,
+      `environment: ${nav.userAgent || "?"}`,
+      `platform ${nav.platform || "?"}; window ${win.innerWidth || "?"}x${win.innerHeight || "?"} @${win.devicePixelRatio || "?"}x; display ~${hz ? hz + "Hz" : "unmeasured (no hot frames)"}`,
+      `gpu: ${gpu}`,
+      `theme: ${themeName}; snippets on: ${snippets}; plugins on: ${plugins}`,
+      `pane: ${clip ? clip.w + "x" + clip.h : "none"}; canvas region now: ${region ? region.w + "x" + region.h : "none"}`,
+      `settings: style ${s.cursorStyle || "?"}; low power ${s.lowPowerMode ? "on" : "off"}; hide when unfocused ${s.hideOnWindowBlur === false ? "off" : "on"}; note editor only ${s.noteEditorOnly ? "on" : "off"}; reduced motion ${this.reducedMotion && this.reducedMotion() ? "ACTIVE" : "no"}`,
+      `effects on: ${on.join(", ") || "none"}`,
+      `share code: ${code}`,
+      `loop: ${perf.ticks} ticks (${(perf.ticks / secs).toFixed(1)}/s), ${perf.draws} draws (${(perf.draws / secs).toFixed(1)}/s), gears ${gears}, ${perf.reanchors} canvas re-anchors, ${perf.keys} keystrokes`,
+      `cost per frame: tick ${perf.ticks ? (perf.tickMs / perf.ticks).toFixed(2) : "0"}ms (caret measure ${perf.ticks ? (perf.caretMs / perf.ticks).toFixed(2) : "0"}ms), draw ${perf.draws ? (perf.drawMs / perf.draws).toFixed(2) : "0"}ms; plugin main-thread total ${perf.tickMs.toFixed(0)}ms of ${(secs * 1000).toFixed(0)}ms (${(100 * perf.tickMs / (secs * 1000)).toFixed(1)}%)`,
+      `long tasks (anything over 50ms, any source): ${perf.longTasks}, ${perf.longTaskMs.toFixed(0)}ms total`,
+    ];
+    return lines.join("\n");
+  }
+
+  // The render loops' frame intervals for the current Low Power setting.
+  // Global, not a look: read off this.settings directly, which a per-Vim-mode
+  // swap leaves untouched because no mode snapshot carries the key.
+  _frameCaps() {
+    return this.settings && this.settings.lowPowerMode ? FRAME_CAPS.lowPower : FRAME_CAPS.normal;
   }
 
   // True when the OS-level window that owns our canvas is the focused one.
@@ -4008,20 +4539,35 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._hotScroll = { el, x: sx, y: sy };
       return;
     }
-    const dx = sx - prev.x;
-    const dy = sy - prev.y;
-    prev.x = sx;
-    prev.y = sy;
-    if (!dx && !dy) return;
-
+    // The primary's pass reads the scroll delta and shifts the shared ember
+    // pool; it also records the delta for this tick, because a secondary's
+    // pass (its bundle swapped in, see _withCaret) runs later in the same
+    // frame and must shift ITS burn marks and inertia by the same amount -
+    // by then the delta against `prev` is zero.
+    let ox, oy;
+    if (this._caretPass === "secondary") {
+      const sh = this._hotShift;
+      if (!sh || sh.tick !== this._tickNo) return;
+      // Once per caret per tick, whatever calls hotSyncScroll on it.
+      if (this._hotShiftTick === sh.tick) return;
+      this._hotShiftTick = sh.tick;
+      if (!sh.ox && !sh.oy) return;
+      ox = sh.ox; oy = sh.oy;
+    } else {
+      const dx = sx - prev.x;
+      const dy = sy - prev.y;
+      prev.x = sx;
+      prev.y = sy;
+      this._hotShift = { ox: -dx, oy: -dy, tick: this._tickNo };
+      if (!dx && !dy) return;
+      ox = -dx;
+      oy = -dy;
+      for (const p of this.flameEmbers) { p.x += ox; p.y += oy; }
+    }
     const nEmbers = this.flameEmbers.length;
     const nBurns = this.hotBurns ? this.hotBurns.length : 0;
     if (!nEmbers && !nBurns && !this._hotPrev && !this._hotEmitFrom) return;
 
-    // Content moves opposite to the scroll offset.
-    const ox = -dx;
-    const oy = -dy;
-    for (const p of this.flameEmbers) { p.x += ox; p.y += oy; }
     for (const b of this.hotBurns) {
       b.x += ox;
       b.y += oy;
@@ -4128,9 +4674,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // the governor has to agree, or a fire that has burnt out would still pin the
   // render loop at full rate forever on the grounds that the effect is enabled.
   hotHeadFeeding(nowT) {
+    return this._hotFeedingAt(this._hotActiveT, nowT);
+  }
+
+  // The same test for a caret whose state is not swapped in (a secondary's
+  // bundle, read from _isAnimating without a swap).
+  _hotFeedingAt(activeT, nowT) {
     const idleMs = Math.max(0, this.styleFor("hotHeadIdleMs") ?? 0);
     if (idleMs <= 0) return true;
-    return (nowT - (this._hotActiveT || 0)) <= idleMs;
+    return (nowT - (activeT || 0)) <= idleMs;
   }
 
   // Emit fire from every patch of text that is currently alight.
@@ -4173,10 +4725,40 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const fadeMs = Math.max(120, this.styleFor("hotHeadFade") ?? FLAME_MAX_LIFETIME);
     const heightMul = Math.max(0.05, this.styleFor("hotHeadHeight") ?? 0.55);
     const perLength = FLAME_PER_LENGTH * ((this.styleFor("hotHeadTrail") ?? 0) / 10);
+    const qtyEarly = Math.max(0, this.styleFor("hotHeadQuantity") ?? 1);
 
-    // How long a patch stays alight after the caret leaves it, and how wide
-    // each patch burns. Both scale off Fire Spread, so one control governs
-    // "how much of the text is on fire" in both directions.
+    // Engulfed: the caret jumped (set on the committed move, see the commit
+    // path in updateActivePoint), so for HOT_ENGULF_MS the fire spawns all
+    // around the drawn caret's box while it lands and settles.
+    if (qtyEarly > 0 && this._hotEngulfUntil && now < this._hotEngulfUntil) {
+      const vel = this._hotVel || { x: 0, y: 0 };
+      const shapeN = HOT_BLOCK_SHAPES.length;
+      const n = HOT_ENGULF_RATE * dt * qtyEarly;
+      const count = Math.floor(n) + (Math.random() < (n % 1) ? 1 : 0);
+      const w = Math.max(cw, active.w || 0);
+      const x0 = active.x - cw * HOT_ENGULF_PAD_X, x1 = active.x + w + cw * HOT_ENGULF_PAD_X;
+      const y0 = active.top - lh * HOT_ENGULF_ABOVE, y1 = active.top + lh * (1 + HOT_ENGULF_BELOW);
+      for (let i = 0; i < count; i++) {
+        const spark = Math.random() < 0.5;
+        const ang = Math.random() * Math.PI * 2;
+        const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul * 0.8;
+        const life0 = fadeMs * (spark ? 0.15 + 0.45 * Math.random() : 0.2 + 0.5 * Math.pow(Math.random(), 2));
+        this.flameEmbers.push({
+          spark, fine: spark && Math.random() < HOT_FINE_CHANCE,
+          x: x0 + Math.random() * (x1 - x0), y: y0 + Math.random() * (y1 - y0),
+          vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
+          vy: mag * Math.sin(ang) - (spark ? HOT_SPARK_RISE * 0.6 : 1) * cw * heightMul + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+          shape0: Math.min(shapeN - 1, 5 + Math.floor(Math.random() * (shapeN - 6))),
+          flip: Math.random() < 0.5,
+          life: life0, life0,
+          maxLife: fadeMs,
+          temp: 0.6 + Math.random() * 0.4,
+          cw,
+          lift: heightMul * (spark ? HOT_SPARK_LIFT : 1),
+        });
+      }
+    }
+
     const linger = HOT_BURN_LINGER_MS * (1 + spreadCw);
     const halfSpan = spreadCw * cw * 0.5;
 
@@ -4194,7 +4776,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // being switched off - and the next real movement starts it again.
     if (!this.hotHeadFeeding(now)) return;
 
-    const live = this.flameEmbers.length;
+    // Chunks and sparks have separate budgets; only the chunks count here.
+    let live = 0, sparks = 0;
+    for (const p of this.flameEmbers) { if (p.spark) sparks++; else live++; }
+    this._hotSparks = sparks;
     if (live >= FLAME_MAX_NUM) return;
     const qty = Math.max(0, this.styleFor("hotHeadQuantity") ?? 1);
     if (qty <= 0) return;
@@ -4206,7 +4791,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     let weightSum = 0;
     const weights = burns.map((b) => {
       const w = 1 - (now - b.t) / linger;
-      const v = w * w;
+      const v = Math.pow(w, HOT_TRAIL_FADE_POW);
       weightSum += v;
       return v;
     });
@@ -4217,7 +4802,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // spread should look like more fire, not like the same fire smeared out,
     // without the particle count exploding.
     const spanScale = 1 + (halfSpan * 2) / (cw * 6);
-    const n = (FLAME_PER_SECOND * dt * spanScale * Math.min(1.6, 0.55 + weightSum * 0.45)
+    const n = (FLAME_PER_SECOND * dt * spanScale * Math.min(HOT_TRAIL_EMIT_MAX, 0.55 + weightSum * 0.45)
       + travelCw * perLength) * qty;
     let count = Math.floor(n) + (Math.random() < (n % 1) ? 1 : 0);
     count = Math.max(0, Math.min(count, FLAME_MAX_NUM - live));
@@ -4264,6 +4849,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // actually behaves - rising, but rooted in what it is burning.
       let py = topY + alongY
         + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh;
+      // Off a mark the caret has left behind: down over the glyphs, the trail
+      // burning ON the text it passed (HOT_TRAIL_DOWN).
+      if (bi < burns.length - 1) py += Math.random() * HOT_TRAIL_DOWN * (burn.lh || lh);
 
       // Keep the fire on the text. Without this the spread band burns happily
       // out into the empty margin past the end of a line, which looks like the
@@ -4306,16 +4894,27 @@ module.exports = class CursorSmithPlugin extends Plugin {
       const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul;
       const ang = Math.random() * Math.PI * 2;
 
+      // The shape: how far down HOT_BLOCK_SHAPES this particle starts, from
+      // how long it will live (life0 over the maximum), with a little jitter
+      // so equally long-lived neighbours are not identical. Mirrored at random.
+      // Older marks (the trail behind the caret) still get a decent floor on
+      // life, so the trail keeps some proper chunks rather than only specks.
+      const life0 = fadeMs * (0.1 + 0.9 * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.62 + 0.38 * strength);
+      const lifeShare = Math.max(0, Math.min(1, life0 / fadeMs));
+      const shapeN = HOT_BLOCK_SHAPES.length;
+      const shape0 = Math.max(0, Math.min(shapeN - 1,
+        Math.round((1 - lifeShare) * (shapeN - 1) + (Math.random() - 0.5) * 3)));
       this.flameEmbers.push({
         x: px, y: py,
         vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
         vy: mag * Math.sin(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+        shape0, flip: Math.random() < 0.5,
         // Upstream is a bare max*rand^n. The floor is ours: with no floor a
         // large share of particles are born with a percent or two of max life
         // and die inside a frame, spending the budget on specks nobody sees.
         // The exponent still shapes the distribution; the floor just makes
         // every particle last long enough to be drawn.
-        life: fadeMs * (0.1 + 0.9 * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.5 + 0.5 * strength),
+        life: life0, life0,
         maxLife: fadeMs,
         // Older patches burn cooler, so a trail of lingering fire fades down
         // the ramp as well as thinning out.
@@ -4325,6 +4924,28 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // everything already in the air.
         lift: heightMul,
       });
+      // The sparks: tiny, quick, lighter, from the same spot, rising faster.
+      // And now and then a finer one with them.
+      if (this._hotSparks < HOT_SPARK_MAX) {
+        const nSp = HOT_SPARKS_PER_CHUNK + (Math.random() < HOT_FINE_CHANCE ? 1 : 0);
+        for (let k = 0; k < nSp; k++) {
+          const fine = k >= HOT_SPARKS_PER_CHUNK;
+          const sang = Math.random() * Math.PI * 2;
+          const smag = FLAME_INITIAL_VELOCITY * Math.random() * cw * heightMul;
+          this.flameEmbers.push({
+            spark: true, fine,
+            x: px + (Math.random() - 0.5) * cw * 0.6, y: py - Math.random() * lh * 0.15,
+            vx: smag * Math.cos(sang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
+            vy: smag * Math.sin(sang) - HOT_SPARK_RISE * cw * heightMul + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+            life: fadeMs * (0.15 + 0.65 * Math.random()) * (0.5 + 0.5 * strength),
+            maxLife: fadeMs,
+            temp: 0.5 + Math.random() * 0.5,
+            cw,
+            lift: heightMul * HOT_SPARK_LIFT,
+          });
+          this._hotSparks = (this._hotSparks | 0) + 1;
+        }
+      }
     }
   }
 
@@ -4416,7 +5037,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // Hard ceiling on live motes. Each one is a fillRect plus a dirty-rect
     // contribution, and unlike every other particle effect here this one has
     // no natural end - it emits for as long as you leave the window alone.
-    if (this.stardust.length >= 60) return;
+    // Per caret: the pool is shared with the secondaries' motes.
+    if (this.stardust.length >= STARDUST_MAX_PER_CARET * (1 + (this._secondaries ? this._secondaries.length : 0))) return;
 
     const now = performance.now();
     const rate = Math.max(0.1, this.settings.stardustRate ?? 1);
@@ -4452,6 +5074,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
       life: 2.2 + Math.random() * 2.2,      // seconds
       color: `rgb(${vary(sr)}, ${vary(sg)}, ${vary(sb)})`,
       start: now,
+      // Which caret this mote belongs to: the bundle when spawned in a
+      // secondary's pass, null for the primary. An orbiting mote re-anchors
+      // to its own caret every frame (drawStardust).
+      owner: this._caretOwner || null,
 
       // --- orbit mode ---
       orbit,
@@ -4523,20 +5149,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
   }
 
+  // The torch's look - darkness, colour, radius - is painted by the torch
+  // tick from the effective settings every frame it changes (see
+  // _torchPaintDarkness / _torchPaintGlow), so a settings change has nothing
+  // to apply to the elements themselves. Kept as the hook saveSettings and
+  // the tick call, so the dedupe keys can be dropped here: the painters
+  // compare against them, and a changed Darkness or Colour must repaint.
   applyOverlayStyle() {
-    if (!this.overlay) return;
-    const s = this.settings;
-    const o = this.overlay;
-    // --torch-radius is deliberately NOT written here. With Blink Sync on it
-    // changes every frame, so the torch tick owns it outright and writes it on
-    // its own dedupe; a second writer here would stamp the un-pulsed value back
-    // over it whenever anything else about the overlay changed.
-    o.style.setProperty("--torch-darkness", String(s.overlayDarkness));
-    // Glow Strength is NOT written here at all any more. It is the glow layer's
-    // opacity, that layer is built and owned by the torch tick, and the tick
-    // rewrites it every frame it is flickering - so this had nothing to
-    // contribute and everything to fight over.
-    o.style.setProperty("--torch-warm", hexToRgb(s.overlayColor));
+    this._torchDarkKey = "";
+    this._torchGlowKey = "";
   }
 
   // The focused document that ISN'T the active view's - or null when the
@@ -4609,6 +5230,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.canvasWrapper = null;
       this.canvas = null;
       this.ctx = null;
+      this._canvasRect = null;
     }
     if (!this.canvasWrapper) {
       targetDoc.body.classList.add("retro-box-cursor-active");
@@ -4644,10 +5266,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.canvas.style.position = "absolute";
       // NO app-region declaration (same rationale as wrapper above).
       this.canvasWrapper.appendChild(this.canvas);
-      
+
       this.ctx = this.canvas.getContext("2d");
       this.injectStyles(targetDoc);
-      this.resizeCanvas();
+      // No backing store yet: the canvas is sized to the caret's neighbourhood
+      // by _fitCanvasRegion on the first frame that has something to show,
+      // never to the window. See fitCanvasRegion.
+      this._canvasRect = null;
+      this._canvasDpr = 0;
+      this._wrapperPos = null;
+      this._dirtyRaw = null;
     }
     if (!targetDoc.body.classList.contains("retro-box-cursor-active")) {
       targetDoc.body.classList.add("retro-box-cursor-active");
@@ -4696,7 +5324,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // Same as canvas wrapper: append inside .app-container to avoid
       // Obsidian's body.is-frameless > .app-container ~ * { no-drag } rule.
       const appContainer = targetDoc.querySelector(".app-container") || targetDoc.body;
-      this.overlay = appContainer.createDiv({ cls: "torch-cursor-overlay" });
+      this.overlay = appContainer.createEl("canvas", { cls: "torch-cursor-overlay" });
+      this._torchDarkKey = "";
       this.overlay.style.top = "0px";
       this.overlay.style.left = "0px";
       this.overlay.style.width = "0px";
@@ -4706,9 +5335,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // properties, so the radius cache has to be dropped with it or the tick
       // would dedupe against a value this overlay was never given.
       this._lastTorchRadius = -1;
-      this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
-    this._lastGlowRect = "";
-    this._lastGlowPos = "";
+      this._lastGlowRect = "";      // glow layer dedupe stamps; see the torch tick
+    this._lastGlowAlpha = "";
+    this._torchGlowKey = "";
       this.injectStyles(targetDoc);
       this.applyOverlayStyle();
       
@@ -4718,6 +5347,33 @@ module.exports = class CursorSmithPlugin extends Plugin {
       });
       this.modalObserver.observe(targetDoc.body, { childList: true });
     }
+  }
+
+  // Paint the darkness layer for these lights, if anything about the picture
+  // changed since the last paint: a moved light, a new radius, a new size,
+  // a new setting. A parked torch does not touch the bitmap.
+  _torchPaintDarkness(spots, radiusPx, darkness, w, h) {
+    const el = this.overlay;
+    if (!el || typeof el.getContext !== "function") return;
+    const key = w + "x" + h + "|" + radiusPx + "|" + darkness + "|" +
+      spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";");
+    if (key === this._torchDarkKey) return;
+    const ctx = torchCanvasContext(el, w, h);
+    if (!ctx) return;
+    this._torchDarkKey = key;
+    paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness);
+  }
+
+  _torchPaintGlow(spots, radiusPx, warmRgb, w, h) {
+    const el = this.glowEl;
+    if (!el || typeof el.getContext !== "function") return;
+    const key = w + "x" + h + "|" + radiusPx + "|" + warmRgb + "|" +
+      spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";");
+    if (key === this._torchGlowKey) return;
+    const ctx = torchCanvasContext(el, w, h);
+    if (!ctx) return;
+    this._torchGlowKey = key;
+    paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb);
   }
 
   // Build or tear down the additive glow layer.
@@ -4731,7 +5387,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // re-composite of everything beneath it whether or not it paints anything.
   _ensureGlowLayer(wanted) {
     if (!wanted) {
-      if (this.glowEl) { this.glowEl.remove(); this.glowEl = null; this._lastGlow = null; }
+      if (this.glowEl) { this.glowEl.remove(); this.glowEl = null; this._torchGlowKey = ""; }
       return null;
     }
     const doc = this.overlay && this.overlay.ownerDocument;
@@ -4744,10 +5400,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (!this.glowEl) {
       const appContainer = doc.querySelector(".app-container") || doc.body;
       // Sibling of the overlay, deliberately - see the CSS note in injectStyles.
-      this.glowEl = appContainer.createDiv({ cls: "torch-cursor-glow" });
-      this._lastGlow = null;
+      this.glowEl = appContainer.createEl("canvas", { cls: "torch-cursor-glow" });
+      this._torchGlowKey = "";
       this._lastGlowRect = "";
-      this._lastGlowPos = "";
+      this._lastGlowAlpha = "";
+      this._torchGlowKey = "";
     }
     return this.glowEl;
   }
@@ -4930,7 +5587,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this._tetherSegKey = null;
     this._tetherAnchorA = null;
     this._tetherAnchorB = null;
-    this.secondaryCarets = []; // dashed 2px vertical lines for CM6 multi-cursor mode
+    this.secondaryCarets = []; // plain 2px lines: carets past SECONDARY_FULL_MAX
+    this._secondaries = [];    // full-effect secondaries: one CARET_STATE_FIELDS bundle each
+    this._selShape = null;     // (count, mainIndex) of the selection last frame
     this.lastActive = null;
     this.pending = null;
     this.smearQuad = null;
@@ -5004,6 +5663,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     this._canvasTick = null;
     this._drawSig = null;
+    this._caretGeoCache = null;
+    this._paneRectCache = null;
+    this._observeEditorLayout(null);
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
       if (doc && doc.body) {
@@ -5021,6 +5683,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
+    this._canvasRect = null;
+    this._clipRect = null;
+    this._wrapperPos = null;
+    this._dirtyRaw = null;
     // Single reset site (see _resetEngineState). This used to be a hand-copied
     // list that had quietly fallen behind the other two: `trail`, `lastActive`,
     // `lastMoveTime`, `typingSpeedMod`, `_catchUpBoost` and the firework /
@@ -5037,11 +5703,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._torchIdleT = 0;
     }
     this._torchTick = null;
-    this._lastTorchPos = "";
+    this._torchDarkKey = "";
     this._lastTorchRadius = -1;
-    this._lastGlow = null;        // glow layer dedupe stamps; see the torch tick
-    this._lastGlowRect = "";
-    this._lastGlowPos = "";
+    this._lastGlowRect = "";      // glow layer dedupe stamps; see the torch tick
+    this._lastGlowAlpha = "";
+    this._torchGlowKey = "";
     if (this.torchRaf) {
       cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
@@ -5058,9 +5724,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // The glow is a sibling, so removing the overlay does not take it with it.
     this.glowEl?.remove();
     this.glowEl = null;
-    this._lastGlow = null;
     this._lastGlowRect = "";
-    this._lastGlowPos = "";
+    this._lastGlowAlpha = "";
+    this._torchGlowKey = "";
+    this._torchDarkKey = "";
     this.modalObserver?.disconnect();
     this.modalObserver = null;
     this.modalOpen = false;
@@ -5075,7 +5742,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // cycles, so assume nothing about what is currently painted on it.
     this._dirty = null;
     this._dirtyPrev = null;
+    this._dirtyRaw = null;
     this._dirtyFull = true;
+    this._canvasRect = null;
+    this._regionOversizedT = 0;
 
     // Schedule the next frame according to the gear the frame just decided
     // on (this._canvasGear): hot = next vsync, warm/idle = doze on a timeout
@@ -5083,6 +5753,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const schedule = () => {
       if (!this.canvasEngineActive) return;
       const gear = this._canvasGear || "hot";
+      const caps = this._frameCaps();
       if (gear === "hot") {
         this.canvasRaf = requestAnimationFrame(tick);
         return;
@@ -5090,7 +5761,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._canvasIdleT = window.setTimeout(() => {
         this._canvasIdleT = 0;
         if (this.canvasEngineActive) this.canvasRaf = requestAnimationFrame(tick);
-      }, gear === "warm" ? 33 : gear === "energy" ? ENERGY_FRAME_MS : 100);
+      }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : caps.idleMs);
     };
 
     const tick = () => {
@@ -5098,14 +5769,35 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // Hot-gear frame cap: on 120Hz ProMotion displays rAF fires every
       // ~8ms; a cursor gains nothing above ~60fps, so skip alternate
       // frames. The skipped wake-up is just a reschedule, costing ~nothing.
+      // Low Power raises the cap to ~30fps (FRAME_CAPS).
+      // `perf` is the performance report's counters while one is running
+      // (performanceReport); null otherwise, and every touch is guarded so
+      // the common case costs one null test.
+      const perf = this._perf;
       if ((this._canvasGear || "hot") === "hot") {
         const n = performance.now();
-        if (n - (this._lastHotFrameT || 0) < 14) {
+        if (perf) {
+          // Every raw frame in the hot gear, cap included. The MOST COMMON gap
+          // is the display's refresh interval; the shortest is not - Chromium
+          // delivers callbacks back to back after a stalled frame.
+          if (perf.rafPrev) {
+            const d = n - perf.rafPrev;
+            if (d > 1 && d < 100) {
+              const b = Math.round(d * 2) / 2;
+              perf.rafGaps[b] = (perf.rafGaps[b] || 0) + 1;
+            }
+          }
+          perf.rafPrev = n;
+        }
+        if (n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
           this.canvasRaf = requestAnimationFrame(tick);
           return;
         }
         this._lastHotFrameT = n;
+      } else if (perf) {
+        perf.rafPrev = 0;
       }
+      const tTick = perf ? performance.now() : 0;
       // The whole frame is wrapped so a single bad frame (e.g. a transient
       // null during window refocus, a detached node mid-layout) can never
       // kill the rAF loop permanently - that's exactly the "cursor
@@ -5126,8 +5818,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // as it was so coming back doesn't replay a move or snap the spring.
         if (this.presentationActive() || !this.windowFocused()) {
           if (this.ctx && this.canvas && !this._suspendCleared) {
-            const win = this.canvas.ownerDocument.defaultView || window;
-            this.ctx.clearRect(0, 0, win.innerWidth, win.innerHeight);
+            this._clearCanvas();
             this._suspendCleared = true;
             // The surface is blank, so there's nothing left for the next frame
             // to clear; dropping the signature guarantees the first frame back
@@ -5144,6 +5835,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureCanvasForView(view);
         if (view) this.registerWindowEvents(view.dom.ownerDocument);
+        this._observeEditorLayout(view);
         // The canvas may have just migrated to a document that hosts no view
         // at all - the 1.13 settings window - which the line above therefore
         // cannot register. Without listeners there, typing in a settings box
@@ -5189,13 +5881,18 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // pane briefly reaches the window edge, so clamp the clip to the
           // status bar's top. No-op for an in-flow status bar (the pane already
           // stops above it) and on platforms with no status bar (inset is 0).
-          const { bottomInset } = this._chromeInsets(this.canvas.ownerDocument);
-          if (bottomInset > 0) {
+          const ins = this._chromeInsets(this.canvas.ownerDocument);
+          let clipPath = "";
+          if (ins.bottomInset > 0) {
             const win = this.canvas.ownerDocument.defaultView || window;
-            const maxBottom = win.innerHeight - bottomInset;
-            if (top + height > maxBottom) height = Math.max(0, maxBottom - top);
+            const cut = wrapperClipForStatusBar(
+              { top, left, width, height },
+              { top: win.innerHeight - ins.bottomInset, left: ins.statusLeft, right: ins.statusRight },
+            );
+            height = cut.height;
+            clipPath = cut.clipPath;
           }
-          const key = top + "," + left + "," + width + "," + height;
+          const key = top + "," + left + "," + width + "," + height + "|" + clipPath;
           if (key !== this._lastWrapperRect) {
             this._lastWrapperRect = key;
             // The wrapper clips the canvas (overflow:hidden). Pixels painted
@@ -5207,12 +5904,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
             this.canvasWrapper.style.left = left + "px";
             this.canvasWrapper.style.width = width + "px";
             this.canvasWrapper.style.height = height + "px";
-            // Shift the canvas backward so absolute screen coordinates draw
-            // perfectly. transform: none when there's no offset avoids
-            // promoting the canvas to a separate compositor layer for
-            // nothing.
-            this.canvas.style.transform =
-              top === 0 && left === 0 ? "none" : `translate(${-left}px, ${-top}px)`;
+            this.canvasWrapper.style.clipPath = clipPath;
+            // The canvas is positioned relative to the wrapper, so it has to
+            // be re-placed against the new origin (_fitCanvasRegion does it,
+            // and also drops a region that no longer lies inside the clip).
+            this._wrapperPos = { left, top };
+            this._clipRect = { x: left, y: top, w: width, h: height };
+            this._canvasPlaced = false;
           }
         }
 
@@ -5231,18 +5929,36 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.settings = this.effectiveSettings(_vimMode);
         this._settingsSwapped = true;
         try {
+          // Frame counter: hotSyncScroll shares one scroll delta per tick
+          // between the primary and the secondaries.
+          this._tickNo = (this._tickNo || 0) + 1;
+          // The Backspace, Enter and Space flags are consumed by the first
+          // commitMove that sees them, and that is the primary's. The
+          // secondaries move on the same keystroke and get the same
+          // disintegration, strike and volley, so remember the flags first.
+          const flagsAtFrame = {
+            del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending,
+          };
+          // Multi-cursor: if the selection changed shape (a caret came or
+          // went, or the main one moved), every saved caret state has to be
+          // re-matched to the ranges BEFORE the primary measures itself -
+          // including the primary's own, which may now belong to a secondary.
+          this.rematchCaretStates(view);
+          const tCaret = perf ? performance.now() : 0;
           this.updateActivePoint();
+          if (perf) perf.caretMs += performance.now() - tCaret;
           this.updateSmoothCursor();
-          // Multi-cursor: gather all non-primary carets so draw() can stamp a
-          // dashed line at each. Independent of the smoothing/smearing pipeline
-          // that only tracks the primary caret.
-          this.secondaryCarets = this.secondaryCaretCoords(view);
+          // Multi-cursor: run the primary's own update pipeline on each
+          // full-effect secondary's state, and gather the plain remainder for
+          // draw() to stamp a line at.
+          this.updateSecondaryCarets(view, flagsAtFrame);
           // Cheap when off, and internally cached on (caret pos, doc length)
           // so the text scan doesn't rerun every frame while the caret sits
-          // still.
-          this.bracketTether = this.settings.bracketTether
-            ? this.bracketTetherCoords(view)
-            : null;
+          // still. The secondaries' tethers (computed in
+          // updateSecondaryCarets, each through its own caches) are merged
+          // in: drawBracketTether paints one list.
+          this.bracketTether = this.mergeTethers(
+            this.settings.bracketTether ? this.bracketTetherCoords(view) : null);
           this.updateSmearQuad();
           // Must run before the gear decision below, which reads trail.length.
           this.pruneTrail();
@@ -5339,8 +6055,14 @@ module.exports = class CursorSmithPlugin extends Plugin {
             const isDark = this.canvas
               ? this.canvas.ownerDocument.body.classList.contains("theme-dark")
               : true;
+            // The record carries `top` and `bottom`, not `y`: a `c.y` here
+            // used to read undefined, so a secondary moving vertically never
+            // changed the signature and a settled frame could keep showing it
+            // in its old place.
             const sec = this.secondaryCarets && this.secondaryCarets.length
-              ? this.secondaryCarets.map((c) => (c.x | 0) + ":" + (c.y | 0)).join(",")
+              ? this.secondaryCarets
+                  .map((c) => (c.x | 0) + ":" + (c.top | 0) + ":" + (c.bottom | 0))
+                  .join(",")
               : "";
             // The tether moves without the caret moving (scrolling, or an edit
             // that shifts the match), so it needs its own term here or a
@@ -5368,6 +6090,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
               // does nothing visible until the next keystroke wakes the loop.
               eff.cursorTranslucent,
               eff.underlineWidthPx, sec, bt, eff.bracketTetherStrength,
+              // The full-effect secondaries: position, shape and smear quad
+              // each, for the same reasons `la` and _smearSig() are here.
+              this._secondariesSig(),
               // Breathing changes the painted size during a hold, where
               // blinkBucket alone can't tell the two states apart: switching it
               // on while the caret sat in the dark half of the cycle matched
@@ -5417,7 +6142,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
           // skipping the draw would strand the invalidation and leave the
           // stale content on screen indefinitely.
           if (this._dirtyFull) doDraw = true;
-          if (doDraw) this.draw();
+          // Where the canvas element sits this frame (issue #30). After the
+          // update phase so every pool a spawn just filled is in the need, and
+          // before the draw because the draw has to land on the new surface.
+          // A re-anchored canvas is blank, so the frame must paint whatever
+          // the static-frame test above thought was still on screen.
+          if (this._fitCanvasRegion()) { doDraw = true; if (perf) perf.reanchors++; }
+          if (doDraw && this._canvasRect) {
+            const tDraw = perf ? performance.now() : 0;
+            this.draw();
+            if (perf) { perf.draws++; perf.drawMs += performance.now() - tDraw; }
+          }
         } finally {
           this.settings = _realSettings;
           this._settingsSwapped = false;
@@ -5428,6 +6163,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
           console.error("[cursor-smith] canvas tick error (loop kept alive):", e);
         }
       }
+      if (perf) {
+        perf.ticks++;
+        perf.tickMs += performance.now() - tTick;
+        const g = this._canvasGear || "hot";
+        perf.gears[g] = (perf.gears[g] || 0) + 1;
+      }
       schedule();
     };
     this._canvasTick = tick;
@@ -5435,17 +6176,24 @@ module.exports = class CursorSmithPlugin extends Plugin {
     this.canvasRaf = requestAnimationFrame(tick);
   }
 
+  // (Re)allocate the backing store for the current canvas region. This used
+  // to size the canvas to the window; it now sizes it to this._canvasRect,
+  // the caret's neighbourhood chosen by _fitCanvasRegion (issue #30). Drawing
+  // stays in absolute client coordinates: the context transform subtracts
+  // the region's origin, so nothing that paints had to change.
   resizeCanvas() {
     if (!this.canvas) return;
+    const r = this._canvasRect;
+    if (!r) return;
     const win = this.canvas.ownerDocument.defaultView || window;
     const dpr = win.devicePixelRatio || 1;
-    const w = win.innerWidth;
-    const h = win.innerHeight;
-    this.canvas.style.width = w + "px";
-    this.canvas.style.height = h + "px";
-    this.canvas.width = Math.max(1, Math.round(w * dpr));
-    this.canvas.height = Math.max(1, Math.round(h * dpr));
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._canvasDpr = dpr;
+    this.canvas.style.width = r.w + "px";
+    this.canvas.style.height = r.h + "px";
+    this.canvas.width = Math.max(1, Math.round(r.w * dpr));
+    this.canvas.height = Math.max(1, Math.round(r.h * dpr));
+    this.ctx.setTransform(dpr, 0, 0, dpr, -r.x * dpr, -r.y * dpr);
+    this._placeCanvas();
     // Reassigning width/height blanks the backing store, so nothing from the
     // previous frame survives and there is nothing left to clear.
     this._dirty = null;
@@ -5455,6 +6203,176 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // which can move the caret's font metrics without moving pos - so drop the
     // cached style read rather than wait out its TTL.
     this._caretStyleCache = null;
+  }
+
+  // Position the canvas element inside the wrapper so that the region's
+  // origin lands at its own client coordinates. transform: none when the
+  // region sits at the wrapper's corner avoids promoting the canvas to a
+  // separate compositor layer for nothing.
+  _placeCanvas() {
+    const r = this._canvasRect;
+    if (!this.canvas || !r) return;
+    const wp = this._wrapperPos || { left: 0, top: 0 };
+    const dx = r.x - wp.left;
+    const dy = r.y - wp.top;
+    this.canvas.style.transform = dx === 0 && dy === 0 ? "none" : `translate(${dx}px, ${dy}px)`;
+    this._canvasPlaced = true;
+  }
+
+  // Blank the whole surface, whatever region it covers. Bypasses the region
+  // transform so it needs no coordinates at all.
+  _clearCanvas() {
+    const ctx = this.ctx;
+    if (!ctx || !this.canvas) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.restore();
+    this._dirty = null;
+    this._dirtyPrev = null;
+    this._dirtyRaw = null;
+  }
+
+  // The bounding box of everything this frame has to be able to paint, in
+  // client coordinates, or null when there is nothing. Runs after the update
+  // phase, so it sees every pool a spawn just filled.
+  //
+  // Three sources. The cursor's own damage bounds (the same helper draw()
+  // marks dirty from, so the two cannot disagree), plus the smooth-movement
+  // target so the region grows toward where the caret is heading rather than
+  // chasing it. The secondaries and the tether, whose positions are known
+  // before the draw. And last frame's UNCLAMPED painted union, padded for
+  // motion: particles, embers, motes, trail ghosts and glitch slices were all
+  // painted somewhere last frame and will be near there this frame. That
+  // union is recorded from _markDirty whether or not the canvas actually
+  // showed the pixels, which is what lets anything that outruns the pad
+  // reappear one frame later instead of staying lost.
+  //
+  // Two effects are exempt from all that and claim the whole clip window for
+  // as long as they are live: a thunderbolt starts above the pane on purpose
+  // (see spawnThunderbolt) and a firework shell climbs out of any region
+  // fitted round the caret. Both are rare and short.
+  _frameNeed(clip) {
+    if ((this.thunderbolts && this.thunderbolts.length) ||
+        (this.fireworks && this.fireworks.length)) {
+      return { x0: clip.x, y0: clip.y, x1: clip.x + clip.w, y1: clip.y + clip.h };
+    }
+    let b = null;
+    const add = (x0, y0, x1, y1) => {
+      if (!b) { b = { x0, y0, x1, y1 }; return; }
+      if (x0 < b.x0) b.x0 = x0;
+      if (y0 < b.y0) b.y0 = y0;
+      if (x1 > b.x1) b.x1 = x1;
+      if (y1 > b.y1) b.y1 = y1;
+    };
+    const cb = this._cursorBounds();
+    if (cb) add(cb.x0, cb.y0, cb.x1, cb.y1);
+    const la = this.lastActive;
+    if (la && this.animActive && la !== this.animActive) {
+      const pad = 24;
+      add(la.x - pad, la.top - pad,
+          la.x + Math.max(la.w || 0, la.actualCharWidth || 0) + pad, la.top + (la.h || 0) + pad);
+    }
+    if (this.secondaryCarets && this.secondaryCarets.length) {
+      for (const c of this.secondaryCarets) add(c.x - 4, c.top - 4, c.x + 8, c.bottom + 4);
+    }
+    // The full-effect secondaries contribute what the primary does: their
+    // damage bounds (smear quad included) and their smooth-movement target.
+    if (this._secondaries && this._secondaries.length) {
+      for (const st of this._secondaries) {
+        if (!st.animActive) continue;
+        const sb = this._withCaret(st, () => this._cursorBounds());
+        if (sb) add(sb.x0, sb.y0, sb.x1, sb.y1);
+        const sl = st.lastActive;
+        if (sl && sl !== st.animActive) {
+          add(sl.x - 24, sl.top - 24,
+              sl.x + Math.max(sl.w || 0, sl.actualCharWidth || 0) + 24, sl.top + (sl.h || 0) + 24);
+        }
+      }
+    }
+    if (this.bracketTether && this.bracketTether.length) {
+      for (const s of this.bracketTether) {
+        add(Math.min(s.x1, s.x2) - 4, Math.min(s.y1, s.y2) - 4,
+            Math.max(s.x1, s.x2) + 4, Math.max(s.y1, s.y2) + 4);
+      }
+    }
+    const r = this._dirtyRaw;
+    if (r) {
+      const p = CANVAS_REGION_MOTION_PAD;
+      add(r.x0 - p, r.y0 - p, r.x1 + p, r.y1 + p);
+    }
+    return b;
+  }
+
+  // Decide the canvas region for this frame and apply it. Returns true when
+  // the surface was re-anchored (and is therefore blank), so the caller
+  // knows the frame must be painted whatever the static-frame test said.
+  //
+  // Movement without growth keeps the backing store and only moves the
+  // element (a transform write); growth or a DPR change reallocates it.
+  // Either way the surface is blank afterwards, which is fine: draw() paints
+  // every live thing from state each frame, it never relies on last frame's
+  // pixels beyond knowing where to clear them.
+  _fitCanvasRegion() {
+    if (!this.canvas || !this.ctx) return false;
+    const clip = this._clipRect;
+    if (!clip) return false;
+    const win = this.canvas.ownerDocument.defaultView || window;
+    const dpr = win.devicePixelRatio || 1;
+    let cur = this._canvasRect;
+    // A region fitted inside an earlier clip window is worthless once the
+    // window has moved out from under it.
+    if (cur && (cur.x < clip.x || cur.y < clip.y ||
+                cur.x + cur.w > clip.x + clip.w || cur.y + cur.h > clip.y + clip.h)) {
+      cur = null;
+    }
+    const need = this._frameNeed(clip);
+    const lh = (this.animActive && this.animActive.h) || (this.lastActive && this.lastActive.h) || 24;
+    const marginY = Math.round(CANVAS_REGION_MARGIN_Y * lh);
+
+    // Shrink only after the region has been oversized for a while.
+    const now = performance.now();
+    let allowShrink = false;
+    if (cur && need) {
+      const nw = Math.min(clip.w, (need.x1 - need.x0) + 2 * CANVAS_REGION_MARGIN_X);
+      const nh = Math.min(clip.h, (need.y1 - need.y0) + 2 * marginY);
+      if (cur.w * cur.h > CANVAS_REGION_SHRINK_RATIO * Math.max(1, nw) * Math.max(1, nh)) {
+        if (!this._regionOversizedT) this._regionOversizedT = now;
+        else if (now - this._regionOversizedT > CANVAS_REGION_SHRINK_MS) allowShrink = true;
+      } else {
+        this._regionOversizedT = 0;
+      }
+    } else {
+      this._regionOversizedT = 0;
+    }
+
+    const next = fitCanvasRegion(need, clip, cur, {
+      marginX: CANVAS_REGION_MARGIN_X, marginY, grid: CANVAS_REGION_GRID, allowShrink,
+    });
+    if (next === cur && cur === this._canvasRect && dpr === this._canvasDpr) {
+      if (!this._canvasPlaced) this._placeCanvas();
+      return false;
+    }
+    if (!next) {
+      // Nothing to show and no region worth keeping (the clip moved out from
+      // under it). Leave the old store; the first frame with a need refits.
+      this._canvasRect = null;
+      return false;
+    }
+    if (allowShrink && next !== cur) this._regionOversizedT = 0;
+    const prev = this._canvasRect;
+    this._canvasRect = next;
+    if (!prev || next.w !== prev.w || next.h !== prev.h || dpr !== this._canvasDpr) {
+      this.resizeCanvas();
+    } else {
+      this.ctx.setTransform(dpr, 0, 0, dpr, -next.x * dpr, -next.y * dpr);
+      this._placeCanvas();
+      this._clearCanvas();
+    }
+    // The surface is blank: nothing to clear, everything to paint.
+    this._dirtyFull = false;
+    this._dirtyPrev = null;
+    return true;
   }
 
   caretCoords() {
@@ -5496,7 +6414,24 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // at the start of the new row - that matches CodeMirror's own native
       // cursor and is left as-is deliberately.
       const side = main.assoc || 1;
-      let c = inTable ? null : (view.coordsAtPos(pos, side) || view.coordsAtPos(pos, -side));
+      // Geometry cache. coordsAtPos is a layout read (and, in Obsidian, a
+      // getComputedStyle for the line's text direction) and it used to run
+      // every frame the caret merely sat there. Keyed on (doc identity, pos,
+      // assoc) like the style cache below, plus the layout generation every
+      // wake source bumps, plus a short TTL as the backstop for what has no
+      // event. Tables go through selectionFallbackCoords and are not cached.
+      const geoNow = performance.now();
+      let gc = this._caretGeoCache;
+      let c;
+      if (!inTable && gc && gc.doc === view.state.doc && gc.pos === pos && gc.assoc === (main.assoc || 0) &&
+          gc.gen === (this._layoutGen | 0) && (geoNow - gc.t) < GEOMETRY_TTL_MS) {
+        c = gc.c;
+      } else {
+        c = inTable ? null : (view.coordsAtPos(pos, side) || view.coordsAtPos(pos, -side));
+        if (c && !inTable) {
+          this._caretGeoCache = { doc: view.state.doc, pos, assoc: main.assoc || 0, gen: this._layoutGen | 0, t: geoNow, c };
+        }
+      }
 
       if (!c) {
         c = this.selectionFallbackCoords(view);
@@ -5737,16 +6672,20 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   // CodeMirror 6 supports multiple cursors: state.selection.ranges is an
-  // array and state.selection.mainIndex points at the "primary" one that the
-  // rest of the plugin (smoothing, smearing, letter-pop, trails) already
-  // draws. This function returns raw pixel coords for every *other* range's
-  // caret head so we can render each as a simple dashed vertical line -
-  // enough to see where the additional carets are without duplicating the
-  // full effect pipeline for them. Returns [] when there's only one range
-  // or the view isn't focused.
-  secondaryCaretCoords(view) {
+  // array and state.selection.mainIndex points at the "primary" one that
+  // this.* tracks. This returns one entry per OTHER range, in range order,
+  // with the caret head's raw pixel coords - or `visible: false` for a range
+  // that has scrolled out of the pane, which keeps the array aligned with
+  // the per-caret state bundles in this._secondaries (see
+  // updateSecondaryCarets; an off-screen entry there clears its caret the
+  // way the primary clears when it scrolls out). Returns [] when there is
+  // only one range or the view isn't focused.
+  secondaryCaretCoords(view, states) {
     const out = [];
     if (!view || !view.hasFocus) return out;
+    const gen = this._layoutGen | 0;
+    const now = performance.now();
+    const doc = view.state.doc;
     try {
       const sel = view.state.selection;
       const ranges = sel.ranges;
@@ -5764,18 +6703,331 @@ module.exports = class CursorSmithPlugin extends Plugin {
         const head = ranges[i].head;
         // Same soft-wrap disambiguation as the primary caret in cmCaretCoords.
         const s = ranges[i].assoc || 1;
-        const c = view.coordsAtPos(head, s) || view.coordsAtPos(head, -s);
-        if (!c) continue;
-        if (paneRect) {
-          const cBottom = c.bottom ?? c.top;
-          if (cBottom < paneRect.top - margin || c.top > paneRect.bottom + margin) continue;
+        // Same geometry cache as the primary's, kept on the bundle when there
+        // is one (index-aligned with the entries, see updateSecondaryCarets).
+        const st = states && states[out.length];
+        let c = null;
+        const g = st && st._geo;
+        if (g && g.doc === doc && g.pos === head && g.gen === gen && (now - g.t) < GEOMETRY_TTL_MS) {
+          c = g.c;
+        } else {
+          c = view.coordsAtPos(head, s) || view.coordsAtPos(head, -s);
+          if (st && c) st._geo = { doc, pos: head, gen, t: now, c };
         }
-        out.push({ x: c.left, top: c.top, bottom: c.bottom });
+        let visible = !!c;
+        if (c && paneRect) {
+          const cBottom = c.bottom ?? c.top;
+          if (cBottom < paneRect.top - margin || c.top > paneRect.bottom + margin) visible = false;
+        }
+        // pos/assoc are for the full-effect path; the plain line ignores them.
+        const empty = !!ranges[i].empty;
+        out.push(visible
+          ? { x: c.left, top: c.top, bottom: c.bottom, pos: head, assoc: ranges[i].assoc || 0, empty, visible: true }
+          : { x: 0, top: 0, bottom: 0, pos: head, assoc: ranges[i].assoc || 0, empty, visible: false });
       }
     } catch {
       /* fall through - a bad frame shouldn't kill the tick loop */
     }
     return out;
+  }
+
+  // =========================================================================
+  // Multi-cursor: full effects on secondary carets
+  // =========================================================================
+  // Every non-primary caret up to SECONDARY_FULL_MAX gets the primary's whole
+  // pipeline rather than a 2px line. Nothing in that pipeline was rewritten to
+  // take a caret argument; it reads and writes the fields in CARET_STATE_FIELDS
+  // on `this`, so each secondary keeps a bundle of those fields and _withCaret
+  // swaps it in, runs the primary's own code, and saves the bundle back. The
+  // cost of the swap is a few dozen property writes per caret per frame.
+  //
+  // What is per caret: position, smoothing, the smear spring, the trail,
+  // the pending (Move Delay) state, a Signal Glitch burst, and the pop
+  // effects a move spawns (letter pop, pixel trail, disintegration, jump
+  // trail). What stays global: the blink clock (lastMoveTime - every caret
+  // blinks with the primary), Speed Demon's heat, Thunderstrike, Fireworks,
+  // Hot-head and Stardust, which follow the primary only.
+
+  // Copy the caret fields out of `this` into `into` (a bundle), and back.
+  // References, not clones: the bundle IS the state while it is swapped out.
+  _saveCaretState(into) {
+    for (const k of CARET_STATE_FIELDS) into[k] = this[k];
+    return into;
+  }
+
+  _loadCaretState(from) {
+    for (const k of CARET_STATE_FIELDS) this[k] = from[k];
+  }
+
+  // A bundle in the state a fresh engine has. Taken from _resetEngineState
+  // itself, on a scratch object, so the two cannot drift.
+  _freshCaretState() {
+    const scratch = Object.create(Object.getPrototypeOf(this));
+    scratch._resetEngineState();
+    const out = {};
+    for (const k of CARET_STATE_FIELDS) out[k] = scratch[k];
+    return out;
+  }
+
+  // Run `fn` with `state` swapped into `this`, then save whatever fn did back
+  // into `state` and restore the primary. Re-entrant only in the sense that
+  // the primary's fields are always what is put back, whatever fn threw.
+  //
+  // The primary's fields are parked in a scratch bundle from a small pool
+  // indexed by nesting depth, not a fresh object: with forty fields and a
+  // handful of swaps per secondary per frame, allocating one each time was
+  // measurable GC churn at ten carets.
+  _withCaret(state, fn) {
+    const depth = this._swapDepth | 0;
+    const pool = this._swapPool || (this._swapPool = []);
+    const saved = pool[depth] || (pool[depth] = {});
+    this._saveCaretState(saved);
+    const pass = this._caretPass;
+    const owner = this._caretOwner;
+    this._swapDepth = depth + 1;
+    this._loadCaretState(state);
+    this._caretPass = "secondary";
+    this._caretOwner = state;
+    try {
+      return fn();
+    } finally {
+      this._saveCaretState(state);
+      this._loadCaretState(saved);
+      this._caretPass = pass;
+      this._caretOwner = owner;
+      this._swapDepth = depth;
+    }
+  }
+
+  // The selection changed shape: a range was added or removed, or a different
+  // one is main. Index-aligned bundles are then wrong, so every bundle - the
+  // primary's included, since the range it was tracking may now be a
+  // secondary and vice versa - is matched to the new ranges by document
+  // position. An Alt+click that makes the new caret main is the common case:
+  // the old primary's state follows its range down into the secondaries and
+  // the new caret starts fresh, so nothing streaks across the page. Ranges
+  // cannot cross without merging, so while the shape holds, index order does.
+  rematchCaretStates(view) {
+    const sel = view && view.hasFocus ? view.state.selection : null;
+    const count = sel ? sel.ranges.length : 1;
+    const mainIndex = sel ? sel.mainIndex : 0;
+    const prev = this._selShape;
+    this._selShape = { count, mainIndex };
+    if (!prev || (prev.count === count && prev.mainIndex === mainIndex)) return;
+    if (!sel) { this._secondaries = []; return; }
+
+    // Candidates: the primary's live state, then every secondary bundle.
+    const candidates = [{ state: this._saveCaretState({}), pos: this.lastActive ? this.lastActive.pos : null }];
+    for (const c of this._secondaries) candidates.push({ state: c, pos: c.lastActive ? c.lastActive.pos : null });
+    const take = (head) => {
+      let best = -1, bestD = SECONDARY_MATCH_WINDOW + 1;
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        if (!cand || cand.pos == null) continue;
+        const d = Math.abs(cand.pos - head);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      if (best < 0) return null;
+      const st = candidates[best].state;
+      candidates[best] = null;
+      return st;
+    };
+    const main = take(sel.ranges[mainIndex].head) || this._freshCaretState();
+    this._loadCaretState(main);
+    const next = [];
+    for (let i = 0; i < sel.ranges.length && next.length < SECONDARY_FULL_MAX; i++) {
+      if (i === mainIndex) continue;
+      next.push(take(sel.ranges[i].head) || this._freshCaretState());
+    }
+    this._secondaries = next;
+  }
+
+  // The full caret record for one secondary - what cmCaretCoords builds for
+  // the primary - from its coordsAtPos geometry plus the style of the line it
+  // sits on. No elementFromPoint: that is a layout hit-test per caret per
+  // edit, and a column edit re-measures every caret on every keystroke. The
+  // line element from domAtPos is cheap and right for everything but a
+  // caret inside an inline span with its own font, which draws with the
+  // line's metrics instead. Cached on the bundle the way the primary's
+  // style is (doc identity + pos + a short TTL), and shared per line within
+  // a frame through `lineStyles`.
+  secondaryCaretRecord(view, c, state, lineStyles) {
+    const doc = view.state.doc;
+    const pos = c.pos;
+    const now = performance.now();
+    let st = state._style;
+    if (!(st && st.doc === doc && st.pos === pos && (now - st.t) < 250)) {
+      const win = view.dom.ownerDocument.defaultView || window;
+      let lineEl = null;
+      try {
+        const d = view.domAtPos(pos);
+        const n = d && d.node && d.node.nodeType === 3 ? d.node.parentElement : d && d.node;
+        lineEl = n && n.closest ? n.closest(".cm-line") : null;
+      } catch { /* fall back to the editor's own style */ }
+      const key = lineEl || view.contentDOM;
+      let ls = lineStyles.get(key);
+      if (!ls) {
+        const cs = win.getComputedStyle(key);
+        const letterSpacingStr = cs.letterSpacing;
+        ls = {
+          textColor: cs.color || "#ffffff",
+          fontSize: parseFloat(cs.fontSize) || 14,
+          fontFamily: cs.fontFamily || "monospace",
+          fontWeight: cs.fontWeight || "normal",
+          fontStyle: cs.fontStyle || "normal",
+          letterSpacing: letterSpacingStr && letterSpacingStr.endsWith("px") ? (parseFloat(letterSpacingStr) || 0) : 0,
+          lineHeightStr: cs.lineHeight || "",
+        };
+        lineStyles.set(key, ls);
+      }
+      const rawChar = doc.sliceString(pos, pos + 1);
+      const char = rawChar && rawChar !== "\n" ? rawChar : "";
+      let charWidth = view.defaultCharacterWidth || 8;
+      if (char) {
+        const m = this.measureCharWidth(char, ls.fontFamily, ls.fontSize, ls.fontWeight, ls.fontStyle);
+        if (m) charWidth = m + ls.letterSpacing;
+      }
+      st = state._style = Object.assign({ doc, pos, t: now, char, charWidth }, ls);
+    }
+    let h = Math.max(4, c.bottom - c.top);
+    const lh = st.lineHeightStr;
+    if (lh && lh.endsWith("px")) h = parseFloat(lh);
+    else if (lh && !isNaN(parseFloat(lh)) && lh !== "normal") h = st.fontSize * parseFloat(lh);
+    const centerY = (c.top + c.bottom) / 2;
+    const w = this.styleFor("cursorStyle") === "Line" ? this.styleFor("caretWidthPx") : st.charWidth;
+    return {
+      x: c.x, top: centerY - h / 2, bottom: centerY + h / 2, h, w,
+      actualCharWidth: st.charWidth,
+      rowLeft: null, rowRight: null,
+      char: st.char, textColor: st.textColor,
+      fontSize: st.fontSize, fontFamily: st.fontFamily, fontWeight: st.fontWeight, fontStyle: st.fontStyle,
+      letterSpacing: st.letterSpacing,
+      focused: true, pos, assoc: c.assoc,
+    };
+  }
+
+  // Per frame: measure every secondary, run the primary's update pipeline on
+  // the first SECONDARY_FULL_MAX of them through their bundles, and leave the
+  // rest in this.secondaryCarets for the plain line. `flags` holds the
+  // Backspace/Enter/Space flags as they stood before the primary consumed
+  // them, so each secondary's commitMove sees the same keystroke.
+  updateSecondaryCarets(view, flags = {}) {
+    const raw = this.secondaryCaretCoords(view, this._secondaries);
+    const full = raw.slice(0, SECONDARY_FULL_MAX);
+    // The plain line only ever draws what is on screen.
+    this.secondaryCarets = raw.slice(SECONDARY_FULL_MAX).filter((c) => c.visible);
+    const states = this._secondaries;
+    // One bundle per range, index-aligned (secondaryCaretCoords keeps an
+    // entry for an off-screen range so the alignment holds). More carets
+    // than bundles means the shape changed while rematchCaretStates could
+    // not see it (no focus that frame): the extras start fresh.
+    while (states.length < full.length) states.push(this._freshCaretState());
+    if (states.length > full.length) states.length = full.length;
+    if (full.length === 0) return;
+    const lineStyles = new Map();
+    const primaryFlags = { del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending };
+    try {
+      for (let i = 0; i < full.length; i++) {
+        // Off the pane: updateActivePoint(null) clears the caret exactly as
+        // the primary is cleared when cmCaretCoords declines to place it.
+        const record = full[i].visible ? this.secondaryCaretRecord(view, full[i], states[i], lineStyles) : null;
+        const c = full[i];
+        this._withCaret(states[i], () => {
+          this._deletePending = flags.del || 0;
+          this._enterPending = flags.enter || 0;
+          this._popKeyPending = flags.pop || 0;
+          this.updateActivePoint(record);
+          this.updateSmoothCursor();
+          this.updateSmearQuad();
+          this.pruneTrail();
+          // The same per-frame effect calls the tick makes for the primary,
+          // in the same order, each on this caret's own state.
+          if (this.settings.speedDemon && this.settings.speedDemonSparks && this.animActive) {
+            this.maybeSpawnSpeedDemonSparks();
+          }
+          this.updateHotHeadInertia();
+          if (this.styleFor("hotHead") && this.animActive) this.maybeSpawnHotHead();
+          this.maybeSpawnStardust();
+          // The tether, through this caret's own caches; merged by the tick.
+          states[i]._tetherOut = this.settings.bracketTether && c.visible
+            ? this.bracketTetherCoords(view, c.pos, c.empty !== false)
+            : null;
+        });
+      }
+    } finally {
+      this._deletePending = primaryFlags.del;
+      this._enterPending = primaryFlags.enter;
+      this._popKeyPending = primaryFlags.pop;
+    }
+  }
+
+  // The primary's tether segments plus every secondary's, as one list for
+  // drawBracketTether; null when nobody has one.
+  mergeTethers(primary) {
+    let out = primary && primary.length ? primary : null;
+    const states = this._secondaries;
+    if (states && states.length) {
+      for (const st of states) {
+        const t = st._tetherOut;
+        if (t && t.length) out = out ? out.concat(t) : t.slice();
+      }
+    }
+    return out;
+  }
+
+  // The static-frame signature term for the full-effect secondaries: each
+  // one's settled position and shape, plus its smear quad - the same things
+  // the primary contributes, for the same reasons (see the tick).
+  _secondariesSig() {
+    const states = this._secondaries;
+    if (!states || states.length === 0) return "";
+    const parts = [];
+    for (const st of states) {
+      const la = st.lastActive;
+      parts.push(la
+        ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," + Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "")
+        : "none");
+      parts.push(this._withCaret(st, () => this._smearSig()));
+    }
+    return parts.join(";");
+  }
+
+  // Draw every full-effect secondary with the primary's own painters, and
+  // return each one's damage bounds for draw() to mark after its snapshot
+  // (see the note on _dirtyRaw there: a cursor's own bounds must not be in
+  // the effects-only union).
+  drawFullSecondaries() {
+    const states = this._secondaries;
+    const bounds = [];
+    if (!states || states.length === 0) return bounds;
+    const ctx = this.ctx;
+    const style = this.styleFor("cursorStyle");
+    for (const st of states) {
+      if (!st.animActive) continue;
+      this._withCaret(st, () => {
+        const a = this.animActive;
+        const cb = this._cursorBounds();
+        if (cb) bounds.push(cb);
+        // Breathing, as in draw(): a transform round the whole caret draw.
+        const breath = this.breathScale(performance.now());
+        const breathing = breath < 0.999;
+        if (breathing) {
+          const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+          const cy = a.top + (a.h || 0) / 2;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(breath, breath);
+          ctx.translate(-cx, -cy);
+        }
+        switch (style) {
+          case "Line": this.drawGenericCaret(false); break;
+          case "Underline": this.drawGenericCaret(true); break;
+          case "Box": this.drawRetroBox(); break;
+        }
+        if (breathing) ctx.restore();
+      });
+    }
+    return bounds;
   }
 
   selectionFallbackCoords(view) {
@@ -6348,8 +7600,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
     return this.lastActive ? this.lastActive.char : "";
   }
 
-  updateActivePoint() {
-    const caret = this.caretCoords();
+  // With no argument this is the primary and measures itself. A secondary
+  // hands its own record in, with its state bundle swapped into `this`
+  // (see _withCaret), and everything below then runs for that caret.
+  updateActivePoint(caret = this.caretCoords()) {
     if (!caret || !caret.focused) {
       this.lastActive = null;
       this.pending = null;
@@ -6616,6 +7870,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
   }
 
   commitMove(caret) {
+    // A secondary caret (see _withCaret) gets everything here - trail,
+    // disintegration, jump trail, glitch, strike and volley; the tick hands
+    // it the frame's Enter/Space/Backspace flags before the primary's own
+    // commit zeroes them - except heat, which is one gauge for the whole
+    // editor and is fed by the primary's moves alone, and except CLEARING
+    // those flags, which is the primary's job.
+    const secondary = this._caretPass === "secondary";
     // Speed Demon: a caret move that no heat-bumping keystroke accounts for -
     // a mouse click, a Vim motion from another plugin, a jump to a search hit -
     // still represents the user going somewhere, so it heats too. Scaled by how
@@ -6623,7 +7884,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // over is a nudge and a leap across the file is a real bump, but neither
     // can slam the cursor to white-hot in one go. Keyboard-driven moves are
     // skipped here because onKeyDown already charged them.
-    if (this.settings.speedDemon && this.lastActive && caret) {
+    if (this.settings.speedDemon && this.lastActive && caret && !secondary) {
       const keyed = this._heatKeyT && performance.now() - this._heatKeyT < 150;
       if (!keyed) {
         const dist = Math.hypot(caret.x - this.lastActive.x, caret.top - this.lastActive.top);
@@ -6666,6 +7927,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
       if (this.settings.crtEffect && this.settings.crtGlitch) {
         this.spawnGlitch(this.lastActive, caret);
       }
+      // Hot-Head, same test again: a jump puts the caret in fire for a moment
+      // (the "engulfed" state maybeSpawnHotHead feeds). Decided here, on the
+      // committed move, rather than from the drawn caret's travel: with
+      // Smooth Movement the drawn caret eases across a jump and never covers
+      // JUMP_TRAIL_MIN_DIST in one frame, and a scroll shift - which does -
+      // has already been filtered out above this block.
+      if (this.styleFor("hotHead")
+          && Math.hypot(caret.x - this.lastActive.x, caret.top - this.lastActive.top) >= JUMP_TRAIL_MIN_DIST) {
+        this._hotEngulfUntil = now + HOT_ENGULF_MS;
+        this._hotActiveT = now;
+      }
       // Same 250ms window as the delete flag. Note the bolt is aimed at
       // `caret`, the position being moved TO, not at lastActive: the strike
       // drives the cursor down to the new line, so it has to land there.
@@ -6681,9 +7953,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     // Cleared unconditionally, outside the lastActive branch: a stale flag left
     // by a move that didn't spawn anything would fire a bolt on whatever caret
-    // move happened to come next.
-    this._enterPending = 0;
-    this._popKeyPending = 0;
+    // move happened to come next. The primary's job; a secondary never fires
+    // them, so it must not clear them either.
+    if (!secondary) {
+      this._enterPending = 0;
+      this._popKeyPending = 0;
+    }
     this.lastActive = caret;
     this.pending = null;
     this.lastMoveTime = performance.now(); 
@@ -8242,6 +9517,16 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // draw call below is what should do the retiring.
       (!!this.glitch && (nowT - this.glitch.start) < this.glitch.dur) ||
       this.heat > 0 ||
+      // Every full-effect secondary carries the same motion fields (see
+      // CARET_STATE_FIELDS), and a settling spring or a live trail on any of
+      // them needs frames exactly as the primary's does. A pure read of the
+      // bundles, nothing swapped in.
+      (this._secondaries && this._secondaries.some((c) =>
+        !!c._smoothMoving || !!c.pending || !!c._smearMoving ||
+        (c.trail && c.trail.length > 0) ||
+        (!!c.glitch && (nowT - c.glitch.start) < c.glitch.dur) ||
+        // Hot-head feeding on a secondary, same test as the primary's above.
+        (!!this.styleFor("hotHead") && !!c.animActive && this._hotFeedingAt(c._hotActiveT, nowT)))) ||
       // Precise: the spring reports whether any corner is still off its
       // target or carrying velocity. This used to be a 1200ms window
       // after the last motion, which was a workaround for a timestamp
@@ -8266,15 +9551,90 @@ module.exports = class CursorSmithPlugin extends Plugin {
     if (y + h > d.y1) d.y1 = y + h;
   }
 
+  // The cursor's own damage bounds, in client coordinates: the interpolated
+  // caret, the entire smear quad (which overshoots well past the caret on a
+  // fast move), any held character and the serifs, padded for glow
+  // (shadowBlur maxes at 10), outline width, antialiasing and a Signal Glitch
+  // throw. Marked dirty once from draw() rather than threaded through every
+  // branch of drawRetroBox/drawGenericCaret - and read by _frameNeed to place
+  // the canvas, so the region and the damage rect cannot disagree.
+  // Null when there is no caret.
+  _cursorBounds() {
+    const a = this.animActive;
+    if (!a) return null;
+    let x0 = a.x, y0 = a.top;
+    let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
+    let y1 = a.top + (a.h || 0);
+    // Bound BOTH the raw spring quad and the tapered shape actually painted.
+    // The taper usually pulls corners inward, but it works by preserving each
+    // corner's distance ALONG the travel line while pulling it toward that
+    // line - and on a fast diagonal jump that can nudge a corner slightly
+    // PAST the raw quad's axis-aligned bounds (shrinking one axis grows the
+    // other). Marking only the raw quad then under-reports by a sliver, which
+    // never gets cleared: the tapered-tail artifact. smearShape is usually
+    // the same object as smearQuad (taper off or below threshold), so the
+    // second pass is a cheap no-op then.
+    for (const src of [this.smearQuad, this.smearShape]) {
+      if (!src) continue;
+      for (const k in src) {
+        if (src[k].x < x0) x0 = src[k].x;
+        if (src[k].y < y0) y0 = src[k].y;
+        if (src[k].x > x1) x1 = src[k].x;
+        if (src[k].y > y1) y1 = src[k].y;
+      }
+    }
+    // Serifs reach out to either side of the stem, and the left one reaches
+    // OUTSIDE the caret's own x. The base pad below covers that at ordinary
+    // font sizes, but the span follows the character width, so a large
+    // heading can push the outer edge past it - and anything painted
+    // outside the damage rect is never cleared. Widen explicitly instead of
+    // relying on the pad happening to be enough.
+    if (this.styleFor("cursorStyle") === "Line" && this.settings.lineSerifs) {
+      const halfSpan = Math.max(
+        SERIF_MIN_SPAN_PX,
+        Math.min(a.actualCharWidth || 0, (a.h || 0) * SERIF_MAX_SPAN_RATIO),
+      ) / 2;
+      const cx = a.x + (a.w || 0) / 2;
+      if (cx - halfSpan < x0) x0 = cx - halfSpan;
+      if (cx + halfSpan > x1) x1 = cx + halfSpan;
+    }
+    let pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
+    // The CRT glow's blur grows with Speed Demon's heat (glowHeatScale), and
+    // a shadow spreads roughly its blur radius. 24 comfortably covers the
+    // base blur of 8-10; at full heat that becomes ~26 and would paint
+    // outside the rect this frame clears, leaving a halo smeared across the
+    // pane. Scale the pad by the same factor rather than picking a fixed
+    // worst case, so an idle cursor still clears the small rect.
+    if (this.settings.crtEffect && this.settings.glow) {
+      pad += 10 * (this.glowHeatScale() - 1);
+    }
+    // A Signal Glitch throws slices far outside the caret box, and anything
+    // painted outside the damage rect is never cleared - it would leave
+    // permanent debris on the canvas. Widen the rect to cover the worst-case
+    // throw for the current settings rather than the average one: the
+    // envelope decays, so a rect sized for "typical" would under-report on
+    // exactly the first and most violent frames.
+    if (this.glitch) {
+      const st = Math.max(0, Math.min(2.5, this.settings.crtGlitchStrength ?? 1));
+      const abr = Math.max(0, Math.min(3, this.settings.crtGlitchAberration ?? 1));
+      // 14 * strength * reach(<=2.2) is the slice throw; the width stretch
+      // adds up to ~28% of the caret width per side; then the channel split.
+      pad += 14 * st * 2.2 + 3.2 * abr + (a.w || 0) * 0.3 + 4;
+    }
+    return { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+  }
+
   draw() {
     const ctx = this.ctx;
     if (!ctx) return;
-    const win = this.canvas.ownerDocument.defaultView || window;
-    const vw = win.innerWidth;
-    const vh = win.innerHeight;
+    // The surface is the region, not the window (issue #30): clears and the
+    // clamp on the damage rect are both against it.
+    const r = this._canvasRect;
+    if (!r) return;
+    const rx0 = r.x, ry0 = r.y, rx1 = r.x + r.w, ry1 = r.y + r.h;
 
     if (!DIRTY_RECT_CLEAR || this._dirtyFull) {
-      ctx.clearRect(0, 0, vw, vh);
+      ctx.clearRect(rx0, ry0, r.w, r.h);
       this._dirtyFull = false;
     } else if (this._dirtyPrev) {
       const p = this._dirtyPrev;
@@ -8303,74 +9663,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // in front of it rather than being swallowed by the strike.
     this.drawFireworks();
 
-    // Cursor bounds are marked once here rather than threaded through every
-    // branch of drawRetroBox/drawGenericCaret. The box spans the interpolated
-    // caret, the entire smear quad (which overshoots well past the caret on a
-    // fast move) and any held character, padded for glow (shadowBlur maxes at
-    // 10), outline width and antialiasing.
+    // Cursor bounds are marked once, at the END of the frame rather than
+    // here, so the effects-only union can be snapshotted first - see the
+    // note on _dirtyRaw below. Computed here, before anything cursor-shaped
+    // paints, exactly as it always was.
     const a = this.animActive;
-    if (a) {
-      let x0 = a.x, y0 = a.top;
-      let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
-      let y1 = a.top + (a.h || 0);
-      // Bound BOTH the raw spring quad and the tapered shape actually painted.
-      // The taper usually pulls corners inward, but it works by preserving each
-      // corner's distance ALONG the travel line while pulling it toward that
-      // line - and on a fast diagonal jump that can nudge a corner slightly
-      // PAST the raw quad's axis-aligned bounds (shrinking one axis grows the
-      // other). Marking only the raw quad then under-reports by a sliver, which
-      // never gets cleared: the tapered-tail artifact. smearShape is usually
-      // the same object as smearQuad (taper off or below threshold), so the
-      // second pass is a cheap no-op then.
-      for (const src of [this.smearQuad, this.smearShape]) {
-        if (!src) continue;
-        for (const k in src) {
-          if (src[k].x < x0) x0 = src[k].x;
-          if (src[k].y < y0) y0 = src[k].y;
-          if (src[k].x > x1) x1 = src[k].x;
-          if (src[k].y > y1) y1 = src[k].y;
-        }
-      }
-      // Serifs reach out to either side of the stem, and the left one reaches
-      // OUTSIDE the caret's own x. The base pad below covers that at ordinary
-      // font sizes, but the span follows the character width, so a large
-      // heading can push the outer edge past it - and anything painted
-      // outside the damage rect is never cleared. Widen explicitly instead of
-      // relying on the pad happening to be enough.
-      if (this.styleFor("cursorStyle") === "Line" && this.settings.lineSerifs) {
-        const halfSpan = Math.max(
-          SERIF_MIN_SPAN_PX,
-          Math.min(a.actualCharWidth || 0, (a.h || 0) * SERIF_MAX_SPAN_RATIO),
-        ) / 2;
-        const cx = a.x + (a.w || 0) / 2;
-        if (cx - halfSpan < x0) x0 = cx - halfSpan;
-        if (cx + halfSpan > x1) x1 = cx + halfSpan;
-      }
-      let pad = 24 + Math.max(0, this.settings.caretWidthPx || 0);
-      // The CRT glow's blur grows with Speed Demon's heat (glowHeatScale), and
-      // a shadow spreads roughly its blur radius. 24 comfortably covers the
-      // base blur of 8-10; at full heat that becomes ~26 and would paint
-      // outside the rect this frame clears, leaving a halo smeared across the
-      // pane. Scale the pad by the same factor rather than picking a fixed
-      // worst case, so an idle cursor still clears the small rect.
-      if (this.settings.crtEffect && this.settings.glow) {
-        pad += 10 * (this.glowHeatScale() - 1);
-      }
-      // A Signal Glitch throws slices far outside the caret box, and anything
-      // painted outside the damage rect is never cleared - it would leave
-      // permanent debris on the canvas. Widen the rect to cover the worst-case
-      // throw for the current settings rather than the average one: the
-      // envelope decays, so a rect sized for "typical" would under-report on
-      // exactly the first and most violent frames.
-      if (this.glitch) {
-        const st = Math.max(0, Math.min(2.5, this.settings.crtGlitchStrength ?? 1));
-        const abr = Math.max(0, Math.min(3, this.settings.crtGlitchAberration ?? 1));
-        // 14 * strength * reach(<=2.2) is the slice throw; the width stretch
-        // adds up to ~28% of the caret width per side; then the channel split.
-        pad += 14 * st * 2.2 + 3.2 * abr + (this.animActive?.w || 0) * 0.3 + 4;
-      }
-      this._markDirty(x0 - pad, y0 - pad, (x1 - x0) + pad * 2, (y1 - y0) + pad * 2);
-    }
+    const cb = this._cursorBounds();
 
     // Breathing is applied as a transform around the whole cursor draw rather
     // than by shrinking the rect each painter is handed. Two reasons: with
@@ -8410,9 +9708,30 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     if (breathing) ctx.restore();
 
-    // Secondary carets sit on top of the main cursor's trail/particles but
-    // don't participate in smear/glow - just plain dashed vertical lines.
+    // Multi-cursor. The full-effect secondaries are painted with the very
+    // same painters as the primary, each with its own state swapped in; the
+    // carets past SECONDARY_FULL_MAX are the plain 2px line. Both sit on top
+    // of the primary's trail and particles.
+    const secBounds = this.drawFullSecondaries();
     this.drawSecondaryCarets();
+
+    // The UNCLAMPED union of everything EXCEPT the cursor, kept for
+    // _frameNeed to place the canvas next frame: particles, embers, motes,
+    // trail ghosts, secondaries - whatever was painted somewhere this frame
+    // will be painted near there next frame, and a painter that reached past
+    // the region is exactly what the region has to grow to include. The
+    // cursor is left out on purpose. Its NEXT position is known before the
+    // draw (_cursorBounds), and its last one needs no coverage: a re-anchor
+    // blanks the surface, and inside the region _dirtyPrev clears it. With
+    // the cursor in here a caret jump dragged its old position into the
+    // need, and the region grew to span the jump instead of sliding.
+    const e = this._dirty;
+    this._dirtyRaw = e ? { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 } : null;
+    // Now the cursor, for the clear: see _cursorBounds for what it spans.
+    // The full-effect secondaries are cursors too, and out of _dirtyRaw for
+    // the same reason.
+    if (cb) this._markDirty(cb.x0, cb.y0, cb.x1 - cb.x0, cb.y1 - cb.y0);
+    for (const b of secBounds) this._markDirty(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
 
     // Freeze this frame's union for the next frame to clear, clamped to the
     // surface so an off-screen particle can't inflate the cleared region.
@@ -8421,10 +9740,10 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this._dirtyPrev = null;
       return;
     }
-    const cx0 = Math.max(0, Math.floor(d.x0) - 2);
-    const cy0 = Math.max(0, Math.floor(d.y0) - 2);
-    const cx1 = Math.min(vw, Math.ceil(d.x1) + 2);
-    const cy1 = Math.min(vh, Math.ceil(d.y1) + 2);
+    const cx0 = Math.max(rx0, Math.floor(d.x0) - 2);
+    const cy0 = Math.max(ry0, Math.floor(d.y0) - 2);
+    const cx1 = Math.min(rx1, Math.ceil(d.x1) + 2);
+    const cy1 = Math.min(ry1, Math.ceil(d.y1) + 2);
     this._dirtyPrev =
       cx1 > cx0 && cy1 > cy0 ? { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 } : null;
   }
@@ -9210,10 +10529,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
     ctx.restore();
   }
 
-  // Simple solid 2px vertical line per non-primary caret. Deliberately
-  // minimal: no smear (independent spring per caret would be visually noisy
-  // and expensive with many cursors), no letter-inside-box, no trail. Blinks
-  // in sync with the main cursor so all carets fade together.
+  // The plain fallback: a solid 2px vertical line for every non-primary caret
+  // PAST SECONDARY_FULL_MAX. The first SECONDARY_FULL_MAX get the primary's
+  // whole pipeline instead (drawFullSecondaries); this is what the rest
+  // are, and what every secondary was before that. Blinks in sync with the
+  // main cursor so all carets fade together.
   //
   // Colour follows the primary cursor, including its Gradient: with Gradient
   // on, each secondary caret gets the whole ramp down its own height, the same
@@ -9471,134 +10791,46 @@ module.exports = class CursorSmithPlugin extends Plugin {
     const damp = Math.exp(Math.log(1 - FLAME_DAMPING) * (dtMs / 17));
 
     // Grid square, from the font rather than the character cell, so it stays
-    // square and stays small enough not to draw attention to itself.
+    // square and stays small enough not to draw attention to itself. Chunks
+    // are placed on this lattice (pixel art aligns); nothing is shaded by it.
     const fontSize = (active && active.fontSize) || 16;
     const px = Math.max(HOT_PX_MIN, Math.min(HOT_PX_MAX, Math.round(fontSize / HOT_PX_DIVISOR)));
+    // Sparks and spent dots are lattice pixels too: a speck centred in its
+    // grid square, snapped to the same lattice as the chunks.
+    const speck = Math.max(1, Math.round(px * HOT_SPECK_SCALE));
+    const speckOff = Math.floor((px - speck) / 2);
+    const fineSz = Math.max(1, Math.round(px * HOT_FINE_SCALE));
+    const fineOff = Math.floor((px - fineSz) / 2);
 
-    const cells = new Map();
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-    // `stage` is 2 for a square belonging to a fresh 2x2 block, 1 for a lone
-    // pixel, 0 for a spent dot. Kept per square (highest wins) so opacity can
-    // key off how big the thing being drawn actually is.
-    const mark = (gx, gy, life, temp, stage) => {
-      const key = gy * 100000 + gx;
-      const c = cells.get(key);
-      if (c) {
-        if (life > c.life) c.life = life;
-        if (stage > c.stage) c.stage = stage;
-        c.tw += life * temp;
-        c.lw += life;
-      } else {
-        cells.set(key, { gx, gy, life, stage, tw: life * temp, lw: life });
-      }
-    };
-
-    this.flameEmbers = this.flameEmbers.filter((p) => {
-      p.life -= dtMs;
-      if (p.life <= 0) return false;
-
-      const pcw = p.cw || 8;
-      const lift = p.lift || 1;
-      // Buoyancy plus per-frame turbulence, then damping - upstream's
-      // update_particles with gravity negated so the fire rises.
-      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5)) * pcw * dt) * damp;
-      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5) * pcw * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-
-      const frac = p.life / (p.maxLife || maxLife);
-      const gx = Math.floor(p.x / px);
-      const gy = Math.floor(p.y / px);
-      const temp = Math.max(0, Math.min(1, (p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA)));
-
-      if (frac > HOT_STAGE_BLOCK) {
-        // Fresh: a 2x2 patch. Marking four squares rather than drawing one big
-        // rect keeps everything on the same lattice, so a cluster of fresh
-        // particles merges into one solid mass instead of overlapping quads.
-        mark(gx, gy, p.life, temp, 2);
-        mark(gx + 1, gy, p.life, temp, 2);
-        mark(gx, gy + 1, p.life, temp, 2);
-        mark(gx + 1, gy + 1, p.life, temp, 2);
-      } else {
-        mark(gx, gy, p.life, temp, frac > HOT_STAGE_PIXEL ? 1 : 0);
-      }
-      return true;
-    });
-
-    if (!cells.size) return;
-
-    // Flat mode paints every level in the cursor's own colour, so the fire is
-    // one colour varying only in brightness. Off, it runs the heat gradient and
-    // the colour tells you how hot that patch is.
-    //
-    // Whichever branch runs, the colour it starts FROM is the cursor's, and
-    // hotHeadSpeedHeat decides whether that means the configured colour or the
-    // one Speed Demon has heated it to. On, the fire warms with you: the flames
-    // ride the same ramp as the caret, so flat mode tracks the heated colour
-    // and gradient mode ignites from it. Off (the default) the fire keeps its
-    // own look no matter how fast you type, which is what every existing setup
-    // has always done.
-    //
-    // Deliberately NOT gated on speedDemonNoCursorHeat: that switch is about
-    // the caret BODY keeping its colour, and someone who wants a steady caret
-    // throwing hotter flames as they speed up is asking for something
-    // coherent, not contradictory.
-    // Gated on flat mode as well as on the toggle, and that is not just
-    // mirroring the panel. In gradient mode `base` is only the IGNITION colour
-    // - the coolest embers - and everything above it is the fixed
-    // yellow/orange/red/white fire ramp. Measured: 2 of 17 palette entries
-    // move with heat there, against all 17 in flat mode, where the whole
-    // palette is built around the cursor's colour. So the toggle did close to
-    // nothing unless Use Cursor Color was on, which is how it was reported.
-    //
-    // Enforced here rather than left to the panel because a share code or a
-    // preset can carry the key on with flat mode off, and a setting that
-    // silently does nothing is worse than one that isn't offered.
+    // ---- Colour ----------------------------------------------------------------
+    // Two palettes, one per mode, each a ramp of FLAME_LEVELS+1 entries indexed
+    // by temperature. Rebuilt only when its inputs change - it used to be
+    // rebuilt every frame the heat moved at all, which with Speed Demon on was
+    // every frame.
     const flatMode = !!this.styleFor("hotHeadFlat");
     const heatTheFire =
       flatMode && this.styleFor("hotHeadSpeedHeat") && this.settings.speedDemon;
-    // Quantised, and this is load-bearing rather than a micro-optimisation.
-    // The palette is rebuilt whenever this key changes, and `heat` is a
-    // continuously varying float - feeding it in raw would rebuild all
-    // HOT_PALETTE_STEPS entries EVERY frame that the heat moved at all, which
-    // is every frame you are typing. 32 buckets is finer than the eye can
-    // follow on a flame and rebuilds at most 32 times across the whole ramp.
     const heatQ = heatTheFire ? Math.round(Math.max(0, Math.min(1, this.heat || 0)) * 32) : -1;
     const base = heatTheFire
       ? this.heatColor(heatQ / 32, this.getBaseColor())
       : this.getBaseColor();
-    const flat = flatMode;
-    const paletteKey = base + (flat ? "|flat" : "");
+    const paletteKey = base + (flatMode ? "|flat" : "");
     if (this._hotPaletteKey !== paletteKey) {
       this._hotPaletteKey = paletteKey;
       this._hotPalette = [];
       const baseHsv = rgbToHsv(hexToRgbTuple(base));
       for (let j = 0; j <= FLAME_LEVELS; j++) {
         const u = j / FLAME_LEVELS;
-        if (flat) {
-          // "Use cursor color" doesn't mean one flat colour. A single RGB
-          // triple repeated across every particle reads as a stencil rather
-          // than as fire: real flame varies moment to moment even when it's all
-          // one hue family. So the flat palette is still a ramp, just one built
-          // around the cursor's own colour instead of around yellow-orange-red.
-          //
-          // Temperature already varies per particle (it's jittered at spawn and
-          // decays with age), so spreading hue, saturation and value across the
-          // palette index gives every particle its own tint for free, with no
-          // extra per-particle state: cool embers sit darker, duller and a few
-          // degrees to one side of the cursor's hue, hot ones brighter, more
-          // saturated and a few degrees to the other.
-          this._hotPalette.push(hsvToRgb([
-            baseHsv[0] + (u - 0.5) * HOT_FLAT_HUE_SPAN,
-            Math.max(0, Math.min(1, baseHsv[1] * (HOT_FLAT_SAT_LO + (HOT_FLAT_SAT_HI - HOT_FLAT_SAT_LO) * u))),
-            Math.max(0, Math.min(1, baseHsv[2] * (HOT_FLAT_VAL_LO + (HOT_FLAT_VAL_HI - HOT_FLAT_VAL_LO) * u))),
-          ]));
+        if (flatMode) {
+          // "Use cursor color": the cursor's own colour at u = 0, lightening
+          // toward white with heat. Never darker than the cursor.
+          const tinted = hsvToRgb([baseHsv[0] + u * HOT_FLAT_HUE_SPAN * 0.5, baseHsv[1], baseHsv[2]]);
+          const k = u * HOT_FLAT_LIGHTEN;
+          this._hotPalette.push([
+            Math.round(tinted[0] + (255 - tinted[0]) * k),
+            Math.round(tinted[1] + (255 - tinted[1]) * k),
+            Math.round(tinted[2] + (255 - tinted[2]) * k),
+          ]);
         } else {
           this._hotPalette.push(hexToRgbTuple(this.hotFireColor(u, base)));
         }
@@ -9606,62 +10838,116 @@ module.exports = class CursorSmithPlugin extends Plugin {
     }
     const palette = this._hotPalette;
 
-    const dotSize = Math.max(1, Math.round(px * HOT_DOT_SCALE));
-
+    // ---- Advance and paint -----------------------------------------------------------
+    // Oldest first (the array is in spawn order), so a fresh bright chunk
+    // paints over the fading ones beneath it. A chunk is ONE fill: its
+    // shape's squares are put into a single path and filled once with one
+    // colour, so nothing inside a chunk is shaded square by square - that
+    // per-square shading was the grid. Chunks of the same colour that touch
+    // merge seamlessly; different shades meet at an edge, which is a chunk.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const grow = (x0, y0, w, h) => {
+      if (x0 < minX) minX = x0;
+      if (y0 < minY) minY = y0;
+      if (x0 + w > maxX) maxX = x0 + w;
+      if (y0 + h > maxY) maxY = y0 + h;
+    };
+    const shapeN = HOT_BLOCK_SHAPES.length;
     ctx.save();
-    for (const c of cells.values()) {
-      const frac = Math.max(0, Math.min(1, c.life / maxLife));
+    this.flameEmbers = this.flameEmbers.filter((p) => {
+      p.life -= dtMs;
+      if (p.life <= 0) return false;
 
-      // Brightness is normalised WITHIN the square's own size stage, not across
-      // the whole lifetime. Measured across the lifetime, a dot is doubly
-      // penalised - it is small AND, by definition, near the end of its life -
-      // so it lands at a few percent alpha and effectively disappears. Scaling
-      // each stage over its own span means a fresh dot is a proper dot that
-      // then fades, and the size tiers stay a deliberate hierarchy rather than
-      // an accident of where the thresholds fell.
-      let shade;
-      if (c.stage === 2) shade = (frac - HOT_STAGE_BLOCK) / (1 - HOT_STAGE_BLOCK);
-      else if (c.stage === 1) shade = (frac - HOT_STAGE_PIXEL) / (HOT_STAGE_BLOCK - HOT_STAGE_PIXEL);
-      else shade = frac / HOT_STAGE_PIXEL;
-      shade = Math.max(0, Math.min(1, shade));
-      const level = Math.round(shade * FLAME_LEVELS);
-      if (level < 1) continue;
+      const pcw = p.cw || 8;
+      const lift = p.lift || 1;
+      // Buoyancy scaled by Flame Height, plus per-frame turbulence. Damping
+      // is strong, so what matters is the terminal velocity this implies.
+      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5)) * pcw * dt) * damp;
+      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5) * pcw * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
 
-      const temp = c.lw > 0 ? c.tw / c.lw : 0;
-      const [r, g, b] = palette[Math.round(Math.max(0, Math.min(1, temp)) * FLAME_LEVELS)];
+      const frac = Math.max(0, Math.min(1, p.life / (p.maxLife || maxLife)));
+      const temp = hotQuant((p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA), HOT_COLOR_LEVELS) * HOT_TEMP_MAX;
+      const [r, g, b] = palette[Math.round(temp * FLAME_LEVELS)];
 
-      // Opacity by how big the thing is. Big fresh blocks are the body of the
-      // fire and read as burning matter, so they carry nearly full ink; lone
-      // pixels sit back a little; spent dots get a fraction, because a generous
-      // alpha on something that small turns it into a bright saturated point -
-      // an LED, not a pixel. Three tiers rather than two, so a block reads as
-      // more solid than a single pixel beside it and not merely bigger.
-      const isDot = c.stage === 0;
-      const lvl = level / FLAME_LEVELS;
-      const alpha = (c.stage === 2 ? 0.72 + 0.28 * lvl
-        : c.stage === 1 ? 0.50 + 0.26 * lvl
-        : 0.20 + 0.22 * lvl) * opacity;
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
-
-      const x0 = c.gx * px;
-      const y0 = c.gy * px;
-      if (isDot) {
-        const off = Math.round((px - dotSize) / 2);
-        ctx.fillRect(x0 + off, y0 + off, dotSize, dotSize);
-      } else {
-        // Whole-pixel lattice already, so no rounding needed - adjacent squares
-        // share an exact edge and runs of them tile seamlessly, with no
-        // antialiased fringes to make this look like sprites.
-        ctx.fillRect(x0, y0, px, px);
+      if (p.spark) {
+        // A spark: a speck at its own position, fading with its life, a
+        // little paler than the chunks so the haze reads as embers.
+        const q = hotQuant(frac, HOT_ALPHA_LEVELS);
+        if (q <= 0) return true;
+        const alpha = (p.fine ? 0.15 + 0.35 * q : 0.2 + 0.5 * q) * opacity;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        const sz = p.fine ? fineSz : speck, off = p.fine ? fineOff : speckOff;
+        const sx = Math.floor(p.x / px) * px + off, sy = Math.floor(p.y / px) * px + off;
+        ctx.fillRect(sx, sy, sz, sz);
+        grow(sx, sy, sz, sz);
+        return true;
       }
-    }
+
+      if (frac <= HOT_STAGE_PIXEL) {
+        // Spent: a dot at the particle's own position.
+        const q = hotQuant(frac / HOT_STAGE_PIXEL, HOT_ALPHA_LEVELS);
+        if (q <= 0) return true;
+        const alpha = (0.15 + 0.25 * q) * opacity;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        const dx0 = Math.floor(p.x / px) * px + speckOff, dy0 = Math.floor(p.y / px) * px + speckOff;
+        ctx.fillRect(dx0, dy0, speck, speck);
+        grow(dx0, dy0, speck, speck);
+        return true;
+      }
+
+      // The chunk: its shape, stepped down the table by how much of its own
+      // life is gone, anchored at the particle's lattice square, growing up
+      // and right, mirrored if `flip`. One path, one fill.
+      const gone = 1 - Math.max(0, Math.min(1, p.life / (p.life0 || p.maxLife || maxLife)));
+      const idx = Math.min(shapeN - 1, (p.shape0 | 0) + Math.floor(gone * (shapeN - (p.shape0 | 0))));
+      const rows = HOT_BLOCK_SHAPES[idx];
+      const h = rows.length;
+      let area = 0;
+      for (const row of rows) for (let i = 0; i < row.length; i++) if (row[i] === "1") area++;
+      const stage = hotShapeStage(area);
+      const q = hotQuant((frac - HOT_STAGE_PIXEL) / (1 - HOT_STAGE_PIXEL), HOT_ALPHA_LEVELS);
+      if (q <= 0) return true;
+      // Three alphas per stage, the big shapes the most solid.
+      const alpha = (stage >= 3 ? 0.70 + 0.25 * q
+        : stage >= 2 ? 0.60 + 0.25 * q
+        : 0.45 + 0.25 * q) * opacity;
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+      const gx = Math.floor(p.x / px);
+      const gy = Math.floor(p.y / px);
+      ctx.beginPath();
+      for (let ri = 0; ri < h; ri++) {
+        const row = rows[ri];
+        const w = row.length;
+        // Runs of squares in a row become one rect each.
+        let i = 0;
+        while (i < w) {
+          if (row[i] !== "1") { i++; continue; }
+          let j = i;
+          while (j < w && row[j] === "1") j++;
+          const c0 = p.flip ? (w - j) : i;
+          const x0 = (gx + c0) * px;
+          const y0 = (gy - (h - 1 - ri)) * px;
+          ctx.rect(x0, y0, (j - i) * px, px);
+          grow(x0, y0, (j - i) * px, px);
+          i = j;
+        }
+      }
+      ctx.fill();
+      return true;
+    });
     ctx.restore();
 
     if (minX <= maxX) {
-      const pad = px * 3;
+      const pad = px * 2;
       this._markDirty(minX - pad, minY - pad, (maxX - minX) + pad * 2, (maxY - minY) + pad * 2);
     }
   }
+
+
+
+
 
   // Age and paint the idle motes.
   //
@@ -9693,7 +10979,8 @@ module.exports = class CursorSmithPlugin extends Plugin {
         // Track the live caret so the swarm follows the cursor around; keep
         // the last anchor when there's no caret this frame (mid-blur, or a
         // mote outliving its caret) rather than collapsing to the origin.
-        const anchor = this.animActive;
+        // A secondary's mote follows its own caret (see owner).
+        const anchor = p.owner ? p.owner.animActive : this.animActive;
         if (anchor) {
           p.ax = anchor.x + (anchor.w || anchor.actualCharWidth || 8) / 2;
           p.ay = anchor.top + anchor.h / 2;
@@ -9967,17 +11254,21 @@ module.exports = class CursorSmithPlugin extends Plugin {
   // fixed at 0,0, so viewport coords ARE canvas coords, the same assumption
   // cmCaretCoords and secondaryCaretCoords make). Returns null when there's
   // nothing to draw.
-  bracketTetherCoords(view) {
+  // With no head this is the primary's tether, at the main selection. A
+  // secondary passes its own head (and whether its range is empty), with its
+  // bundle swapped in so the caches below are its own.
+  bracketTetherCoords(view, head, empty) {
     if (!view || !view.hasFocus) return null;
     try {
       const state = view.state;
       const main = state.selection.main;
+      if (head === undefined) { head = main.head; empty = main.empty; }
       // Only for a collapsed caret: over a selection the line would fight the
       // selection highlight and there's no single "the caret is here" point.
-      if (!main.empty) return null;
+      if (!empty) return null;
 
       const doc = state.doc;
-      const pos = main.head;
+      const pos = head;
       const len = doc.length;
 
       // The scan is the expensive part and depends only on where the caret is
@@ -10518,11 +11809,12 @@ module.exports = class CursorSmithPlugin extends Plugin {
         this.torchRaf = requestAnimationFrame(tick);
         return;
       }
-      // Parked or hidden: a 150ms heartbeat is plenty to notice the effect
-      // being re-enabled, a mode switch, or the pane moving. Blink Sync asks
-      // for a middle cadence instead - fast enough to render the blink's fades
-      // smoothly, slow enough not to be the hot gear.
-      const delay = this._torchGear === "pulse" ? TORCH_PULSE_FRAME_MS : 150;
+      // Parked or hidden: a heartbeat is plenty to notice the effect being
+      // re-enabled, a mode switch, or the pane moving. Blink Sync asks for a
+      // middle cadence instead - fast enough to render the blink's fades
+      // smoothly, slow enough not to be the hot gear. Both from FRAME_CAPS.
+      const caps = this._frameCaps();
+      const delay = this._torchGear === "pulse" ? caps.torchPulseMs : caps.torchIdleMs;
       this._torchIdleT = window.setTimeout(() => {
         this._torchIdleT = 0;
         if (this.torchEngineActive) this.torchRaf = requestAnimationFrame(tick);
@@ -10601,7 +11893,11 @@ module.exports = class CursorSmithPlugin extends Plugin {
               const next = stepped <= 2 ? 1 : stepped;
               if (next !== this._lastTorchRadius) {
                 this._lastTorchRadius = next;
-                this.overlay.style.setProperty("--torch-radius", next + "px");
+                const box = this._overlayBox;
+                if (box) {
+                  this._torchPaintDarkness([{ x: this.x - box.left, y: this.y - box.top }], next,
+                    this.settings.overlayDarkness, box.width, box.height);
+                }
                 // Still closing: hold the pulse cadence. Once it lands on 1px
                 // the gear stays "idle" and the loop drops to the heartbeat.
                 if (next > 1) this._torchGear = "pulse";
@@ -10625,7 +11921,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 this.applyOverlayStyle();
               }
 
-              this.updateOverlayTarget();
+              const useMouse = this.updateOverlayTarget();
               const lerp = this.settings.overlaySpeed;
               this.x += (this.tx - this.x) * lerp;
               this.y += (this.ty - this.y) * lerp;
@@ -10638,6 +11934,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 Math.abs(this.tx - this.x) < 0.25 && Math.abs(this.ty - this.y) < 0.25;
               if (!settled) this._torchGear = "hot";
               else { this.x = this.tx; this.y = this.ty; }
+              // The secondaries' lights, eased the same way. `useMouse` is
+              // what updateOverlayTarget returned above.
+              const spots = this.torchSpotlights(useMouse, lerp);
 
               const r = this.getPaneRect(view);
               // Sparing the sidebars means dimming only the editor pane, which
@@ -10692,7 +11991,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
                 // light closes to nothing rather than merely narrowing.
                 const depth = Math.max(0, Math.min(1, this.settings.overlayBlinkDepth ?? 0.25));
                 radius *= 1 - depth * (1 - this.blinkPhase(performance.now()));
-                // Not the hot gear: see TORCH_PULSE_FRAME_MS. Only claimed if
+                // Not the hot gear: see FRAME_CAPS.torchPulseMs. Only claimed if
                 // nothing above already asked for hot - a spotlight still
                 // chasing the caret outranks this.
                 if (this._torchGear === "idle") this._torchGear = "pulse";
@@ -10709,10 +12008,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
               // the exact opposite of the intent. A 1px circle is well-defined
               // and, against a pane-sized dark field, invisible.
               const rKey = Math.max(1, Math.round(radius));
-              if (rKey !== this._lastTorchRadius) {
-                this._lastTorchRadius = rKey;
-                this.overlay.style.setProperty("--torch-radius", rKey + "px");
-              }
+              this._lastTorchRadius = rKey;
 
               // Candle flicker. Driven from this tick so it stays under the
               // frame governor, never from a CSS animation - the reference does
@@ -10744,6 +12040,13 @@ module.exports = class CursorSmithPlugin extends Plugin {
               // not it paints anything.
               const baseI = this.settings.overlayIntensity;
               const glow = this._ensureGlowLayer(!hidden && baseI > 0);
+              // Every light, in the overlay's own coordinates. Both layers
+              // are canvases (TORCH_CANVAS_SCALE) repainted only when a
+              // light moved, the radius changed, or a setting did - the
+              // painters dedupe on a key, so a parked light costs nothing.
+              const local = spots.map((sp) => ({ x: sp.x - left, y: sp.y - top }));
+              this._overlayBox = { top, left, width, height };
+              this._torchPaintDarkness(local, rKey, this.settings.overlayDarkness, width, height);
               if (glow) {
                 if (key !== this._lastGlowRect) {
                   this._lastGlowRect = key;
@@ -10752,41 +12055,17 @@ module.exports = class CursorSmithPlugin extends Plugin {
                   glow.style.width = width + "px";
                   glow.style.height = height + "px";
                 }
-                // Glow Strength scales the layer's opacity; the flicker is just
-                // another multiplier on the same number, so both end up in one
-                // property write. Quantised to 3dp before the dedupe: the raw
-                // value changes every frame while flickering, and without a
-                // quantum this would force a style recalc plus a re-composite
-                // of a blended layer on every single frame. 3dp is finer than
-                // 8-bit alpha can resolve.
-                const gAlpha = Math.max(0, Math.min(1, baseI * fScale)).toFixed(3);
-                // The gradient sizes itself off --torch-radius (at 0.6x, in the
-                // CSS), so the pulse and the spotlight stay locked together
-                // with one value rather than two that can drift.
-                const gSig = rKey + ":" + gAlpha + ":" + this.settings.overlayColor;
-                if (gSig !== this._lastGlow) {
-                  this._lastGlow = gSig;
-                  glow.style.setProperty("--torch-radius", rKey + "px");
+                // Glow Strength and the flicker scale the whole layer's
+                // opacity - a compositor-only change, so the flicker never
+                // repaints the bitmap. Quantised to 2dp: the flicker's swing
+                // at the default depth is 0.15, and 15 steps across it are
+                // not visible, while 3dp wrote nearly every frame.
+                const gAlpha = Math.max(0, Math.min(1, baseI * fScale)).toFixed(2);
+                if (gAlpha !== this._lastGlowAlpha) {
+                  this._lastGlowAlpha = gAlpha;
                   glow.style.setProperty("--torch-glow", gAlpha);
-                  glow.style.setProperty("--torch-warm", hexToRgb(this.settings.overlayColor));
                 }
-                const gPos = (this.x - left).toFixed(1) + "," + (this.y - top).toFixed(1);
-                if (gPos !== this._lastGlowPos) {
-                  this._lastGlowPos = gPos;
-                  glow.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
-                  glow.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
-                }
-              }
-
-              // Dedupe the spotlight position write: setting a CSS custom
-              // property forces a style recalc even when the value hasn't
-              // changed, and this used to run every frame forever with a
-              // parked spotlight.
-              const posKey = (this.x - left).toFixed(1) + "," + (this.y - top).toFixed(1);
-              if (posKey !== this._lastTorchPos) {
-                this._lastTorchPos = posKey;
-                this.overlay.style.setProperty("--torch-x", (this.x - left).toFixed(1) + "px");
-                this.overlay.style.setProperty("--torch-y", (this.y - top).toFixed(1) + "px");
+                this._torchPaintGlow(local, rKey, hexToRgb(this.settings.overlayColor), width, height);
               }
 
               this.overlay.classList.toggle("torch-cursor-hidden", !!hideForModal);
@@ -10888,6 +12167,7 @@ module.exports = class CursorSmithPlugin extends Plugin {
     // the pane's own bottom briefly reaches the window edge). An
     // invisible-but-in-flow status bar is skipped, same as the top clamp.
     let bottomInset = 0;
+    let statusLeft = 0, statusRight = 0;
     const statusBar = doc.querySelector(".status-bar");
     if (statusBar && this._isVisiblyRendered(statusBar)) {
       const sb = statusBar.getBoundingClientRect();
@@ -10896,10 +12176,15 @@ module.exports = class CursorSmithPlugin extends Plugin {
       // mispositioned or stale-rect bar can't pull the clip up over content.
       if (sb.height > 0 && sb.bottom >= win.innerHeight - 1) {
         bottomInset = Math.max(0, win.innerHeight - sb.top);
+        // Its horizontal extent too: a floating status bar is usually a
+        // pill at the bottom right, and the clip has to spare only THAT,
+        // not the whole bottom band (see wrapperClipForStatusBar).
+        statusLeft = sb.left;
+        statusRight = sb.right;
       }
     }
 
-    this._chromeCache = { doc, t: now, top, bottomInset };
+    this._chromeCache = { doc, t: now, top, bottomInset, statusLeft, statusRight };
     return this._chromeCache;
   }
 
@@ -11025,9 +12310,23 @@ module.exports = class CursorSmithPlugin extends Plugin {
 
   getPaneRect(view) {
     if (!view) return null;
+    // Called twice a frame (the clip window and the caret's out-of-view
+    // test); a getBoundingClientRect each time. Cached on the layout
+    // generation and a short TTL, like the caret geometry: the pane does not
+    // move on an inner scroll, and everything that does move it bumps the
+    // generation.
+    const now = performance.now();
+    const pc = this._paneRectCache;
+    if (pc && pc.view === view && pc.gen === (this._layoutGen | 0) && (now - pc.t) < GEOMETRY_TTL_MS) return pc.rect;
     const rootEl = view.dom.closest(".cm-editor") || view.dom.closest(".workspace-leaf");
     if (!rootEl) return null;
     const rect = rootEl.getBoundingClientRect();
+    const out = this._paneRectFrom(rect, rootEl);
+    this._paneRectCache = { view, gen: this._layoutGen | 0, t: now, rect: out };
+    return out;
+  }
+
+  _paneRectFrom(rect, rootEl) {
 
     // Clipping to the pane's own rect assumes the titlebar/status bar take
     // up real space in flow, pushing the pane to stop short of them. Some
@@ -11054,6 +12353,9 @@ module.exports = class CursorSmithPlugin extends Plugin {
     };
   }
 
+  // Sets this.tx/ty, the primary spotlight's target. Returns true when the
+  // torch is following the mouse - in which case there is one light and
+  // the secondaries get none (torchSpotlights).
   updateOverlayTarget() {
     const mode = this.settings.overlayFollowMode;
     const caret = this.caretCoords();
@@ -11075,7 +12377,105 @@ module.exports = class CursorSmithPlugin extends Plugin {
       this.tx = this.lastCaret.x;
       this.ty = (this.lastCaret.top + this.lastCaret.bottom) / 2;
     }
+    return !!useMouse;
   }
+
+  // Every spotlight this frame: the primary's (already eased to this.x/y by
+  // the torch tick) and one per full-effect secondary, each chasing its own
+  // caret at the same easing. Returns [{x, y}] in client coordinates, and
+  // sets this._torchGear hot while any secondary is still en route. With
+  // the torch on the mouse there is one light, so only the primary's.
+  torchSpotlights(useMouse, lerp) {
+    const spots = [{ x: this.x, y: this.y }];
+    const states = this._secondaries;
+    if (useMouse || !states || !states.length) return spots;
+    for (const st of states) {
+      const a = st.animActive;
+      if (!a) { st.torchX = st.torchY = undefined; continue; }
+      const tx = a.x;
+      const ty = a.top + (a.h || 0) / 2;
+      if (st.torchX === undefined || st.torchY === undefined) { st.torchX = tx; st.torchY = ty; }
+      st.torchX += (tx - st.torchX) * lerp;
+      st.torchY += (ty - st.torchY) * lerp;
+      if (Math.abs(tx - st.torchX) < 0.25 && Math.abs(ty - st.torchY) < 0.25) {
+        st.torchX = tx; st.torchY = ty;
+      } else {
+        this._torchGear = "hot";
+      }
+      spots.push({ x: st.torchX, y: st.torchY });
+    }
+    return spots;
+  }
+}
+
+// The torch's two layers, painted. Both used to be DOM elements carrying a
+// CSS radial-gradient positioned by custom properties, which cost a
+// pane-sized gradient raster on every frame a light moved or the radius
+// pulsed - fine on a GPU, the torch's whole cost without one - and could not
+// hold more than one light (a gradient darkens everything outside its OWN
+// hole; two stacked light only their intersection). Both are now canvases at
+// TORCH_CANVAS_SCALE of the pane, painted by these two pure functions.
+//
+// The darkness: a flat fill at the Darkness setting, then one radial
+// gradient per light punched out with destination-out. That composite
+// multiplies the alpha in place - alpha becomes darkness x (1 - source) - so
+// a point inside any hole is clear and the stops below are the stylesheet's
+// old four-stop ramp turned inside out: 0 / 0.52 / 0.91 / 1.0 of the darkness
+// at 0% / 40% / 70% / 100% of the radius. Several lights multiply, which is
+// what `mask-composite: intersect` did before this.
+//
+// The glow: one warm core per light at 0.6x the radius, transparent outside
+// itself, so lights simply add. The layer's opacity carries Glow Strength
+// and the flicker (a custom property, compositor-only).
+//
+// `w`/`h` are the layer's CSS size, `spots` in its own coordinates; the
+// context is expected to carry the TORCH_CANVAS_SCALE transform
+// (torchCanvasContext). Pure so the painting can be tested on a recorder.
+function paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness) {
+  const d = Math.max(0, Math.min(1, darkness));
+  const r = Math.max(1, radiusPx);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = `rgba(0, 0, 0, ${d})`;
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = "destination-out";
+  for (const sp of spots) {
+    const g = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, r);
+    g.addColorStop(0, "rgba(0, 0, 0, 1)");
+    g.addColorStop(0.4, "rgba(0, 0, 0, 0.48)");
+    g.addColorStop(0.7, "rgba(0, 0, 0, 0.09)");
+    g.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(sp.x - r, sp.y - r, r * 2, r * 2);
+  }
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb) {
+  const r = Math.max(1, radiusPx * 0.6);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.clearRect(0, 0, w, h);
+  for (const sp of spots) {
+    const g = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, r);
+    g.addColorStop(0, `rgba(${warmRgb}, 0.4)`);
+    g.addColorStop(0.45, `rgba(${warmRgb}, 0.12)`);
+    g.addColorStop(0.75, `rgba(${warmRgb}, 0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(sp.x - r, sp.y - r, r * 2, r * 2);
+  }
+}
+
+// Size a torch canvas's backing store for a layer of w x h CSS pixels and
+// return its context with the scale transform set. Reassigning width/height
+// blanks the store, so it is only touched when the size changed.
+function torchCanvasContext(el, w, h) {
+  const bw = Math.max(1, Math.ceil(w * TORCH_CANVAS_SCALE));
+  const bh = Math.max(1, Math.ceil(h * TORCH_CANVAS_SCALE));
+  if (el.width !== bw || el.height !== bh) { el.width = bw; el.height = bh; }
+  const ctx = el.getContext("2d");
+  if (!ctx) return null;
+  ctx.setTransform(TORCH_CANVAS_SCALE, 0, 0, TORCH_CANVAS_SCALE, 0, 0);
+  return ctx;
 }
 
 class CursorSmithSettingTab extends PluginSettingTab {
@@ -11156,11 +12556,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
     } catch (e) {
       console.error("[cursor-smith] could not register settings window:", e);
     }
-    // Hold the scroll position across the rebuild. Every redrawing toggle in
-    // this panel calls display(), which empties containerEl and builds it
-    // again - so before this, flipping a toggle two thirds of the way down
-    // threw you back to the top of a very long panel, and the further down the
-    // setting was the worse it got.
+    // Hold the scroll position across the rebuild. The structural controls -
+    // the CUA/Vim switch, preset load/save/import, the Vim tab bar and its two
+    // gating toggles - call display(), which empties containerEl and builds it
+    // again; before this, that threw you back to the top of a very long panel.
+    // The look settings' own gated toggles no longer come through here at
+    // all: they re-render their section in place (see renderLookSettings).
     const scroller = this._scrollHost();
     const scrollTop = scroller ? scroller.scrollTop : 0;
     containerEl.empty();
@@ -11217,6 +12618,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       .setDesc("Hides the cursor while Obsidian isn't the active window.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.hideOnWindowBlur ?? true).onChange(setGlobal("hideOnWindowBlur")));
+
+    new Setting(containerEl)
+      .setName("Low Power Mode")
+      .setDesc("Halves every effect's frame rate. For battery, or if Obsidian feels slower with the plugin on.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.lowPowerMode === true).onChange(setGlobal("lowPowerMode")));
 
     new Setting(containerEl)
       .setName("Respect Reduced Motion")
@@ -11299,14 +12706,22 @@ class CursorSmithSettingTab extends PluginSettingTab {
   // whichever groups someone actually uses - Effects alone now covers 8
   // separate features. Sections default open: collapsibility is the point,
   // not being hidden by default.
+  //
+  // The rows go in a body element of their own under the summary, and
+  // renderFn is handed a `rerender` that empties that body and runs renderFn
+  // over it again. That is how a gated toggle refreshes the rows around it
+  // without display() tearing down the whole panel: the <details> element
+  // itself, its open state and everything outside it are untouched, so the
+  // scroll position and the other sections' DOM stay exactly where they were.
   // -------------------------------------------------------------------------
   renderSection(containerEl, title, renderFn, { open = true } = {}) {
     const details = containerEl.createEl("details", { cls: "cursor-smith-section" });
-    // Remember which sections the user had collapsed. display() rebuilds the
-    // whole panel via containerEl.empty() on ~40 of its toggles, so without
-    // this, collapsing a section to get it out of the way lasted exactly until
-    // the next toggle - which is the same act. Keyed by title rather than by
-    // index so adding a section doesn't shuffle everyone's saved state.
+    // Remember which sections the user had collapsed. display() still rebuilds
+    // the whole panel via containerEl.empty() for the structural controls
+    // (the mode switch, presets, the Vim tab bar), so without this, collapsing
+    // a section to get it out of the way lasted exactly until the next one of
+    // those. Keyed by title rather than by index so adding a section doesn't
+    // shuffle everyone's saved state.
     //
     // Deliberately in memory rather than in settings: it is panel state, not
     // configuration, and it should not travel in a share code or a preset.
@@ -11319,7 +12734,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
     });
     const summary = details.createEl("summary");
     summary.createEl("span", { cls: "cursor-smith-section-title", text: title });
-    renderFn(details);
+    const body = details.createDiv({ cls: "cursor-smith-section-body" });
+    const rerender = () => {
+      body.empty();
+      renderFn(body, rerender);
+    };
+    renderFn(body, rerender);
     return details;
   }
 
@@ -11374,24 +12794,97 @@ class CursorSmithSettingTab extends PluginSettingTab {
   // the only things a caller supplies:
   //
   //   get(key)                    - read the current value for `key`
-  //   set(key)                    - returns an onChange handler: save only
-  //   setAndRedraw(key)           - returns an onChange handler: save +
-  //                                 re-render the settings panel (for changes
-  //                                 that reveal or hide other settings)
-  //   renderCursorStyleSetting(body) - builds the "Cursor Style" dropdown
+  //   set(key)                    - returns an onChange handler: write the
+  //                                 value where it lives and save. Must put
+  //                                 the value in memory synchronously, before
+  //                                 its first await - the re-render below
+  //                                 reads it back straight away.
+  //   renderCursorStyleSetting(body, rerender)
+  //                               - builds the "Cursor Style" dropdown
   //                                 Setting. Kept as a caller-supplied hook
-  //                                 (rather than generic set/setAndRedraw)
-  //                                 because the global panel needs an extra
+  //                                 (rather than a generic set) because the
+  //                                 global panel needs an extra
   //                                 plugin.enable() call after saving that a
-  //                                 Vim mode does not.
-  //   renderTorchToggleSetting(body) - builds the "Torch Spotlight" toggle
+  //                                 Vim mode does not. Call `rerender()`
+  //                                 after the write, never this.display().
+  //   renderTorchToggleSetting(body, rerender)
+  //                               - builds the "Torch Spotlight" toggle
   //                                 Setting. Also a caller-supplied hook: the
   //                                 global panel must start/stop the torch
   //                                 engine immediately on toggle, which has no
   //                                 Vim-mode equivalent (see the comment at
-  //                                 that call site).
+  //                                 that call site). Same `rerender` rule.
+  //
+  // There is no setAndRedraw any more. A toggle that reveals or hides other
+  // rows goes through `redraw(key)` below, which re-renders only the section
+  // the toggle lives in - plus any section that has declared, in its
+  // `rerenderOn` list, that it reads the key from elsewhere. display() is no
+  // longer involved: it empties the whole panel, and doing that for a toggle
+  // two thirds of the way down a very long panel cost a full teardown and
+  // rebuild of every row to change three.
+  //
+  // Returns the gate registry, for the tests: which section each redraw key
+  // lives in, and which sections declared it. The completeness test flips
+  // every key and requires that no section OTHER than those changes its rows,
+  // so a new cross-section read fails the build until it is declared.
   // -------------------------------------------------------------------------
-  renderLookSettings(containerEl, { get, set, setAndRedraw, renderCursorStyleSetting, renderTorchToggleSetting }) {
+  renderLookSettings(containerEl, { get, set, renderCursorStyleSetting, renderTorchToggleSetting }) {
+    // --- Section-local re-render ------------------------------------------
+    // `rerenders` is filled in as the sections below are built, `current` is
+    // the section being built right now, and `redraw(key)` binds to it at
+    // build time - so by the time anything is clicked the registry is
+    // complete and every handler knows its home.
+    const rerenders = new Map();      // section title -> () => void
+    const rerenderOn = new Map();     // key -> Set of section titles that declared it
+    const gates = new Map();          // key -> home section title
+    let current = null;
+
+    const section = (title, opts, renderFn) => {
+      for (const key of opts.rerenderOn || []) {
+        if (!rerenderOn.has(key)) rerenderOn.set(key, new Set());
+        rerenderOn.get(key).add(title);
+      }
+      this.renderSection(containerEl, title, (body, rerender) => {
+        rerenders.set(title, rerender);
+        const prev = current;
+        current = title;
+        try { renderFn(body); } finally { current = prev; }
+      }, { open: opts.open });
+    };
+
+    // Re-render the section `key` lives in and every section that reads it.
+    const rerenderFor = (key, home) => {
+      const targets = new Set([home]);
+      for (const t of rerenderOn.get(key) || []) targets.add(t);
+      for (const t of targets) {
+        const fn = rerenders.get(t);
+        if (fn) fn();
+      }
+    };
+
+    // An onChange handler for a gated control: write through `set`, then
+    // re-render. The re-render runs as soon as the value is in memory rather
+    // than after the save lands on disk - the rows read memory, and the
+    // panel responding a disk write later is what the old full rebuild felt
+    // like. The save's promise is still returned so a failure surfaces.
+    const redraw = (key) => {
+      const home = current;
+      gates.set(key, home);
+      return async (v) => {
+        const saved = set(key)(v);
+        rerenderFor(key, home);
+        await saved;
+      };
+    };
+
+    // For the two caller-built controls: the re-render they call after their
+    // own write, bound to the section they were built in.
+    const afterWrite = (key) => {
+      const home = current;
+      gates.set(key, home);
+      return () => rerenderFor(key, home);
+    };
+
     // Several colour pickers on ONE Setting, so they lay out side by side in
     // that row's control area (Obsidian's .setting-item-control is already a
     // flex row; .cursor-smith-color-row only adds the gap between swatches)
@@ -11416,29 +12909,30 @@ class CursorSmithSettingTab extends PluginSettingTab {
     // slider's default" to drift out of date, and a new slider that forgets
     // the button is visibly the odd one out.
     //
-    // The write goes through setAndRedraw even for the sliders whose own
-    // onChange is the cheaper `set`. A slider's handle position is DOM state
-    // that nothing else in the panel updates, so without the rebuild the value
+    // The write goes through redraw even for the sliders whose own onChange
+    // is the cheaper `set`. A slider's handle position is DOM state that
+    // nothing else in the panel updates, so without a re-render the value
     // would change underneath a handle still sitting where the user left it -
-    // i.e. the button would look broken while working perfectly. The rebuild
-    // also re-runs the gates, which is what the dials that reveal other rows
-    // need (flameTrailGravity's angle, say). This is the same full-panel
-    // rebuild that ~40 toggles here already do, and display() carries scroll
-    // position and collapsed sections across it.
+    // i.e. the button would look broken while working perfectly. The
+    // re-render also re-runs the gates, which is what the dials that reveal
+    // other rows need (flameTrailGravity's angle, say). It is the section's
+    // own re-render, so the rest of the panel does not move.
     //
     // The default is read from DEFAULT_SETTINGS rather than from the
     // `?? fallback` at the call site: those fallbacks are what a *sparse*
     // Vim-mode snapshot displays for a key it has never been given, and the
     // two are not obliged to agree (overlayFlickerAmount's don't). What the
     // button promises is the default, so it reads the defaults.
-    const resetSlider = (key) => (btn) =>
-      btn
+    const resetSlider = (key) => (btn) => {
+      const reset = redraw(key);
+      return btn
         .setIcon("rotate-ccw")
         .setTooltip(`Restore default (${DEFAULT_SETTINGS[key]})`)
-        .onClick(() => setAndRedraw(key)(DEFAULT_SETTINGS[key]));
+        .onClick(() => reset(DEFAULT_SETTINGS[key]));
+    };
 
-    this.renderSection(containerEl, "Appearance", (body) => {
-      renderCursorStyleSetting(body);
+    section("Appearance", {}, (body) => {
+      renderCursorStyleSetting(body, afterWrite("cursorStyle"));
 
       // Everything that applies to exactly one cursor style lives here, in a
       // sub-group hanging directly off the dropdown that selects it, so the
@@ -11493,7 +12987,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         new Setting(g)
           .setName("Hollow")
           .setDesc("Draws only the outline of the box instead of a filled block.")
-          .addToggle((toggle) => toggle.setValue(get("boxHollow")).onChange(setAndRedraw("boxHollow")));
+          .addToggle((toggle) => toggle.setValue(get("boxHollow")).onChange(redraw("boxHollow")));
 
         if (get("boxHollow")) {
           // Nested one level deeper: Outline Width is conditional on Hollow,
@@ -11509,7 +13003,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Gradient")
         .setDesc("Blends several colors instead of one flat color.")
-        .addToggle((toggle) => toggle.setValue(!!get("gradientEnabled")).onChange(setAndRedraw("gradientEnabled")));
+        .addToggle((toggle) => toggle.setValue(!!get("gradientEnabled")).onChange(redraw("gradientEnabled")));
 
       if (get("gradientEnabled")) {
         const g = this.subGroup(body);
@@ -11520,7 +13014,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
             // Dropdown values are strings; store a number so the engine's
             // clamping arithmetic doesn't have to care where the value came
             // from. Redraws the panel to add or remove color pickers.
-            .onChange((v) => setAndRedraw("gradientCount")(Number(v))));
+            .onChange((v) => redraw("gradientCount")(Number(v))));
 
         const count = Math.max(2, Math.min(4, Number(get("gradientCount")) || 2));
         const keys = (prefix) => Array.from({ length: count }, (_, i) => prefix + (i + 1));
@@ -11545,18 +13039,18 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Translucent")
         .setDesc("Blends the cursor into the page instead of painting over it. Overrides Show Letter Inside Cursor.")
-        .addToggle((toggle) => toggle.setValue(!!get("cursorTranslucent")).onChange(setAndRedraw("cursorTranslucent")));
+        .addToggle((toggle) => toggle.setValue(!!get("cursorTranslucent")).onChange(redraw("cursorTranslucent")));
 
       new Setting(body).setName("Rounded Corners")
         .setDesc("Softens the cursor's corners. Line and Underline become fully rounded bars; Box gets a gentler curve.")
         .addToggle((toggle) => toggle.setValue(!!get("cursorRounded")).onChange(set("cursorRounded")));
     });
 
-    this.renderSection(containerEl, "Blinking", (body) => {
+    section("Blinking", {}, (body) => {
       new Setting(body)
         .setName("Blinking")
         .setDesc("Makes the cursor blink.")
-        .addToggle((toggle) => toggle.setValue(get("blinkingEnabled")).onChange(setAndRedraw("blinkingEnabled")));
+        .addToggle((toggle) => toggle.setValue(get("blinkingEnabled")).onChange(redraw("blinkingEnabled")));
 
       if (get("blinkingEnabled")) {
         const g = this.subGroup(body);
@@ -11578,7 +13072,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addSlider((s) => s.setLimits(0, 20, 1).setValue(get("blinkStopAfter") ?? 0).setDynamicTooltip().onChange(set("blinkStopAfter")))
           .addExtraButton(resetSlider("blinkStopAfter"));
         new Setting(g).setName("Breathing").setDesc("The cursor swells and shrinks instead of fading out.")
-          .addToggle((toggle) => toggle.setValue(!!get("blinkBreathing")).onChange(setAndRedraw("blinkBreathing")));
+          .addToggle((toggle) => toggle.setValue(!!get("blinkBreathing")).onChange(redraw("blinkBreathing")));
         if (get("blinkBreathing")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Breath Depth").setDesc("How far the cursor shrinks at the bottom of the breath.")
@@ -11588,11 +13082,11 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
     });
 
-    this.renderSection(containerEl, "Smooth Movement", (body) => {
+    section("Smooth Movement", {}, (body) => {
       new Setting(body)
         .setName("Smooth Movement")
         .setDesc("Makes the cursor glide to its new spot instead of jumping there instantly.")
-        .addToggle((toggle) => toggle.setValue(get("smoothEnabled")).onChange(setAndRedraw("smoothEnabled")));
+        .addToggle((toggle) => toggle.setValue(get("smoothEnabled")).onChange(redraw("smoothEnabled")));
 
       if (get("smoothEnabled")) {
         const g = this.subGroup(body);
@@ -11609,7 +13103,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         // sitting beside it as a live-looking slider that does nothing.
         new Setting(g).setName("Speed Up When Typing Fast")
           .setDesc("Lets the cursor exceed Catch-Up Speed while you type, so it can't fall behind.")
-          .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(setAndRedraw("smoothAdaptive")));
+          .addToggle((toggle) => toggle.setValue(get("smoothAdaptive")).onChange(redraw("smoothAdaptive")));
         if (get("smoothAdaptive")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Max Catch-Up Speed")
@@ -11624,7 +13118,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       }
     });
 
-    this.renderSection(containerEl, "Effects", (body) => {
+    // Effects reads two gates that live in other sections: Gradient decides
+    // whether Pixel Trail's Gradient Colors, Energy Beam's Aurora and Neon's
+    // Gradient Trail are offered, and Blinking decides whether the torch's
+    // Sync With Blink is. Declaring them here is what makes those rows appear
+    // and disappear when the toggle in the OTHER section is flipped.
+    section("Effects", { rerenderOn: ["gradientEnabled", "blinkingEnabled"] }, (body) => {
       // Pop Effects: one group for everything the cursor throws off in
       // response to a keystroke. Rainbow is a modifier across all four, so it
       // sits at the BOTTOM of the group rather than nested under any one of
@@ -11636,12 +13135,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
       // anyone opening Pop Effects met was an option that did nothing yet.
       new Setting(body).setName("Pop Effects")
         .setDesc("Things the cursor throws off as you type — letters, lightning and fireworks.")
-        .addToggle((toggle) => toggle.setValue(!!get("popEffects")).onChange(setAndRedraw("popEffects")));
+        .addToggle((toggle) => toggle.setValue(!!get("popEffects")).onChange(redraw("popEffects")));
       if (get("popEffects")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Popping Letters")
           .setDesc("Each character you type springs out of the cursor and tumbles away as it fades.")
-          .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(setAndRedraw("popLetters")));
+          .addToggle((toggle) => toggle.setValue(get("popLetters")).onChange(redraw("popLetters")));
 
         // Sits next to Popping Letters on purpose: they're the pair that fires
         // per character, one for adding and one for removing. The two below
@@ -11650,14 +13149,14 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc(get("popRainbow")
             ? "Deleting throws a burst outward. Rainbow takes the next color in the sweep, inverted."
             : "Deleting throws a burst outward in inverted colors.")
-          // setAndRedraw, not set: Rainbow at the bottom of this group appears
-          // as soon as any one of the four effects is on, so this row now
-          // controls another row's visibility and has to redraw the panel.
-          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(setAndRedraw("backspaceDisintegrate")));
+          // redraw, not set: Rainbow at the bottom of this group appears as
+          // soon as any one of the four effects is on, so this row now
+          // controls another row's visibility and has to redraw the section.
+          .addToggle((toggle) => toggle.setValue(get("backspaceDisintegrate")).onChange(redraw("backspaceDisintegrate")));
 
         new Setting(g).setName("Thunderstrike")
           .setDesc("Enter calls down a bolt of pixelated lightning onto the new line.")
-          .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(setAndRedraw("thunderstrike")));
+          .addToggle((toggle) => toggle.setValue(!!get("thunderstrike")).onChange(redraw("thunderstrike")));
         if (get("thunderstrike")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Bolt Size")
@@ -11674,7 +13173,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
         new Setting(g).setName("Fireworks")
           .setDesc("Space and Enter send shells climbing out of the cursor to burst above it.")
-          .addToggle((toggle) => toggle.setValue(!!get("fireworks")).onChange(setAndRedraw("fireworks")));
+          .addToggle((toggle) => toggle.setValue(!!get("fireworks")).onChange(redraw("fireworks")));
         if (get("fireworks")) {
           const g2 = this.subGroup(g);
           // The colour source isn't configurable - it follows Rainbow, then
@@ -11706,13 +13205,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
             // Backspace Disintegration, Thunderstrike and Fireworks rows above
             // say about where their colors come from, and those descriptions
             // are built at render time.
-            .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(setAndRedraw("popRainbow")));
+            .addToggle((toggle) => toggle.setValue(get("popRainbow")).onChange(redraw("popRainbow")));
         }
       }
 
       new Setting(body).setName("Pixel Trail")
         .setDesc("Scatters a small puff of colored pixels wherever the cursor has just been.")
-        .addToggle((toggle) => toggle.setValue(get("flameTrail")).onChange(setAndRedraw("flameTrail")));
+        .addToggle((toggle) => toggle.setValue(get("flameTrail")).onChange(redraw("flameTrail")));
       if (get("flameTrail")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Density")
@@ -11739,7 +13238,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         }
         new Setting(g).setName("Gravity")
           .setDesc("A steady pull on the pixels. 0 leaves them drifting sideways.")
-          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("flameTrailGravity") ?? 0).setDynamicTooltip().onChange(setAndRedraw("flameTrailGravity")))
+          .addSlider((s) => s.setLimits(0, 1, 0.05).setValue(get("flameTrailGravity") ?? 0).setDynamicTooltip().onChange(redraw("flameTrailGravity")))
           .addExtraButton(resetSlider("flameTrailGravity"));
         if ((get("flameTrailGravity") ?? 0) > 0) {
           const g2 = this.subGroup(g);
@@ -11752,12 +13251,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Stardust")
         .setDesc("A slow stream of floating pixels that drift up and fade.")
-        .addToggle((toggle) => toggle.setValue(!!get("stardustEnabled")).onChange(setAndRedraw("stardustEnabled")));
+        .addToggle((toggle) => toggle.setValue(!!get("stardustEnabled")).onChange(redraw("stardustEnabled")));
       if (get("stardustEnabled")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Always On")
           .setDesc("Streams continuously instead of waiting for the cursor to settle.")
-          .addToggle((toggle) => toggle.setValue(!!get("stardustAlwaysOn")).onChange(setAndRedraw("stardustAlwaysOn")));
+          .addToggle((toggle) => toggle.setValue(!!get("stardustAlwaysOn")).onChange(redraw("stardustAlwaysOn")));
         // The delay is what Always On overrides, so hide it rather than leave
         // a live-looking slider that no longer does anything.
         if (!get("stardustAlwaysOn")) {
@@ -11773,7 +13272,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
         new Setting(g).setName("Orbit")
           .setDesc("Motes circle the cursor like fireflies instead of drifting up.")
-          .addToggle((toggle) => toggle.setValue(!!get("stardustOrbit")).onChange(setAndRedraw("stardustOrbit")));
+          .addToggle((toggle) => toggle.setValue(!!get("stardustOrbit")).onChange(redraw("stardustOrbit")));
         if (get("stardustOrbit")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Orbit Radius")
@@ -11785,7 +13284,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Bracket Tether")
         .setDesc("Underlines the span between matching brackets or quotes.")
-        .addToggle((toggle) => toggle.setValue(!!get("bracketTether")).onChange(setAndRedraw("bracketTether")));
+        .addToggle((toggle) => toggle.setValue(!!get("bracketTether")).onChange(redraw("bracketTether")));
       if (get("bracketTether")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Strength")
@@ -11796,7 +13295,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Motion Smear")
         .setDesc("The cursor stretches as it moves and snaps back when it arrives.")
-        .addToggle((toggle) => toggle.setValue(get("smear")).onChange(setAndRedraw("smear")));
+        .addToggle((toggle) => toggle.setValue(get("smear")).onChange(redraw("smear")));
       if (get("smear")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Stiffness")
@@ -11813,7 +13312,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addExtraButton(resetSlider("smearDamping"));
         new Setting(g).setName("Tapered Trail")
           .setDesc("Narrows the smear to a point behind the cursor, like a comet tail.")
-          .addToggle((toggle) => toggle.setValue(!!get("smearTaper")).onChange(setAndRedraw("smearTaper")));
+          .addToggle((toggle) => toggle.setValue(!!get("smearTaper")).onChange(redraw("smearTaper")));
         if (get("smearTaper")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Taper Amount")
@@ -11827,7 +13326,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         .setDesc(get("gradientEnabled")
           ? "Scrolls your gradient along the cursor, with a brightness pulse riding over it."
           : "Runs a shimmering pulse of light along the cursor.")
-        .addToggle((toggle) => toggle.setValue(get("energyEffect")).onChange(setAndRedraw("energyEffect")));
+        .addToggle((toggle) => toggle.setValue(get("energyEffect")).onChange(redraw("energyEffect")));
       if (get("energyEffect")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Beam Speed")
@@ -11839,7 +13338,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         if (get("gradientEnabled")) {
           new Setting(g).setName("Aurora")
             .setDesc("Swirls your gradient colors instead of scrolling them past.")
-            .addToggle((toggle) => toggle.setValue(!!get("energyAurora")).onChange(setAndRedraw("energyAurora")));
+            .addToggle((toggle) => toggle.setValue(!!get("energyAurora")).onChange(redraw("energyAurora")));
           if (get("energyAurora")) {
             const g2 = this.subGroup(g);
             new Setting(g2).setName("Waviness")
@@ -11852,7 +13351,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("CRT Effect")
         .setDesc("Old-monitor phosphor look: the cursor leaves fading ghosts behind it.")
-        .addToggle((toggle) => toggle.setValue(get("crtEffect")).onChange(setAndRedraw("crtEffect")));
+        .addToggle((toggle) => toggle.setValue(get("crtEffect")).onChange(redraw("crtEffect")));
       if (get("crtEffect")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Trail Length")
@@ -11867,10 +13366,10 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc(get("speedDemon") && !get("speedDemonNoCursorHeat")
             ? "Soft halo around the cursor, in its own color. Speed Demon is on, so the halo swells as the cursor heats up and settles back as it cools."
             : "Soft halo around the cursor, in its own color.")
-          .addToggle((toggle) => toggle.setValue(get("glow")).onChange(setAndRedraw("glow")));
+          .addToggle((toggle) => toggle.setValue(get("glow")).onChange(redraw("glow")));
         new Setting(g).setName("Neon Trail")
           .setDesc("Renders the ghosts as a glowing neon tube instead of fading boxes.")
-          .addToggle((toggle) => toggle.setValue(!!get("crtNeon")).onChange(setAndRedraw("crtNeon")));
+          .addToggle((toggle) => toggle.setValue(!!get("crtNeon")).onChange(redraw("crtNeon")));
         if (get("crtNeon")) {
           const g2 = this.subGroup(g);
           if (get("gradientEnabled")) {
@@ -11881,7 +13380,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         }
         new Setting(g).setName("Signal Glitch")
           .setDesc("Long jumps break up like a mistracked video signal.")
-          .addToggle((toggle) => toggle.setValue(!!get("crtGlitch")).onChange(setAndRedraw("crtGlitch")));
+          .addToggle((toggle) => toggle.setValue(!!get("crtGlitch")).onChange(redraw("crtGlitch")));
         if (get("crtGlitch")) {
           const g3 = this.subGroup(g);
           new Setting(g3).setName("Break-Up")
@@ -11901,12 +13400,12 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Speed Demon")
         .setDesc("The cursor heats from grey to white-hot as you type, then cools when you stop.")
-        .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(setAndRedraw("speedDemon")));
+        .addToggle((toggle) => toggle.setValue(get("speedDemon")).onChange(redraw("speedDemon")));
       if (get("speedDemon")) {
         const g = this.subGroup(body);
         new Setting(g).setName("Fire Sparks")
           .setDesc("Throws embers off the cursor once it is hot enough.")
-          .addToggle((toggle) => toggle.setValue(get("speedDemonSparks")).onChange(setAndRedraw("speedDemonSparks")));
+          .addToggle((toggle) => toggle.setValue(get("speedDemonSparks")).onChange(redraw("speedDemonSparks")));
         if (get("speedDemonSparks")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Spark Quantity")
@@ -11920,7 +13419,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         }
         new Setting(g).setName("Keep Cursor Color")
           .setDesc("The cursor keeps your color; only the sparks react to speed.")
-          .addToggle((toggle) => toggle.setValue(get("speedDemonNoCursorHeat") ?? false).onChange(setAndRedraw("speedDemonNoCursorHeat")));
+          .addToggle((toggle) => toggle.setValue(get("speedDemonNoCursorHeat") ?? false).onChange(redraw("speedDemonNoCursorHeat")));
         new Setting(g).setName("Sensitivity")
           .setDesc("How fast typing and caret movement heat the cursor up.")
           .addSlider((s) => s.setLimits(0.5, 2, 0.1).setValue(get("speedDemonSensitivity")).setDynamicTooltip().onChange(set("speedDemonSensitivity")))
@@ -11932,7 +13431,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         if (!get("speedDemonNoCursorHeat")) {
           new Setting(g).setName("Custom Gradient")
             .setDesc("Replaces the built-in heat curve with four colors of your own.")
-            .addToggle((toggle) => toggle.setValue(!!get("speedDemonGradient")).onChange(setAndRedraw("speedDemonGradient")));
+            .addToggle((toggle) => toggle.setValue(!!get("speedDemonGradient")).onChange(redraw("speedDemonGradient")));
           if (get("speedDemonGradient")) {
             const g2 = this.subGroup(g);
             // Same one-Setting-per-row layout the Gradient section uses, so the
@@ -11956,7 +13455,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
 
       new Setting(body).setName("Hot-head")
         .setDesc("Sets the text you're working on alight.")
-        .addToggle((toggle) => toggle.setValue(!!get("hotHead")).onChange(setAndRedraw("hotHead")));
+        .addToggle((toggle) => toggle.setValue(!!get("hotHead")).onChange(redraw("hotHead")));
       if (get("hotHead")) {
         const gh = this.subGroup(body);
         new Setting(gh).setName("Fire Quantity")
@@ -11989,7 +13488,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addExtraButton(resetSlider("hotHeadOpacity"));
         new Setting(gh).setName("Use Cursor Color")
           .setDesc("Paints the fire in the cursor's color instead of the heat gradient.")
-          .addToggle((toggle) => toggle.setValue(!!get("hotHeadFlat")).onChange(setAndRedraw("hotHeadFlat")));
+          .addToggle((toggle) => toggle.setValue(!!get("hotHeadFlat")).onChange(redraw("hotHeadFlat")));
         // Nested under Use Cursor Color, and hidden without it, because that
         // is the only mode it can actually do anything in - see
         // hotHeadSpeedHeat's gate in drawHotHead. Also hidden without Speed
@@ -11998,11 +13497,11 @@ class CursorSmithSettingTab extends PluginSettingTab {
           const gf = this.subGroup(gh);
           new Setting(gf).setName("Heat With Speed Demon")
             .setDesc("The fire warms up as you type, following Speed Demon's heat.")
-            .addToggle((toggle) => toggle.setValue(!!get("hotHeadSpeedHeat")).onChange(setAndRedraw("hotHeadSpeedHeat")));
+            .addToggle((toggle) => toggle.setValue(!!get("hotHeadSpeedHeat")).onChange(redraw("hotHeadSpeedHeat")));
         }
       }
 
-      renderTorchToggleSetting(body);
+      renderTorchToggleSetting(body, afterWrite("torchEffect"));
       if (get("torchEffect")) {
         // One group for the whole spotlight, with the two subheadings inside
         // it: Spotlight and Environment are labels within the torch's options,
@@ -12023,7 +13522,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
         if (get("blinkingEnabled")) {
           new Setting(g).setName("Sync With Blink")
             .setDesc("The light closes in as the cursor blinks out and opens back up as it returns.")
-            .addToggle((toggle) => toggle.setValue(!!get("overlayBlinkSync")).onChange(setAndRedraw("overlayBlinkSync")));
+            .addToggle((toggle) => toggle.setValue(!!get("overlayBlinkSync")).onChange(redraw("overlayBlinkSync")));
           if (get("overlayBlinkSync")) {
             const g2 = this.subGroup(g);
             new Setting(g2).setName("Pulse Depth")
@@ -12057,7 +13556,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .setDesc(get("overlayIntensity") > 0
             ? "The light gutters like a candle instead of burning steady."
             : "The light gutters like a candle. Does nothing while Glow Strength is 0.")
-          .addToggle((toggle) => toggle.setValue(!!get("overlayFlicker")).onChange(setAndRedraw("overlayFlicker")));
+          .addToggle((toggle) => toggle.setValue(!!get("overlayFlicker")).onChange(redraw("overlayFlicker")));
         if (get("overlayFlicker")) {
           const g2 = this.subGroup(g);
           new Setting(g2).setName("Flicker Depth")
@@ -12070,12 +13569,13 @@ class CursorSmithSettingTab extends PluginSettingTab {
           .addToggle((toggle) => toggle.setValue(get("overlaySpareSidebars")).onChange(set("overlaySpareSidebars")));
       }
     });
+
+    return { gates, rerenderOn };
   }
 
   renderNormalSection(containerEl) {
     const plugin = this.plugin;
     const set = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); };
-    const setAndRedraw = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); this.display(); };
 
     this.renderSection(containerEl, "Presets", (body) => {
       if (plugin._pendingPresetName === undefined) plugin._pendingPresetName = "";
@@ -12161,8 +13661,7 @@ class CursorSmithSettingTab extends PluginSettingTab {
     this.renderLookSettings(containerEl, {
       get: (key) => plugin.settings[key],
       set,
-      setAndRedraw,
-      renderCursorStyleSetting: (body) => {
+      renderCursorStyleSetting: (body, rerender) => {
         new Setting(body)
           .setName("Cursor Style")
           .setDesc("The shape of the cursor itself.")
@@ -12170,11 +13669,14 @@ class CursorSmithSettingTab extends PluginSettingTab {
             dropdown
               .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
               .setValue(plugin.settings.cursorStyle)
+              // Re-render as soon as the value is in memory, not after the
+              // save lands - the rows read memory, and enable() does too.
               .onChange(async (value) => {
                 plugin.settings.cursorStyle = value;
-                await plugin.saveSettings();
+                const saved = plugin.saveSettings();
                 plugin.enable();
-                this.display();
+                rerender();
+                await saved;
               })
           );
       },
@@ -12183,18 +13685,19 @@ class CursorSmithSettingTab extends PluginSettingTab {
       // having its setting saved - a Vim mode doesn't need this since its
       // torch state is already picked up by the shared engine's per-frame
       // torchPossible() scan across all modes.
-      renderTorchToggleSetting: (body) => {
+      renderTorchToggleSetting: (body, rerender) => {
         new Setting(body)
           .setName("Torch Spotlight")
           .setDesc("Darkens everything except a pool of light around the cursor.")
           .addToggle((toggle) =>
             toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
               plugin.settings.torchEffect = value;
-              await plugin.saveSettings();
+              const saved = plugin.saveSettings();
               if (plugin.settings.enabled) {
                 value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
               }
-              this.display();
+              rerender();
+              await saved;
             })
           );
       },
@@ -12448,25 +13951,26 @@ class CursorSmithSettingTab extends PluginSettingTab {
     const plugin = this.plugin;
     const after = onEdit || (() => {});
     const set = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); };
-    const setR = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); this.display(); };
+    // Write, then re-render the section - the same shape renderLookSettings
+    // gives its own gated toggles.
+    const setR = (key, rerender) => async (v) => { const saved = set(key)(v); rerender(); await saved; };
 
     this.renderLookSettings(containerEl, {
       get: (key) => target[key],
       set,
-      setAndRedraw: setR,
-      renderCursorStyleSetting: (body) => {
+      renderCursorStyleSetting: (body, rerender) => {
         new Setting(body)
           .setName("Cursor Style")
           .setDesc("The shape of the cursor itself.")
           .addDropdown((d) =>
             d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
-              .setValue(target.cursorStyle).onChange(setR("cursorStyle"))
+              .setValue(target.cursorStyle).onChange(setR("cursorStyle", rerender))
           );
       },
-      renderTorchToggleSetting: (body) => {
+      renderTorchToggleSetting: (body, rerender) => {
         new Setting(body).setName("Torch Spotlight")
           .setDesc("Darkens everything except a pool of light around the cursor.")
-          .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect")));
+          .addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect", rerender)));
       },
     });
   }

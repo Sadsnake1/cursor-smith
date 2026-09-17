@@ -180,6 +180,17 @@ body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-dropCursor {
   background-color: transparent;
 }
 
+/* The cursor LAYER carries CodeMirror's blink as a CSS animation (cm-blink,
+   steps(1)). A running main-thread animation has its style recalculated on
+   every rendering frame - including every frame this plugin's loop requests,
+   of which an idle page would otherwise have almost none. With every cursor
+   in the layer hidden above, the animation animates nothing; stopping it took
+   idle style recalcs from ~25/s to 0 (measured 2026-09-17). The same rule is
+   in injectStyles, which is the only stylesheet a popped-out window gets. */
+body.retro-box-cursor-hide-native.retro-box-cursor-hide-native .cm-cursorLayer {
+  animation: none;
+}
+
 /* Belt-and-braces: some CM themes set caret-color directly on .cm-content
    or .cm-line. That used to tie in specificity with the rule above and
    fall back to stylesheet load order (fixed here with !important); doubling

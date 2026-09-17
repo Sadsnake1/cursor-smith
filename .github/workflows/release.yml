@@ -1,0 +1,45 @@
+# Builds the release assets from the tagged commit and attaches them, with
+# GitHub's build attestations. Runs when a release is published; run it by
+# hand (Actions > Release > Run workflow) for a release that already exists.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the assets to (for example 1.5.4)"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The same 1,000-odd assertions the working bundle passes, run on the
+      # built file.
+      - run: npm test
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
+            manifest.json
+      - name: Attach the assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name || inputs.tag }}" main.js styles.css manifest.json --clobber

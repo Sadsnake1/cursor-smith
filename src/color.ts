@@ -4,7 +4,7 @@
 
 import { THUNDER_PALETTE } from "./constants";
 
-export function hexToRgba(hex, alpha) {
+export function hexToRgba(hex: string, alpha: number) {
   let h = (hex || "#39ff14").replace("#", "");
   if (h.length === 3) {
     h = h.split("").map((c) => c + c).join("");
@@ -16,7 +16,7 @@ export function hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-export function hexToRgb(hex) {
+export function hexToRgb(hex: string) {
   let h = (hex || "#ff963c").replace("#", "");
   if (h.length === 3) {
     h = h.split("").map((c) => c + c).join("");
@@ -74,7 +74,7 @@ export function thunderColorAt(stops, t) {
   ];
 }
 
-export function hexToRgbTuple(hex) {
+export function hexToRgbTuple(hex: string) {
   let h = (hex || "#ffffff").replace("#", "");
   if (h.length === 3) h = h.split("").map((c) => c + c).join("");
   const int = parseInt(h, 16) || 0;
@@ -87,7 +87,7 @@ export function hexToRgbTuple(hex) {
 // effects (popped letters, Thunderstrike's colour ramp, Fireworks' sparks) and
 // two of them need [r,g,b] to interpolate or nudge before anything is painted,
 // so building a string first and re-parsing it would be pure waste.
-export function hslToRgbTuple(h, s, l) {
+export function hslToRgbTuple(h: number, s, l) {
   const hue = ((h % 360) + 360) % 360;
   const c = (1 - Math.abs(2 * l - 1)) * s;
   const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
@@ -105,7 +105,7 @@ export function hslToRgbTuple(h, s, l) {
     Math.round((b1 + m) * 255),
   ];
 }
-export function hslToRgbString(h, s, l) {
+export function hslToRgbString(h: number, s, l) {
   const [r, g, b] = hslToRgbTuple(h, s, l);
   return `rgb(${r}, ${g}, ${b})`;
 }
@@ -185,7 +185,7 @@ export function rgbTupleToHex([r, g, b]: number[]) {
   return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
 }
 
-export function invertColor(colorStr) {
+export function invertColor(colorStr: string) {
   const nums = (colorStr || "").match(/[\d.]+/g);
   if (!nums || nums.length < 3) return "#000000";
   const [r, g, b] = nums.map(Number);
@@ -199,7 +199,7 @@ export function invertColor(colorStr) {
 // digits worth having in a hex string), which is fine for its one caller but
 // makes it useless as a building block. Returns null rather than a guess when
 // it can't parse, so callers can fall back deliberately.
-export function parseColorTuple(colorStr) {
+export function parseColorTuple(colorStr: string) {
   if (!colorStr || typeof colorStr !== "string") return null;
   const s = colorStr.trim();
   if (s[0] === "#") {

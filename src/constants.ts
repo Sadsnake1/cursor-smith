@@ -168,7 +168,7 @@ export const GLOW_HEAT_GAIN = 1.6;
 // finger rate, so it takes the same kind of discount navigation's autorepeat
 // does (0.45/0.7 of the hand-pressed rate) off its full press weight of 1.
 // Held character keys stay at 0 - that part of the old rule was right.
-export function keystrokeHeatWeight(kind, repeat) {
+export function keystrokeHeatWeight(kind: string, repeat: boolean) {
   if (kind === "nav") return repeat ? 0.45 : 0.7;
   if (kind === "delete") return repeat ? 0.7 : 1;
   return repeat ? 0 : 1;

@@ -1951,6 +1951,105 @@ section("the two stylesheets hide every native cursor, and its blink");
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// The mode tab itself. Its click listener is synchronous (addEventListener
+// does not await; the review's no-misused-promises) and hands off to an
+// async switch: setVimModeEnabled, then a re-display - and nothing at all
+// when the pressed tab is already the current mode.
+{
+  const mkEl = () => {
+    const el = { children: [], listeners: {}, classes: [] };
+    el.createDiv = (o = {}) => { const c = mkEl(); c.cls = o.cls; el.children.push(c); return c; };
+    el.createEl = (t, o = {}) => { const c = mkEl(); c.tag = t; c.text = o.text; c.cls = o.cls; el.children.push(c); return c; };
+    el.addEventListener = (type, fn) => { el.listeners[type] = fn; };
+    return el;
+  };
+  const press = async (uiMode, label) => {
+    const calls = [];
+    const plugin = { settings: { uiMode }, setVimModeEnabled: async (v) => { calls.push(v); } };
+    const tab = Object.create(Plugin.__test.SettingTabPrototype);
+    tab.plugin = plugin;
+    tab.displayed = 0;
+    tab.display = () => { tab.displayed++; };
+    const root = mkEl();
+    tab.renderModeSwitch(root);
+    const wrap = root.children[0];
+    const btn = wrap.children.find((b) => b.text === label);
+    const ret = btn.listeners.click();
+    // The listener returns nothing (no promise for addEventListener to drop);
+    // the switch happens on the microtask queue behind it.
+    await Promise.resolve(); await Promise.resolve();
+    return { calls, displayed: tab.displayed, ret, wrap };
+  };
+  later(async () => {
+    const a = await press("cua", "Vim");
+    ok("the switch is a segmented control with both modes", a.wrap.cls === "cursor-smith-segmented" && a.wrap.children.length === 2, a.wrap);
+    ok("...the current one marked active", a.wrap.children[0].cls === "cursor-smith-segment is-active" && a.wrap.children[1].cls === "cursor-smith-segment");
+    ok("pressing the other tab switches the mode", a.calls.length === 1 && a.calls[0] === true, a.calls);
+    ok("...and re-displays the panel afterwards", a.displayed === 1, a.displayed);
+    ok("...through a listener that returns nothing", a.ret === undefined, a.ret);
+    const b = await press("vim", "Vim");
+    ok("pressing the current tab does nothing", b.calls.length === 0 && b.displayed === 0, b);
+    const c = await press("vim", "CUA / Normal");
+    ok("...and the other direction switches back", c.calls.length === 1 && c.calls[0] === false && c.displayed === 1, c.calls);
+  });
+}
+
+// ---------------------------------------------------------------------------
+section("the plugin review's rules (static styles, settings headings)");
+
+// The Obsidian plugin review (2026-09-17, 1.5.3) failed on two rules: no
+// literal inline styles (obsidianmd/no-static-styles-assignment - a class,
+// or setCssStyles for what is set at runtime) and no HTML headings in the
+// settings tab (Setting.setHeading instead). The canvas wrapper, the torch
+// overlay and the settings panel's notes moved to classes; this pins that
+// the classes exist where the elements are created, and that neither
+// pattern comes back.
+{
+  const fs = require("fs");
+  const path = require("path");
+  const css = fs.readFileSync(path.join(__dirname, "..", "styles.css"), "utf8");
+  const js = fs.readFileSync(path.join(__dirname, "..", "build", "test-bundle.js"), "utf8");
+  const injStart = js.indexOf("  injectStyles(doc) {");
+  const inj = js.slice(injStart, js.indexOf("\n  }\n", injStart));
+  const ruleFor = (sheet, sel) => {
+    const i = sheet.indexOf(sel);
+    if (i < 0) return null;
+    const open = sheet.indexOf("{", i);
+    return sheet.slice(open, sheet.indexOf("}", open));
+  };
+  const has = (rule, decl) => !!rule && rule.replace(/\s+/g, " ").includes(decl);
+  for (const [name, sheet] of [["styles.css", css], ["the injected stylesheet", inj]]) {
+    const w = ruleFor(sheet, ".retro-box-cursor-wrapper {");
+    ok(`${name} lays out the canvas wrapper`,
+       has(w, "position: fixed") && has(w, "overflow: hidden") && has(w, "pointer-events: none") && has(w, "z-index: 10000"), w);
+    ok(`${name} collapses it until the tick sizes it`,
+       has(w, "width: 0") && has(w, "height: 0") && has(w, "top: 0") && has(w, "left: 0"));
+    const c = ruleFor(sheet, ".retro-box-cursor-canvas {");
+    ok(`${name} places the canvas inside the wrapper`, has(c, "position: absolute") && has(c, "pointer-events: none"), c);
+  }
+  const ov = ruleFor(inj, ".torch-cursor-overlay {");
+  ok("the injected overlay rule collapses the overlay too", has(ov, "width: 0") && has(ov, "height: 0") && has(ov, "position: fixed"));
+  for (const cls of ["cursor-smith-vim-status", "cursor-smith-code-input", "cursor-smith-note", "cursor-smith-note-warning", "cursor-smith-version",
+                     "cursor-smith-segmented", "cursor-smith-segment", "cursor-smith-share-code", "cursor-smith-copy-button"]) {
+    ok(`styles.css has .${cls}`, css.includes("." + cls + " {"));
+    ok(`...which main.js uses`, js.includes(cls));
+  }
+  // The review rule, as a regex: a literal string assigned to a style
+  // property, or to cssText. Comments do not count.
+  const code = js.replace(/^\s*\/\/.*$/gm, "");
+  const literal = code.match(/\.style\.\w+\s*=\s*["'`]/g) || [];
+  ok("no literal inline style assignment is left", literal.length === 0, literal);
+  ok("no cssText either", !/\.style\.cssText\s*=/.test(code));
+  // And no HTML headings are built anywhere (the settings tab is the only
+  // place that ever did). Whole-file on purpose: the TypeScript build the
+  // same suite runs against does not keep the class statement as written.
+  const tab = js;
+  ok("the settings tab builds no <h1>-<h6> of its own", !/createEl\("h[1-6]"/.test(tab));
+  ok("...its section headings are Settings", (tab.match(/\.setHeading\(\)/g) || []).length >= 4);
+}
+
+// ---------------------------------------------------------------------------
 section("frame caps, wake sources, geometry cache, report (the #30 tail)");
 
 // Eight small levers after the canvas region (#30): the frame caps behind Low
@@ -2492,6 +2591,10 @@ section("reduced motion: the user can find out why");
         return c;
       },
       createDiv(opts = {}) { return el.createEl("div", opts); },
+      createSpan(opts = {}) { return el.createEl("span", opts); },
+      addClass(...cs) { el.classes.push(...cs); },
+      setCssStyles(styles) { Object.assign(el.style, styles); },
+      style: {},
     };
     return el;
   };
@@ -3031,6 +3134,9 @@ section("form-field mirror: what the caret's position is measured against");
     const appended = [];
     const mirror = {
       style: new Proxy({}, { set: (t, k, v) => { written[k] = v; t[k] = v; return true; } }),
+      // Obsidian's helper, which the mirror uses for the styles it sets
+      // itself (as against the ones it copies); the same recorder sees them.
+      setCssStyles(styles) { for (const k in styles) this.style[k] = styles[k]; },
       setAttribute() {}, remove() {},
       appendChild(node) { appended.push(node); },
       getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 20 }),
@@ -3046,7 +3152,10 @@ section("form-field mirror: what the caret's position is measured against");
       // plaintext because that is what Obsidian's app.css puts on every input.
       textAlign: "right", direction: "ltr", unicodeBidi: "plaintext",
     }, over);
-    const marker = { style: {}, getBoundingClientRect: () => ({ left: 40, top: 0 }) };
+    const marker = {
+      style: {}, setCssStyles(styles) { Object.assign(this.style, styles); },
+      getBoundingClientRect: () => ({ left: 40, top: 0 }),
+    };
     const doc = {
       createElement: (tag) => (tag === "span" ? marker : mirror),
       createTextNode: (t) => ({ t }),
@@ -3248,16 +3357,17 @@ section("isExcalidrawCaretHost: staying off other plugins' carets");
   // around the content, which is exactly what the title-bar case turns on. The
   // default - everything, with the content box holding all of it - keeps the
   // fallback's original meaning, and a test that cares passes its own.
+  // The engine asks the workspace for the active view (getActiveViewOfType,
+  // the API that replaced the deprecated activeLeaf), so that is what the
+  // fake answers.
   const engine = (viewType, inside = () => true, content = inside) => ({
     app: {
       workspace: {
-        activeLeaf: viewType
+        getActiveViewOfType: () => viewType
           ? {
-              view: {
-                getViewType: () => viewType,
-                containerEl: { contains: inside },
-                contentEl: { contains: content },
-              },
+              getViewType: () => viewType,
+              containerEl: { contains: inside },
+              contentEl: { contains: content },
             }
           : null,
       },
@@ -3268,9 +3378,7 @@ section("isExcalidrawCaretHost: staying off other plugins' carets");
   const containerOnly = (inside = () => true) => ({
     app: {
       workspace: {
-        activeLeaf: {
-          view: { getViewType: () => "excalidraw", containerEl: { contains: inside } },
-        },
+        getActiveViewOfType: () => ({ getViewType: () => "excalidraw", containerEl: { contains: inside } }),
       },
     },
   });
@@ -3340,7 +3448,7 @@ section("isExcalidrawCaretHost: staying off other plugins' carets");
 
   // A view with no containerEl at all must fail closed rather than throw.
   const noContainer = {
-    app: { workspace: { activeLeaf: { view: { getViewType: () => "excalidraw" } } } },
+    app: { workspace: { getActiveViewOfType: () => ({ getViewType: () => "excalidraw" }) } },
   };
   ok("a view with no containerEl is safe", call(noContainer, el([])) === false);
 

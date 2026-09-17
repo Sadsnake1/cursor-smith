@@ -16,7 +16,7 @@ import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS } from
 // entirely outside the governor and therefore pinned the display at full
 // refresh rate for as long as the torch was lit, in whichever gear the loops
 // had otherwise chosen. See the notes in injectStyles and styles.css.
-export function torchFlickerScale(nowMs, amount) {
+export function torchFlickerScale(nowMs: number, amount: number) {
   const a = Math.max(0, Math.min(1, amount));
   if (a === 0) return 1;
   const t = nowMs / 1000;
@@ -67,7 +67,7 @@ export function applyReducedMotion(obj) {
   return obj;
 }
 
-export function easeInOutSine(x) {
+export function easeInOutSine(x: number) {
   return -(Math.cos(Math.PI * x) - 1) / 2;
 }
 
@@ -90,13 +90,13 @@ export function glitchNoise(a, b, c) {
 // radio, range, color, button, etc. don't have a caret and must be excluded
 // so clicking an Obsidian settings toggle (which is <input type="checkbox">)
 // doesn't cause the plugin to draw a cursor on top of it.
-export function isTextCaretHost(el) {
+export function isTextCaretHost(el: Element | null) {
   if (!el) return false;
-  if (el.isContentEditable) return true;
+  if ((el as HTMLElement).isContentEditable) return true;
   const tag = el.tagName;
   if (tag === "TEXTAREA") return true;
   if (tag === "INPUT") {
-    const type = (el.type || "text").toLowerCase();
+    const type = ((el as HTMLInputElement).type || "text").toLowerCase();
     return (
       type === "text" || type === "search" || type === "url" || type === "tel" ||
       type === "email" || type === "password" || type === "number"
@@ -105,7 +105,7 @@ export function isTextCaretHost(el) {
   return false;
 }
 
-export function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5, fade = 0.15) {
+export function blinkAlphaAt(nowMs: number, speed, onOffBalance = 0.5, fade = 0.15) {
   if (speed <= 0) return 1;
   const period = 2500 / speed; 
   const phase = (nowMs % period) / period; 

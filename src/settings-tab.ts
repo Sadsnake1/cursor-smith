@@ -38,7 +38,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // Deliberately NOT fixed by flipping the respectReducedMotion default: the
   // preference is real and honouring it by default is correct. The defect was
   // only ever that it was silent.
-  renderReducedMotionNotice(containerEl) {
+  renderReducedMotionNotice(containerEl: HTMLElement) {
     // Fail closed. This runs FIRST in display(), so anything thrown here takes
     // the entire settings panel down with it - the exact failure panel_harness
     // exists to catch, and a far worse outcome than the silent suppression
@@ -54,11 +54,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     }
     if (!reduced) return null;
     const notice = containerEl.createDiv({ cls: "cursor-smith-reduced-notice" });
-    notice.createEl("div", {
+    notice.createDiv({
       cls: "cursor-smith-reduced-notice-title",
       text: "Motion effects are off",
     });
-    notice.createEl("div", {
+    notice.createDiv({
       text: "Your system is set to reduce motion, so Smooth Movement, Motion " +
             "Smear and the other moving effects are suppressed - the toggles " +
             "below still show your own settings. Turn off \"Respect Reduced " +
@@ -100,8 +100,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // Read the version off the manifest rather than hardcoding it here, so a
     // release is a one-line edit in manifest.json instead of two edits that
     // can silently drift apart.
-    containerEl.createEl("h2", {
-      text: `Cursor-Smith ${this.plugin.manifest?.version ?? ""}`.trim(),
+    // The version, as a small note rather than a heading: Obsidian's
+    // guidelines want no plugin-name title in a settings tab and headings
+    // built through Setting.setHeading (the review enforces both).
+    containerEl.createDiv({
+      cls: "cursor-smith-version",
+      text: `v${this.plugin.manifest?.version ?? ""}`.trim(),
     });
 
     this.renderReducedMotionNotice(containerEl);
@@ -184,7 +188,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // a straight assignment because rows are laid out on the next frame, so
     // setting it here would clamp against a container that is still short.
     if (scroller && scrollTop) {
-      requestAnimationFrame(() => { scroller.scrollTop = scrollTop; });
+      window.requestAnimationFrame(() => { scroller.scrollTop = scrollTop; });
     }
   }
 
@@ -194,27 +198,20 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // keybindings); selecting "CUA/Normal" turns them off. This one control is
   // both the panel switch and the feature's on/off switch.
   // -------------------------------------------------------------------------
-  renderModeSwitch(containerEl) {
+  renderModeSwitch(containerEl: HTMLElement) {
     const plugin = this.plugin;
     const current = plugin.settings.uiMode || "cua";
 
-    const wrap = containerEl.createDiv();
-    wrap.style.cssText = [
-      "display:flex", "border:1px solid var(--background-modifier-border)",
-      "border-radius:6px", "overflow:hidden", "margin:0.4em 0 1.4em", "max-width:340px",
-    ].join(";");
+    // A segmented control; the look is styles.css's (.cursor-smith-segmented
+    // / .cursor-smith-segment, is-active for the chosen one).
+    const wrap = containerEl.createDiv({ cls: "cursor-smith-segmented" });
 
     const makeBtn = (label, key) => {
-      const btn = wrap.createEl("button", { text: label });
       const active = current === key;
-      btn.style.cssText = [
-        "flex:1", "padding:7px 10px", "border:none", "cursor:pointer",
-        "font-size:var(--font-ui-small)", "font-weight:" + (active ? "600" : "400"),
-        "background:" + (active ? "var(--interactive-accent)" : "var(--background-secondary)"),
-        "color:" + (active ? "var(--text-on-accent)" : "var(--text-normal)"),
-        "transition:background 0.1s ease",
-      ].join(";");
-      btn.addEventListener("click", async () => {
+      const btn = wrap.createEl("button", {
+        text: label, cls: active ? "cursor-smith-segment is-active" : "cursor-smith-segment",
+      });
+      const switchMode = async () => {
         if ((plugin.settings.uiMode || "cua") === key) return;
         // Deliberately NOT setting uiMode here: setVimModeEnabled writes it
         // (keeping both flags in one place), and it needs the pre-click state
@@ -223,7 +220,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         // drifted apart, silently skipping the restore.
         await plugin.setVimModeEnabled(key === "vim");
         this.display();
-      });
+      };
+      btn.addEventListener("click", () => { void switchMode(); });
       return btn;
     };
 
@@ -264,7 +262,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       this._sectionOpen[title] = details.open;
     });
     const summary = details.createEl("summary");
-    summary.createEl("span", { cls: "cursor-smith-section-title", text: title });
+    summary.createSpan({ cls: "cursor-smith-section-title", text: title });
     const body = details.createDiv({ cls: "cursor-smith-section-body" });
     const rerender = () => {
       body.empty();
@@ -303,15 +301,15 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   //
   // Matches the sub-option styling in Word-Smith (.ws-settings-sub), so the
   // two plugins' settings panels read the same way.
-  subGroup(containerEl) {
+  subGroup(containerEl: HTMLElement) {
     return containerEl.createDiv({ cls: "cursor-smith-sub" });
   }
 
   // Small all-caps label used to split a section into sub-groups (e.g. Torch
   // Spotlight's "Spotlight" vs "Environment" controls) without opening a
   // whole new collapsible section for them.
-  renderSubheading(containerEl, title) {
-    containerEl.createEl("div", { cls: "cursor-smith-subsection-title", text: title });
+  renderSubheading(containerEl: HTMLElement, title: string) {
+    containerEl.createDiv({ cls: "cursor-smith-subsection-title", text: title });
   }
 
   // -------------------------------------------------------------------------
@@ -1104,7 +1102,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     return { gates, rerenderOn };
   }
 
-  renderNormalSection(containerEl) {
+  renderNormalSection(containerEl: HTMLElement) {
     const plugin = this.plugin;
     const set = (key) => async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); };
 
@@ -1136,9 +1134,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         .addText((text) => {
           text.setPlaceholder("Paste code here…");
           text.onChange((v) => { importCode = v.trim(); });
-          text.inputEl.style.fontFamily = "var(--font-monospace)";
-          text.inputEl.style.fontSize = "var(--font-smaller)";
-          text.inputEl.style.width = "14em";
+          text.inputEl.addClass("cursor-smith-code-input");
         })
         .addButton((btn) => {
           btn.setButtonText("Import").onClick(async () => {
@@ -1151,7 +1147,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
               // which mistake was made rather than a flat "invalid".
               btn.setButtonText(importCode.startsWith(SHARE_VERSION_VIM + "|")
                 ? "That's a Vim code" : "Invalid code");
-              setTimeout(() => btn.setButtonText("Import"), 2000);
+              window.setTimeout(() => { btn.setButtonText("Import"); }, 2000);
             }
           });
         });
@@ -1160,10 +1156,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       const names = Object.keys(presets);
 
       if (names.length === 0) {
-        const empty = body.createEl("p", {
+        body.createEl("p", {
+          cls: "cursor-smith-note",
           text: "No saved presets yet. Configure your cursor below, then save it above.",
         });
-        empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
       } else {
         for (const name of names) {
           this.renderPresetRow(body, name, presets[name], {
@@ -1248,32 +1244,14 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     if (code === undefined) code = presetToCode(name, snap);
     const setting = new Setting(containerEl).setName(name);
 
-    const codeEl = setting.controlEl.createEl("code", { text: code });
-    codeEl.style.cssText = [
-      "font-size:10px", "letter-spacing:0.01em",
-      "color:var(--text-muted)", "background:var(--background-secondary)",
-      "border:1px solid var(--background-modifier-border)",
-      "border-radius:3px", "padding:1px 6px",
-      "max-width:10em", "overflow:hidden",
-      "text-overflow:ellipsis", "white-space:nowrap",
-      "display:inline-block", "vertical-align:middle",
-      "cursor:pointer", "user-select:all",
-      "margin-right:4px",
-    ].join(";");
+    const codeEl = setting.controlEl.createEl("code", { text: code, cls: "cursor-smith-share-code" });
     codeEl.title = code;
 
-    const copyBtn = setting.controlEl.createEl("button", { text: "Copy" });
-    copyBtn.style.cssText = [
-      "font-size:10px", "padding:2px 8px", "margin-right:6px",
-      "border-radius:3px", "cursor:pointer",
-      "border:1px solid var(--background-modifier-border)",
-      "background:var(--background-secondary)",
-      "color:var(--text-muted)",
-    ].join(";");
+    const copyBtn = setting.controlEl.createEl("button", { text: "Copy", cls: "cursor-smith-copy-button" });
     copyBtn.addEventListener("click", () => {
-      navigator.clipboard.writeText(code).then(() => {
+      void navigator.clipboard.writeText(code).then(() => {
         copyBtn.textContent = "Copied!";
-        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+        window.setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
       });
     });
 
@@ -1288,10 +1266,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // -------------------------------------------------------------------------
   // Vim Mode settings section — shown in full when the switch is on "Vim".
   // -------------------------------------------------------------------------
-  renderVimSection(containerEl) {
+  renderVimSection(containerEl: HTMLElement) {
     const plugin = this.plugin;
 
-    containerEl.createEl("h3", { text: "⌨ Vim Cursors" });
+    new Setting(containerEl).setName("⌨ Vim cursors").setHeading();
 
     new Setting(containerEl)
       .setName("Control Obsidian's Vim key bindings")
@@ -1337,11 +1315,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           ? "⚠ Obsidian's Vim key bindings look off right now. They should switch on automatically — reopen the editor if the mode cursors don't appear."
           : "⚠ Obsidian's Vim key bindings are off, so mode cursors won't appear. Enable them in Settings → Editor → Vim key bindings, or turn on \"Control Obsidian's Vim key bindings\" above.",
       });
-      warn.style.cssText = "font-size:var(--font-smaller);color:var(--text-warning, var(--text-muted));margin:0.2em 0 1em";
+      warn.addClass("cursor-smith-note", "cursor-smith-note-warning");
     }
 
     // --- Vim presets, styled exactly like the normal preset list ---
-    containerEl.createEl("h3", { text: "Vim Presets" });
+    new Setting(containerEl).setName("Vim presets").setHeading();
 
     if (plugin._pendingVimPresetName === undefined) plugin._pendingVimPresetName = "";
     new Setting(containerEl)
@@ -1370,9 +1348,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       .addText((text) => {
         text.setPlaceholder("Paste code here…");
         text.onChange((v) => { importVimCode = v.trim(); });
-        text.inputEl.style.fontFamily = "var(--font-monospace)";
-        text.inputEl.style.fontSize = "var(--font-smaller)";
-        text.inputEl.style.width = "14em";
+        text.inputEl.addClass("cursor-smith-code-input");
       })
       .addButton((btn) => {
         btn.setButtonText("Import").onClick(async () => {
@@ -1383,7 +1359,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           } else {
             btn.setButtonText(importVimCode.startsWith(SHARE_VERSION + "|")
               ? "That's a regular code" : "Invalid code");
-            setTimeout(() => btn.setButtonText("Import"), 2000);
+            window.setTimeout(() => { btn.setButtonText("Import"); }, 2000);
           }
         });
       });
@@ -1392,10 +1368,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const names = Object.keys(presets);
 
     if (names.length === 0) {
-      const empty = containerEl.createEl("p", {
+      containerEl.createEl("p", {
+        cls: "cursor-smith-note",
         text: "No saved Vim presets yet. Configure each mode below, then save it above.",
       });
-      empty.style.cssText = "font-size:var(--font-smaller);color:var(--text-muted);margin:0.4em 0 1em";
     } else {
       for (const name of names) {
         const setting = this.renderPresetRow(containerEl, name, presets[name], {
@@ -1418,7 +1394,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     }
 
     // --- Per-mode editor: pick one mode, then edit its FULL cursor config ---
-    containerEl.createEl("h3", { text: "Per-Mode Cursors" });
+    new Setting(containerEl).setName("Per-mode cursors").setHeading();
 
     if (!VIM_MODE_KEYS.includes(plugin._vimEditMode)) plugin._vimEditMode = "normal";
 
@@ -1429,23 +1405,19 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // active tab uses the accent background instead, where a tint would be
     // unreadable.
     const isDarkTheme = containerEl.ownerDocument?.body?.classList?.contains("theme-dark") ?? true;
-    const tabWrap = containerEl.createDiv();
-    tabWrap.style.cssText = [
-      "display:flex", "border:1px solid var(--background-modifier-border)",
-      "border-radius:6px", "overflow:hidden", "margin:0.4em 0 1em", "max-width:520px",
-    ].join(";");
+    const tabWrap = containerEl.createDiv({ cls: "cursor-smith-segmented cursor-smith-segmented-modes" });
     for (const m of VIM_MODE_KEYS) {
       const active = plugin._vimEditMode === m;
       const cfg = plugin.settings.vimModes[m] || {};
       const tint = isDarkTheme ? cfg.colorDark : cfg.colorLight;
-      const btn = tabWrap.createEl("button", { text: VIM_MODE_LABELS[m] });
-      btn.style.cssText = [
-        "flex:1", "padding:7px 4px", "border:none", "cursor:pointer",
-        "font-size:var(--font-ui-small)", "font-weight:" + (active ? "600" : "400"),
-        "background:" + (active ? "var(--interactive-accent)" : "var(--background-secondary)"),
-        "color:" + (active ? "var(--text-on-accent)" : (tint || "var(--text-normal)")),
-        "transition:background 0.1s ease",
-      ].join(";");
+      const btn = tabWrap.createEl("button", {
+        text: VIM_MODE_LABELS[m],
+        cls: active ? "cursor-smith-segment is-active" : "cursor-smith-segment",
+      });
+      // The one thing that is per mode and per theme: the tab takes the
+      // mode's cursor colour (the active tab is on the accent, where a tint
+      // would be unreadable).
+      if (!active && tint) btn.setCssStyles({ color: tint });
       btn.addEventListener("click", () => {
         if (plugin._vimEditMode === m) return;
         plugin._vimEditMode = m;
@@ -1455,8 +1427,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
 
     const mode = plugin._vimEditMode;
     const target = plugin.settings.vimModes[mode];
-    const heading = containerEl.createEl("h4", { text: `${VIM_MODE_LABELS[mode]} mode cursor` });
-    heading.style.marginTop = "0.4em";
+    new Setting(containerEl).setName(`${VIM_MODE_LABELS[mode]} mode cursor`).setHeading();
 
     if (mode === "command") {
       const note = containerEl.createEl("p", {
@@ -1467,8 +1438,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           "Motion effects (smear, smooth movement, CRT trail) are best left off here: these " +
           "are all single-line fields, so they read as jitter rather than movement.",
       });
-      note.style.cssText =
-        "font-size:var(--font-smaller);color:var(--text-muted);margin:0.2em 0 1em";
+      note.addClass("cursor-smith-note");
     }
 
     this.renderModeControls(containerEl, target, () => {
@@ -1478,7 +1448,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
 
   // Renders the FULL set of cursor look/effect controls bound to an arbitrary
   // settings-shaped `target` object (here, one Vim mode's snapshot).
-  renderModeControls(containerEl, target, onEdit) {
+  renderModeControls(containerEl: HTMLElement, target, onEdit) {
     const plugin = this.plugin;
     const after = onEdit || (() => {});
     const set = (key) => async (v) => { target[key] = v; after(); await plugin.saveSettings(); };

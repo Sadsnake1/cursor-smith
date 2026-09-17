@@ -589,7 +589,7 @@ export function fullVimMode(overrides) {
 // people had already saved Vim presets: without the fallback an older preset
 // would expand to the plain global defaults for Command and every preset would
 // end up with an identical, uncustomised command-line cursor.
-export function vimModeSnapshot(modeKey, overrides) {
+export function vimModeSnapshot(modeKey: string, overrides) {
   return fullVimMode(overrides || VIM_MODE_STARTERS[modeKey]);
 }
 

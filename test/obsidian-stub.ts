@@ -2,6 +2,7 @@
 // `Setting` is a mutable binding so the panel tests can swap in a recording
 // stub and put the real one back (renderLookSettings closes over it).
 export class Plugin { constructor(..._args: any[]) {} }
+export class View { constructor(..._args: any[]) {} }
 export class PluginSettingTab { constructor(..._args: any[]) {} }
 export let Setting: any = class {
   constructor(..._args: any[]) {}

@@ -119,7 +119,7 @@ export function presetToCode(name, snap) {
   return [SHARE_VERSION, encodeURIComponent(name || ""), body].join("|");
 }
 
-export function codeToPreset(code) {
+export function codeToPreset(code: string) {
   const trimmed = (code || "").trim();
   // Anything that isn't the versioned format is rejected outright. That
   // includes a Vim code ("2|..."), which is five look snapshots and has no
@@ -180,7 +180,7 @@ export function vimPresetToCode(name, modes) {
 
 // Returns { name, modes } - modes being a sparse map of mode key to look
 // overrides, ready for cloneVimModes - or null if this isn't a Vim code.
-export function codeToVimPreset(code) {
+export function codeToVimPreset(code: string) {
   const trimmed = (code || "").trim();
   if (trimmed.slice(0, 2) !== SHARE_VERSION_VIM + "|") return null;
   try {

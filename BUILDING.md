@@ -30,5 +30,7 @@ npm run build     # main.js
 npm test          # `build:test` then the assertions, against the built bundle
 ```
 
-Types are being tightened incrementally: the settings object and the pure
-helpers are typed, the engine's per-caret working state is not yet.
+Types are being tightened incrementally: the settings object, the caret
+record, the particles, the engine's declared state and parameters named
+by convention are typed (see types.ts); the rest of the per-caret working
+state still goes through an index signature.

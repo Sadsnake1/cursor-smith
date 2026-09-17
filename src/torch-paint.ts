@@ -27,7 +27,7 @@ import { TORCH_CANVAS_SCALE } from "./constants";
 // `w`/`h` are the layer's CSS size, `spots` in its own coordinates; the
 // context is expected to carry the TORCH_CANVAS_SCALE transform
 // (torchCanvasContext). Pure so the painting can be tested on a recorder.
-export function paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness) {
+export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: number, spots, radiusPx: number, darkness: number) {
   const d = Math.max(0, Math.min(1, darkness));
   const r = Math.max(1, radiusPx);
   ctx.globalCompositeOperation = "source-over";
@@ -47,7 +47,7 @@ export function paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness) {
   ctx.globalCompositeOperation = "source-over";
 }
 
-export function paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb) {
+export function paintTorchGlow(ctx: CanvasRenderingContext2D, w: number, h: number, spots, radiusPx: number, warmRgb) {
   const r = Math.max(1, radiusPx * 0.6);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, w, h);
@@ -64,7 +64,7 @@ export function paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb) {
 // Size a torch canvas's backing store for a layer of w x h CSS pixels and
 // return its context with the scale transform set. Reassigning width/height
 // blanks the store, so it is only touched when the size changed.
-export function torchCanvasContext(el, w, h) {
+export function torchCanvasContext(el: HTMLCanvasElement, w: number, h: number) {
   const bw = Math.max(1, Math.ceil(w * TORCH_CANVAS_SCALE));
   const bh = Math.max(1, Math.ceil(h * TORCH_CANVAS_SCALE));
   if (el.width !== bw || el.height !== bh) { el.width = bw; el.height = bh; }

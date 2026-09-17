@@ -18,7 +18,9 @@ function makeEl(tag) {
       return child;
     },
     createDiv(opts = {}) { return el.createEl("div", opts); },
-    addClass(c) { el.classes.push(c); },
+    createSpan(opts = {}) { return el.createEl("span", opts); },
+    addClass(...cs) { el.classes.push(...cs); },
+    setCssStyles(styles) { Object.assign(el.style, styles); },
     empty() { el.children.length = 0; },
   };
   return el;

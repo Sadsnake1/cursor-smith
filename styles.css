@@ -166,24 +166,26 @@
    The categories are Obsidian's own sub-pages; their entries are Obsidian's
    rows. This plugin adds only a Lucide icon, in front of the entry's NAME.
    The icon is written into the description (the one slot of an entry that
-   takes markup); the entry's info block is then laid out as a two-column
-   grid - the icon in the first column, spanning the name and the
-   description, the name and the description's text in the second - so it
-   reads as a leading icon. `display: contents` lifts the description's
-   icon and text into the grid; the text places itself in the one free
-   cell. */
-.setting-item-info:has(> .setting-item-description > .cursor-smith-page-icon) {
+   takes markup) and, once the entry is rendered, moved by the panel's
+   decorate pass (settings-tab.ts, decorateIcons) to the front of the
+   entry's info block, which takes .cursor-smith-iconed: a two-column grid,
+   the icon in the first column spanning the name and the description, the
+   two of them in the second - a leading icon. (This was a parent-matching
+   selector and a contents display before; the plugin review warns on
+   both.) */
+.setting-item-info.cursor-smith-iconed {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 10px;
+  gap: 0 10px;
   align-items: start;
 }
-.setting-item-info:has(> .setting-item-description > .cursor-smith-page-icon) > .setting-item-name {
+.setting-item-info.cursor-smith-iconed > .setting-item-name {
   grid-column: 2;
   grid-row: 1;
 }
-.setting-item-info:has(> .setting-item-description > .cursor-smith-page-icon) > .setting-item-description {
-  display: contents;
+.setting-item-info.cursor-smith-iconed > .setting-item-description {
+  grid-column: 2;
+  grid-row: 2;
 }
 /* On the name's line, not floating between the name and the description:
    the name's line box is about 20px, the icon 16px. */

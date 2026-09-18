@@ -14,25 +14,74 @@
 // predicate in place, as Obsidian does.
 const Plugin = require("./harness");
 
+// Obsidian's createFragment global: a fragment is an element here, with
+// appendText as Obsidian adds it.
+if (typeof globalThis.createFragment === "undefined") {
+  globalThis.createFragment = (cb) => { const f = makeEl("fragment"); if (cb) cb(f); return f; };
+}
+// createDiv, for the Modal stub's title and content elements.
+if (typeof globalThis.createDiv === "undefined") {
+  globalThis.createDiv = (opts) => makeEl("div", opts);
+}
+
 function makeEl(tag) {
   const el = {
-    tag, children: [], style: {}, classes: [], parent: null, listeners: {},
+    tag, children: [], style: {}, classes: [], parent: null, listeners: {}, attrs: {},
     createEl(t, opts = {}) {
       const child = makeEl(t);
       child.text = opts.text;
       child.parent = el;
-      if (opts.cls) child.classes.push(...opts.cls.split(" "));
+      if (opts.cls) child.classes.push(...opts.cls.split(" ").filter(Boolean));
       if (opts.attr) child.attrs = Object.assign({}, opts.attr);
       el.children.push(child);
       return child;
     },
     createDiv(opts = {}) { return el.createEl("div", opts); },
     createSpan(opts = {}) { return el.createEl("span", opts); },
-    addClass(...cs) { el.classes.push(...cs); },
+    addClass(...cs) { for (const c of cs) if (!el.classes.includes(c)) el.classes.push(c); },
     removeClass(...cs) { el.classes = el.classes.filter((c) => !cs.includes(c)); },
+    toggleClass(c, force) { const has = el.classes.includes(c); const want = force === undefined ? !has : !!force; if (want && !has) el.classes.push(c); if (!want && has) el.classes = el.classes.filter((x) => x !== c); },
+    hasClass(c) { return el.classes.includes(c); },
     setCssStyles(styles) { Object.assign(el.style, styles); },
+    setCssProps(props) { Object.assign(el.style, props); },
+    setAttribute(k, v) { el.attrs[k] = v; },
+    getAttribute(k) { return el.attrs[k]; },
+    setText(t) { el.text = t; },
+    getText() { return el.text ?? ""; },
+    focus() { el.focused = true; },
+    get value() { return el._value ?? ""; },
+    set value(v) { el._value = v; },
+    appendText(t) { el.text = (el.text || "") + t; },
     addEventListener(type, fn) { el.listeners[type] = fn; },
-    empty() { el.children.length = 0; },
+    click() { if (el.listeners.click) el.listeners.click({ target: el, stopPropagation() {} }); },
+    prepend(child) { if (child.parent) child.parent.children = child.parent.children.filter((c) => c !== child); child.parent = el; el.children.unshift(child); return child; },
+    appendChild(child) { if (child.parent) child.parent.children = child.parent.children.filter((c) => c !== child); child.parent = el; el.children.push(child); return child; },
+    get lastElementChild() { return el.children[el.children.length - 1] || null; },
+    get parentElement() { return el.parent; },
+    get classList() { return { contains: (c) => el.classes.includes(c), add: (...cs) => el.addClass(...cs), remove: (...cs) => el.removeClass(...cs) }; },
+    // Enough of querySelector for the panel: one class name, or a tag.
+    querySelector(sel) {
+      const cls = sel.startsWith(".") ? sel.slice(1) : null;
+      const walk = (node) => {
+        for (const c of node.children) {
+          if (cls ? c.classes.includes(cls) : c.tag === sel) return c;
+          const found = walk(c); if (found) return found;
+        }
+        return null;
+      };
+      return walk(el);
+    },
+    querySelectorAll(sel) {
+      const cls = sel.startsWith(".") ? sel.slice(1) : null;
+      const out = [];
+      const walk = (node) => { for (const c of node.children) { if (cls ? c.classes.includes(cls) : c.tag === sel) out.push(c); walk(c); } };
+      walk(el);
+      return out;
+    },
+    closest(sel) { const cls = sel.slice(1); let n = el; while (n) { if (n.classes.includes(cls)) return n; n = n.parent; } return null; },
+    empty() { el.children.length = 0; el.text = undefined; },
+    remove() { if (el.parent) el.parent.children = el.parent.children.filter((c) => c !== el); el.parent = null; },
+    contains(node) { let n = node; while (n) { if (n === el) return true; n = n.parent; } return false; },
   };
   return el;
 }
@@ -51,7 +100,7 @@ function control() {
     setCta: () => c, setDestructive: () => { c._destructive = true; return c; },
     setTooltip: (t) => { c._tooltip = t; return c; },
     setIcon: (i) => { c._icon = i; return c; },
-    setDisabled: () => c,
+    setDisabled: (d) => { c._disabled = !!d; return c; },
     // As in Obsidian: the component holds the new value by the time its
     // onChange runs, so a second press sees the first.
     onChange: (fn) => { c._change = (v) => { c._value = v; return fn(v); }; return c; },
@@ -68,11 +117,18 @@ function control() {
 class FakeSetting {
   constructor(def, section, rows) {
     this.settingEl = makeEl("div");
+    const info = this.settingEl.createDiv({ cls: "setting-item-info" });
+    this.nameEl = info.createDiv({ cls: "setting-item-name" });
+    this.descEl = info.createDiv({ cls: "setting-item-description" });
     this.controlEl = this.settingEl.createDiv({ cls: "setting-item-control" });
+    // Obsidian's Setting keeps every component it built; setDisabled loops
+    // read it.
+    this.components = [];
     this.row = {
-      name: def.name ?? "", desc: typeof def.desc === "string" ? def.desc : (def.desc ? "[fragment]" : ""),
-      def, section, controls: [], sliders: [], toggles: [], dropdowns: [], extras: [], buttons: [],
-      settingEl: this.settingEl, controlEl: this.controlEl,
+      name: def.name ?? "", desc: typeof def.desc === "string" ? def.desc : (def.desc ? def.desc.text ?? "[fragment]" : ""),
+      icon: def.desc && def.desc.children ? (def.desc.children.find((c) => c.icon) || {}).icon || null : null,
+      def, section, controls: [], sliders: [], toggles: [], dropdowns: [], extras: [], buttons: [], colors: [],
+      settingEl: this.settingEl, controlEl: this.controlEl, descEl: this.descEl, components: this.components,
     };
     rows.push(this.row);
   }
@@ -80,14 +136,25 @@ class FakeSetting {
   setDesc(d) { this.row.desc = typeof d === "string" ? d : "[fragment]"; return this; }
   setHeading() { return this; }
   setClass() { return this; }
-  addToggle(cb) { const c = control(); this.row.controls.push("toggle"); this.row.toggles.push(c); cb(c); return this; }
-  addSlider(cb) { const c = control(); this.row.controls.push("slider"); this.row.sliders.push(c); cb(c); return this; }
-  addColorPicker(cb) { this.row.controls.push("color"); cb(control()); return this; }
-  addDropdown(cb) { const c = control(); this.row.controls.push("dropdown"); this.row.dropdowns.push(c); cb(c); return this; }
-  addText(cb) { this.row.controls.push("text"); cb(control()); return this; }
-  addTextArea(cb) { this.row.controls.push("textarea"); cb(control()); return this; }
-  addButton(cb) { const c = control(); this.row.controls.push("button"); this.row.buttons.push(c); cb(c); return this; }
-  addExtraButton(cb) { const c = control(); this.row.controls.push("extra"); this.row.extras.push(c); cb(c); return this; }
+  _add(kind, list, cb) {
+    const c = control();
+    this.row.controls.push(kind);
+    if (list) list.push(c);
+    this.components.push(c);
+    // Obsidian appends the component's element to controlEl; a colour
+    // picker's input is what swatchRow moves into its labelled cell.
+    c.el = this.controlEl.createEl(kind === "color" ? "input" : "div", { cls: "setting-" + kind });
+    cb(c);
+    return this;
+  }
+  addToggle(cb) { return this._add("toggle", this.row.toggles, cb); }
+  addSlider(cb) { return this._add("slider", this.row.sliders, cb); }
+  addColorPicker(cb) { return this._add("color", this.row.colors, cb); }
+  addDropdown(cb) { return this._add("dropdown", this.row.dropdowns, cb); }
+  addText(cb) { return this._add("text", null, cb); }
+  addTextArea(cb) { return this._add("textarea", null, cb); }
+  addButton(cb) { return this._add("button", this.row.buttons, cb); }
+  addExtraButton(cb) { return this._add("extra", this.row.extras, cb); }
 }
 
 const isGroup = (item) => item && (item.type === "group" || item.type === "list");
@@ -100,7 +167,9 @@ const isGroup = (item) => item && (item.type === "group" || item.type === "list"
 // answer is recorded as `row.visible`.
 function renderDefinitions(items, tab, rows) {
   for (const item of items) {
-    if (isGroup(item)) {
+    if (item && item.type === "page") {
+      renderPage(item, tab, rows);
+    } else if (isGroup(item)) {
       renderGroup(item, tab, rows);
     } else {
       renderGroup({ type: "group", heading: null, items: [item] }, tab, rows);
@@ -108,11 +177,50 @@ function renderDefinitions(items, tab, rows) {
   }
 }
 
+// Obsidian's sub-page: an entry in the list (recorded on rows.pages with
+// its displayValue and status as evaluated now), and its items rendered
+// as if the page were open, so the tests see every row.
+function renderPage(page, tab, rows) {
+  const evalFn = (v) => (typeof v === "function" ? v() : v);
+  const entry = {
+    name: page.name, desc: typeof page.desc === "string" ? page.desc : (page.desc ? page.desc.text ?? "[fragment]" : ""),
+    icon: page.desc && page.desc.children ? (page.desc.children.find((c) => c.icon) || {}).icon || null : null,
+    displayValue: evalFn(page.displayValue) ?? null, status: evalFn(page.status) ?? null,
+    visible: page.visible === undefined ? true : !!evalFn(page.visible), def: page,
+    refresh() { this.displayValue = evalFn(page.displayValue) ?? null; this.status = evalFn(page.status) ?? null; },
+  };
+  rows.pages = rows.pages || [];
+  rows.pages.push(entry);
+  rows.pageStack = rows.pageStack || [];
+  rows.pageStack.push(page.name);
+  renderDefinitions(page.items || [], tab, rows);
+  rows.pageStack.pop();
+}
+
 function renderGroup(group, tab, rows) {
   const section = group.heading ?? null;
   const names = new Set();
+  // The card's heading, with the extra buttons Obsidian would build on it:
+  // the collapse chevron (and its summary) and the reset. The heading is
+  // an element the buttons can find with closest(), which is how they
+  // reach the card.
+  if (section !== null) {
+    const groupEl = makeEl("div"); groupEl.classes.push("setting-group");
+    const heading = groupEl.createDiv({ cls: "setting-item setting-item-heading" });
+    heading.createDiv({ cls: "setting-item-info" }).createDiv({ cls: "setting-item-name", text: section });
+    const ctl = heading.createDiv({ cls: "setting-item-control" });
+    const buttons = [];
+    for (const build of group.extraButtons || []) {
+      const btn = control();
+      btn.extraSettingsEl = ctl.createDiv({ cls: "clickable-icon extra-setting-button" });
+      build(btn);
+      buttons.push(btn);
+    }
+    rows.groups = rows.groups || {};
+    rows.groups[section] = { el: groupEl, heading, buttons, summaryEl: heading.querySelector(".cursor-smith-section-summary") };
+  }
   for (const def of group.items || []) {
-    if (def.type === "page") continue;
+    if (def.type === "page") { renderPage(def, tab, rows); continue; }
     // Obsidian keys the rows of a group by name and logs an error on a
     // duplicate; here it is a throw, so the test suite cannot miss it.
     if (def.name) {
@@ -121,6 +229,7 @@ function renderGroup(group, tab, rows) {
     }
     const setting = new FakeSetting(def, section, rows);
     const row = setting.row;
+    row.page = rows.pageStack && rows.pageStack.length ? rows.pageStack[rows.pageStack.length - 1] : null;
     row.visible = askVisible(def);
     if (def.control) {
       const ctl = def.control;
@@ -158,6 +267,9 @@ function makePlugin(settings) {
   const plugin = Object.create(Plugin.prototype);
   plugin.settings = merged;
   plugin.manifest = { version: "0.0.0-test" };
+  // The Vim warning row asks Obsidian whether its Vim key bindings are on,
+  // through app.vault.getConfig; answer "off".
+  plugin.app = { vault: { getConfig: () => false } };
   plugin.isDarkTheme = () => true;
   plugin.reducedMotion = () => false;
   plugin.saveSettings = async () => {};
@@ -180,8 +292,11 @@ function makeTab(plugin, rows, build) {
   tab.containerEl = makeEl("div");
   tab.updates = 0;
   tab.refreshes = 0;
+  // The Effects rail shows one effect at a time; the tests want to see every
+  // row, so the pick starts as "all" (a test of the rail picks for itself).
+  tab._effectsPick = "all";
   tab.update = () => { tab.updates++; renderDefinitions(build(tab), tab, rows); };
-  tab.refreshDomState = () => { tab.refreshes++; for (const row of rows) row.visible = askVisible(row.def); };
+  tab.refreshDomState = () => { tab.refreshes++; for (const row of rows) row.visible = askVisible(row.def); tab.runRefreshers(); };
   return tab;
 }
 
@@ -207,6 +322,7 @@ function renderPanel(settings) {
   const plugin = makePlugin(settings);
   const merged = plugin.settings;
   let gates = new Set();
+  let cardKeys = {};
   const tab = makeTab(plugin, rows, (t) => {
     const cards = t.lookDefinitions({
       get: (k) => merged[k],
@@ -215,6 +331,7 @@ function renderPanel(settings) {
       renderTorchToggleSetting: () => {},
     });
     gates = cards.gates;
+    cardKeys = cards.cardKeys;
     return cards;
   });
   tab.update();
@@ -223,6 +340,7 @@ function renderPanel(settings) {
   rows.writes = writes;
   rows.settings = merged;
   rows.gates = gates;
+  rows.cardKeys = cardKeys;
   rows.tab = tab;
   return rows;
 }

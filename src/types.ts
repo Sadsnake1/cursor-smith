@@ -1,7 +1,3 @@
-// Generated from the plugin's working bundle by tools/gen-ts.js - the
-// module split, the imports and the type annotations are the script's; the
-// code and its comments are the bundle's.
-
 import type { EditorView, Rect as CMRect } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
 import type { Setting, SettingDefinitionGroup } from "obsidian";
@@ -47,6 +43,8 @@ export interface PerfCounters {
   t0: number; ticks: number; draws: number; gears: Record<string, number>;
   tickMs: number; caretMs: number; drawMs: number; reanchors: number;
   longTasks: number; longTaskMs: number; rafGaps: Record<string, number>; rafPrev: number; keys: number;
+  // Why each tick was in the gear it was in: the first reason that held.
+  why: Record<string, number>;
 }
 
 // Caret measurement caches, keyed on what invalidates them.
@@ -205,23 +203,20 @@ export interface KeyFlags { enter?: number; del?: number; pop?: number; repeat?:
 export interface FireworkSpark { ang: number; speed: number; size: number; ci: number; tw: number; tr: number }
 export type TrailPointCallback = (p: TrailPoint, alpha: number, age: number) => void;
 
-// What a saved-preset row does when its buttons are pressed, and whether it
-// is the preset in use.
-export interface PresetRowActions {
-  onLoad: () => Promise<void> | void;
-  onEdit: () => Promise<void> | void;
-  onDelete: () => Promise<void> | void;
-  code?: string;
-  active?: boolean;
-}
 // The look rows' options: how deep the row is indented under its parent,
-// whether writing it refreshes the panel (a gate), and when it shows.
-export interface SwatchOptions { depth?: number; when?: () => boolean }
+// whether writing it refreshes the panel (a gate), when it shows, and what
+// it needs from another card - a row with `needs` stays visible but is
+// disabled, with a hint naming the setting, while the predicate is false.
+export interface Needs { when: () => boolean; hint: string }
+export interface SwatchOptions { depth?: number; when?: () => boolean; needs?: Needs }
 export interface RowOptions extends SwatchOptions { gate?: boolean }
 export interface SliderOptions extends RowOptions { fallback?: number }
 export interface DropdownOptions extends SwatchOptions { value?: string; onChange?: (value: string) => unknown }
 // The look cards, carrying the set of gate keys for the tests.
-export type LookCards = SettingDefinitionGroup[] & { gates?: Set<keyof Look> };
+export type LookCards = SettingDefinitionGroup[] & { gates?: Set<keyof Look>; cardKeys?: Record<string, (keyof Look)[]>; summaries?: Record<string, () => string>; effectsOn?: () => RailEffect[] };
+// One effect on the Effects page: its master key, its entry's name,
+// description and Lucide icon.
+export interface RailEffect { key: keyof Look; name: string; icon: string; desc: string }
 
 // A glitch burst resolved to this frame's drawing parameters.
 export interface GlitchState { seed: number; bucket: number; env: number; amp: number; ab: number; strength: number }
@@ -236,6 +231,9 @@ export interface LookSettingsHooks<S extends Look = Look> {
   set: SettingSet<S>;
   renderCursorStyleSetting: (setting: Setting, rerender: () => void) => void;
   renderTorchToggleSetting: (setting: Setting, rerender: () => void) => void;
+  // After a card's reset has written its defaults: what the caller does for
+  // a write of its own (restart the engine, sync the torch, mark the edit).
+  afterReset?: () => void;
 }
 
 // Where a caret is, as caretCoords() measures it: the box, the row it sits

@@ -1,7 +1,3 @@
-// Generated from the plugin's working bundle by tools/gen-ts.js - the
-// module split, the imports and the type annotations are the script's; the
-// code and its comments are the bundle's.
-
 import { DEFAULT_SETTINGS, cloneVimModes, presetWithDefaults } from "./settings";
 import type { CursorSmithSettings, Look } from "./types";
 
@@ -261,30 +257,7 @@ export const DEFAULT_PRESETS = {
     "smearTrailingStiffness": 0.15, "smearDamping": 0.4,
     "smoothEnabled": false, "smoothStopBlinking": true, "smoothness": 0.15,
     "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
-  },
-  // Added 2026-09-17 from a share code the user posted, decoded with
-  // codeToPreset and written out as the sparse delta the code carries: every
-  // key it omits inherits from DEFAULT_SETTINGS through presetWithDefaults,
-  // which is how a share code is meant to be read. A box caret in the
-  // cursor's colour, Hot-head in that colour and heated by Speed Demon, a
-  // tapered smear, smooth movement, no blink.
-  "FireBox": {
-    "colorDark": "#f7e259", "colorLight": "#f3a65e",
-    "gradientDark1": "#d9e4d8", "gradientDark2": "#ffbb00",
-    "gradientLight1": "#f4c066", "gradientLight2": "#eb402d",
-    "overlayDarkness": 0.7, "overlayIntensity": 0.1, "overlayFlicker": false,
-    "caretWidthPx": 3, "popLetters": false, "flameTrail": false,
-    "lineSerifs": true, "speedDemon": true,
-    "hotHead": true, "hotHeadQuantity": 1.6, "hotHeadSpread": 3,
-    "hotHeadTrail": 19, "hotHeadFade": 1180, "hotHeadFlat": true,
-    "hotHeadIdleMs": 500, "hotHeadSpeedHeat": true,
-    "energySpeed": 1.4,
-    "blinkingEnabled": false, "blinkSpeed": 1.5, "blinkOnOffBalance": 0.55,
-    "blinkDelayMs": 1200,
-    "smearStiffness": 0.85, "smearTrailingStiffness": 0.15, "smearTaper": true,
-    "smoothEnabled": true, "smoothness": 0.05, "catchUpSpeed": 0.6,
-    "maxCatchUpSpeed": 0.9, "popEffects": false
-  },
+  }
 };
 
 // Which of the above a brand-new install opens on.

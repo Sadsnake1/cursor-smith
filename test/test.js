@@ -763,7 +763,7 @@ section("Speed Demon: glow scales with heat");
 }
 
 // ---------------------------------------------------------------------------
-section("palette: Toggle CUA/Vim mode");
+section("palette: Toggle Vim mode");
 
 // This command was removed from the palette once, for real reasons, and is
 // back because the chain underneath it has since been hardened - see the note
@@ -775,7 +775,7 @@ section("palette: Toggle CUA/Vim mode");
   // Deferred assertions land at the bottom of the run, after every
   // synchronous section, so they get a header of their own rather than
   // appearing as loose passes under whatever finished last.
-  later(() => section("palette: Toggle CUA/Vim mode (after the await)"));
+  later(() => section("palette: Toggle Vim mode (after the await)"));
 
   const mkPlugin = (settings, over = {}) => {
     const p = Object.create(Plugin.prototype);
@@ -1092,7 +1092,7 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
 // name here means something threw before it, or a gate is wrong.
 {
   const rows = panelRows({});
-  for (const name of ["Pop effects", "Pixel trail", "Speed demon", "CRT effect"]) {
+  for (const name of ["Pop effects", "Pixel trail", "Speed demon", "CRT effects"]) {
     ok(`"${name}" is reachable`, named(rows, name), rows.map(r => r.name).filter(Boolean));
   }
   ok("Text Crawl is gone", !rows.some(r => (r.name || "").includes("Crawl")),
@@ -1104,7 +1104,7 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
 {
   const rows = panelRows({});
   const { sectionOf } = require("./panel_harness");
-  const sections = [...new Set(rows.map(sectionOf))];
+  const sections = [...new Set(rows.map(sectionOf))].filter((s) => s !== null);
   ok("the look settings are four cards", sections.join() === "Appearance,Blinking,Smooth movement,Effects", sections);
   ok("every row has a name or a note",
      rows.every((r) => r.name || r.def.render), rows.filter((r) => !r.name && !r.def.render).map((r) => r.def));
@@ -1442,13 +1442,13 @@ section("settings panel: gates refresh visibility in place");
     ok("CRT's sub-options are built even while it is off", rows.some((r) => r.name === "Trail length"));
     ok("...but hidden", !named(rows, "Trail length"));
     const n = rows.length;
-    const added = flip(rows, "CRT effect");
+    const added = flip(rows, "CRT effects");
     ok("flipping an Effects gate refreshes the panel", rows.tab.refreshes === 1, rows.tab.refreshes);
     ok("...and does not rebuild it", added && added.length === 0 && rows.tab.updates === 0 && rows.length === n,
        { added: added && added.length, updates: rows.tab.updates });
     ok("...with the toggle now on", rows.settings.crtEffect === true);
     ok("...revealing the gate's own sub-options", named(rows, "Trail length") && named(rows, "Signal glitch"));
-    flip(rows, "CRT effect");
+    flip(rows, "CRT effects");
     ok("...and off hides them again", !named(rows, "Trail length") && rows.tab.refreshes === 2);
   }
 
@@ -1465,21 +1465,31 @@ section("settings panel: gates refresh visibility in place");
   {
     // Gradient lives in Appearance; three Effects rows show only with it on.
     const rows = panelRows({ gradientEnabled: false, flameTrail: true, energyEffect: true, crtEffect: true, crtNeon: true });
-    ok("with Gradient off, Effects offers no gradient sub-options",
-       !named(rows, "Gradient colors") && !named(rows, "Aurora") && !named(rows, "Gradient trail"));
+    // Since 1.5.6 a row that needs a setting from ANOTHER card stays visible
+    // and is disabled with a hint, instead of vanishing: hidden, it read as a
+    // missing option and was reported as one.
+    const needs = (name) => { const r = rows.find((x) => x.name === name); return r && r.settingEl.classes.includes("cursor-smith-needs"); };
+    const disabled = (name) => { const r = rows.find((x) => x.name === name); return r && r.components.every((c) => c._disabled === true); };
+    ok("with Gradient off, the Effects rows that need it are shown",
+       named(rows, "Gradient colors") && named(rows, "Aurora") && named(rows, "Gradient trail"));
+    ok("...but disabled, with the hint", needs("Gradient colors") && needs("Aurora") && needs("Gradient trail")
+       && disabled("Gradient colors") && disabled("Aurora") && disabled("Gradient trail"));
+    const hint = rows.find((x) => x.name === "Aurora").descEl.querySelector(".cursor-smith-needs-hint");
+    ok("...naming the setting and its card", hint && /Gradient, in Appearance/.test(hint.text) && hint.classes.includes("is-shown"), hint && hint.text);
     flip(rows, "Gradient");
     ok("flipping Gradient refreshes once", rows.tab.refreshes === 1 && rows.tab.updates === 0, rows.tab);
-    ok("...and the Effects rows it gates appear",
-       named(rows, "Gradient colors") && named(rows, "Aurora") && named(rows, "Gradient trail"),
-       rows.filter((r) => sectionOf(r) === "Effects" && r.visible).map((r) => r.name));
+    ok("...and the rows come alive", !needs("Gradient colors") && !needs("Aurora") && !needs("Gradient trail")
+       && !disabled("Gradient colors") && !disabled("Aurora"));
+    ok("...with the hint gone", !hint.classes.includes("is-shown"));
     ok("...while the flat colour row goes", !named(rows, "Cursor color") && named(rows, "Colors (dark theme)"));
   }
   {
     // Blinking lives in Blinking; the torch's Sync with blink needs it.
     const rows = panelRows({ blinkingEnabled: false, torchEffect: true });
-    ok("with Blinking off, the torch offers no Sync with blink", !named(rows, "Sync with blink"));
+    const sync = rows.find((x) => x.name === "Sync with blink");
+    ok("with Blinking off, the torch's Sync with blink is shown but disabled", sync && sync.visible && sync.settingEl.classes.includes("cursor-smith-needs"));
     flip(rows, "Blinking");
-    ok("...and flipping Blinking makes it appear", named(rows, "Sync with blink") && rows.tab.refreshes === 1);
+    ok("...and flipping Blinking enables it", !sync.settingEl.classes.includes("cursor-smith-needs") && rows.tab.refreshes === 1);
   }
 
   // --- The one structural write rebuilds ------------------------------------
@@ -1579,6 +1589,325 @@ section("settings panel: gates refresh visibility in place");
 }
 
 // ---------------------------------------------------------------------------
+section("settings panel: the rail, the summaries, the resets, the cards");
+
+// The six changes of the 1.5.6 mockup, each asserted on what the harness
+// renders: the Effects rail, the card summaries and resets, the dependency
+// hints (above), the preset cards, the swatch labels, the preview strip.
+{
+  const { renderWholePanel, sectionOf } = require("./panel_harness");
+  const D = T.DEFAULT_SETTINGS;
+  const flip = (rows, name) => { const row = rows.find((r) => r.name === name && r.toggles.length); row.toggles[0]._change(!row.toggles[0]._value); };
+
+  // --- The rail on the Effects page --------------------------------------------
+  // One chip per effect - its icon, a dot for "on" - and the picked effect's
+  // rows under it: one effect on screen at a time, one back to the list.
+  {
+    const rows = panelRows({ popEffects: true, flameTrail: true, crtEffect: false, smear: true });
+    const rail = rows.find((r) => r.settingEl.classes.includes("cursor-smith-rail-row"));
+    ok("the Effects card opens with the rail", !!rail && sectionOf(rail) === "Effects" && rows.filter((r) => sectionOf(r) === "Effects")[0] === rail);
+    const chips = rail.settingEl.querySelectorAll(".cursor-smith-chip");
+    const chip = (name) => chips.find((c) => c.children.some((k) => k.text === name));
+    ok("one chip per effect, plus All", chips.length === 11, chips.length);
+    ok("every effect's chip carries its Lucide icon (Hot-head a flame, Speed demon a gauge, the torch the candle)",
+       chips.slice(0, 10).every((c) => c.querySelector(".cursor-smith-chip-icon") && c.querySelector(".cursor-smith-chip-icon").icon)
+       && chip("Hot-head").querySelector(".cursor-smith-chip-icon").icon === "flame" && chip("Speed demon").querySelector(".cursor-smith-chip-icon").icon === "gauge"
+       && chip("Torch spotlight").querySelector(".cursor-smith-chip-icon").icon === "cursor-smith-candle");
+    ok("the picked chip is the rail's one Tab stop, and arrows move it", chips.filter((c) => c.attrs.tabindex === "0").length === 1 && chips.find((c) => c.attrs.tabindex === "0") === chips.find((c) => c.classes.includes("is-picked")) && (() => { const i = chips.findIndex((c) => c.attrs.tabindex === "0"); rail.settingEl.querySelector(".cursor-smith-rail").listeners.keydown({ key: "ArrowRight", target: chips[i], preventDefault() {} }); return chips[(i + 1) % chips.length].focused === true && chips[(i + 1) % chips.length].attrs.tabindex === "0"; })(), chips.map((c) => c.attrs.tabindex));
+    ok("a chip marks the effects that are on", chip("Pop effects").classes.includes("is-on") && chip("Motion smear").classes.includes("is-on") && !chip("CRT effects").classes.includes("is-on"));
+    ok("the harness sees every effect (its pick is All)", chip("All").classes.includes("is-picked") && named(rows, "Stiffness") && !named(rows, "Trail length"));
+    chip("CRT effects").click();
+    ok("clicking a chip picks it", rows.tab._effectsPick === "crtEffect" && rows.tab.refreshes === 1 && chip("CRT effects").classes.includes("is-picked") && !chip("All").classes.includes("is-picked"));
+    ok("...shows the picked effect's own toggle", named(rows, "CRT effects"));
+    ok("...hides the other effects' rows", !named(rows, "Stiffness") && !named(rows, "Pop effects") && !named(rows, "Pixel density"));
+    ok("...and its sub-options follow its own gate", !named(rows, "Trail length"));
+    flip(rows, "CRT effects");
+    ok("switching the picked effect on reveals its options", named(rows, "Trail length") && named(rows, "Signal glitch"));
+    ok("...and lights its chip", chip("CRT effects").classes.includes("is-on"));
+    const allOff = { popEffects: false, flameTrail: false, stardustEnabled: false, bracketTether: false, smear: false, energyEffect: false, crtEffect: false, speedDemon: false, hotHead: false, torchEffect: false };
+    const fresh = panelRows(Object.assign({}, allOff, { crtEffect: true }));
+    fresh.tab._effectsPick = null;
+    fresh.tab.refreshDomState();
+    ok("with no pick, the first effect that is on is shown", named(fresh, "CRT effects") && named(fresh, "Trail length") && !named(fresh, "Pop effects"));
+    const none = panelRows(allOff);
+    none.tab._effectsPick = null;
+    none.tab.refreshDomState();
+    ok("...and with nothing on, the first effect", named(none, "Pop effects") && !named(none, "Pixel trail"));
+    ok("the reset for all the effects is the page's last row", rows.filter((r) => sectionOf(r) === "Effects").pop().settingEl.classes.includes("cursor-smith-reset-row"));
+    ok("no effect is a page of its own any more", !rows.pages || rows.pages.length === 0);
+  }
+
+  // --- The panel's pages ---------------------------------------------------------------
+  // The categories are Obsidian's sub-pages too - the "Ribbon menu
+  // configuration" kind of entry, on a phone as on a desktop - under a
+  // header of Enable plugin and the mode switch. Each entry says what its
+  // page is set to.
+  {
+    const lookNow = { cursorStyle: "Box", showChar: true, cursorTranslucent: true, blinkingEnabled: true, blinkSpeed: 1.0, blinkBreathing: true, smoothEnabled: false, popEffects: true, flameTrail: true, crtEffect: true, smear: false };
+    const rows = renderWholePanel(Object.assign({}, lookNow, { userPresets: { One: T.pickLook(Object.assign({}, T.DEFAULT_SETTINGS, lookNow)) } }));
+    const top = rows.pages;
+    ok("the pages, in order (no Presets page: the presets are in the header)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects", top.map((p) => p.name));
+    ok("...each with an icon and a line", top.every((p) => p.icon && p.desc.length > 10), top.map((p) => [p.icon, p.desc]));
+    const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
+    ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
+    ok("the five other switches are on the General page", ["Note editor only", "Hide real cursor", "Hide cursor when unfocused", "Low power mode", "Respect reduced motion"].every((n) => rows.find((r) => r.name === n).page === "Behavior"));
+    ok("the look rows are on their pages", rows.find((r) => r.name === "Cursor style").page === "Appearance" && rows.find((r) => r.name === "Blink speed").page === "Blinking" && rows.find((r) => r.name === "Glide amount").page === "Smooth movement" && rows.find((r) => r.name === "Stiffness").page === "Effects");
+    const value = (name) => rows.pages.find((p) => p.name === name).displayValue;
+    ok("Appearance's entry says the style and the extras", value("Appearance") === "Box · translucent · letter inside", value("Appearance"));
+    ok("Blinking's says On, the speed, breathing", value("Blinking") === "On · 1.0× · breathing", value("Blinking"));
+    ok("Smooth movement's says Off", value("Smooth movement") === "Off");
+    ok("Effects' names what is on", value("Effects") === "Pop effects · Pixel trail · CRT effects", value("Effects"));
+    // ...and, once Obsidian has rendered the entry, wears their icons in
+    // the value instead (displayValue is a string; the icons go in after).
+    {
+      const entry = rows.tab.containerEl.createDiv({ cls: "setting-item mod-navigable" });
+      entry.createDiv({ cls: "setting-item-info" }).createDiv({ cls: "setting-item-name", text: "Effects" });
+      const val = entry.createDiv({ cls: "setting-item-control" }).createDiv({ cls: "setting-item-value", text: "Pop effects · Pixel trail · CRT effects" });
+      rows.tab.decorateEffectsValue();
+      const icons = val.querySelectorAll(".cursor-smith-value-icon");
+      ok("the Effects entry's value is one icon per effect that is on, in the rail's order, the names in its title", icons.map((i) => i.icon).join() === "party-popper,wind,circuit-board" && val.attrs.title === "Pop effects, Pixel trail, CRT effects" && val.text === undefined, icons.map((i) => i.icon));
+      const n = icons.length;
+      rows.tab.decorateEffectsValue();
+      ok("...decorating again changes nothing", val.querySelectorAll(".cursor-smith-value-icon").length === n);
+      val.empty(); val.setText("Pop effects · Pixel trail · CRT effects");
+      rows.tab.decorateEffectsValue();
+      ok("...and Obsidian rewriting the text gets the icons back", val.querySelectorAll(".cursor-smith-value-icon").length === n);
+      // With nothing on it writes "Off" once and then leaves the value
+      // alone (a rewrite on every call re-fired the observer forever).
+      const none = renderWholePanel({ popEffects: false, flameTrail: false, crtEffect: false, smear: false, energyEffect: false, speedDemon: false, hotHead: false, stardustEnabled: false, bracketTether: false, torchEffect: false });
+      const entry0 = none.tab.containerEl.createDiv({ cls: "setting-item" });
+      entry0.createDiv({ cls: "setting-item-info" }).createDiv({ cls: "setting-item-name", text: "Effects" });
+      const val0 = entry0.createDiv({ cls: "setting-item-control" }).createDiv({ cls: "setting-item-value", text: "Off" });
+      let writes = 0; const emptyOnce = val0.empty; val0.empty = () => { writes++; emptyOnce(); };
+      none.tab.decorateEffectsValue(); none.tab.decorateEffectsValue(); none.tab.decorateEffectsValue();
+      ok("with nothing on the value is written 'Off' once and then left alone", val0.text === "Off" && writes === 1, writes);
+    }
+    ok("General's has no value", rows.pages.find((p) => p.name === "Behavior").displayValue === null);
+
+    // The presets: a strip of thin cards in the header. One per saved
+    // preset - a crawling-caret demo in its look, the name, a tick on the
+    // one in use, its buttons - and two more, Save and Import.
+    const strip = rows.find((r) => r.name === "Presets");
+    ok("the presets are a strip in the header, after the mode switch", !!strip && sectionOf(strip) === null && strip.page === null && rows.indexOf(strip) > rows.findIndex((r) => r.name === "Mode"));
+    const cards = strip.controlEl.querySelectorAll(".cursor-smith-pcard");
+    const named_ = (n) => cards.find((c) => c.querySelector(".cursor-smith-pcard-name").text === n);
+    ok("one card per preset, then Save and Import", cards.map((c) => c.querySelector(".cursor-smith-pcard-name").text).join() === "One,Save,Import", cards.map((c) => c.querySelector(".cursor-smith-pcard-name").text));
+    // Valid markup: the card is a div; the demo, name and tick are one
+    // button that uses the preset, the three actions its siblings.
+    const useOf = (card) => card.querySelector(".cursor-smith-pcard-use");
+    ok("a card is a div holding a button that uses the preset, pressed while it is the one in use", named_("One").tag === "div" && useOf(named_("One")).tag === "button" && /Use preset One/.test(useOf(named_("One")).attrs["aria-label"]) && useOf(named_("One")).attrs["aria-pressed"] === "true");
+    ok("...the name and the demo inside that button, the actions beside it", !!useOf(named_("One")).querySelector(".cursor-smith-pcard-name") && !!useOf(named_("One")).querySelector(".cursor-smith-pcard-demo") && named_("One").querySelector(".cursor-smith-pcard-actions").parent === named_("One"));
+    ok("...and its two buttons beside it: copy, delete", named_("One").querySelectorAll(".cursor-smith-pcard-action").map((b) => b.icon).join() === "copy,trash");
+    ok("Save and Import are plain buttons", named_("Save").tag === "button" && named_("Import").tag === "button");
+    ok("the Presets row wears the bookmark, as the page entries wear theirs", strip.icon === "bookmark", strip.icon);
+    ok("an effect's head row wears the rail's icon; its sub-rows none", rows.find((r) => r.name === "Hot-head").icon === "flame" && rows.find((r) => r.name === "Motion smear").icon === "paintbrush" && rows.find((r) => r.name === "Stiffness").icon === null, [rows.find((r) => r.name === "Hot-head").icon, rows.find((r) => r.name === "Stiffness").icon]);
+    ok("Save wears a floppy, Import a download arrow", named_("Save").querySelector(".cursor-smith-pcard-more-icon").icon === "save" && named_("Import").querySelector(".cursor-smith-pcard-more-icon").icon === "download");
+    ok("a translucent Box carries no letter copy (the real letter shows through it)", !named_("One").querySelector(".cursor-smith-pcard-caret-text"));
+    ok("...with the caret demo over the preset's own name (still here: no requestAnimationFrame in the harness)", named_("One").querySelector(".cursor-smith-pcard-caret-box") && named_("One").querySelector(".cursor-smith-pcard-text").text === "One" && /translateX\(/.test(named_("One").querySelector(".cursor-smith-pcard-caret").style.transform), named_("One").querySelector(".cursor-smith-pcard-caret").style);
+    const glide = renderWholePanel({ userPresets: { Glide: { cursorStyle: "Line", smoothEnabled: true, blinkingEnabled: true }, Ghosts: { crtEffect: true, trailLength: 4 } } });
+    const cardOf = (n) => glide.find((r) => r.name === "Presets").controlEl.querySelectorAll(".cursor-smith-pcard").find((c) => c.querySelector(".cursor-smith-pcard-name").text === n);
+    ok("...a Line caret carries no letter copy", !cardOf("Glide").querySelector(".cursor-smith-pcard-caret-text") && cardOf("Glide").querySelector(".cursor-smith-pcard-caret-line"));
+    ok("a Box caret carries the name again, clipped inside it, in a color that reads on the box", cardOf("Ghosts").querySelector(".cursor-smith-pcard-caret-text").text === "Ghosts" && /^(#|rgb)/.test(cardOf("Ghosts").querySelector(".cursor-smith-pcard-caret-text").style.color), cardOf("Ghosts").querySelector(".cursor-smith-pcard-caret-text").style);
+    ok("...a CRT preset's demo has its ghosts, as many as its trail length", cardOf("Ghosts").querySelectorAll(".cursor-smith-pcard-ghost").length === 4 && cardOf("Glide").querySelectorAll(".cursor-smith-pcard-ghost").length === 0);
+    // The demo's motion is a pure step, driven by the preset's numbers.
+    {
+      const S = T.demoStep, init = T.demoInitialState;
+      // 10 ms frames, so a 170 ms keystroke lands on a frame exactly.
+      const K = 170, HOLD = 650;
+      const run = (look, n, ms, dt = 10) => { const s = init(0); let now = 0; while (now < ms) { now += dt; S(s, look, n, dt, now); } return s; };
+      const snap = run({ smoothEnabled: false }, 3, K * 2 + 10);
+      ok("a stepping preset types a letter every 170 ms and sits on it", snap.target === 2 && snap.lead === 2 && snap.trail === 2, snap);
+      const mid = init(0); let now = 0; for (let i = 0; i < 17; i++) { now += 16; S(mid, { smoothEnabled: true, catchUpSpeed: 0.5, smoothness: 0.15 }, 3, 16, now); }
+      ok("a smooth preset glides: just after a keystroke the caret is between letters", mid.target === 1 && mid.lead > 0 && mid.lead < 1, mid.lead);
+      const smear = init(0); now = 0; for (let i = 0; i < 17; i++) { now += 16; S(smear, { smear: true, smearStiffness: 0.6, smearTrailingStiffness: 0.4 }, 3, 16, now); }
+      ok("a smearing preset stretches: the trailing edge lags the leading one on a move", smear.lead > smear.trail && smear.trail >= 0, [smear.lead, smear.trail]);
+      const settled = run({ smear: true }, 3, K * 4 + 500);
+      ok("...and snaps back once arrived (in the pause at the end)", settled.phase === "holdEnd" && Math.abs(settled.lead - settled.trail) < 0.05 && Math.abs(settled.lead - settled.target) < 0.05, [settled.lead, settled.trail, settled.phase]);
+      const end = run({}, 3, K * 4 + 10);
+      ok("at the end of the name it pauses", end.target === 3 && end.phase === "holdEnd", end.phase);
+      const back = run({}, 3, K * 4 + HOLD + 20);
+      ok("...then jumps back to the start and pauses again", back.target === 0 && back.lead === 0 && back.phase === "holdStart", back);
+      const crt = run({ crtEffect: true, trailLength: 3, trailFadeMs: 5000 }, 5, K * 5 + 10);
+      ok("CRT leaves a ghost per keystroke, up to the trail length", crt.ghosts.length === 3 && crt.ghosts.every((g) => typeof g.at === "number"), crt.ghosts.length);
+      const hot = run({ speedDemon: true }, 8, K * 8);
+      ok("Speed demon heats up while typing", hot.heat > 0.4, hot.heat);
+      const blink = T.demoBlinkAlpha;
+      const fresh = init(1000);
+      ok("a blinking preset holds the caret lit right after a keystroke when it doesn't blink while typing, and blinks otherwise", blink(fresh, { blinkingEnabled: true, smoothStopBlinking: true, blinkSpeed: 1 }, 1100) === 1 && blink(fresh, { blinkingEnabled: false }, 5000) === 1 && [0, 300, 600, 900, 1200, 1500, 1800].some((dt) => blink(fresh, { blinkingEnabled: true, smoothStopBlinking: false, blinkSpeed: 1 }, 5000 + dt) < 0.5));
+      ok("the card in use plays two passes over its name, then rests one space past it; the others sit there still", T.DEMO_CYCLES === 2 && T.demoIdleAt(3) === 4 && String(cardOf("Glide").querySelector(".cursor-smith-pcard-caret").style.transform) === "translateX(48.00px)" && String(named_("One").querySelector(".cursor-smith-pcard-caret").style.transform) === "translateX(0.00px)" && /demos[.]add[(][^;]*isActive[)]/.test(require("fs").readFileSync(require("path").join(__dirname, "..", "src", "settings-tab.ts"), "utf8")), [cardOf("Glide").querySelector(".cursor-smith-pcard-caret").style.transform, named_("One").querySelector(".cursor-smith-pcard-caret").style.transform]);
+      const frozen = init(0); frozen.target = 4; for (let k = 0; k < 40; k++) S(frozen, { smoothEnabled: true }, 3, 10, k * 10, true);
+      ok("a frozen step runs the springs only: it settles on the target and never types", Math.abs(frozen.lead - 4) < 0.01 && frozen.phase === "type" && frozen.target === 4, frozen);
+      // The Appearance page, as the engine reads it.
+      const sh = T.demoShapeOf;
+      const box = sh({ cursorStyle: "Box" }, "#112233", ["#ff0000", "#00ff00"], 8);
+      ok("a flat Box: its color, no gradient, a letter's width, square", box.fill === "#112233" && box.gradient === null && box.thick === 7 && box.radius === 0 && box.hollowWidth === 0 && box.alphaScale === 1, box);
+      const grad = sh({ cursorStyle: "Box", gradientEnabled: true }, "#112233", ["#ff0000", "#00ff00", "#0000ff"], 8);
+      ok("Gradient on: a top-to-bottom CSS gradient through the stops, the first stop as the flat fallback", grad.gradient === "linear-gradient(180deg, #ff0000 0%, #00ff00 50%, #0000ff 100%)" && grad.fill === "#ff0000", grad.gradient);
+      ok("...left to right on an Underline", /^linear-gradient\(90deg/.test(sh({ cursorStyle: "Underline", gradientEnabled: true }, "#112233", ["#ff0000", "#00ff00"], 8).gradient));
+      const hollow = sh({ cursorStyle: "Box", boxHollow: true, boxHollowWidth: 2, showChar: true }, "#112233", [], 8);
+      ok("Hollow: an outline of the setting's width (scaled), no fill", hollow.hollowWidth === 2, hollow.hollowWidth);
+      const line = sh({ cursorStyle: "Line", caretWidthPx: 4, lineSerifs: true, cursorRounded: true }, "#112233", [], 8);
+      ok("a Line: thickness from the setting (scaled), serifs, and a full half-round when rounded", line.thick === 3 && line.serifs === true && line.radius === 1.5, line);
+      const under = sh({ cursorStyle: "Underline", underlineWidthPx: 4 }, "#112233", [], 8);
+      ok("an Underline: its own thickness (scaled), 2px when automatic", under.thick === 3 && sh({ cursorStyle: "Underline" }, "#112233", [], 8).thick === 2, under.thick);
+      const soft = sh({ cursorStyle: "Box", cursorRounded: true, cursorTranslucent: true, cursorOpacity: 0.5 }, "#112233", [], 8);
+      ok("a rounded Box takes the engine's ratio; translucency and opacity multiply into the alpha", soft.radius === 1.75 && Math.abs(soft.alphaScale - 0.475) < 1e-9, soft);
+      const tinted = renderWholePanel({ userPresets: { Tint: { cursorStyle: "Box", glyphColorMode: "tinted", colorDark: "#3182ed" }, Hollow: { cursorStyle: "Box", boxHollow: true }, Serif: { cursorStyle: "Line", lineSerifs: true } } });
+      const cardT = (n) => tinted.find((r) => r.name === "Presets").controlEl.querySelectorAll(".cursor-smith-pcard").find((c) => c.querySelector(".cursor-smith-pcard-name").text === n);
+      ok("the letter inside takes the color mode; a hollow box shows the real letter instead; a serif Line is marked", /rgb|#/.test(cardT("Tint").querySelector(".cursor-smith-pcard-caret-text").style.color) && !cardT("Hollow").querySelector(".cursor-smith-pcard-caret-text") && cardT("Hollow").querySelector(".cursor-smith-pcard-caret").style.border === "2px solid #7f7f7f".replace("#7f7f7f", cardT("Hollow").querySelector(".cursor-smith-pcard-caret").style.border.split("solid ")[1]) && cardT("Serif").querySelector(".cursor-smith-pcard-caret").classes.includes("is-serif"), cardT("Hollow").querySelector(".cursor-smith-pcard-caret").style);
+      ok("heat warms the color through the stops and leaves it alone when cold", T.demoHeatColor("#000000", ["#ff0000", "#00ff00", "#0000ff", "#ffffff"], 0) === "#000000" && T.demoHeatColor("#000000", ["#ff0000", "#00ff00", "#0000ff", "#ffffff"], 1).toLowerCase() === "#ffffff" && T.demoHeatColor("#000000", ["#ff0000", "#00ff00", "#0000ff", "#ffffff"], 0.25).toLowerCase() === "#ff0000" && T.demoHeatColor("#000000", ["#ff8c28", "#ff461e", "#fff0c8"], 1).toLowerCase() === "#fff0c8");
+    }
+    ok("...ticked at the left while it is the look in use", !!named_("One").querySelector(".cursor-smith-tick") && useOf(named_("One")).children[0].classes.includes("cursor-smith-tick") && named_("One").classes.includes("is-active"));
+    rows.plugin.loadUserPreset = async (name) => { rows.plugin.loaded = name; };
+    useOf(named_("One")).click();
+    later(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      ok("tapping a card loads that preset", rows.plugin.loaded === "One", rows.plugin.loaded);
+    });
+    // Which preset is in use is read off the look, not off a remembered
+    // name: the look that IS a saved preset is ticked after a reload too,
+    // and an edit unticks it.
+    const same = Object.assign({}, T.DEFAULT_SETTINGS, { cursorStyle: "Line", colorDark: "#123456" });
+    const inUse = renderWholePanel({ cursorStyle: "Line", colorDark: "#123456", userPresets: { Mine: T.pickLook(same) } });
+    const pc = (rows_, n) => rows_.find((r) => r.name === "Presets").controlEl.querySelectorAll(".cursor-smith-pcard").find((c) => c.querySelector(".cursor-smith-pcard-name").text === n);
+    ok("a look that equals a saved preset is ticked", !!pc(inUse, "Mine").querySelector(".cursor-smith-tick") && pc(inUse, "Mine").querySelector(".cursor-smith-pcard-caret").style.backgroundColor === "#123456");
+    const edited = renderWholePanel({ cursorStyle: "Line", colorDark: "#654321", userPresets: { Mine: T.pickLook(same) } });
+    ok("...and an edited look is not", !pc(edited, "Mine").querySelector(".cursor-smith-tick"));
+    // Delete is two taps: the first arms the trash, the second deletes.
+    // (Both taps here and now: the arm lasts three seconds of wall clock,
+    // and the deferred checks run after the whole file.)
+    const del = renderWholePanel({ userPresets: { Gone: { cursorStyle: "Line" } } });
+    del.plugin.deleteUserPreset = async (n) => { del.plugin.deleted = n; };
+    const trashOf = (rows_, n) => pc(rows_, n).querySelectorAll(".cursor-smith-pcard-action").find((b) => b.icon === "trash" || b.classes.includes("is-armed"));
+    trashOf(del, "Gone").click();
+    const armed = trashOf(del, "Gone");
+    ok("one tap on the trash arms it - 'Delete?' - and deletes nothing", del.plugin.deleted === undefined && armed.classes.includes("is-armed") && armed.text === "Delete?" && /again/.test(armed.attrs["aria-label"]), JSON.stringify({ deleted: del.plugin.deleted, classes: armed.classes, attrs: armed.attrs, text: armed.text }));
+    armed.click();
+    later(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      ok("...the second tap deletes and rebuilds", del.plugin.deleted === "Gone" && del.tab.updates > 0, del.plugin.deleted);
+    });
+    const none = renderWholePanel({});
+    ok("with nothing saved the strip is Save and Import alone", none.find((r) => r.name === "Presets").controlEl.querySelectorAll(".cursor-smith-pcard").length === 2);
+    ok("...and the row has no description, with or without presets", none.find((r) => r.name === "Presets").desc === "" && rows.find((r) => r.name === "Presets").desc === "", rows.find((r) => r.name === "Presets").desc);
+    // Save opens a prompt; a name saves and rebuilds.
+    const { Modal } = T;
+    none.plugin.saveUserPreset = async (name) => { none.plugin.savedAs = name; };
+    pc(none, "Save").click();
+    const prompt = Modal.last;
+    ok("Save opens a prompt for the name", prompt && prompt.opened && /Save this look as/.test(prompt.title), prompt && prompt.title);
+    prompt.field.value = "  Fresh ";
+    later(async () => {
+      prompt.contentEl.querySelector(".mod-cta").click();
+      await new Promise((r) => setTimeout(r, 0));
+      ok("...and OK saves the trimmed name and closes", none.plugin.savedAs === "Fresh" && prompt.opened === false, none.plugin.savedAs);
+    });
+    // A taken name warns once; OK again replaces.
+    const taken = renderWholePanel({ userPresets: { Mine: { cursorStyle: "Line" } } });
+    taken.plugin.saveUserPreset = async (name) => { taken.plugin.savedAs = name; };
+    pc(taken, "Save").click();
+    const tp = Modal.last;
+    tp.field.value = "Mine";
+    later(async () => {
+      tp.contentEl.querySelector(".mod-cta").click();
+      await new Promise((r) => setTimeout(r, 0));
+      ok("saving under a taken name warns and keeps the prompt", taken.plugin.savedAs === undefined && tp.opened && /Mine exists\. OK again/.test(tp.contentEl.querySelector(".cursor-smith-prompt-note").text), tp.contentEl.querySelector(".cursor-smith-prompt-note").text);
+      tp.contentEl.querySelector(".mod-cta").click();
+      await new Promise((r) => setTimeout(r, 0));
+      ok("...and OK again replaces it", taken.plugin.savedAs === "Mine" && tp.opened === false, taken.plugin.savedAs);
+    });
+
+    // Vim mode: a Vim page with a warning while Obsidian's Vim is off, the
+    // Vim presets on the Presets page, and the mode row at the top of every
+    // look page.
+    const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"].map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
+    const vim = renderWholePanel({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes, vimPresets: { Setup: modes }, vimActivePreset: "Setup" });
+    const vtop = vim.pages;
+    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects", vtop.map((p) => p.name));
+    ok("...flagged while Obsidian's Vim key bindings are off", vim.pages.find((p) => p.name === "Vim").status === "warning");
+    ok("...holding the Vim switches", vim.find((r) => r.name === "Control Obsidian's Vim key bindings").page === "Vim");
+    ok("Vim mode adds no Presets page either", !vim.pages.some((p) => p.name === "Presets"));
+    // The alert under the mode switch: the wording for a plugin that drives
+    // Obsidian's Vim key bindings (the default), with the way back.
+    const alerts = vim.filter((r) => r.settingEl.classes.includes("cursor-smith-alert"));
+    // Three states, one place. The fixture's Obsidian says its bindings
+    // are off (getConfig false) and the plugin drives them (the default):
+    // the transient "look off" wording.
+    ok("Vim mode shows a tiny alert in the header, between the toggle and the mode tabs, with no button of its own", alerts.length === 3 && alerts.map((a) => a.visible).join() === "false,true,false" && sectionOf(alerts[1]) === null && /look off/.test(alerts[1].desc) && alerts[1].buttons.length === 0 && vim.indexOf(alerts[1]) < vim.findIndex((r) => r.name === "Mode") && vim.indexOf(alerts[1]) > vim.findIndex((r) => r.name === "Vim mode") && alerts[1].settingEl.children[0].classes.includes("cursor-smith-alert-icon"), alerts.map((a) => a.visible));
+    vim.plugin.app.vault.getConfig = () => true;
+    vim.tab.refreshDomState();
+    ok("...with the bindings on, the wording for the CUA user who flipped it", alerts.map((a) => a.visible).join() === "true,false,false" && /uses Vim key bindings. Not a Vim user?/.test(alerts[0].desc), alerts.map((a) => a.visible));
+    const noDrive = renderWholePanel({ uiMode: "vim", vimModeEnabled: true, vimControlObsidian: false, vimModes: modes });
+    const na = noDrive.filter((r) => r.settingEl.classes.includes("cursor-smith-alert"));
+    ok("without the plugin driving them, the alert says the bindings are needed", na.map((a) => a.visible).join() === "false,false,true" && /Settings → Editor/.test(na[2].desc), na.map((a) => a.visible));
+    noDrive.plugin.app.vault.getConfig = () => true;
+    noDrive.tab.refreshDomState();
+    ok("...and with them on, no alert at all", na.every((a) => a.visible === false));
+    alerts[1].def.render({ settingEl: alerts[1].settingEl, controlEl: alerts[1].controlEl, descEl: alerts[1].descEl, addButton() { return this; } });
+    ok("rendering the alert again (update keeps the row's element) leaves one icon, not two", alerts[1].settingEl.querySelectorAll(".cursor-smith-alert-icon").length === 1, alerts[1].settingEl.querySelectorAll(".cursor-smith-alert-icon").length);
+    ok("the Vim page has no note of its own about the bindings (the header says it once)", !vim.some((r) => r.page === "Vim" && /Vim key bindings/.test(r.desc) && !r.name), vim.filter((r) => r.page === "Vim" && !r.name).map((r) => r.desc));
+    ok("...its strip carries the Vim presets, ticked by the active name", !!pc(vim, "Setup") && !!pc(vim, "Setup").querySelector(".cursor-smith-tick"), vim.find((r) => r.name === "Presets").controlEl.querySelectorAll(".cursor-smith-pcard").map((c) => c.querySelector(".cursor-smith-pcard-name").text));
+    ok("the mode row sits in the header, above the pages, not inside any", vim.find((r) => r.name === "Vim mode").page === null && sectionOf(vim.find((r) => r.name === "Vim mode")) === null && !vim.some((r) => r.name === "Vim mode" && r.page));
+    ok("...after the Vim mode toggle", vim.findIndex((r) => r.name === "Vim mode") < vim.findIndex((r) => r.name === "Mode"));
+    ok("...and in Vim mode the presets come before the mode tabs (a preset is all five modes)", vim.findIndex((r) => r.name === "Presets") < vim.findIndex((r) => r.name === "Mode"));
+    ok("the Mode row wears an icon and no words", vim.find((r) => r.name === "Mode").icon === "layers" && vim.find((r) => r.name === "Mode").desc === "", vim.find((r) => r.name === "Mode").icon);
+    // Arrow keys along the tabs: the picked one is the Tab stop, Right/Left
+    // move it (and focus), Home/End jump.
+    const tabRow = vim.find((r) => r.name === "Mode").controlEl.children[0];
+    const tabs = tabRow.children;
+    ok("the picked tab is the row's one Tab stop", tabs.map((b) => b.attrs.tabindex).join() === "0,-1,-1,-1,-1", tabs.map((b) => b.attrs.tabindex));
+    tabRow.listeners.keydown({ key: "ArrowRight", target: tabs[0], preventDefault() {} });
+    ok("Right moves focus and the Tab stop to the next tab", tabs[1].focused === true && tabs.map((b) => b.attrs.tabindex).join() === "-1,0,-1,-1,-1");
+    tabRow.listeners.keydown({ key: "ArrowLeft", target: tabs[0], preventDefault() {} });
+    ok("...Left from the first wraps to the last", tabs[4].focused === true && tabs[4].attrs.tabindex === "0");
+    tabRow.listeners.keydown({ key: "Home", target: tabs[4], preventDefault() {} });
+    ok("...Home goes to the first", tabs[0].attrs.tabindex === "0");
+    let stray = false;
+    tabRow.listeners.keydown({ key: "ArrowRight", target: tabRow, preventDefault() { stray = true; } });
+    ok("...a key from outside the pills is left alone", stray === false);
+  }
+
+  // --- The resets --------------------------------------------------------------
+  {
+    const rows = panelRows({ blinkSpeed: 2.5, blinkBreathing: true, blinkingEnabled: true });
+    const resetRow = (card) => rows.find((r) => sectionOf(r) === card && r.settingEl.classes.includes("cursor-smith-reset-row"));
+    ok("every tab ends with its reset", ["Appearance", "Blinking", "Smooth movement", "Effects"].every((c) => !!resetRow(c)));
+    const link = resetRow("Blinking").controlEl.querySelector(".cursor-smith-reset-link");
+    ok("...a link naming the tab", link && /Reset Blinking to defaults/.test(link.children.map((c) => c.text).join("")), link && link.children.map((c) => c.text));
+    ok("...that is the last row of its tab", rows.filter((r) => sectionOf(r) === "Blinking").pop() === resetRow("Blinking"));
+    rows.writes.length = 0;
+    link.click();
+    later(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      const wrote = Object.fromEntries(rows.writes.map((w) => [w.key, w.value]));
+      ok("pressing it writes the card's keys back to their defaults", wrote.blinkSpeed === D.blinkSpeed && wrote.blinkBreathing === D.blinkBreathing && wrote.blinkingEnabled === D.blinkingEnabled, wrote);
+      ok("...every key the card's rows own, and no other card's", rows.cardKeys.Blinking.every((k) => k in wrote) && !("smoothness" in wrote) && !("cursorStyle" in wrote), Object.keys(wrote));
+      ok("...and rebuilds the panel", rows.tab.updates === 1, rows.tab.updates);
+    });
+    // Every look key belongs to exactly one card, so nothing is left out of
+    // a reset and nothing is reset twice.
+    const owned = Object.values(rows.cardKeys).flat();
+    const missing = T.LOOK_KEYS.filter((k) => !owned.includes(k));
+    const twice = owned.filter((k, i) => owned.indexOf(k) !== i);
+    ok("every look key is owned by a card", missing.length === 0, missing);
+    ok("...by one card only", twice.length === 0, twice);
+  }
+
+  // --- The swatch labels --------------------------------------------------------
+  {
+    const rows = panelRows({ gradientEnabled: false });
+    const color = rows.find((r) => r.name === "Cursor color");
+    const labels = color.controlEl.querySelectorAll(".cursor-smith-swatch-label").map((l) => l.text);
+    ok("the colour swatches are labelled", labels.join() === "Dark,Light", labels);
+    ok("...each in its own cell with its picker", color.controlEl.querySelectorAll(".cursor-smith-swatch-cell").every((c) => c.children.some((k) => k.tag === "input")));
+    const grad = panelRows({ gradientEnabled: true, gradientCount: 3 });
+    const dark = grad.find((r) => r.name === "Colors (dark theme)");
+    ok("gradient stops are numbered", dark.controlEl.querySelectorAll(".cursor-smith-swatch-label").map((l) => l.text).join() === "1,2,3");
+  }
+
+}
+
+// ---------------------------------------------------------------------------
 section("settings panel: the two callers and their hooks");
 
 // renderPanel enters at lookDefinitions with the caller's hooks stubbed out,
@@ -1604,8 +1933,8 @@ section("settings panel: the two callers and their hooks");
     try { rows = renderNormal({ enabled: true, cursorStyle: "Box", torchEffect: false }); }
     catch (e) { threw = e; }
     ok("normalDefinitions builds", !threw, threw && threw.message);
-    ok("...Presets first, then the four look cards",
-       sectionsOf(rows).join() === "Presets,Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
+    ok("...the four look cards (the presets live in the header)",
+       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
 
     // Cursor style: writes to plugin.settings, restarts the engine, and
     // refreshes the panel so the new style's sub-options appear.
@@ -1647,7 +1976,7 @@ section("settings panel: the two callers and their hooks");
     catch (e) { threw = e; }
     ok("modeDefinitions builds", !threw, threw && threw.message);
     ok("...the four look cards and no Presets",
-       sectionsOf(rows).join() === "Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
+       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
 
     const added = press(rows, "Cursor style", "dropdowns", "Underline");
     ok("Cursor style writes the mode's snapshot, not the global settings",
@@ -1688,23 +2017,26 @@ section("settings panel: the whole tree");
   const cua = build({});
   ok("the whole CUA panel renders", !cua.threw, cua.threw && cua.threw.message);
   const sections = [...new Set(cua.map(sectionOf))];
-  ok("the first card is named after the plugin, with the manifest's version",
-     sections[0] === "Cursor-Smith 0.0.0-test", sections[0]);
-  ok("...then Presets and the look cards",
-     sections.slice(1).join() === "Presets,Appearance,Blinking,Smooth movement,Effects", sections);
+  ok("the header has no heading of its own",
+     sections[0] === null, sections[0]);
+  const foot = cua[cua.length - 1];
+  ok("the version is a muted footer line under the pages, out of search",
+     foot.settingEl.classes.includes("cursor-smith-footer") && foot.desc === "Cursor-Smith 0.0.0-test" && foot.def.searchable === false, foot.desc);
+  ok("...then Behavior and the look cards",
+     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects", sections);
   const names = cua.map((r) => r.name);
-  ok("the global switches come first, in order",
-     names.indexOf("Enable plugin") < names.indexOf("Note editor only") &&
+  ok("Enable plugin and the Vim mode toggle come first, then the strip, then General's switches in order",
+     names.indexOf("Enable plugin") < names.indexOf("Vim mode") &&
+     names.indexOf("Vim mode") < names.indexOf("Note editor only") &&
      names.indexOf("Note editor only") < names.indexOf("Hide real cursor") &&
      names.indexOf("Hide real cursor") < names.indexOf("Hide cursor when unfocused") &&
      names.indexOf("Hide cursor when unfocused") < names.indexOf("Low power mode") &&
-     names.indexOf("Low power mode") < names.indexOf("Respect reduced motion") &&
-     names.indexOf("Respect reduced motion") < names.indexOf("Mode"), names.slice(0, 9));
+     names.indexOf("Low power mode") < names.indexOf("Respect reduced motion"), names.slice(0, 9));
   ok("...as toggles Obsidian binds to the settings keys",
      ["enabled", "noteEditorOnly", "hideNativeCaret", "hideOnWindowBlur", "lowPowerMode", "respectReducedMotion"]
        .every((k) => cua.some((r) => r.def.control && r.def.control.type === "toggle" && r.def.control.key === k)));
-  ok("the mode switch is a segmented control in its row",
-     cua.find((r) => r.name === "Mode").controlEl.children[0].classes.includes("cursor-smith-segmented"));
+  ok("the Vim mode switch is a toggle in its row, off in CUA",
+     cua.find((r) => r.name === "Vim mode").toggles.length === 1 && cua.find((r) => r.name === "Vim mode").toggles[0]._value === false);
 
   // Search: every row Obsidian indexes has a name; notes and subheadings
   // opt out.
@@ -1718,23 +2050,29 @@ section("settings panel: the whole tree");
     .map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
   const vim = build({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes });
   ok("the whole Vim panel renders", !vim.threw, vim.threw && vim.threw.message);
-  const vimSections = [...new Set(vim.map(sectionOf))];
-  ok("...its cards: Vim cursors, Vim presets, Per-mode cursors, then the look",
-     vimSections.slice(1).join() === "Vim cursors,Vim presets,Per-mode cursors,Appearance,Blinking,Smooth movement,Effects", vimSections);
+  const vimSections = [...new Set(vim.map(sectionOf))].filter((s) => s !== null);
+  ok("...its cards: Behavior, Vim, then the look (the mode row is in the header)",
+     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects", vimSections);
   ok("the status bar colour row hangs off the status bar toggle",
      vim.some((r) => r.name === "Color status bar text to match the cursor"));
-  ok("the Vim warning is a row that shows only while Obsidian's Vim is off",
-     vim.some((r) => r.def.visible && /Vim key bindings/.test(r.desc)));
-  ok("the mode tabs are a segmented control in the Vim mode row",
-     vim.find((r) => r.name === "Vim mode").controlEl.children[0].classes.includes("cursor-smith-segmented-modes"));
+  ok("the Vim warning is a header row that shows only while Obsidian's Vim is off",
+     vim.some((r) => r.def.visible && /Vim key bindings/.test(r.desc) && r.page === null));
+  ok("the mode tabs are chips in the Mode row, the picked one filled in its mode's color",
+     vim.find((r) => r.name === "Mode").controlEl.children[0].classes.includes("cursor-smith-mode-tabs")
+     && vim.find((r) => r.name === "Mode").controlEl.children[0].children.every((b) => b.classes.includes("cursor-smith-chip"))
+     && vim.find((r) => r.name === "Mode").controlEl.children[0].children.filter((b) => b.classes.includes("is-picked")).length === 1
+     && !!vim.find((r) => r.name === "Mode").controlEl.children[0].children.find((b) => b.classes.includes("is-picked")).style.backgroundColor);
+  ok("...and the Vim mode toggle is on", vim.find((r) => r.name === "Vim mode").toggles[0]._value === true);
 
-  // The reduced-motion notice is the first row, hidden unless the OS asks.
+  // The reduced-motion notice is the second row, under Enable plugin (a
+  // hidden first row would leave Enable plugin with Obsidian's separator
+  // over it), hidden unless the OS asks.
   const quiet = build({});
-  const notice = quiet[0];
-  ok("the notice is the first row", notice.name === "Motion effects are off", notice.name);
+  const notice = quiet[1];
+  ok("the notice is the second row, under Enable plugin", quiet[0].name === "Enable plugin" && notice.name === "Motion effects are off", notice.name);
   ok("...hidden while the OS isn't asking", notice.visible === false);
   const loud = build({}, { reduced: true });
-  ok("...and shown when it is", loud[0].visible === true);
+  ok("...and shown when it is", loud[1].visible === true);
 }
 
 // update() rebuilds the panel through Obsidian, which then puts keyboard
@@ -2147,41 +2485,26 @@ section("the stylesheet hides every native cursor, and its blink");
 // async switch: setVimModeEnabled, then a re-display - and nothing at all
 // when the pressed tab is already the current mode.
 {
-  const mkEl = () => {
-    const el = { children: [], listeners: {}, classes: [] };
-    el.createDiv = (o = {}) => { const c = mkEl(); c.cls = o.cls; el.children.push(c); return c; };
-    el.createEl = (t, o = {}) => { const c = mkEl(); c.tag = t; c.text = o.text; c.cls = o.cls; el.children.push(c); return c; };
-    el.addEventListener = (type, fn) => { el.listeners[type] = fn; };
-    return el;
-  };
-  const press = async (uiMode, label) => {
-    const calls = [];
-    const plugin = { settings: { uiMode }, setVimModeEnabled: async (v) => { calls.push(v); } };
-    const tab = Object.create(Plugin.__test.SettingTabPrototype);
-    tab.plugin = plugin;
-    tab.displayed = 0;
-    tab.update = () => { tab.displayed++; };
-    const root = mkEl();
-    tab.renderModeSwitch(root);
-    const wrap = root.children[0];
-    const btn = wrap.children.find((b) => b.text === label);
-    const ret = btn.listeners.click();
-    // The listener returns nothing (no promise for addEventListener to drop);
-    // the switch happens on the microtask queue behind it.
-    await Promise.resolve(); await Promise.resolve();
-    return { calls, displayed: tab.displayed, ret, wrap };
-  };
+  const { renderWholePanel: whole } = require("./panel_harness");
+  const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"].map((m) => [m, Object.assign({}, Plugin.__test.DEFAULT_SETTINGS)]));
   later(async () => {
-    const a = await press("cua", "Vim");
-    ok("the switch is a segmented control with both modes", a.wrap.cls === "cursor-smith-segmented" && a.wrap.children.length === 2, a.wrap);
-    ok("...the current one marked active", a.wrap.children[0].cls === "cursor-smith-segment is-active" && a.wrap.children[1].cls === "cursor-smith-segment");
-    ok("pressing the other tab switches the mode", a.calls.length === 1 && a.calls[0] === true, a.calls);
-    ok("...and rebuilds the panel afterwards", a.displayed === 1, a.displayed);
-    ok("...through a listener that returns nothing", a.ret === undefined, a.ret);
-    const b = await press("vim", "Vim");
-    ok("pressing the current tab does nothing", b.calls.length === 0 && b.displayed === 0, b);
-    const c = await press("vim", "CUA / Normal");
-    ok("...and the other direction switches back", c.calls.length === 1 && c.calls[0] === false && c.displayed === 1, c.calls);
+    const cua = whole({ uiMode: "cua" });
+    const calls = [];
+    // As the real one does, the switch writes uiMode.
+    cua.plugin.setVimModeEnabled = async (v) => { calls.push(v); cua.plugin.settings.uiMode = v ? "vim" : "cua"; };
+    const t = cua.find((r) => r.name === "Vim mode").toggles[0];
+    ok("the Vim mode switch is a toggle, off in CUA", t._value === false, t._value);
+    await t._change(true);
+    ok("flipping it on switches the mode and rebuilds", calls.join() === "true" && cua.tab.updates === 1, calls);
+    await t._change(true);
+    ok("...and flipping to the state it is in does nothing", calls.length === 1 && cua.tab.updates === 1, calls);
+    const vim = whole({ uiMode: "vim", vimModeEnabled: true, vimModes: modes });
+    const vcalls = [];
+    vim.plugin.setVimModeEnabled = async (v) => { vcalls.push(v); };
+    const vt = vim.find((r) => r.name === "Vim mode").toggles[0];
+    ok("...on in Vim mode", vt._value === true, vt._value);
+    await vt._change(false);
+    ok("...and flipping it off switches back", vcalls.join() === "false" && vim.tab.updates === 1, vcalls);
   });
 }
 
@@ -2218,11 +2541,12 @@ section("the plugin review's rules (static styles, settings headings)");
   }
   const ov = ruleFor(css, ".cursor-smith-torch-overlay {");
   ok("styles.css collapses the torch overlay too", has(ov, "width: 0") && has(ov, "height: 0") && has(ov, "position: fixed"));
-  ok("the first card names the plugin, with the manifest's version",
-     /heading: `Cursor-Smith \$\{plugin\.manifest\?\.version/.test(js));
-  for (const cls of ["cursor-smith-vim-status", "cursor-smith-code-input", "cursor-smith-note-row", "cursor-smith-note-warning",
+  ok("the footer names the plugin, with the manifest's version, and no card is headed by it",
+     /desc: `Cursor-Smith \$\{plugin\.manifest\?\.version/.test(js) && !/heading: `Cursor-Smith/.test(js));
+  for (const cls of ["cursor-smith-vim-status", "cursor-smith-note-row", "cursor-smith-note-warning",
                      "cursor-smith-section", "cursor-smith-sub", "cursor-smith-subsection-row", "cursor-smith-reduced-notice",
-                     "cursor-smith-segmented", "cursor-smith-segment", "cursor-smith-share-code", "cursor-smith-copy-button"]) {
+                     "cursor-smith-mode-tabs", "cursor-smith-mode-tab", "cursor-smith-page-icon", "cursor-smith-chip", "cursor-smith-rail",
+                     "cursor-smith-pcard", "cursor-smith-pcard-use", "cursor-smith-pcard-caret", "cursor-smith-tick", "cursor-smith-alert", "cursor-smith-footer", "cursor-smith-pcard-caret-text", "cursor-smith-pcard-ghost", "cursor-smith-pcard-particle", "cursor-smith-value-icon", "cursor-smith-prompt-field", "cursor-smith-needs-hint", "cursor-smith-reset-link"]) {
     ok(`styles.css has .${cls}`, new RegExp("\\." + cls + "(?![\\w-])").test(css));
     ok(`...which main.js uses`, js.includes(cls));
   }
@@ -2247,7 +2571,7 @@ section("the plugin review's rules (static styles, settings headings)");
   ok("the manifest asks for the Obsidian this needs",
      JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")).minAppVersion === "1.13.7");
   ok("...and versions.json says so for this release",
-     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.5"] === "1.13.7");
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.6"] === "1.13.7");
 }
 
 // ---------------------------------------------------------------------------
@@ -2446,26 +2770,6 @@ section("the canvas is kept off the status bar without cutting the bottom line")
 }
 
 // ---------------------------------------------------------------------------
-section("the FireBox preset is the share code it came from");
-
-// Added from a share code (2026-09-17). Pinning that the shipped snapshot
-// decodes to exactly what the code says, so a hand edit to either cannot
-// drift from the other unnoticed.
-{
-  const code = "1|FireBox|1cf7e259~2cf3a65e~5cd9e4d8~6cffbb00~9cf4c066~10ceb402d~21n0.7~22n0.1~24b0~28n3~29b0~31b0~51b1~55b1~61b1~62n1.6~63n3~64n19~65n1180~68b1~69n500~72n1.4~76b0~77n1.5~78n0.55~79n1200~86n0.85~87n0.15~89b1~91b1~93n0.05~94n0.6~95n0.9~103b0~116b1";
-  const decoded = T.codeToPreset(code);
-  ok("the code decodes", decoded && decoded.name === "FireBox", decoded && decoded.name);
-  const shipped = T.DEFAULT_PRESETS.FireBox;
-  ok("the preset is shipped", !!shipped);
-  const norm = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
-  ok("...and is exactly the code's look", shipped && norm(shipped) === norm(decoded.snap), { shipped: Object.keys(shipped || {}).length, code: Object.keys(decoded.snap).length });
-  ok("...re-encoding it gives the same body back",
-     T.presetToCode("FireBox", T.presetWithDefaults(shipped)).split("|")[2] === code.split("|")[2]);
-  ok("a box caret, Hot-head in the cursor's colour, heated by Speed Demon",
-     T.presetWithDefaults(shipped).cursorStyle === "Box" && shipped.hotHead === true && shipped.hotHeadFlat === true && shipped.hotHeadSpeedHeat === true && shipped.speedDemon === true);
-}
-
-// ---------------------------------------------------------------------------
 section("settings descriptions stay short");
 
 // The panel is ~105 descriptions long; at the original average of 109
@@ -2507,7 +2811,7 @@ section("settings descriptions stay short");
   const endpoints = descs.filter((d) => /(^|[\s(])0\b|At 1\b/.test(d));
   ok("endpoint semantics are still stated", endpoints.length >= 15, endpoints.length);
   const named = (frag) => descs.some((d) => d.includes(frag));
-  ok("0 = automatic underline is still explained", named("0 = automatic"));
+  ok("0 = automatic underline is still explained", named("0 fits the line height"));
   ok("0 follows immediately is still explained", named("0 follows immediately"));
   ok("0 gives a pure spotlight is still explained", named("0 gives a pure spotlight"));
 }
@@ -2563,6 +2867,150 @@ section("reduced motion");
   ok("respectReducedMotion is a global, not a look key",
      ("respectReducedMotion" in T.DEFAULT_SETTINGS) &&
      T.LOOK_KEYS.indexOf("respectReducedMotion") === -1);
+}
+
+// ---------------------------------------------------------------------------
+section("the look: this.settings is never swapped");
+
+// The engine reads this.look - the active Vim mode's snapshot merged over the
+// settings, reduced motion applied - through the memo in effectiveSettings.
+// this.settings is only ever the persisted object. Until 1.5.5 the ticks
+// swapped this.settings for the merged one and put it back in a finally; a
+// read from anything that fired mid-frame saw the wrong object, and a save
+// would have persisted a mode snapshot as the global config.
+{
+  const e = Object.create(Plugin.prototype);
+  e.settings = Object.assign({}, T.DEFAULT_SETTINGS, {
+    colorDark: "#111111", smear: false,
+    vimModeEnabled: true,
+    vimModes: { normal: { colorDark: "#abcdef", smear: true } },
+  });
+  e.currentVimMode = () => "normal";
+  e.reducedMotion = () => false;
+
+  const real = e.settings;
+  ok("the look is the mode's snapshot over the settings", e.look.colorDark === "#abcdef" && e.look.smear === true, e.look.colorDark);
+  ok("...and styleFor reads it", e.styleFor("colorDark") === "#abcdef");
+  ok("...while this.settings keeps the persisted values", e.settings === real && e.settings.colorDark === "#111111" && e.settings.smear === false);
+  ok("...and a global key reads the same either way", e.look.hideNativeCaret === e.settings.hideNativeCaret);
+  ok("the look is memoized: two reads are one object", e.look === e.look);
+
+  // A mode switch, a settings edit or a save is seen at once, with nothing
+  // to refresh by hand.
+  e.currentVimMode = () => "insert";
+  ok("a mode with no snapshot is the settings themselves", e.look === e.settings);
+  e.currentVimMode = () => "normal";
+  e.settings.vimModes.normal.colorDark = "#222222";
+  e._effCache = null; // what saveSettings does after a slider write
+  ok("an edited snapshot is seen after the save drops the memo", e.look.colorDark === "#222222");
+
+  // Saving from anywhere - including mid-frame - writes the real object.
+  let saved = null;
+  e.saveData = async (d) => { saved = d; };
+  e.applyBodyClasses = () => {}; e.applyOverlayStyle = () => {}; e.syncVimStatusBar = () => {};
+  e.refreshSettingTab = () => {}; e.updateVimStatusBar = () => {}; e._statusSig = "";
+  const p = e.saveSettings();
+  ok("saveSettings returns a promise", p && typeof p.then === "function");
+  later(async () => {
+    await p;
+    ok("...that persists this.settings, never the look", saved === real && saved.colorDark === "#111111", saved && saved.colorDark);
+  });
+
+  // With Vim off the look IS the settings object: no merge, no copy.
+  const f = Object.create(Plugin.prototype);
+  f.settings = Object.assign({}, T.DEFAULT_SETTINGS);
+  f.reducedMotion = () => false;
+  ok("with Vim mode off the look is the settings object itself", f.look === f.settings);
+
+  // The seam files paint, spawn and measure: they read the look and never
+  // the persisted object - an alias like `const s = this.settings` at the
+  // top of a painter is the regression this guards (it happened once, in
+  // the flip: five painters kept the alias and read the global settings
+  // in Vim mode).
+  {
+    const fs_ = require("fs"), path_ = require("path");
+    const offenders = [];
+    const isComment = (l) => /^\s*\/\//.test(l);
+    // The torch's two global questions - is the overlay needed by ANY mode,
+    // does the global cursor want it - read the persisted object on purpose.
+    const torchGlobal = /this\.settings\.(torchEffect|vimModeEnabled|vimModes)\b/;
+    // effects.ts is an aggregate since the split by effect; the four files
+    // behind it are what to sweep.
+    for (const f of ["effects-fire.ts", "effects-pops.ts", "effects-dust.ts", "effects-trail.ts", "paint.ts", "torch.ts"]) {
+      const text = fs_.readFileSync(path_.join(__dirname, "..", "src", f), "utf8");
+      text.split("\n").forEach((l, i) => { if (/this\.settings\b/.test(l) && !isComment(l) && !(f === "torch.ts" && torchGlobal.test(l))) offenders.push(f + ":" + (i + 1)); });
+    }
+    const measure = fs_.readFileSync(path_.join(__dirname, "..", "src", "measure.ts"), "utf8");
+    measure.split("\n").forEach((l, i) => { if (/this\.settings\b/.test(l) && !/this\.settings\.noteEditorOnly/.test(l) && !isComment(l)) offenders.push("measure.ts:" + (i + 1)); });
+    ok("the painters, effects, torch and measurers read the look, never this.settings", offenders.length === 0, offenders);
+  }
+
+  // And the fields the swap needed are gone for good.
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "build", "test-bundle.js"), "utf8");
+  ok("nothing assigns this.settings inside the ticks", !/_settingsSwapped|_realSettings/.test(src));
+}
+
+// ---------------------------------------------------------------------------
+section("no catch is silent");
+
+// A defensive catch that swallows turns a bug into a cursor that is quietly
+// wrong - the settings-window ghost of 1.5.5 was invisible to every check
+// because nothing failed. So every catch in the source is one of two things:
+// an EXPECTED failure with a comment naming it, or a guard that reports once
+// per site through _reportOnce. This sweeps the TypeScript source (the
+// bundle has no comments left to read) for a catch that is neither.
+{
+  const fs_ = require("fs"), path_ = require("path");
+  const srcDir = path_.join(__dirname, "..", "src");
+  const bare = [], silent = [];
+  let reporting = 0, commented = 0, total = 0;
+  for (const f of fs_.readdirSync(srcDir).filter((n) => n.endsWith(".ts"))) {
+    const text = fs_.readFileSync(path_.join(srcDir, f), "utf8");
+    const re = /\bcatch\b(?:\s*\([^)]*\))?\s*\{/g;
+    let m;
+    while ((m = re.exec(text))) {
+      total++;
+      // The block: from the brace to its match.
+      let depth = 1, i = m.index + m[0].length;
+      while (i < text.length && depth) { if (text[i] === "{") depth++; else if (text[i] === "}") depth--; i++; }
+      const body = text.slice(m.index + m[0].length, i - 1);
+      const line = text.slice(0, m.index).split("\n").length;
+      if (/_reportOnce\(|console\.(error|warn)\(/.test(body)) reporting++;
+      else if (/\/\*|\/\//.test(body)) commented++;
+      else if (!body.trim()) bare.push(f + ":" + line);
+      else silent.push(f + ":" + line + " " + body.trim().replace(/\s+/g, " ").slice(0, 60));
+    }
+  }
+  ok("the sweep found the catches", total > 60, total);
+  ok("no catch has an empty body", bare.length === 0, bare);
+  ok("every silent catch says which failure it expects", silent.length === 0, silent);
+  ok("the guards that must not take a frame down report", reporting >= 30, reporting);
+  ok("...and the expected failures are the minority", commented < reporting, { commented, reporting });
+}
+
+// _reportOnce: the first occurrence of a site is in the console, the rest are
+// not, and a fresh engine run starts over.
+{
+  const e = Object.create(Plugin.prototype);
+  const logged = [];
+  const orig = console.error;
+  console.error = (...a) => logged.push(a);
+  try {
+    e._reportOnce("probe A", new Error("one"));
+    e._reportOnce("probe A", new Error("two"));
+    e._reportOnce("probe B", new Error("three"));
+    ok("one line per site", logged.length === 2, logged.length);
+    ok("...naming the site and saying it is once", /probe A \(reported once\)/.test(logged[0][0]) && logged[0][1].message === "one", logged[0]);
+    ok("...the second site on its own line", /probe B/.test(logged[1][0]));
+    e._resetEngineState();
+    e._reportOnce("probe A", new Error("again"));
+    ok("a fresh engine run reports again", logged.length === 3, logged.length);
+  } finally {
+    console.error = orig;
+  }
+  const engineSrc = require("fs").readFileSync(require("path").join(__dirname, "..", "src", "engine.ts"), "utf8");
+  const torchSrc = require("fs").readFileSync(require("path").join(__dirname, "..", "src", "torch.ts"), "utf8");
+  ok("the two ticks report through it too", /_reportOnce\("canvas tick/.test(engineSrc) && /_reportOnce\("torch tick/.test(torchSrc));
 }
 
 // ---------------------------------------------------------------------------
@@ -3528,6 +3976,17 @@ section("adjacentCharRect: which side of the neighbouring glyph the caret is on"
     ok("...and its top is the character's", r.top === 10, r);
     ok("...and its bottom too", r.bottom === 27, r);
   }
+  // At a soft-wrap boundary the collapsed range answers for the end of the
+  // line that wraps while the character after the caret is on the next
+  // line; the caret the user sees is before that character. Its X must be
+  // the character's left edge, not the collapsed range's.
+  {
+    const NEXT_LINE = { left: 20, right: 80, top: 34, bottom: 51, width: 60, height: 17 };
+    const doc = mkDoc((s, c) => (c ? { left: 400, top: 10, right: 400, bottom: 27, width: 0, height: 17 } : NEXT_LINE));
+    const r = call(doc, 3);
+    ok("at a wrap, the caret is on the next character's line", r.top === 34 && r.bottom === 51, r);
+    ok("...at that character's left edge, not the wrapped line's end", r.left === 20, r);
+  }
   // At the end of the node, where the character BEFORE the caret is measured.
   // 1.4.8 returned that character's RIGHT edge, which in RTL is the far side.
   {
@@ -3662,9 +4121,12 @@ section("isExcalidrawCaretHost: staying off other plugins' carets");
   };
   ok("a view with no containerEl is safe", call(noContainer, el([])) === false);
 
-  // A thrown closest() must not take the tick loop with it.
+  // A thrown closest() must not take the tick loop with it - and must not
+  // pass in silence either: the guard reports once (see _reportOnce).
   const boom = { closest: () => { throw new Error("boom"); }, classList: null };
-  ok("a throwing element degrades to false", call(engine("markdown"), boom) === false);
+  const loud = Object.assign(engine("markdown"), { reports: [], _reportOnce(site, e) { this.reports.push([site, e.message]); } });
+  ok("a throwing element degrades to false", call(loud, boom) === false);
+  ok("...and reports the throw, naming the site", loud.reports.length === 1 && loud.reports[0][0] === "isExcalidrawCaretHost" && loud.reports[0][1] === "boom", loud.reports);
 
   // The cache keys on element identity, so a second element must not inherit
   // the first one's answer.
@@ -4338,6 +4800,63 @@ section("motion smear: the quad must not twist");
   const box = drive(30, {}, "Box");
   ok("a Box caret stays finite on a diagonal", box.allFinite);
 
+  // The twist itself, pinned (HANDOFF §2, five attempts): the lead/trail
+  // split used to flip at atan(w/h) - 7 degrees for a Line, 21 for a Box -
+  // from a shear to a rotation, and the sweep read a lean of 0 at 5 degrees
+  // and 56 at 10. Since 1.5.6 the split is measured in the caret's own
+  // units and blended linearly in the spring's time constant, so the lean
+  // grows with the angle and never jumps. Swept in 5-degree steps over the
+  // whole quadrant for every style; a CLIFF is the bug, not a lean.
+  {
+    const sweep = (style, w) => {
+      const leans = [];
+      for (let deg = 0; deg <= 90; deg += 5) {
+        const e = makeEngine({ smear: true, smearTaper: false, cursorStyle: style, smearStiffness: 0.65, smearTrailingStiffness: 0.15, smearDamping: 0.45 });
+        e.styleFor = (k) => e.settings[k]; e.renderWidth = (a) => a.w; e.underlineThickness = () => 3; e._catchUpBoost = 1;
+        e.smearQuad = null; e.smearShape = null; e.smearCenterPrev = null; e._smearDtT = 0; e._smearDir = null;
+        const a = deg * Math.PI / 180;
+        const real = performance.now;
+        let tt = 1000, lean = 0, para = 0, slant = 0;
+        try {
+          for (let i = 0; i < 40; i++) {
+            e.animActive = { x: 400 + Math.cos(a) * 6 * i, top: 400 + Math.sin(a) * 6 * i, w, h: 24, actualCharWidth: w };
+            performance.now = () => tt;
+            e.updateSmearQuad();
+            tt += 16.7;
+            const q = e.smearQuad;
+            if (!q) continue;
+            const l = Math.atan2(q.bl.x - q.tl.x, q.bl.y - q.tl.y) * 180 / Math.PI;
+            const r = Math.atan2(q.br.x - q.tr.x, q.br.y - q.tr.y) * 180 / Math.PI;
+            lean = Math.max(lean, Math.abs((l + r) / 2));
+            para = Math.max(para, Math.abs((q.tl.x + q.br.x) - (q.tr.x + q.bl.x)) / 2, Math.abs((q.tl.y + q.br.y) - (q.tr.y + q.bl.y)) / 2);
+            // An end's slant as a share of the smear's length - the measure
+            // that means something for a 3px-tall underline, where a 3px
+            // offset already reads as 45 degrees of "lean".
+            const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x];
+            const len = Math.max(...xs) - Math.min(...xs) - w;
+            if (len > 10) slant = Math.max(slant, Math.max(Math.abs(q.tl.x - q.bl.x), Math.abs(q.tr.x - q.br.x)) / len);
+          }
+        } finally { performance.now = real; }
+        leans.push({ deg, lean, para, slant });
+      }
+      return leans;
+    };
+    for (const [style, w] of [["Line", 3], ["Box", 9], ["Underline", 9]]) {
+      const rows = sweep(style, w);
+      ok(`${style}: the quad stays close to a parallelogram`, Math.max(...rows.map((r) => r.para)) < 6, rows.map((r) => r.para.toFixed(1)).join(" "));
+      ok(`${style}: flat and vertical travel do not lean`, rows[0].lean < 0.01 && rows[rows.length - 1].lean < 0.01);
+      if (style === "Underline") {
+        // Shallow travel only: a flat bar moving diagonally sweeps a
+        // parallelogram with slanted ends, and that is the true shape.
+        ok("Underline: at a shallow angle the bar's ends stay near square", rows.slice(0, 3).every((r) => r.slant < 0.3), rows.slice(0, 3).map((r) => r.slant.toFixed(2)).join(" "));
+      } else {
+        const jumps = rows.slice(1).map((r, i) => Math.abs(r.lean - rows[i].lean));
+        ok(`${style}: no cliff in the lean across the quadrant`, Math.max(...jumps) < 8, rows.map((r) => r.deg + ":" + r.lean.toFixed(0)).join(" "));
+        ok(`${style}: a shallow diagonal is a shear, not a rotation`, rows[2].lean < 5 && rows[6].lean < 8, [rows[2].lean, rows[6].lean]);
+      }
+    }
+  }
+
   // The spring must come to rest exactly on target rather than hovering.
   {
     const e = drive(0).engine;
@@ -4833,10 +5352,13 @@ section("Note Editor Only: the plugin stays out of the interface");
     const e = Object.create(proto);
     e.settings = Object.assign({}, T.DEFAULT_SETTINGS);
     e.app = { get workspace() { throw new Error("mid-teardown"); } };
+    e.reports = [];
+    e._reportOnce = (site, err) => e.reports.push([site, err.message]);
     let threw = false, out;
     try { out = e.noteEditorFocused(); } catch { threw = true; }
     ok("a broken workspace lookup does not throw", threw === false);
     ok("...and fails safe, toward the native caret", out === false);
+    ok("...and reports it once, naming the site", e.reports.length === 1 && e.reports[0][0] === "noteEditorFocused", e.reports);
   }
 
   // --- hideNativeActive: what the body class means now -------------------
@@ -5803,3 +6325,29 @@ deferred
     console.log("\n" + (fails === 0 ? "ALL PASS" : fails + " FAILURE(S)"));
     process.exit(fails === 0 ? 0 : 1);
   });
+
+// ---------------------------------------------------------------------------
+section("visual regression: what a frame paints, against the goldens");
+
+// test/goldens.js: an engine with no DOM draws a scripted dozen frames per
+// shipped preset into a context that records every 2D call; the recording
+// is compared to test/goldens/<scenario>.json. Time and randomness are
+// pinned, so a difference is a paint change. UPDATE_GOLDENS=1 rewrites.
+{
+  const { checkGoldens, runScenario } = require("./goldens");
+  const results = checkGoldens(T, Plugin);
+  const { EXTRA } = require("./goldens");
+  ok("every shipped preset, the defaults, the effects no preset carries, and the torch have a scenario", results.length === Object.keys(T.DEFAULT_PRESETS).length + 1 + Object.keys(EXTRA).length + 1, results.length);
+  ok("...Hot-head's scenario paints fire (the heaviest painter, unpinned until now)", (results.find((r) => r.name === "hot-head") || {}).ops > 1000 || !!(results.find((r) => r.name === "hot-head") || {}).wrote, results.find((r) => r.name === "hot-head"));
+  for (const r of results) {
+    if (r.wrote) { ok(`golden written: ${r.name}${r.changed ? " (changed)" : " (same)"}`, true); continue; }
+    ok(`${r.name} paints as its golden says (${r.frames} frames, ${r.ops} ops)`, r.error === null, r.error);
+  }
+  // The recording is a pure function of the paint code: two runs agree.
+  const a = JSON.stringify(runScenario(T, Plugin, T.DEFAULT_PRESETS["Jell-O"]));
+  const b = JSON.stringify(runScenario(T, Plugin, T.DEFAULT_PRESETS["Jell-O"]));
+  ok("a scenario is deterministic: two runs record the same ops", a === b);
+  // And it sees a paint change: a different color paints differently.
+  const c = JSON.stringify(runScenario(T, Plugin, Object.assign({}, T.DEFAULT_PRESETS["Jell-O"], { colorDark: "#ff0000" })));
+  ok("...and a changed look records different ops", c !== a);
+}

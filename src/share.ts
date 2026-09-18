@@ -1,7 +1,3 @@
-// Generated from the plugin's working bundle by tools/gen-ts.js - the
-// module split, the imports and the type annotations are the script's; the
-// code and its comments are the bundle's.
-
 import {
   DEFAULT_SETTINGS,
   LOOK_KEYS,
@@ -69,7 +65,7 @@ export function shareDecodeValue(tag: string, raw: string) {
     case "n": return Number(raw);
     case "c": return "#" + raw;
     case "s": return decodeURIComponent(raw);
-    case "j": try { return JSON.parse(decodeURIComponent(raw)) as unknown; } catch { return undefined; }
+    case "j": try { return JSON.parse(decodeURIComponent(raw)) as unknown; } catch { return undefined; /* a malformed field is dropped, not fatal */ }
     default:  return undefined;
   }
 }
@@ -136,6 +132,8 @@ export function codeToPreset(code: string) {
     const name = decodeURIComponent(parts[1] || "") || "Imported preset";
     return { name, snap: shareParseFields(parts.slice(2).join("|")) };
   } catch {
+    // A malformed code (bad percent-encoding, a broken JSON field) is "not a
+    // code"; the importer shows "Invalid code".
     return null;
   }
 }
@@ -196,6 +194,7 @@ export function codeToVimPreset(code: string) {
     });
     return { name, modes };
   } catch {
+    // Same as codeToPreset: malformed means "not a Vim code".
     return null;
   }
 }

@@ -1,7 +1,3 @@
-// Generated from the plugin's working bundle by tools/gen-ts.js - the
-// module split, the imports and the type annotations are the script's; the
-// code and its comments are the bundle's.
-
 // ===========================================================================
 // Cursor-Smith — READ THIS BEFORE EDITING
 //
@@ -71,12 +67,14 @@
 //    A full-viewport layer over the titlebar breaks Electron window dragging
 //    even when invisible.
 //
-//  • SETTINGS READS GO THROUGH this.settings, which is SWAPPED per Vim mode
-//    during the tick. Don't cache values across frames; use styleFor(key).
+//  • THE ENGINE READS this.look (the active Vim mode's snapshot merged over
+//    the settings), never this.settings, which is only ever the persisted
+//    object. Don't cache a look value across frames; use styleFor(key).
 //
-// TESTS: `node test.js` runs the whole file outside Obsidian with the Obsidian
-// API stubbed (harness.js), plus a settings-panel render harness
-// (panel_harness.js). 228 assertions covering migration, share codes, colour
+// TESTS: `npm test` builds the test bundle and runs test/test.js outside
+// Obsidian with the Obsidian API stubbed (test/obsidian-stub.ts), plus a
+// settings-panel render harness (test/panel_harness.js). 1,100-odd
+// assertions covering migration, share codes, colour
 // precedence, effect physics, the frame governor's gear decision, the engine
 // state reset, and which rows the panel actually builds.
 //
@@ -353,7 +351,7 @@ export const TORCH_FLICKER_WEIGHTS = [0.5, 0.3, 0.2];
 // the smear's leading corners. See updateSmearQuad.
 export const SMEAR_LEAD_BOOST_CAP = 6;
 
-// Motion Smear / Conserve volume: the narrowest the smear is ever thinned
+// Motion Smear / Conserve area (smearConserveVolume): the narrowest the smear is ever thinned
 // to, as a share of its resting width. A floor, so a very long streak thins
 // into a line and not into nothing.
 export const SMEAR_VOLUME_MIN_FACTOR = 0.35;

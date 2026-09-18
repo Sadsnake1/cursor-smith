@@ -1,7 +1,3 @@
-// Generated from the plugin's working bundle by tools/gen-ts.js - the
-// module split, the imports and the type annotations are the script's; the
-// code and its comments are the bundle's.
-
 // --- Hot-head: the fire's colour ramp -------------------------------------
 // Waypoint positions. The first is a placeholder filled in per-call with the
 // cursor's own colour (see hotFireColor), so the coolest fire is the colour of

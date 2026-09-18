@@ -50,15 +50,10 @@ Ten of them, from subtle to absurd. Each has its own switch and its own settings
 
 Some of them unlock extra options together. Try Blinking with the torch.
 
-## Presets
-
-Dial in a cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it, the other person imports it and has your cursor. Six come with the plugin to start from.
-
-## Vim mode
-
-Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in the status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it.
-
 ## Settings
+<img width="1307" height="931" alt="cursor-smith-settings-1" src="https://github.com/user-attachments/assets/398fc2df-15f4-44d4-8d0a-9d4e42b25cad" />
+<img width="1307" height="931" alt="cursor-smith-settings-2" src="https://github.com/user-attachments/assets/5711e10c-e6f0-491c-aacc-0cd5fc381206" />
+
 
 The top of the panel is short: enable the plugin, Vim mode on or off, your presets, and the mode you're editing when Vim is on. Everything else is a page:
 
@@ -70,6 +65,13 @@ The top of the panel is short: enable the plugin, Vim mode on or off, your prese
 | **Blinking** | If it blinks, how, and how fast |
 | **Smooth movement** | Gliding instead of jumping |
 | **Effects** | Pick an effect, see its settings. A tick marks the ones that are on |
+## Presets
+
+Dial in a cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it, the other person imports it and has your cursor. Six come with the plugin to start from.
+
+## Vim mode
+
+Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in the status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it.
 
 ## Commands
 

@@ -51,8 +51,11 @@ Ten of them, from subtle to absurd. Each has its own switch and its own settings
 Some of them unlock extra options together. Try Blinking with the torch.
 
 ## Settings
-<img width="1307" height="931" alt="cursor-smith-settings-1" src="https://github.com/user-attachments/assets/398fc2df-15f4-44d4-8d0a-9d4e42b25cad" />
-<img width="1307" height="931" alt="cursor-smith-settings-2" src="https://github.com/user-attachments/assets/5711e10c-e6f0-491c-aacc-0cd5fc381206" />
+
+<p align="center">
+  <img width="49%" alt="cursor-smith-settings-1" src="https://github.com/user-attachments/assets/398fc2df-15f4-44d4-8d0a-9d4e42b25cad" />
+  <img width="49%" alt="cursor-smith-settings-2" src="https://github.com/user-attachments/assets/5711e10c-e6f0-491c-aacc-0cd5fc381206" />
+</p>
 
 
 The top of the panel is short: enable the plugin, Vim mode on or off, your presets, and the mode you're editing when Vim is on. Everything else is a page:

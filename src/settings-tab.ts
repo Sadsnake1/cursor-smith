@@ -150,11 +150,15 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     };
   }
 
-  // A description with a Lucide icon in front of it, for a page's entry.
-  // Obsidian renders the entry itself - the name, then the description -
-  // and the description is the one slot that takes markup, so the icon is
-  // written here; styles.css lays the entry out as a grid that puts the
-  // icon in front of the NAME (.cursor-smith-page-icon).
+  // A description with a Lucide icon in front of it, for a page's entry
+  // (and the rows that wear one). Obsidian renders the entry itself - the
+  // name, then the description - and the description is the one slot that
+  // takes markup, so the icon is written here; once the entry is in the
+  // DOM, decorateIcons moves it out of the description to the front of
+  // the entry's info block, which styles.css lays out as a grid with the
+  // icon in the first column (.cursor-smith-iconed). It used to be done
+  // in CSS alone with :has() and display: contents; the plugin review
+  // warns on both, and this is the same picture without them.
   iconDesc(icon: string, text: string): DocumentFragment {
     return createFragment((f) => {
       setIcon(f.createSpan({ cls: "cursor-smith-page-icon" }), icon);
@@ -186,7 +190,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   refreshDomState() {
     super.refreshDomState();
     this.runRefreshers();
-    this.decorateEffectsValue();
+    this.decoratePanel();
   }
 
   hide() {
@@ -194,51 +198,73 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     if (this._valueObserver) { this._valueObserver.disconnect(); this._valueObserver = null; }
   }
 
-  // The Effects entry's value is the icons of the effects that are on, not
-  // their names (which Obsidian ellipsizes past two). A page entry's
-  // displayValue takes a string only, so the icons go in after Obsidian
-  // renders: an observer on the tab's own element - the settings window
-  // is its own document, so not on `document` - redecorates the value
-  // whenever the entry is rendered or its text refreshed. The names stay
-  // in displayValue (search, and the fallback) and in the value's title.
+  // Two things Obsidian's own rendering cannot be told to do go in after
+  // it renders: the Effects entry's value becomes the icons of the effects
+  // that are on (displayValue takes a string only), and every leading icon
+  // written into a description moves to the front of its entry. An
+  // observer on the tab's own element - the settings window is its own
+  // document, so not on `document` - runs the pass whenever an entry is
+  // rendered or its text refreshed; refreshDomState runs it too.
   watchEffectsValue() {
     if (this._valueObserver) return;
     const win = this.containerEl?.ownerDocument?.defaultView;
     if (!win || typeof win.MutationObserver !== "function") return;
-    this._valueObserver = new win.MutationObserver(() => { this.decorateEffectsValue(); });
+    this._valueObserver = new win.MutationObserver(() => { this.decoratePanel(); });
     this._valueObserver.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
-    this.decorateEffectsValue();
+    this.decoratePanel();
+  }
+
+  // The pass. It writes to the DOM the observer watches, so the observer
+  // is paused while it writes, and each job leaves nothing for itself to
+  // do on the next call (a rewrite on every call re-fired the observer
+  // forever once, and hung Obsidian).
+  decoratePanel() {
+    const observer = this._valueObserver;
+    if (observer) observer.disconnect();
+    try {
+      this.decorateIcons();
+      this.decorateEffectsValue();
+    } finally {
+      if (observer && this.containerEl) observer.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+    }
+  }
+
+  // A leading icon still inside its description moves to the front of
+  // the entry's info block, which takes the grid class. Nothing to do
+  // once it has moved (its parent is the info block, not a description).
+  decorateIcons() {
+    if (!this.containerEl) return;
+    for (const icon of Array.from(this.containerEl.querySelectorAll(".cursor-smith-page-icon"))) {
+      const desc = icon.parentElement;
+      if (!desc || !desc.hasClass("setting-item-description")) continue;
+      const info = desc.parentElement;
+      if (!info || !info.hasClass("setting-item-info")) continue;
+      info.addClass("cursor-smith-iconed");
+      info.prepend(icon);
+    }
   }
 
   decorateEffectsValue() {
     const on = this._effectsOn ? this._effectsOn() : null;
     if (!on || !this.containerEl) return;
     const sig = on.map((e) => e.key).join(",");
-    // This writes to the DOM the observer watches. It has to be certain
-    // that a value already in the wanted state is left alone - a write
-    // fires the observer, which calls this again - and, for safety, the
-    // observer is paused while it writes. (The first cut re-wrote "Off"
-    // on every call and hung Obsidian in a mutation loop.)
+    // A value already in the wanted state is left alone - a write fires the
+    // observer, which runs this again (decoratePanel pauses it, but the
+    // guard is what makes the pass converge; the first cut re-wrote "Off"
+    // on every call and hung Obsidian in a mutation loop).
     const wanted = (value: Element) => value.getAttribute("data-cs-effects") === sig
       && (on.length ? !!value.querySelector(".cursor-smith-value-icon") : value.getText() === "Off");
     const rows = Array.from(this.containerEl.querySelectorAll(".setting-item")).filter((row) => {
       const name = row.querySelector(".setting-item-name");
       return !!name && name.getText().trim() === "Effects" && !!row.querySelector(".setting-item-value") && !wanted(row.querySelector(".setting-item-value") as Element);
     });
-    if (!rows.length) return;
-    const observer = this._valueObserver;
-    if (observer) observer.disconnect();
-    try {
-      for (const row of rows) {
-        const value = row.querySelector(".setting-item-value") as HTMLElement;
-        value.empty();
-        value.setAttribute("data-cs-effects", sig);
-        if (!on.length) { value.setText("Off"); continue; }
-        value.setAttribute("title", on.map((e) => e.name).join(", "));
-        for (const e of on) setIcon(value.createSpan({ cls: "cursor-smith-value-icon", attr: { "aria-label": e.name } }), e.icon);
-      }
-    } finally {
-      if (observer) observer.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+    for (const row of rows) {
+      const value = row.querySelector(".setting-item-value") as HTMLElement;
+      value.empty();
+      value.setAttribute("data-cs-effects", sig);
+      if (!on.length) { value.setText("Off"); continue; }
+      value.setAttribute("title", on.map((e) => e.name).join(", "));
+      for (const e of on) setIcon(value.createSpan({ cls: "cursor-smith-value-icon", attr: { "aria-label": e.name } }), e.icon);
     }
   }
 

@@ -1657,6 +1657,21 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     ok("Blinking's says On, the speed, breathing", value("Blinking") === "On · 1.0× · breathing", value("Blinking"));
     ok("Smooth movement's says Off", value("Smooth movement") === "Off");
     ok("Effects' names what is on", value("Effects") === "Pop effects · Pixel trail · CRT effects", value("Effects"));
+    // A leading icon, written into the description, moves to the front of
+    // the entry's info block once rendered; the block takes the grid class.
+    {
+      const entry = rows.tab.containerEl.createDiv({ cls: "setting-item mod-navigable" });
+      const info = entry.createDiv({ cls: "setting-item-info" });
+      info.createDiv({ cls: "setting-item-name", text: "Appearance" });
+      const desc = info.createDiv({ cls: "setting-item-description" });
+      const icon = desc.createSpan({ cls: "cursor-smith-page-icon" }); icon.icon = "palette";
+      desc.appendText("Shape, color, opacity.");
+      rows.tab.decorateIcons();
+      ok("a page entry's icon moves out of the description to the front of the info block, which takes the grid class", info.children[0] === icon && info.classes.includes("cursor-smith-iconed") && !desc.children.includes(icon) && desc.text === "Shape, color, opacity.", info.children.map((c) => c.classes.join(".")));
+      const before = info.children.length;
+      rows.tab.decorateIcons();
+      ok("...and a second pass has nothing to do", info.children.length === before && info.children[0] === icon);
+    }
     // ...and, once Obsidian has rendered the entry, wears their icons in
     // the value instead (displayValue is a string; the icons go in after).
     {
@@ -2546,7 +2561,7 @@ section("the plugin review's rules (static styles, settings headings)");
   for (const cls of ["cursor-smith-vim-status", "cursor-smith-note-row", "cursor-smith-note-warning",
                      "cursor-smith-section", "cursor-smith-sub", "cursor-smith-subsection-row", "cursor-smith-reduced-notice",
                      "cursor-smith-mode-tabs", "cursor-smith-mode-tab", "cursor-smith-page-icon", "cursor-smith-chip", "cursor-smith-rail",
-                     "cursor-smith-pcard", "cursor-smith-pcard-use", "cursor-smith-pcard-caret", "cursor-smith-tick", "cursor-smith-alert", "cursor-smith-footer", "cursor-smith-pcard-caret-text", "cursor-smith-pcard-ghost", "cursor-smith-pcard-particle", "cursor-smith-value-icon", "cursor-smith-prompt-field", "cursor-smith-needs-hint", "cursor-smith-reset-link"]) {
+                     "cursor-smith-pcard", "cursor-smith-pcard-use", "cursor-smith-pcard-caret", "cursor-smith-tick", "cursor-smith-alert", "cursor-smith-footer", "cursor-smith-pcard-caret-text", "cursor-smith-pcard-ghost", "cursor-smith-pcard-particle", "cursor-smith-value-icon", "cursor-smith-iconed", "cursor-smith-prompt-field", "cursor-smith-needs-hint", "cursor-smith-reset-link"]) {
     ok(`styles.css has .${cls}`, new RegExp("\\." + cls + "(?![\\w-])").test(css));
     ok(`...which main.js uses`, js.includes(cls));
   }
@@ -2571,7 +2586,7 @@ section("the plugin review's rules (static styles, settings headings)");
   ok("the manifest asks for the Obsidian this needs",
      JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")).minAppVersion === "1.13.7");
   ok("...and versions.json says so for this release",
-     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.6"] === "1.13.7");
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "versions.json"), "utf8"))["1.5.7"] === "1.13.7");
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 {
   "name": "cursor-smith",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "Forge your cursor with the most advanced cursor engine there is.",
   "private": true,
   "main": "main.js",
@@ -16,7 +16,9 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.0.0",
     "eslint-plugin-obsidianmd": "^0.4.0",
+    "globals": "^17.0.0",
     "obsidian": "^1.13.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.70.0"
   }
 }

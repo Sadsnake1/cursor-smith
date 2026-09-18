@@ -1,11 +1,11 @@
 /* --- Settings panel: the sections ------------------------------------------
    The panel is built from Obsidian 1.13's setting definitions (see
-   getSettingDefinitions in main.js): each named group of settings -
-   Presets, Appearance, Blinking, Smooth movement, Effects - is one of
-   Obsidian's setting groups. Obsidian draws a group as a card: a heading
-   over a shaded, rounded, bordered box of rows. This plugin's sections opt
-   out of the card and keep the flat look the panel always had - a bold
-   heading with a chevron in front of it, rows flush under it separated by
+   getSettingDefinitions in settings-tab.ts): each named group of settings
+   - General, Presets, Appearance, Blinking, Smooth movement, Effects, and
+   Vim's - is one of Obsidian's setting groups, shown one at a time behind
+   the tab strip in the first card. Obsidian draws a group as a card: a
+   heading over a shaded, rounded, bordered box of rows. This plugin's
+   sections opt out of the card and keep the flat look - rows separated by
    a hairline, sub-options stepped in behind a guide line. Every rule here
    is scoped to the plugin's own groups (.cursor-smith-section, and the
    first card, .cursor-smith-global); Obsidian's cards elsewhere are
@@ -50,40 +50,14 @@
   right: 0;
 }
 
-/* The heading: the chevron first, then the title, the way the old summary
-   read ("> Blinking"). The chevron is the group's extra button; the heading
-   is a flex row, so reversing it puts the control in front of the name. The
-   heading and the chevron both toggle the section (see collapseButton). */
-.cursor-smith-section > .setting-item-heading {
-  cursor: pointer;
-  user-select: none;
-  flex-direction: row-reverse;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 4px;
-  padding: 0.2em 0;
-  margin: 0 0 0.2em;
-}
-.cursor-smith-section > .setting-item-heading .setting-item-name {
-  font-size: var(--font-ui-medium);
-  font-weight: 700;
-  color: var(--text-normal);
-}
-.cursor-smith-section > .setting-item-heading .setting-item-control {
-  flex: 0 0 auto;
-  justify-content: flex-start;
-}
-.cursor-smith-section > .setting-item-heading .clickable-icon {
-  padding: 0 2px;
-  margin: 0;
-  color: var(--text-muted);
-}
-.cursor-smith-section > .setting-item-heading .clickable-icon svg {
-  width: 16px;
-  height: 16px;
-}
-.cursor-smith-section.is-collapsed > .setting-items {
+/* A card inside one of the pages: its own heading is not shown (the page's
+   title is it). */
+.cursor-smith-section.cursor-smith-in-page > .setting-item-heading {
   display: none;
+}
+.cursor-smith-section.cursor-smith-in-page {
+  border-bottom: none;
+  margin-bottom: 0;
 }
 
 /* The first card's heading is the plugin's name and version: a small muted
@@ -170,7 +144,503 @@
    against each other and read as one wide multi-coloured control instead of
    N separate pickers. */
 .cursor-smith-color-row .setting-item-control {
+  gap: 10px;
+  align-items: flex-end;
+}
+/* Each swatch in a cell with its label under it: Dark / Light, or the
+   ramp's stop numbers. The picker's input is moved into the cell by the
+   row (swatchRow). */
+.cursor-smith-swatch-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.cursor-smith-swatch-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+/* --- Page entries ------------------------------------------------------------
+   The categories are Obsidian's own sub-pages; their entries are Obsidian's
+   rows. This plugin adds only a Lucide icon, in front of the entry's NAME.
+   The icon is written into the description (the one slot of an entry that
+   takes markup); the entry's info block is then laid out as a two-column
+   grid - the icon in the first column, spanning the name and the
+   description, the name and the description's text in the second - so it
+   reads as a leading icon. `display: contents` lifts the description's
+   icon and text into the grid; the text places itself in the one free
+   cell. */
+.setting-item-info:has(> .setting-item-description > .cursor-smith-page-icon) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+}
+.setting-item-info:has(> .setting-item-description > .cursor-smith-page-icon) > .setting-item-name {
+  grid-column: 2;
+  grid-row: 1;
+}
+.setting-item-info:has(> .setting-item-description > .cursor-smith-page-icon) > .setting-item-description {
+  display: contents;
+}
+/* On the name's line, not floating between the name and the description:
+   the name's line box is about 20px, the icon 16px. */
+.cursor-smith-page-icon {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: start;
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+.cursor-smith-page-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* A page's last row: the reset link. */
+.setting-item.cursor-smith-reset-row {
+  padding: 0.5em 0 0.2em;
+}
+.setting-item.cursor-smith-reset-row .setting-item-info {
+  display: none;
+}
+.setting-item.cursor-smith-reset-row .setting-item-control {
+  justify-content: flex-end;
+}
+.setting-item.cursor-smith-reset-row::before {
+  content: none;
+}
+.cursor-smith-reset-link {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  box-shadow: none;
+}
+.cursor-smith-reset-link:hover {
+  color: var(--text-muted);
+  background-color: var(--background-modifier-hover);
+}
+.cursor-smith-reset-link svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* --- The Effects rail ---------------------------------------------------------
+   A chip per effect on the Effects page: its icon, a dot for "on", the
+   picked one filled with the accent. In the row's control area, which
+   Obsidian empties on a re-render. */
+.setting-item.cursor-smith-rail-row {
+  display: block;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.setting-item.cursor-smith-rail-row .setting-item-name {
+  display: none;
+}
+.setting-item.cursor-smith-rail-row .setting-item-description {
+  margin-top: 0;
+}
+.setting-item.cursor-smith-rail-row .setting-item-control {
+  display: block;
+  width: 100%;
+}
+.cursor-smith-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 6px;
+}
+/* On the tag as well as the class: Obsidian's own button:not(.clickable-icon)
+   rule outranks a lone class and would fill every pill. */
+button.cursor-smith-chip,
+button.cursor-smith-chip:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  margin: 0;
+  border-radius: 15px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: normal;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: none;
+}
+.cursor-smith-chip:hover {
+  color: var(--text-normal);
+  border-color: var(--background-modifier-border-hover);
+}
+.cursor-smith-chip-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.cursor-smith-chip-icon svg {
+  width: 13px;
+  height: 13px;
+}
+/* The tick at the left of a pill - a chip's while its effect is on, a
+   preset card's while it is the look in use. One look for both. */
+.cursor-smith-tick {
+  display: inline-flex;
+  align-items: center;
+  color: var(--interactive-accent);
+}
+.cursor-smith-tick svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
+}
+.cursor-smith-chip .cursor-smith-tick {
+  display: none;
+}
+.cursor-smith-chip.is-on .cursor-smith-tick {
+  display: inline-flex;
+}
+.cursor-smith-chip.is-on {
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+  background-color: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+.cursor-smith-chip.is-picked,
+.cursor-smith-chip.is-picked:hover {
+  color: var(--text-on-accent);
+  background-color: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+.cursor-smith-chip.is-picked .cursor-smith-tick {
+  color: var(--text-on-accent);
+}
+/* A thumb's height on a phone. */
+.is-mobile .cursor-smith-chip,
+.is-mobile .cursor-smith-chip:hover {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 20px;
+  font-size: var(--font-ui-medium);
+}
+
+/* --- A row that needs a setting from another card -------------------------
+   Shown, dimmed, its control disabled, the hint in the description. */
+.setting-item.cursor-smith-needs {
+  opacity: 0.55;
+}
+.cursor-smith-needs-hint {
+  display: none;
+  color: var(--text-accent);
+}
+.cursor-smith-needs-hint.is-shown {
+  display: inline;
+}
+
+/* --- The preset strip ----------------------------------------------------------
+   Thin cards in the header, one per saved preset: a "use" button holding
+   a little text with a caret crawling it in the preset's look, the name
+   and a tick on the one in use, then its three buttons beside it; after
+   them Save and Import, which are plain buttons. The card rules undo
+   Obsidian's button styling, since Save and Import share them. */
+.setting-item.cursor-smith-presets-row {
+  display: block;
+}
+.setting-item.cursor-smith-presets-row .setting-item-control {
+  display: block;
+  width: 100%;
+  padding-top: 8px;
+}
+.cursor-smith-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cursor-smith-pcard,
+.cursor-smith-pcard:hover,
+button.cursor-smith-pcard,
+button.cursor-smith-pcard:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 30px;
+  min-height: 0;
+  padding: 0 6px 0 0;
+  margin: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 15px;
+  background-color: transparent;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: normal;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+}
+.cursor-smith-pcard:hover {
+  border-color: var(--background-modifier-border-hover);
+}
+.cursor-smith-pcard.is-active,
+.cursor-smith-pcard.is-active:hover {
+  border-color: var(--interactive-accent);
+  background-color: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+/* The "use" button: no look of its own, it fills the card's left side. */
+button.cursor-smith-pcard-use,
+button.cursor-smith-pcard-use:hover {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+  padding: 0 4px 0 8px;
+  margin: 0;
+  border: none;
+  border-radius: 15px 0 0 15px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+}
+.cursor-smith-pcard-use:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+/* The demo: the preset's name in the editor's monospace font, and over it
+   a caret in the preset's look, driven frame by frame from the preset's
+   own numbers (demo.ts): it "types" the name, pauses, jumps back. The
+   caret's offset and width are inline; ghosts (CRT effects) are boxes
+   under it. Still under reduced motion. */
+.cursor-smith-pcard-demo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  letter-spacing: 1px;
+  color: var(--text-normal);
+}
+/* Room for the caret after the last letter (it lands there, as a real one
+   does after the last keystroke), and for a smear's stretch. */
+.cursor-smith-pcard-text {
+  padding-right: 22px;
+}
+.cursor-smith-pcard-demo {
+  margin-right: 6px;
+}
+/* A particle: a pixel thrown, risen or burnt, moved and faded inline. */
+.cursor-smith-pcard-particle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 2;
+  will-change: transform, opacity;
+}
+.cursor-smith-pcard-caret,
+.cursor-smith-pcard-ghost {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 1ch;
+  height: 12px;
+  border-radius: 1px;
+  will-change: transform, width;
+}
+.cursor-smith-pcard-ghost {
+  z-index: 0;
+}
+.cursor-smith-pcard-caret {
+  z-index: 1;
+}
+.cursor-smith-pcard-caret-line {
+  width: 2px;
+}
+/* A Line's serifs: a bar across each end, in the caret's own paint. */
+.cursor-smith-pcard-caret-line.is-serif::before,
+.cursor-smith-pcard-caret-line.is-serif::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  height: 1px;
+  background: inherit;
+}
+.cursor-smith-pcard-caret-line.is-serif::before {
+  top: 0;
+}
+.cursor-smith-pcard-caret-line.is-serif::after {
+  bottom: 0;
+}
+.cursor-smith-pcard-caret-underline {
+  top: 16px;
+  height: 2px;
+}
+/* The letter under a Box caret: the name again, inside the caret and
+   clipped to it, moved back by the caret's own offset (inline) so it lies
+   over the real letters; its color is inline (black or white). */
+.cursor-smith-pcard-caret-box {
+  overflow: hidden;
+}
+.cursor-smith-pcard-caret-text {
+  position: absolute;
+  left: 0;
+  top: -5px;
+  line-height: 22px;
+  white-space: nowrap;
+}
+/* The buttons beside the name: small icons, muted until hovered. They
+   carry Obsidian's clickable-icon class, which keeps them out of its
+   narrow-column rule that makes every control button full width. */
+.cursor-smith-pcard-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 0;
+  margin-left: 2px;
+}
+.cursor-smith-pcard-action.clickable-icon,
+.cursor-smith-pcard-action.clickable-icon:hover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  box-shadow: none;
+}
+.cursor-smith-pcard-action.clickable-icon:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+.cursor-smith-pcard-action svg {
+  width: 12px;
+  height: 12px;
+}
+/* Below 400px of settings column (Obsidian's own breakpoint, the one that
+   makes its control buttons full width) the strip is a list: one card
+   per line, demo and name at the left, the buttons at the right edge,
+   Save and Import sharing a line. */
+@container (max-width: 400px) {
+  .setting-item.cursor-smith-presets-row .setting-item-control .cursor-smith-pcard {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .setting-item.cursor-smith-presets-row .setting-item-control .cursor-smith-pcard-use {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+  }
+  .setting-item.cursor-smith-presets-row .setting-item-control .cursor-smith-pcard-more {
+    flex: 1 1 0;
+    width: auto;
+    justify-content: center;
+  }
+  .cursor-smith-pcard-actions {
+    margin-left: auto;
+  }
+  .setting-item .setting-item-control button.cursor-smith-chip.cursor-smith-chip {
+    width: auto;
+  }
+  .setting-item-control .cursor-smith-mode-tabs {
+    justify-content: flex-start;
+  }
+}
+/* A tapped trash: red, and a word. */
+.cursor-smith-pcard-action.clickable-icon.is-armed,
+.cursor-smith-pcard-action.clickable-icon.is-armed:hover {
+  width: auto;
+  padding: 0 8px;
+  color: var(--text-on-accent);
+  background-color: var(--background-modifier-error);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+.cursor-smith-pcard-more .cursor-smith-pcard-name {
+  font-weight: 600;
+}
+/* Save and Import: an icon and a word, dashed. */
+.cursor-smith-pcard.cursor-smith-pcard-more,
+.cursor-smith-pcard.cursor-smith-pcard-more:hover {
+  gap: 8px;
+  padding: 0 10px 0 8px;
+  border-style: dashed;
+  background-color: transparent;
+  color: var(--text-muted);
+}
+.cursor-smith-pcard.cursor-smith-pcard-more:hover {
+  color: var(--text-normal);
+}
+.cursor-smith-pcard-more-icon {
+  display: inline-flex;
+}
+.cursor-smith-pcard-more-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.is-mobile .cursor-smith-pcard,
+.is-mobile .cursor-smith-pcard:hover {
+  height: 40px;
+  border-radius: 20px;
+  font-size: var(--font-ui-medium);
+}
+.is-mobile .cursor-smith-pcard-use,
+.is-mobile .cursor-smith-pcard-use:hover {
+  padding-left: 12px;
+  border-radius: 20px 0 0 20px;
+}
+/* On a phone the two buttons are thumb-sized: the card's full height. */
+.is-mobile .cursor-smith-pcard,
+.is-mobile .cursor-smith-pcard:hover {
+  padding-right: 2px;
+}
+.is-mobile .cursor-smith-pcard-actions {
+  gap: 2px;
+}
+.is-mobile .cursor-smith-pcard-action.clickable-icon,
+.is-mobile .cursor-smith-pcard-action.clickable-icon:hover {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+}
+.is-mobile .cursor-smith-pcard-action svg {
+  width: 19px;
+  height: 19px;
+}
+
+/* --- The prompt (Save, Import) -------------------------------------------------- */
+.cursor-smith-prompt-field {
+  width: 100%;
+  margin: 4px 0 6px;
+}
+.cursor-smith-prompt-note {
+  min-height: 1.4em;
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
 }
 
 /* --- Canvas Engine Styles (Box, Line, Underline) --- */
@@ -408,6 +878,74 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   color: var(--text-warning);
 }
 
+/* The Effects entry's value: one icon per effect that is on. */
+.cursor-smith-value-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--text-muted);
+}
+.cursor-smith-value-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* --- The footer: the version, muted, under the pages --- */
+.setting-item.cursor-smith-footer {
+  border-top: none;
+  padding: 14px 0 0;
+  justify-content: flex-end;
+}
+.setting-item.cursor-smith-footer .setting-item-name:empty {
+  display: none;
+}
+.setting-item.cursor-smith-footer .setting-item-description {
+  padding-top: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  text-align: right;
+}
+
+/* --- The Vim alert: a tiny card under the mode switch while Vim is on --- */
+.setting-item.cursor-smith-alert {
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--text-warning) 45%, transparent);
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--text-warning) 8%, transparent);
+}
+.setting-item.cursor-smith-alert .setting-item-name:empty {
+  display: none;
+}
+.setting-item.cursor-smith-alert .setting-item-description {
+  padding-top: 0;
+  color: var(--text-normal);
+}
+/* Obsidian stacks a row's parts in a narrow column with
+   .setting-item:not(:is(...)) (0,3,0) inside a container query, and on a
+   phone with .is-phone .modal .setting-item:not(:is(...)) (0,5,0). The
+   alert keeps its icon beside the text in both: these two selectors
+   out-rank the first and tie the second, and this sheet comes later. */
+.setting-item.cursor-smith-alert.cursor-smith-alert.cursor-smith-alert,
+.is-phone .modal .setting-item.cursor-smith-alert.cursor-smith-alert {
+  flex-direction: row;
+  align-items: flex-start;
+}
+.setting-item.cursor-smith-alert .setting-item-info {
+  flex: 1 1 0;
+}
+.cursor-smith-alert-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-warning);
+}
+.cursor-smith-alert-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* --- Settings panel and status bar bits (static, so classes not inline) --- */
 
 /* The Vim mode indicator pinned to the LEFT of the status bar: Obsidian
@@ -420,11 +958,6 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
 }
 
 /* Share-code fields. */
-.cursor-smith-code-input {
-  font-family: var(--font-monospace);
-  font-size: var(--font-smaller);
-  width: 14em;
-}
 
 /* Small muted notes among a card's rows (no presets yet, what Command
    mode covers): a row with no name and only a description. The warning
@@ -439,65 +972,15 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   color: var(--text-warning, var(--text-muted));
 }
 
-/* Segmented controls: the CUA / Vim switch in the first card and the five
-   mode tabs of the Vim panel. Each sits in its row's control area. */
-.cursor-smith-segmented {
+/* The five Vim mode tabs: chips (see the Effects rail) in the row's
+   control area, each in its mode's cursor color (inline). */
+.cursor-smith-mode-tabs {
   display: flex;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  overflow: hidden;
-  width: 300px;
-  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
-.cursor-smith-segmented-modes {
-  width: 460px;
-}
-.cursor-smith-segment {
-  flex: 1;
-  padding: 7px 10px;
-  border: none;
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 400;
-  background: var(--background-secondary);
-  color: var(--text-normal);
-  transition: background 0.1s ease;
-}
-.cursor-smith-segmented-modes .cursor-smith-segment {
-  padding: 7px 4px;
-}
-.cursor-smith-segment.is-active {
+.cursor-smith-mode-tab.is-picked {
   font-weight: 600;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
 }
 
-/* A preset's share code and its Copy button, in the preset row. */
-.cursor-smith-share-code {
-  font-size: 10px;
-  letter-spacing: 0.01em;
-  color: var(--text-muted);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 3px;
-  padding: 1px 6px;
-  max-width: 10em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: inline-block;
-  vertical-align: middle;
-  cursor: pointer;
-  user-select: all;
-  margin-right: 4px;
-}
-.cursor-smith-copy-button {
-  font-size: 10px;
-  padding: 2px 8px;
-  margin-right: 6px;
-  border-radius: 3px;
-  cursor: pointer;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  color: var(--text-muted);
-}

@@ -5,7 +5,11 @@ The plugin's source, as a TypeScript project.
 ```
 src/
   main.ts           entry: exports the plugin class
-  plugin.ts         the plugin - engine, effects, per-caret state
+  plugin.ts         the plugin class: fields, lifecycle, settings, presets, Vim mode, the tick
+  measure.ts        where the caret is (part of the class, see plugin.ts)
+  effects.ts        the particle effects (part of the class)
+  paint.ts          painting the cursor (part of the class)
+  torch.ts          the torch spotlight's overlay and loop (part of the class)
   settings-tab.ts   the settings panel
   settings.ts       defaults, migrations, look/preset helpers
   presets.ts        the presets that ship
@@ -20,6 +24,11 @@ src/
   types.ts          the settings type; Obsidian typing gaps
   test-entry.ts     what the test suite reaches into
 test/               the test suite (`npm test`) and its Obsidian stub
+
+`test/goldens/` holds the paint goldens: what a frame draws for each shipped
+preset, recorded by `test/goldens.js` and compared on every run. A paint
+change fails the suite with the first differing op; when the change is
+intended, `UPDATE_GOLDENS=1 npm test` rewrites the files - read their diff.
 ```
 
 ```
@@ -29,6 +38,11 @@ npm run lint      # the plugin review's rules (eslint-plugin-obsidianmd)
 npm run build     # main.js
 npm test          # `build:test` then the assertions, against the built bundle
 ```
+
+`src/` is the source, edited by hand (until 1.5.5 it was generated from a
+single JavaScript file; that file is retired). `main.js` in this folder is
+the build output, committed so the plugin can be installed from the tree,
+and the release workflow rebuilds it from the tag rather than trusting it.
 
 A release is built by GitHub: publishing a release runs
 `.github/workflows/release.yml`, which builds main.js from the tag with the

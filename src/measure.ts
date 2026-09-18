@@ -9,7 +9,7 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { GEOMETRY_TTL_MS } from "./constants";
+import { CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS } from "./constants";
 import { isTextCaretHost } from "./motion";
 import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle } from "./types";
@@ -116,11 +116,18 @@ export const measureMethods = {
       // same Text object, so the key holds across scrolling and blinking,
       // while any edit swaps the Text object and busts it. A short TTL
       // backstops theme / font-size changes that touch none of those keys.
+      // ...plus the style generation (css-change, layout-change, resize -
+      // see _invalidateStyle), so a theme or font change re-measures at once
+      // and the TTL is only the backstop for a change nothing announces. The
+      // layout generation would be the wrong key here: every scroll and
+      // keystroke bumps it, and neither changes the font under a caret that
+      // has not moved.
       const assocKey = main.assoc || 0;
       const nowMs = performance.now();
+      const styleGen = this._styleGen | 0;
       let sc = this._caretStyleCache;
       if (!(sc && sc.doc === view.state.doc && sc.pos === pos &&
-            sc.assoc === assocKey && (nowMs - sc.t) < 250)) {
+            sc.assoc === assocKey && sc.gen === styleGen && (nowMs - sc.t) < CARET_STYLE_TTL_MS)) {
         const contentStyle = win.getComputedStyle(view.contentDOM);
 
         // Find the actual DOM element rendering the character at the caret
@@ -244,7 +251,7 @@ export const measureMethods = {
         }
 
         sc = this._caretStyleCache = {
-          doc: view.state.doc, pos, assoc: assocKey, t: nowMs,
+          doc: view.state.doc, pos, assoc: assocKey, gen: styleGen, t: nowMs,
           textColor: _textColor, fontSize: _fontSize, fontFamily: _fontFamily,
           fontWeight: _fontWeight, fontStyle: _fontStyleCss,
           letterSpacing: _letterSpacing, lineHeightStr: _lineHeightStr,

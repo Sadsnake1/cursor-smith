@@ -36,7 +36,19 @@ export interface Glitch { start: number; dur: number; reach: number; seed: numbe
 
 // Hot-head's scroll compensation: where the pool was shifted to and by how much.
 export interface HotShift { ox: number; oy: number; tick: number }
-export interface HotScroll { el: Element | null; x: number; y: number }
+// The scroller Hot-head follows and its offsets when they were last read;
+// `gen` is the layout generation of that read (see hotSyncScroll).
+export interface HotScroll { el: Element | null; x: number; y: number; gen: number }
+// Where the selection was when selectionchange last woke the loop (see
+// _selectionMoved): the editor's document, anchor, head, assoc and range
+// count, or a field and its selection, or the DOM selection's two ends.
+// Identities, not copies.
+export interface SelectionSig { a: unknown; b: unknown; n: number; h: number; o: number; k: number }
+// What the tick decided for a frame (see _decideGear): the gear, whether
+// the frame is static (nothing animating, so the draw may be skipped on a
+// matching signature), the blink's half for that signature, how long the
+// idle gear may sleep, and the first reason that held (for the report).
+export interface GearDecision { gear: string; staticFrame: boolean; blinkBucket: number; idleWake: number; why: string }
 
 // The tick's counters behind the performance report (see _freshPerf).
 export interface PerfCounters {
@@ -58,7 +70,7 @@ export interface LineStyle {
 }
 // The primary caret's style cache (cmCaretCoords), keyed on the position.
 export interface CaretStyleCache extends LineStyle {
-  doc: Text; pos: number; assoc: number; t: number; charWidth: number; rowLeft: number | null; rowRight: number | null;
+  doc: Text; pos: number; assoc: number; gen: number; t: number; charWidth: number; rowLeft: number | null; rowRight: number | null;
 }
 // A secondary's, kept on its bundle (secondaryCaretRecord).
 export interface SecondaryStyleCache extends LineStyle { doc: Text; pos: number; t: number; char: string; charWidth: number }

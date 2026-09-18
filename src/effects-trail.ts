@@ -19,7 +19,13 @@ export const effectsTrailMethods = {
   // live caret and gets its own ghost on the next move - only the bridge between
   // them is filled.
   pushTrail(this: CursorSmithPlugin, point: CaretRecord | null, dest: CaretRecord | null = null) {
-    if (!point) return;
+    // Only under the CRT effect, which is the one painter of these ghosts
+    // (forEachTrailPoint). They used to be recorded whatever the setting and
+    // pruned by age, so every caret move with CRT off still held the hot
+    // gear and repainted the frame for trailFadeMs (450 ms by default) - the
+    // report read "awake because: trail 100%" while typing on the default
+    // look, sixty draws a second of an invisible tail.
+    if (!point || !this.look.crtEffect) return;
     const now = performance.now();
     const max = Math.max(0, Math.round(this.look.trailLength));
 
@@ -67,12 +73,13 @@ export const effectsTrailMethods = {
   // deliberately NOT gated on crtEffect. It used to be the first two lines of
   // forEachTrailPoint(), which is wrong twice over:
   //
-  //   1. forEachTrailPoint() early-returns when crtEffect is off, but
-  //      pushTrail() runs from commitMove() on every caret move regardless of
-  //      that setting. With the trail effect disabled - the default - the
-  //      array filled to trailLength and was never pruned by age at all,
-  //      only evicted by newer entries. trail.length stayed pinned at 10
-  //      forever after the first ten keystrokes.
+  //   1. forEachTrailPoint() early-returns when crtEffect is off, and until
+  //      1.5.8 pushTrail() ran from commitMove() on every caret move
+  //      regardless of that setting (it is gated on it now). With the trail
+  //      effect disabled - the default - the array filled to trailLength and
+  //      was never pruned by age at all, only evicted by newer entries.
+  //      trail.length stayed pinned at 10 forever after the first ten
+  //      keystrokes.
   //   2. Even with crtEffect on, pruning inside draw() breaks the moment the
   //      frame governor legitimately skips a draw.
   //

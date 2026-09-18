@@ -211,6 +211,45 @@ export function keystrokeHeatWeight(kind: string, repeat: boolean) {
 // load inside a line, say - and bounds how stale the caret can briefly be.
 export const GEOMETRY_TTL_MS = 400;
 
+// How long the hot gear is held after the last input event, in ms. The event
+// itself wakes the loop at once; this window only covers what the input
+// causes a frame or two later with no event of its own - the editor's
+// deferred measure and scrollIntoView, a composition landing. It was 1200
+// until 1.5.8: every stray selectionchange or resize bought over a second of
+// full rate, and once the springs have settled those frames measure a caret
+// that has not moved and draw nothing (the static-frame test).
+export const INPUT_HOT_MS = 500;
+
+// How long the caret's computed style (font, colour, line height, the glyph
+// width, the row's extent) is trusted, in ms. The cache is keyed on a style
+// generation that css-change, layout-change and resize bump, so this is
+// only the backstop for a font change nothing announces. It was a bare 250
+// ms with no generation, which had the idle heartbeat re-reading computed
+// styles and hit-testing the caret's line four times a second for a caret
+// that had not moved: a third of every idle tick, measured.
+export const CARET_STYLE_TTL_MS = 1000;
+
+// The smear spring counts as settled once every corner is within half a
+// pixel of its target and none is moving faster than this, in px/s: half a
+// pixel per frame at 60 Hz, so the next frame could not paint a different
+// half-pixel. Then the corners snap onto their targets and the loop may
+// rest. The velocity floor used to be 0.1 px/s, which kept the quad
+// "moving" for 200-370 ms after its last half-pixel change on every
+// keystroke (the defaults, Jell-O, FairyDust; measured headless) - two
+// hundred frames a minute of typing, painted for nothing visible.
+export const SMEAR_SETTLE_V = 30;
+
+// The frame loop's watchdog (engine.ts, _watchdog): checked every
+// WATCHDOG_INTERVAL_MS from an interval; a loop that has not ticked for
+// WATCHDOG_STALE_MS while the document is visible is restarted, and on the
+// second such stall the native caret is handed back. A parked loop still
+// ticks at the idle heartbeat, so 3 s of silence is a loop that died, not
+// one that is resting - unless the interval itself was late by as much,
+// which is the main thread blocked and no verdict on the loop.
+export const WATCHDOG_INTERVAL_MS = 2000;
+export const WATCHDOG_STALE_MS = 3000;
+
+
 // The torch's two layers are canvases painted at this fraction of the pane's
 // size and scaled up by the compositor. The darkness is a soft radial ramp
 // and the glow a softer one: at a quarter of the resolution a 140px light's
@@ -451,7 +490,11 @@ export const SECONDARY_MATCH_WINDOW = 32;
 // every caret shows it, only the primary's moves feed it.
 export const CARET_STATE_FIELDS = [
   "lastActive", "pending", "animActive",
-  "smearQuad", "smearShape", "smearCenterPrev", "_taperBuf", "_smearDir",
+  "smearQuad", "smearShape", "smearCenterPrev", "_taperBuf", "_volumeBuf", "_smearDir",
+  // The two-point quad's points (1.5.6). They were missing here until 1.5.8,
+  // so a secondary's spring integrated the primary's points toward its own
+  // target and the two carets' smears fought over one spring.
+  "_smearLead", "_smearTrail",
   "_smearMoving", "_smearDtT", "smearQuadLastMoveT",
   "trail", "glitch",
   "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod",

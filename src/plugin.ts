@@ -1,5 +1,5 @@
 import { Plugin, View, addIcon } from "obsidian";
-import { keystrokeHeatWeight } from "./constants";
+import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight } from "./constants";
 import { applyReducedMotion } from "./motion";
 import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset } from "./presets";
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings";
@@ -21,6 +21,7 @@ import type {
   FlamePixel,
   Glitch,
   HotScroll,
+  SelectionSig,
   HotShift,
   LegacySettings,
   LetterParticle,
@@ -154,6 +155,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare sampleHeatRamp: PaintMethods["sampleHeatRamp"];
   declare heatColor: PaintMethods["heatColor"];
   declare blinkPhase: PaintMethods["blinkPhase"];
+  declare blinkWindow: PaintMethods["blinkWindow"];
   declare blinkAlpha: PaintMethods["blinkAlpha"];
   declare breathScale: PaintMethods["breathScale"];
   declare _cursorBounds: PaintMethods["_cursorBounds"];
@@ -169,6 +171,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare createEnergyGradient: PaintMethods["createEnergyGradient"];
   declare serifQuads: PaintMethods["serifQuads"];
   declare drawGenericCaret: PaintMethods["drawGenericCaret"];
+  declare _paintTrail: PaintMethods["_paintTrail"];
+  declare _armGlow: PaintMethods["_armGlow"];
+  declare _glitchNow: PaintMethods["_glitchNow"];
+  declare _bodyPaint: PaintMethods["_bodyPaint"];
   declare drawSecondaryCarets: PaintMethods["drawSecondaryCarets"];
   declare drawFullSecondaries: PaintMethods["drawFullSecondaries"];
   declare matchingBracketPos: PaintMethods["matchingBracketPos"];
@@ -249,15 +255,19 @@ export default class CursorSmithPlugin extends Plugin {
   declare _markDirty: EngineMethods["_markDirty"];
   declare forEachTrailPoint: EngineMethods["forEachTrailPoint"];
   declare _invalidateLayout: EngineMethods["_invalidateLayout"];
+  declare _invalidateStyle: EngineMethods["_invalidateStyle"];
   declare _markActivity: EngineMethods["_markActivity"];
   declare _observeEditorLayout: EngineMethods["_observeEditorLayout"];
   declare _scrollMovesCaret: EngineMethods["_scrollMovesCaret"];
+  declare _selectionMoved: EngineMethods["_selectionMoved"];
+  declare _wakeLoop: EngineMethods["_wakeLoop"];
+  declare _watchdog: EngineMethods["_watchdog"];
+  declare _decideGear: EngineMethods["_decideGear"];
+  declare _frameSignature: EngineMethods["_frameSignature"];
   declare performanceReport: EngineMethods["performanceReport"];
   declare _freshPerf: EngineMethods["_freshPerf"];
   declare perfReportText: EngineMethods["perfReportText"];
   // --- carets.ts
-  declare _saveCaretState: CaretsMethods["_saveCaretState"];
-  declare _loadCaretState: CaretsMethods["_loadCaretState"];
   declare _freshCaretState: CaretsMethods["_freshCaretState"];
   declare _withCaret: CaretsMethods["_withCaret"];
   declare rematchCaretStates: CaretsMethods["rematchCaretStates"];
@@ -270,7 +280,8 @@ export default class CursorSmithPlugin extends Plugin {
 
   // The engine keeps its working state as instance fields set where they
   // are first needed - a hundred and sixty of them, some swapped in and out
-  // per caret (see CARET_STATE_FIELDS). The generator declares every one of
+  // per caret (see CARET_STATE_FIELDS; accessors over this._caret since
+  // 1.5.8, hence `declare`). The generator declares every one of
   // them from the assignments in this class and its FIELD_TYPES table. They
   // are assigned in onload() (most through _resetEngineState) rather than in
   // a constructor, which is what the definite-assignment marks say.
@@ -288,11 +299,15 @@ export default class CursorSmithPlugin extends Plugin {
   _canvasPlaced!: boolean;
   _canvasRect!: Rect | null;
   _canvasTick!: FrameRequestCallback | null;
+  // The current caret's state: the primary's object, or a secondary's
+  // bundle while _withCaret has it in. Every CARET_STATE_FIELDS field is an
+  // accessor over it (the end of this file).
+  _caret!: CaretState;
   _caretGeoCache!: CaretGeoCache | null;
   _caretOwner!: CaretState | null;
   _caretPass!: "primary" | "secondary";
   _caretStyleCache!: CaretStyleCache | null;
-  _catchUpBoost!: number;
+  declare _catchUpBoost: number;
   _chromeCache!: ChromeInsets | null;
   _clipChain!: Element[] | null;
   _clipChainFor!: Element | null;
@@ -313,36 +328,49 @@ export default class CursorSmithPlugin extends Plugin {
   _glyphColorFor!: string | null;
   _glyphColorMode!: string | null;
   _glyphColorVal!: string;
+  // The glyph's measured ascent and descent, per (font, character); drawBoxCursor.
+  _glyphMetricKey!: string | null;
+  _glyphMetrics!: { ascent: number; descent: number } | null;
   _heatKeyT!: number;
   _hideNativeSig!: boolean | null;
-  _hotActiveT!: number;
+  declare _hotActiveT: number;
   _hotDrawT!: number;
-  _hotEmitFrom!: Pt | null;
-  _hotEngulfUntil!: number;
+  declare _hotEmitFrom: Pt | null;
+  declare _hotEngulfUntil: number;
+  // Hot-head's fill strings by (palette index, alpha); see drawHotHead.
+  _hotFill!: Map<number, string> | null;
   _hotPalette!: number[][] | null;
   _hotPaletteKey!: string | null;
-  _hotPrev!: (Pt & { t: number }) | null;
+  declare _hotPrev: (Pt & { t: number }) | null;
   _hotScroll!: HotScroll | null;
   _hotShift!: HotShift | null;
-  _hotShiftTick!: number;
+  declare _hotShiftTick: number;
   _hotSparkCap!: number;
   _hotSparks!: number;
-  _hotVel!: Pt;
+  declare _hotVel: Pt;
+  // How long the idle gear may sleep before the blink next moves (schedule
+  // reads it; the tick sets it from blinkWindow). 0 or Infinity: the heartbeat.
+  _idleWakeMs!: number;
   _lastActivityT!: number;
   // What the last activity was (a key, the selection, a scroll...), for the
   // performance report's "awake because".
   _lastActivityKind!: string;
-  _lastFireworkT!: number;
+  // When the frame loop last ran, for the watchdog.
+  _lastTickT!: number;
+  declare _lastFireworkT: number;
   _lastGlowAlpha!: string;
   _lastGlowRect!: string;
   _lastHotFrameT!: number;
-  _lastHotT!: number;
+  declare _lastHotT: number;
   _lastOverlayRect!: string;
-  _lastSparkT!: number;
-  _lastStardustT!: number;
+  declare _lastSparkT: number;
+  declare _lastStardustT: number;
   _lastTorchRadius!: number;
   _lastWrapperRect!: string;
   _layoutGen!: number;
+  // Bumped by every change to what `look` answers (_lookChanged); the
+  // static-frame signature's one term for the whole look.
+  _lookGen!: number;
   _measureCtx!: CanvasRenderingContext2D | null;
   _nodeIdSeq!: number;
   _nodeIds!: WeakMap<Node, number> | null;
@@ -357,50 +385,65 @@ export default class CursorSmithPlugin extends Plugin {
   _presCacheT!: number;
   _presCacheV!: boolean;
   _realKeyT!: number;
+  _reduceMatches!: boolean;
   _reduceMQ!: MediaQueryList | null;
+  _reduceMQHandler!: ((e: MediaQueryListEvent) => void) | null;
   _regionOversizedT!: number;
   _ro!: ResizeObserver | null;
   _roView!: EditorView | null;
   _secondaries!: CaretState[];
   _selShape!: { count: number; mainIndex: number } | null;
-  _smearDir!: Pt | null;
+  // Holds the last selection's document and nodes by identity until the
+  // next selectionchange; one small object, released with the next event.
+  _selSig!: SelectionSig | null;
+  declare _smearDir: Pt | null;
   // The two points the smear quad is built from: the leading face's origin
   // (a spring) and the trailing face's (a lag behind it). See updateSmearQuad.
-  _smearLead!: (Pt & { vx: number; vy: number }) | null;
-  _smearTrail!: Pt | null;
-  _smearDtT!: number;
-  _smearMoving!: boolean;
-  _smoothLastT!: number;
-  _smoothMoving!: boolean;
+  declare _smearLead: (Pt & { vx: number; vy: number }) | null;
+  declare _smearTrail: Pt | null;
+  declare _smearDtT: number;
+  declare _smearMoving: boolean;
+  declare _smoothLastT: number;
+  declare _smoothMoving: boolean;
   _suspendCleared!: boolean;
-  _swapDepth!: number;
-  _swapPool!: Partial<CaretState>[] | null;
-  _taperBuf!: Quad | null;
-  _tetherAnchorA!: Pt | null;
-  _tetherAnchorB!: Pt | null;
-  _tetherFrom!: number;
-  _tetherKey!: string | null;
-  _tetherSegKey!: string | null;
-  _tetherSegs!: TetherSeg[] | null;
-  _tetherTo!: number;
+  _styleGen!: number;
+  declare _taperBuf: Quad | null;
+  declare _tetherAnchorA: Pt | null;
+  declare _tetherAnchorB: Pt | null;
+  declare _tetherFrom: number;
+  declare _tetherKey: string | null;
+  declare _tetherSegKey: string | null;
+  declare _tetherSegs: TetherSeg[] | null;
+  declare _tetherTo: number;
   // Sites that have reported an unexpected error this engine run (see _reportOnce).
   _reported!: Set<string>;
   _tickNo!: number;
+  // The Vim status bar's 250 ms backstop, running only while there is an
+  // indicator (syncVimStatusBar).
+  _vimStatusTimer!: number;
+  // The frame loop's watchdog (engine.ts): its last run, the stalls it
+  // has seen and when, and whether it handed the native caret back.
+  _watchdogGaveUp!: boolean;
+  _watchdogLastT!: number;
+  _watchdogTripT!: number;
+  _watchdogTrips!: number;
   _torchDarkKey!: string;
   _torchGear!: string;
   _torchGlowKey!: string;
   _torchIdleT!: number;
+  // The torch's own next-wake for its parked gear (see the torch tick).
+  _torchIdleWakeMs!: number;
   _torchTick!: FrameRequestCallback | null;
-  _typingBoostSm!: number | null;
+  declare _typingBoostSm: number | null;
   _uiModeSwitching!: boolean;
   _vimEditMode!: string;
   _vimModeCache!: string | null;
   _vimModeCacheT!: number;
   _vimNormalRetryT!: number;
   _vimStatusSig!: string | null;
-  _volumeBuf!: Quad | null;
+  declare _volumeBuf: Quad | null;
   _wrapperPos!: { left: number; top: number } | null;
-  animActive!: CaretRecord | null;
+  declare animActive: CaretRecord | null;
   bracketTether!: TetherSeg[] | null;
   canvas!: HTMLCanvasElement | null;
   canvasEngineActive!: boolean;
@@ -410,11 +453,11 @@ export default class CursorSmithPlugin extends Plugin {
   fireworks!: Firework[];
   flameEmbers!: Ember[];
   flamePixels!: FlamePixel[];
-  glitch!: Glitch | null;
+  declare glitch: Glitch | null;
   glowEl!: HTMLCanvasElement | null;
   heat!: number;
-  hotBurns!: BurnMark[];
-  lastActive!: CaretRecord | null;
+  declare hotBurns: BurnMark[];
+  declare lastActive: CaretRecord | null;
   lastCaret!: CaretRecord | null;
   lastCaretMove!: number;
   lastMouseMove!: number;
@@ -425,23 +468,23 @@ export default class CursorSmithPlugin extends Plugin {
   mouseY!: number;
   overlay!: HTMLCanvasElement | null;
   particles!: LetterParticle[];
-  pending!: { caret: CaretRecord; since: number; holdChar: string | null } | null;
+  declare pending: { caret: CaretRecord; since: number; holdChar: string | null } | null;
   registeredDocuments!: Set<Document>;
   secondaryCarets!: CaretCoords[];
   settingTab!: CursorSmithSettingTab | null;
   settings!: CursorSmithSettings;
-  smearCenterPrev!: Pt | null;
-  smearQuad!: SmearQuad | null;
-  smearQuadLastMoveT!: number;
-  smearShape!: Quad | null;
+  declare smearCenterPrev: Pt | null;
+  declare smearQuad: SmearQuad | null;
+  declare smearQuadLastMoveT: number;
+  declare smearShape: Quad | null;
   stardust!: StardustMote[];
   thunderbolts!: Thunderbolt[];
   torchEngineActive!: boolean;
   torchRaf!: number;
-  trail!: TrailPoint[];
+  declare trail: TrailPoint[];
   tx!: number;
   ty!: number;
-  typingSpeedMod!: number;
+  declare typingSpeedMod: number;
   vimStatusEl!: HTMLElement | null;
   x!: number;
   y!: number;
@@ -605,8 +648,10 @@ export default class CursorSmithPlugin extends Plugin {
     this._lastGlowAlpha = "";
     this._torchGlowKey = "";
     this._chromeCache = null;
-    // Per-caret computed-style/metric cache for cmCaretCoords (see there).
+    // Per-caret computed-style/metric cache for cmCaretCoords (see there),
+    // and the style generation it is keyed on (_invalidateStyle).
     this._caretStyleCache = null;
+    this._styleGen = 0;
     // Single-flight latch for the palette's mode toggle; see toggleUiMode.
     this._uiModeSwitching = false;
 
@@ -685,13 +730,20 @@ export default class CursorSmithPlugin extends Plugin {
     this.settingTab = new CursorSmithSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
 
-    // Status bar indicator. The canvas tick calls updateVimStatusBar() the
-    // instant the mode changes, so while the cursor engine runs this interval
-    // is pure backstop — it only matters with the custom cursors toggled off,
-    // and for noticing a theme switch. 250ms is plenty for that, and past the
-    // signature check the update is a no-op, keeping the steady-state cost to
-    // one memoized mode read per tick.
-    this.registerInterval(window.setInterval(() => this.updateVimStatusBar(), 250));
+    // The Vim status bar's 250 ms backstop is started by syncVimStatusBar
+    // with the indicator and stopped with it (it used to run for every user,
+    // four times a second, to return at once in CUA mode).
+
+    // The frame loop's watchdog (engine.ts, _watchdog): a dead loop is the
+    // one failure that leaves the editor with no caret at all.
+    this._lookGen = 0;
+    this._lastTickT = 0;
+    this._watchdogTrips = 0;
+    this._watchdogTripT = 0;
+    this._watchdogLastT = 0;
+    this._watchdogGaveUp = false;
+    this._vimStatusTimer = 0;
+    this.registerInterval(window.setInterval(() => this._watchdog(performance.now()), WATCHDOG_INTERVAL_MS));
 
     // Pop-out windows: drop a document's listeners and stylesheet as its window
     // closes. Without this, registeredDocuments only ever grew - every closed
@@ -701,11 +753,15 @@ export default class CursorSmithPlugin extends Plugin {
     // the session.
     // Layout can move without any input: a theme or snippet change, a pane
     // opening or closing, a leaf change. Each invalidates the geometry
-    // caches; none needs a frame on its own (the heartbeat repaints).
+    // caches and wakes the loop for a frame (_invalidateLayout). The first
+    // three can also change the font under the caret (a theme, a snippet, a
+    // zoom, a pane reflowing), so they bump the style generation too; an
+    // active-leaf change only moves it.
     // The four events share one handler signature; the overload is picked by name.
     for (const ev of ["css-change", "layout-change", "active-leaf-change", "resize"]) {
+      const style = ev !== "active-leaf-change";
       try {
-        this.registerEvent(this.app.workspace.on(ev as "layout-change", () => this._invalidateLayout()));
+        this.registerEvent(this.app.workspace.on(ev as "layout-change", () => (style ? this._invalidateStyle() : this._invalidateLayout())));
       } catch { /* an event this Obsidian does not have */ }
     }
 
@@ -729,6 +785,16 @@ export default class CursorSmithPlugin extends Plugin {
 
   onunload() {
     this.disable();
+    // The reduced-motion query's listener (see reducedMotion).
+    if (this._reduceMQ && this._reduceMQHandler && typeof this._reduceMQ.removeEventListener === "function") {
+      try { this._reduceMQ.removeEventListener("change", this._reduceMQHandler); } catch { /* a window already gone */ }
+    }
+    this._reduceMQ = null;
+    this._reduceMQHandler = null;
+    if (this._vimStatusTimer) {
+      window.clearInterval(this._vimStatusTimer);
+      this._vimStatusTimer = 0;
+    }
     // Cancel any pending Normal-mode retry so it can't fire after unload.
     if (this._vimNormalRetryT) {
       window.clearTimeout(this._vimNormalRetryT);
@@ -934,7 +1000,7 @@ export default class CursorSmithPlugin extends Plugin {
       // drop the cached style read too rather than wait out its TTL.
       this._canvasRect = null;
       this._caretStyleCache = null;
-      this._markActivity();
+      this._markActivity("resize");
     };
     
     doc.addEventListener("mousemove", onMouseMove);
@@ -956,7 +1022,13 @@ export default class CursorSmithPlugin extends Plugin {
     // each used to buy 1.2s of the hot gear. A plugin that scrolls something
     // continuously used to pin it forever.
     const onScrollLike = (e: Event) => { if (this._scrollMovesCaret(e.target, doc)) this._markActivity(e.type); };
-    doc.addEventListener("selectionchange", onActivity);
+    // selectionchange only when the selection went somewhere (_selectionMoved):
+    // Android's WebView and CodeMirror re-syncing its own selection fire it
+    // with the caret exactly where it was, and each used to buy INPUT_HOT_MS
+    // of the hot gear - the likeliest reading of a phone report that sat at
+    // "hot 78%" doing nothing.
+    const onSelectionChange = () => { if (this._selectionMoved(doc)) this._markActivity("selectionchange"); };
+    doc.addEventListener("selectionchange", onSelectionChange);
     doc.addEventListener("mousedown", onActivity, true);
     doc.addEventListener("focusin", onActivity, true);
     doc.addEventListener("wheel", onScrollLike, { capture: true, passive: true });
@@ -999,11 +1071,14 @@ export default class CursorSmithPlugin extends Plugin {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
       doc.removeEventListener("beforeinput", onBeforeInput, true);
-      doc.removeEventListener("selectionchange", onActivity);
+      doc.removeEventListener("selectionchange", onSelectionChange);
       doc.removeEventListener("mousedown", onActivity, true);
       doc.removeEventListener("focusin", onActivity, true);
-      doc.removeEventListener("wheel", onActivity, { capture: true });
-      doc.removeEventListener("scroll", onActivity, { capture: true });
+      // onScrollLike, not onActivity: until 1.5.8 these two named the wrong
+      // function and so removed nothing, leaving a closed pop-out's scroll
+      // and wheel listeners attached to a document nothing else held.
+      doc.removeEventListener("wheel", onScrollLike, { capture: true });
+      doc.removeEventListener("scroll", onScrollLike, { capture: true });
       if (win) {
         win.removeEventListener("resize", onResize);
         win.removeEventListener("focus", onWindowFocusChange);
@@ -1018,8 +1093,12 @@ export default class CursorSmithPlugin extends Plugin {
     // call automatically - no separate load/merge step needed anywhere.
     await this.saveData(this.settings);
     // Sliders and pickers mutate mode objects in place, so the memoized
-    // per-mode merge must be rebuilt after every save.
-    this._effCache = null;
+    // per-mode merge must be rebuilt after every save - and the loop shown
+    // the result on the next frame rather than the next heartbeat, which
+    // is the difference between a slider dragged in the settings window
+    // moving the caret and moving it up to 200 ms later.
+    this._lookChanged();
+    this._wakeLoop();
     // Everything below is cosmetic. Each step is isolated so a failure in one
     // (or in an engine that's currently torn down) can neither block the
     // others nor bubble up and abort whichever command called saveSettings.
@@ -1100,9 +1179,17 @@ export default class CursorSmithPlugin extends Plugin {
     try {
       if (!this._reduceMQ) {
         const win = (this.canvas && this.canvas.ownerDocument.defaultView) || window;
-        this._reduceMQ = win.matchMedia("(prefers-reduced-motion: reduce)");
+        const mq = win.matchMedia("(prefers-reduced-motion: reduce)");
+        this._reduceMQ = mq;
+        this._reduceMatches = !!mq.matches;
+        // Read once and kept by a change listener (removed in onunload):
+        // every this.look goes through here (effectiveSettings), dozens of
+        // times a frame, and MediaQueryList.matches re-evaluates the query
+        // on each read - a few percent of a tick, measured.
+        this._reduceMQHandler = (e: MediaQueryListEvent) => { this._reduceMatches = !!e.matches; this._lookChanged(); };
+        if (typeof mq.addEventListener === "function") mq.addEventListener("change", this._reduceMQHandler);
       }
-      return !!this._reduceMQ.matches;
+      return this._reduceMatches;
     } catch {
       // No matchMedia (the test harness): nothing asks for reduced motion.
       return false;
@@ -1148,6 +1235,15 @@ export default class CursorSmithPlugin extends Plugin {
   // put back.
   get look(): CursorSmithSettings {
     return this.effectiveSettings(this.currentVimMode());
+  }
+
+  // Something changed what `look` answers: a save, a preset, the
+  // reduced-motion query. Drops the memo and bumps the look generation the
+  // static-frame signature carries (_frameSignature), so the next frame is
+  // painted whatever else matched.
+  _lookChanged() {
+    this._effCache = null;
+    this._lookGen = (this._lookGen | 0) + 1;
   }
 
   // Thin passthrough kept for the draw-path reads that take a key by name.
@@ -1233,6 +1329,9 @@ export default class CursorSmithPlugin extends Plugin {
   // because with Note Editor Only on the answer changes with FOCUS and not
   // only when a setting is saved.
   hideNativeActive() {
+    // The watchdog handed the native caret back after two stalls of the
+    // frame loop (engine.ts); cleared by the next enable().
+    if (this._watchdogGaveUp) return false;
     if (!this.settings.hideNativeCaret) return false;
     if (!this.settings.noteEditorOnly) return true;
     return this.noteEditorFocused();
@@ -1355,6 +1454,9 @@ export default class CursorSmithPlugin extends Plugin {
     // Unexpected-error sites that have reported (see _reportOnce): a fresh
     // engine run may report again.
     this._reported = new Set();
+    // The primary caret's state object (see carets.ts); the per-caret fields
+    // below are written into it through their accessors.
+    if (!this._caret) this._caret = {} as CaretState;
     this.trail = [];
     this.particles = [];
     this.flamePixels = [];
@@ -1433,6 +1535,18 @@ export default class CursorSmithPlugin extends Plugin {
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
     this._catchUpBoost = 1;
+    // The glide's and the fire's per-caret stamps. They used to be left to
+    // the code paths that set them, so a fresh caret lacked the keys and
+    // the first frame told them apart from a reset one; a caret's state is
+    // complete from the start now (carets.ts, _freshCaretState).
+    this._smoothMoving = false;
+    this._smoothLastT = 0;
+    this._typingBoostSm = null;
+    this._hotEmitFrom = null;
+    this._hotActiveT = 0;
+    this._lastHotT = 0;
+    this._hotShiftTick = 0;
+    this._hotEngulfUntil = 0;
 
     // Speed Demon heat: 0..1, ramps on keystrokes, decays per frame in the
     // canvas tick. Kept separate from typingSpeedMod (which drives smooth-
@@ -1456,10 +1570,20 @@ export default class CursorSmithPlugin extends Plugin {
     // and re-syncs every document, instead of trusting a stamp left over from
     // before the engine was torn down.
     this._hideNativeSig = null;
+
+    // Where the selection was when selectionchange last woke the loop
+    // (_selectionMoved), the idle gear's next wake (the tick sets it), and
+    // the two paint caches that key on what they measured.
+    this._selSig = null;
+    this._idleWakeMs = 0;
+    this._glyphMetricKey = null;
+    this._glyphMetrics = null;
+    this._hotFill = null;
   }
 
   enable() {
-    this.disable(); 
+    this.disable();
+    this._watchdogGaveUp = false;
     this.enableCanvasEngine();
     // torchPossible() covers both the global torch and any per-mode torch, so
     // the engine is up whenever a spotlight could appear; the torch tick then
@@ -1474,3 +1598,25 @@ export default class CursorSmithPlugin extends Plugin {
 
 }
 Object.assign(CursorSmithPlugin.prototype, measureMethods, effectsMethods, paintMethods, torchMethods, libraryMethods, vimMethods, engineMethods, caretsMethods);
+
+// The per-caret fields (CARET_STATE_FIELDS) live on the current caret's
+// state object, this._caret - the primary's, or a secondary's bundle while
+// _withCaret has it in (carets.ts). Each is an accessor here, so the whole
+// pipeline reads and writes them as `this.x` and a secondary is switched in
+// by one pointer instead of forty fields copied in and out. The setter
+// creates the object on first use, so an engine built from the prototype
+// alone (the tests, the probes) works without a reset.
+for (const key of CARET_STATE_FIELDS) {
+  Object.defineProperty(CursorSmithPlugin.prototype, key, {
+    configurable: true,
+    enumerable: false,
+    get(this: CursorSmithPlugin) {
+      const c = this._caret as CaretState | undefined;
+      return c ? (c as unknown as Record<string, unknown>)[key] : undefined;
+    },
+    set(this: CursorSmithPlugin, value: unknown) {
+      const c = (this._caret as CaretState | undefined) || (this._caret = {} as CaretState);
+      (c as unknown as Record<string, unknown>)[key] = value;
+    },
+  });
+}

@@ -101,16 +101,7 @@ export const effectsFireMethods = {
       this._hotScroll = null;
       return;
     }
-    const sx = el.scrollLeft || 0;
-    const sy = el.scrollTop || 0;
     const prev = this._hotScroll;
-    // First sight of this scroller (or a switch to a different pane): take a
-    // baseline and shift nothing, or the delta against some other editor's
-    // scroll position would fling everything off screen.
-    if (!prev || prev.el !== el) {
-      this._hotScroll = { el, x: sx, y: sy };
-      return;
-    }
     // The primary's pass reads the scroll delta and shifts the shared ember
     // pool; it also records the delta for this tick, because a secondary's
     // pass (its bundle swapped in, see _withCaret) runs later in the same
@@ -126,6 +117,24 @@ export const effectsFireMethods = {
       if (!sh.ox && !sh.oy) return;
       ox = sh.ox; oy = sh.oy;
     } else {
+      // scrollTop is a layout read, and on a tick whose keystroke has left
+      // the editor's DOM unlaid-out it flushes layout: 0.12 ms of every hot
+      // tick while typing with Hot-head on, measured. A scroll always bumps
+      // the layout generation (its event is dispatched before the next
+      // frame's animation callbacks), so the offsets are read only on a tick
+      // after one has - and on first sight of a scroller.
+      const gen = this._layoutGen | 0;
+      if (prev && prev.el === el && prev.gen === gen) return;
+      const sx = el.scrollLeft || 0;
+      const sy = el.scrollTop || 0;
+      // First sight of this scroller (or a switch to a different pane): take
+      // a baseline and shift nothing, or the delta against some other
+      // editor's scroll position would fling everything off screen.
+      if (!prev || prev.el !== el) {
+        this._hotScroll = { el, x: sx, y: sy, gen };
+        return;
+      }
+      prev.gen = gen;
       const dx = sx - prev.x;
       const dy = sy - prev.y;
       prev.x = sx;
@@ -656,6 +665,7 @@ export const effectsFireMethods = {
     if (!palette || this._hotPaletteKey !== paletteKey) {
       this._hotPaletteKey = paletteKey;
       palette = this._hotPalette = [];
+      this._hotFill = null;
       const baseHsv = rgbToHsv(hexToRgbTuple(base));
       for (let j = 0; j <= FLAME_LEVELS; j++) {
         const u = j / FLAME_LEVELS;
@@ -674,6 +684,24 @@ export const effectsFireMethods = {
         }
       }
     }
+
+    // The fill strings, cached by (palette entry, alpha): every ember sets
+    // one, and there are only a palette's worth of shades at a dozen alpha
+    // levels. Same text as before, so the goldens see no change; what it
+    // saves is the string built per particle per frame, and the context's
+    // own same-string test then skips the parse for a run of one shade.
+    const pal = palette;
+    const fills = this._hotFill || (this._hotFill = new Map<number, string>());
+    const fillFor = (pi: number, alpha: number) => {
+      const key = pi * 100000 + Math.round(alpha * 1000);
+      let s = fills.get(key);
+      if (s === undefined) {
+        const [r, g, b] = pal[pi];
+        s = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        fills.set(key, s);
+      }
+      return s;
+    };
 
     // ---- Advance and paint -----------------------------------------------------------
     // Oldest first (the array is in spawn order), so a fresh bright chunk
@@ -706,7 +734,7 @@ export const effectsFireMethods = {
 
       const frac = Math.max(0, Math.min(1, p.life / (p.maxLife || maxLife)));
       const temp = hotQuant((p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA), HOT_COLOR_LEVELS) * HOT_TEMP_MAX;
-      const [r, g, b] = palette[Math.round(temp * FLAME_LEVELS)];
+      const pi = Math.round(temp * FLAME_LEVELS);
 
       if (p.spark) {
         // A spark: a speck at its own position, fading with its life, a
@@ -714,7 +742,7 @@ export const effectsFireMethods = {
         const q = hotQuant(frac, HOT_ALPHA_LEVELS);
         if (q <= 0) return true;
         const alpha = (p.fine ? 0.15 + 0.35 * q : 0.2 + 0.5 * q) * opacity;
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        ctx.fillStyle = fillFor(pi, alpha);
         const sz = p.fine ? fineSz : speck, off = p.fine ? fineOff : speckOff;
         const sx = Math.floor(p.x / px) * px + off, sy = Math.floor(p.y / px) * px + off;
         ctx.fillRect(sx, sy, sz, sz);
@@ -727,7 +755,7 @@ export const effectsFireMethods = {
         const q = hotQuant(frac / HOT_STAGE_PIXEL, HOT_ALPHA_LEVELS);
         if (q <= 0) return true;
         const alpha = (0.15 + 0.25 * q) * opacity;
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        ctx.fillStyle = fillFor(pi, alpha);
         const dx0 = Math.floor(p.x / px) * px + speckOff, dy0 = Math.floor(p.y / px) * px + speckOff;
         ctx.fillRect(dx0, dy0, speck, speck);
         grow(dx0, dy0, speck, speck);
@@ -751,7 +779,7 @@ export const effectsFireMethods = {
       const alpha = (stage >= 3 ? 0.70 + 0.25 * q
         : stage >= 2 ? 0.60 + 0.25 * q
         : 0.45 + 0.25 * q) * opacity;
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+      ctx.fillStyle = fillFor(pi, alpha);
       const gx = Math.floor(p.x / px);
       const gy = Math.floor(p.y / px);
       ctx.beginPath();

@@ -10,7 +10,6 @@
 // move.
 
 import {
-  CARET_STATE_FIELDS,
   CATCHUP_BOOST_RATE,
   JUMP_TRAIL_MIN_DIST,
   SECONDARY_FULL_MAX,
@@ -26,11 +25,11 @@ export const caretsMethods = {
   // Multi-cursor: full effects on secondary carets
   // =========================================================================
   // Every non-primary caret up to SECONDARY_FULL_MAX gets the primary's whole
-  // pipeline rather than a 2px line. Nothing in that pipeline was rewritten to
-  // take a caret argument; it reads and writes the fields in CARET_STATE_FIELDS
-  // on `this`, so each secondary keeps a bundle of those fields and _withCaret
-  // swaps it in, runs the primary's own code, and saves the bundle back. The
-  // cost of the swap is a few dozen property writes per caret per frame.
+  // pipeline rather than a 2px line. Nothing in that pipeline takes a caret
+  // argument; it reads and writes the fields in CARET_STATE_FIELDS on
+  // `this`, and those are accessors over the current caret's state object
+  // (this._caret), so _withCaret makes a secondary's bundle current with one
+  // pointer, runs the primary's own code, and points back.
   //
   // What is per caret: position, smoothing, the smear spring, the trail,
   // the pending (Move Delay) state, a Signal Glitch burst, and the pop
@@ -39,57 +38,44 @@ export const caretsMethods = {
   // blinks with the primary), Speed Demon's heat, Thunderstrike, Fireworks,
   // Hot-head and Stardust, which follow the primary only.
 
-  // Copy the caret fields out of `this` into `into` (a bundle), and back.
-  // References, not clones: the bundle IS the state while it is swapped out.
-  _saveCaretState(this: CursorSmithPlugin, into: Partial<CaretState>): Partial<CaretState> {
-    const dst = into as unknown as Record<string, unknown>, src = this as unknown as Record<string, unknown>;
-    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
-    return into;
-  },
+  // A caret's state is an object (CaretState): the primary's is this._caret,
+  // a full-effect secondary's is its bundle in this._secondaries. Every
+  // per-caret field (CARET_STATE_FIELDS) is an accessor on the class that
+  // forwards to this._caret (the end of plugin.ts), so the pipeline
+  // addresses whichever caret is current as `this.x`, and switching carets
+  // is one pointer. Until 1.5.8 _withCaret copied the forty fields into a
+  // scratch bundle and the secondary's in, ran the code, and copied both
+  // back - twice per secondary per frame - and three of the smear's fields
+  // were missing from the list, so every secondary's spring integrated the
+  // primary's points toward its own target.
 
-  _loadCaretState(this: CursorSmithPlugin, from: Partial<CaretState>) {
-    const dst = this as unknown as Record<string, unknown>, src = from as unknown as Record<string, unknown>;
-    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
-  },
-
-  // A bundle in the state a fresh engine has. Taken from _resetEngineState
-  // itself, on a scratch object, so the two cannot drift.
+  // A bundle in the state a fresh engine has: the reset, run by a scratch
+  // engine whose caret is the new object, so the two cannot drift.
   _freshCaretState(this: CursorSmithPlugin): CaretState {
+    const fresh = {} as CaretState;
     const scratch = Object.create(Object.getPrototypeOf(this) as object) as CursorSmithPlugin;
+    scratch._caret = fresh;
     scratch._resetEngineState();
-    const out = {} as CaretState;
-    const dst = out as unknown as Record<string, unknown>, src = scratch as unknown as Record<string, unknown>;
-    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
-    return out;
+    return fresh;
   },
 
-  // Run `fn` with `state` swapped into `this`, then save whatever fn did back
-  // into `state` and restore the primary. Re-entrant only in the sense that
-  // the primary's fields are always what is put back, whatever fn threw.
-  //
-  // The primary's fields are parked in a scratch bundle from a small pool
-  // indexed by nesting depth, not a fresh object: with forty fields and a
-  // handful of swaps per secondary per frame, allocating one each time was
-  // measurable GC churn at ten carets.
+  // Run `fn` with `state` as the current caret, then put the primary back.
+  // Nothing is copied: the state object is the caret before, during and
+  // after. Re-entrant - a nested swap restores the outer one - and the
+  // primary is always what is put back, whatever fn threw.
   _withCaret<T>(this: CursorSmithPlugin, state: CaretState, fn: () => T): T {
-    const depth = this._swapDepth | 0;
-    const pool = this._swapPool || (this._swapPool = []);
-    const saved = pool[depth] || (pool[depth] = {});
-    this._saveCaretState(saved);
+    const prev = this._caret;
     const pass = this._caretPass;
     const owner = this._caretOwner;
-    this._swapDepth = depth + 1;
-    this._loadCaretState(state);
+    this._caret = state;
     this._caretPass = "secondary";
     this._caretOwner = state;
     try {
       return fn();
     } finally {
-      this._saveCaretState(state);
-      this._loadCaretState(saved);
+      this._caret = prev;
       this._caretPass = pass;
       this._caretOwner = owner;
-      this._swapDepth = depth;
     }
   },
 
@@ -111,7 +97,7 @@ export const caretsMethods = {
     if (!sel) { this._secondaries = []; return; }
 
     // Candidates: the primary's live state, then every secondary bundle.
-    const candidates: ({ state: CaretState; pos: number | null } | null)[] = [{ state: this._saveCaretState({}) as CaretState, pos: this.lastActive ? this.lastActive.pos as number : null }];
+    const candidates: ({ state: CaretState; pos: number | null } | null)[] = [{ state: this._caret, pos: this.lastActive ? this.lastActive.pos as number : null }];
     for (const c of this._secondaries) candidates.push({ state: c, pos: c.lastActive ? c.lastActive.pos as number : null });
     const take = (head: number) => {
       let best = -1, bestD = SECONDARY_MATCH_WINDOW + 1, bestCand = null;
@@ -126,7 +112,7 @@ export const caretsMethods = {
       return bestCand.state;
     };
     const main = take(sel.ranges[mainIndex].head) || this._freshCaretState();
-    this._loadCaretState(main);
+    this._caret = main;
     const next: CaretState[] = [];
     for (let i = 0; i < sel.ranges.length && next.length < SECONDARY_FULL_MAX; i++) {
       if (i === mainIndex) continue;

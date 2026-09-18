@@ -395,10 +395,18 @@ export const vimMethods = {
       // styles out (obsidianmd/no-static-styles-assignment).
       this.vimStatusEl.addClass("cursor-smith-vim-status");
       this._vimStatusSig = null;
+      // The 250 ms backstop, only while there is an indicator: the canvas
+      // tick updates it the instant the mode changes, so this only matters
+      // with the custom cursors toggled off and for noticing a theme switch.
+      if (!this._vimStatusTimer) this._vimStatusTimer = window.setInterval(() => this.updateVimStatusBar(), 250);
     } else if (!wanted && this.vimStatusEl) {
       this.vimStatusEl.remove();
       this.vimStatusEl = null;
       this._vimStatusSig = null;
+      if (this._vimStatusTimer) {
+        window.clearInterval(this._vimStatusTimer);
+        this._vimStatusTimer = 0;
+      }
     }
     this.updateVimStatusBar();
   },

@@ -202,7 +202,10 @@ export const torchMethods = {
       // middle cadence instead - fast enough to render the blink's fades
       // smoothly, slow enough not to be the hot gear. Both from FRAME_CAPS.
       const caps = this._frameCaps();
-      const delay = this._torchGear === "pulse" ? caps.torchPulseMs : caps.torchIdleMs;
+      // Parked: the heartbeat, or the blink's next fade if that is sooner
+      // (the tick sets _torchIdleWakeMs from blinkWindow while Blink Sync is on).
+      const idleMs = Math.min(caps.torchIdleMs, Math.max(1, Math.ceil(this._torchIdleWakeMs || caps.torchIdleMs)));
+      const delay = this._torchGear === "pulse" ? caps.torchPulseMs : idleMs;
       this._torchIdleT = window.setTimeout(() => {
         this._torchIdleT = 0;
         if (this.torchEngineActive) this.torchRaf = window.requestAnimationFrame(tick);
@@ -212,6 +215,7 @@ export const torchMethods = {
     const tick = () => {
       if (!this.torchEngineActive) return;
       this._torchGear = "idle";
+      this._torchIdleWakeMs = 0;
       try {
         // The spotlight's on/off state, color, size and follow speed can all
         // differ per Vim mode: every read below is this.look. Structured
@@ -374,11 +378,18 @@ export const torchMethods = {
                 // torch go out completely while the caret is blinked off: the
                 // light closes to nothing rather than merely narrowing.
                 const depth = Math.max(0, Math.min(1, this.look.overlayBlinkDepth ?? 0.25));
-                radius *= 1 - depth * (1 - this.blinkPhase(performance.now()));
+                const tNow = performance.now();
+                radius *= 1 - depth * (1 - this.blinkPhase(tNow));
                 // Not the hot gear: see FRAME_CAPS.torchPulseMs. Only claimed if
                 // nothing above already asked for hot - a spotlight still
-                // chasing the caret outranks this.
-                if (this._torchGear === "idle") this._torchGear = "pulse";
+                // chasing the caret outranks this. And only through the blink's
+                // two fades: the radius holds still for the rest of the cycle,
+                // so the loop parks and is woken for the next fade on time
+                // (blinkWindow), as the cursor loop is. It used to run the pulse
+                // cadence through the holds too, writing nothing.
+                const w = this.blinkWindow(tNow);
+                if (w.fading && this._torchGear === "idle") this._torchGear = "pulse";
+                this._torchIdleWakeMs = w.msToNext;
               }
               // Rounded to whole pixels and written only on a real change. This
               // is what makes the pulse affordable: the blink spends most of its

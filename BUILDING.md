@@ -8,7 +8,9 @@ src/
   plugin.ts         the plugin class: fields, lifecycle, settings, presets, Vim mode, the tick
   measure.ts        where the caret is (part of the class, see plugin.ts)
   effects.ts        the particle effects (part of the class)
-  paint.ts          painting the cursor (part of the class)
+  paint.ts          painting the cursor, gathered from paint-color.ts, paint-blink.ts,
+                    paint-shape.ts, paint-energy.ts, paint-tether.ts,
+                    paint-secondaries.ts, paint-smear.ts, paint-frame.ts (part of the class)
   torch.ts          the torch spotlight's overlay and loop (part of the class)
   settings-tab.ts   the settings panel
   settings.ts       defaults, migrations, look/preset helpers
@@ -23,7 +25,8 @@ src/
   torch-paint.ts    the torch's darkness and glow painters
   types.ts          the settings type; Obsidian typing gaps
   test-entry.ts     what the test suite reaches into
-test/               the test suite (`npm test`) and its Obsidian stub
+test/               the test suite (`npm test`): test.js the runner, cases/ the
+                    fourteen files by area, lib.js what they share, and the Obsidian stub
 
 `test/goldens/` holds the paint goldens: what a frame draws for each shipped
 preset, recorded by `test/goldens.js` and compared on every run. A paint

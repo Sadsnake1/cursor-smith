@@ -43,6 +43,11 @@ function keystrokeHeatWeight(kind, repeat) {
   return repeat ? 0 : 1;
 }
 var GEOMETRY_TTL_MS = 400;
+var INPUT_HOT_MS = 500;
+var CARET_STYLE_TTL_MS = 1e3;
+var SMEAR_SETTLE_V = 30;
+var WATCHDOG_INTERVAL_MS = 2e3;
+var WATCHDOG_STALE_MS = 3e3;
 var TORCH_CANVAS_SCALE = 0.25;
 var FRAME_CAPS = {
   normal: { hotMinMs: 14, warmMs: 33, energyMs: 50, idleMs: 200, torchPulseMs: 33, torchIdleMs: 150 },
@@ -113,7 +118,13 @@ var CARET_STATE_FIELDS = [
   "smearShape",
   "smearCenterPrev",
   "_taperBuf",
+  "_volumeBuf",
   "_smearDir",
+  // The two-point quad's points (1.5.6). They were missing here until 1.5.8,
+  // so a secondary's spring integrated the primary's points toward its own
+  // target and the two carets' smears fought over one spring.
+  "_smearLead",
+  "_smearTrail",
   "_smearMoving",
   "_smearDtT",
   "smearQuadLastMoveT",
@@ -206,24 +217,24 @@ function isTextCaretHost(el) {
   }
   return false;
 }
-function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5, fade = 0.15) {
-  if (speed <= 0) return 1;
+function blinkSegments(speed, onOffBalance = 0.5, fade = 0.15) {
   const period = 2500 / speed;
-  const phase = nowMs % period / period;
   fade = Math.max(0.02, Math.min(0.5, fade ?? 0.15));
   const balance = Math.max(0.1, Math.min(0.9, onOffBalance));
   const hold = 1 - fade * 2;
-  const onHold = hold * balance;
-  const offHold = hold * (1 - balance);
-  const p1 = onHold;
+  const p1 = hold * balance;
   const p2 = p1 + fade;
-  const p3 = p2 + offHold;
-  let a;
-  if (phase < p1) a = 1;
-  else if (phase < p2) a = 1 - easeInOutSine((phase - p1) / fade);
-  else if (phase < p3) a = 0;
-  else a = easeInOutSine((phase - p3) / fade);
-  return a;
+  const p3 = p2 + hold * (1 - balance);
+  return { period, p1, p2, p3, fade };
+}
+function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5, fade = 0.15) {
+  if (speed <= 0) return 1;
+  const s = blinkSegments(speed, onOffBalance, fade);
+  const phase = nowMs % s.period / s.period;
+  if (phase < s.p1) return 1;
+  if (phase < s.p2) return 1 - easeInOutSine((phase - s.p1) / s.fade);
+  if (phase < s.p3) return 0;
+  return easeInOutSine((phase - s.p3) / s.fade);
 }
 
 // src/settings.ts
@@ -3610,8 +3621,9 @@ var measureMethods = {
       const win = doc.defaultView || window;
       const assocKey = main.assoc || 0;
       const nowMs = performance.now();
+      const styleGen = this._styleGen | 0;
       let sc = this._caretStyleCache;
-      if (!(sc && sc.doc === view.state.doc && sc.pos === pos && sc.assoc === assocKey && nowMs - sc.t < 250)) {
+      if (!(sc && sc.doc === view.state.doc && sc.pos === pos && sc.assoc === assocKey && sc.gen === styleGen && nowMs - sc.t < CARET_STYLE_TTL_MS)) {
         const contentStyle = win.getComputedStyle(view.contentDOM);
         const sampleX = Math.min(c.left + 2, doc.documentElement.clientWidth - 1);
         const sampleY = (c.top + c.bottom) / 2;
@@ -3693,6 +3705,7 @@ var measureMethods = {
           doc: view.state.doc,
           pos,
           assoc: assocKey,
+          gen: styleGen,
           t: nowMs,
           textColor: _textColor,
           fontSize: _fontSize,
@@ -4572,13 +4585,7 @@ var effectsFireMethods = {
       this._hotScroll = null;
       return;
     }
-    const sx = el.scrollLeft || 0;
-    const sy = el.scrollTop || 0;
     const prev = this._hotScroll;
-    if (!prev || prev.el !== el) {
-      this._hotScroll = { el, x: sx, y: sy };
-      return;
-    }
     let ox, oy;
     if (this._caretPass === "secondary") {
       const sh = this._hotShift;
@@ -4589,6 +4596,15 @@ var effectsFireMethods = {
       ox = sh.ox;
       oy = sh.oy;
     } else {
+      const gen = this._layoutGen | 0;
+      if (prev && prev.el === el && prev.gen === gen) return;
+      const sx = el.scrollLeft || 0;
+      const sy = el.scrollTop || 0;
+      if (!prev || prev.el !== el) {
+        this._hotScroll = { el, x: sx, y: sy, gen };
+        return;
+      }
+      prev.gen = gen;
       const dx = sx - prev.x;
       const dy = sy - prev.y;
       prev.x = sx;
@@ -4983,6 +4999,7 @@ var effectsFireMethods = {
     if (!palette || this._hotPaletteKey !== paletteKey) {
       this._hotPaletteKey = paletteKey;
       palette = this._hotPalette = [];
+      this._hotFill = null;
       const baseHsv = rgbToHsv(hexToRgbTuple(base));
       for (let j = 0; j <= FLAME_LEVELS; j++) {
         const u = j / FLAME_LEVELS;
@@ -4999,6 +5016,18 @@ var effectsFireMethods = {
         }
       }
     }
+    const pal = palette;
+    const fills = this._hotFill || (this._hotFill = /* @__PURE__ */ new Map());
+    const fillFor = (pi, alpha) => {
+      const key = pi * 1e5 + Math.round(alpha * 1e3);
+      let s = fills.get(key);
+      if (s === void 0) {
+        const [r, g, b] = pal[pi];
+        s = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+        fills.set(key, s);
+      }
+      return s;
+    };
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const grow = (x0, y0, w, h) => {
       if (x0 < minX) minX = x0;
@@ -5019,12 +5048,12 @@ var effectsFireMethods = {
       p.y += p.vy * dt;
       const frac = Math.max(0, Math.min(1, p.life / (p.maxLife || maxLife)));
       const temp = hotQuant((p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA), HOT_COLOR_LEVELS) * HOT_TEMP_MAX;
-      const [r, g, b] = palette[Math.round(temp * FLAME_LEVELS)];
+      const pi = Math.round(temp * FLAME_LEVELS);
       if (p.spark) {
         const q2 = hotQuant(frac, HOT_ALPHA_LEVELS);
         if (q2 <= 0) return true;
         const alpha2 = (p.fine ? 0.15 + 0.35 * q2 : 0.2 + 0.5 * q2) * opacity;
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha2.toFixed(3)})`;
+        ctx.fillStyle = fillFor(pi, alpha2);
         const sz = p.fine ? fineSz : speck, off = p.fine ? fineOff : speckOff;
         const sx = Math.floor(p.x / px) * px + off, sy = Math.floor(p.y / px) * px + off;
         ctx.fillRect(sx, sy, sz, sz);
@@ -5035,7 +5064,7 @@ var effectsFireMethods = {
         const q2 = hotQuant(frac / HOT_STAGE_PIXEL, HOT_ALPHA_LEVELS);
         if (q2 <= 0) return true;
         const alpha2 = (0.15 + 0.25 * q2) * opacity;
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha2.toFixed(3)})`;
+        ctx.fillStyle = fillFor(pi, alpha2);
         const dx0 = Math.floor(p.x / px) * px + speckOff, dy0 = Math.floor(p.y / px) * px + speckOff;
         ctx.fillRect(dx0, dy0, speck, speck);
         grow(dx0, dy0, speck, speck);
@@ -5052,7 +5081,7 @@ var effectsFireMethods = {
       const q = hotQuant((frac - HOT_STAGE_PIXEL) / (1 - HOT_STAGE_PIXEL), HOT_ALPHA_LEVELS);
       if (q <= 0) return true;
       const alpha = (stage >= 3 ? 0.7 + 0.25 * q : stage >= 2 ? 0.6 + 0.25 * q : 0.45 + 0.25 * q) * opacity;
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
+      ctx.fillStyle = fillFor(pi, alpha);
       const gx = Math.floor(p.x / px);
       const gy = Math.floor(p.y / px);
       ctx.beginPath();
@@ -5877,6 +5906,7 @@ var effectsDustMethods = {
     }
   },
   drawFlamePixels() {
+    if (!this.flamePixels.length) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const now = performance.now();
@@ -5889,6 +5919,7 @@ var effectsDustMethods = {
       gx = Math.sin(rad) * mag;
       gy = Math.cos(rad) * mag;
     }
+    ctx.save();
     this.flamePixels = this.flamePixels.filter((p) => {
       const life = p.life || 0.4;
       const elapsed = (now - p.start) / 1e3;
@@ -5899,7 +5930,6 @@ var effectsDustMethods = {
       const pgy = p.trail ? gy : 0;
       const curX = p.x + p.vx * elapsed + pgx * 0.5 * elapsed * elapsed;
       const curY = p.y + p.vy * elapsed + pgy * 0.5 * elapsed * elapsed;
-      ctx.save();
       ctx.globalAlpha = Math.max(0, p.alpha);
       if (p.spark && trailAmt > 0) {
         const speed = Math.hypot(p.vx, p.vy) || 1;
@@ -5929,15 +5959,15 @@ var effectsDustMethods = {
       ctx.fillStyle = p.color;
       ctx.fillRect(curX, curY, p.size, p.size);
       this._markDirty(curX - 1, curY - 1, (p.size || 1) + 2, (p.size || 1) + 2);
-      ctx.restore();
       return true;
     });
+    ctx.restore();
   },
   // ---- Stardust ----------------------------------------------------------
   // Whether the effect is switched on AND currently emitting. Split out from
   // maybeSpawnStardust() because the frame governor needs the same answer: an
   // armed-but-not-yet-emitting cursor still has to be woken often enough to
-  // emit on time, or the first mote would wait out a 100ms idle heartbeat.
+  // emit on time, or the first mote would wait out an idle heartbeat.
   stardustArmed() {
     const s = this.look;
     if (!s.stardustEnabled) return false;
@@ -5949,7 +5979,7 @@ var effectsDustMethods = {
   // Emit a slow stream of drifting motes from the caret while it sits idle.
   //
   // Rate-limited by wall clock rather than per frame: the governor runs this
-  // at ~30fps while stardust is alive but drops to ~10fps in the gaps, so a
+  // at ~30fps while stardust is alive but drops to ~5fps in the gaps, so a
   // per-frame probability would quietly change density with the gear.
   maybeSpawnStardust() {
     if (!this.stardustArmed()) return;
@@ -6014,8 +6044,11 @@ var effectsDustMethods = {
   // both drift speed and lifetime with the gear.
   drawStardust() {
     if (!this.stardust.length) return;
+    const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     const opacity = Math.max(0, Math.min(1, this.look.cursorOpacity ?? 1));
+    ctx.save();
     this.stardust = this.stardust.filter((p) => {
       const elapsed = (now - p.start) / 1e3;
       if (elapsed > p.life) return false;
@@ -6038,17 +6071,16 @@ var effectsDustMethods = {
       const curY = p.y + p.vy * elapsed;
       return this.paintMote(p, curX, curY, alpha);
     });
+    ctx.restore();
   },
   // Shared tail of drawStardust for both motion modes: paint one mote and
   // report the pixels it touched.
   paintMote(p, x, y, alpha) {
     const ctx = this.ctx;
     if (!ctx) return;
-    ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
     ctx.fillRect(x, y, p.size, p.size);
-    ctx.restore();
     this._markDirty(x - 1, y - 1, p.size + 2, p.size + 2);
     return true;
   }
@@ -6063,7 +6095,7 @@ var effectsTrailMethods = {
   // live caret and gets its own ghost on the next move - only the bridge between
   // them is filled.
   pushTrail(point, dest = null) {
-    if (!point) return;
+    if (!point || !this.look.crtEffect) return;
     const now = performance.now();
     const max = Math.max(0, Math.round(this.look.trailLength));
     this.trail.push({ x: point.x, y: point.top, w: point.w, h: point.h, t: now });
@@ -6097,12 +6129,13 @@ var effectsTrailMethods = {
   // deliberately NOT gated on crtEffect. It used to be the first two lines of
   // forEachTrailPoint(), which is wrong twice over:
   //
-  //   1. forEachTrailPoint() early-returns when crtEffect is off, but
-  //      pushTrail() runs from commitMove() on every caret move regardless of
-  //      that setting. With the trail effect disabled - the default - the
-  //      array filled to trailLength and was never pruned by age at all,
-  //      only evicted by newer entries. trail.length stayed pinned at 10
-  //      forever after the first ten keystrokes.
+  //   1. forEachTrailPoint() early-returns when crtEffect is off, and until
+  //      1.5.8 pushTrail() ran from commitMove() on every caret move
+  //      regardless of that setting (it is gated on it now). With the trail
+  //      effect disabled - the default - the array filled to trailLength and
+  //      was never pruned by age at all, only evicted by newer entries.
+  //      trail.length stayed pinned at 10 forever after the first ten
+  //      keystrokes.
   //   2. Even with crtEffect on, pruning inside draw() breaks the moment the
   //      frame governor legitimately skips a draw.
   //
@@ -6224,51 +6257,8 @@ var effectsMethods = {
   ...effectsTrailMethods
 };
 
-// src/text.ts
-var BRACKET_OPEN = { "(": ")", "[": "]", "{": "}", "<": ">" };
-var BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{", ">": "<" };
-var BRACKET_SCAN_LIMIT = 2e4;
-var CODE_FENCE_RE = /^ {0,3}(?:`{3,}|~{3,})/;
-var CODE_FENCE_PREFIX = 8;
-var BLOCK_PREFIX_MAX = 64;
-var BLOCK_HEAD_MAX = BLOCK_PREFIX_MAX + CODE_FENCE_PREFIX;
-var BLOCK_LINE_LOOKBACK = 1024;
-function blockLineInfo(line) {
-  let i = 0;
-  let depth = 0;
-  for (; ; ) {
-    let j = i;
-    let spaces = 0;
-    while (j < line.length && (line[j] === " " || line[j] === "	") && spaces < 3) {
-      j++;
-      spaces++;
-    }
-    if (line[j] !== ">") break;
-    depth++;
-    i = j + 1;
-    if (line[i] === " ") i++;
-  }
-  return { depth, fence: CODE_FENCE_RE.test(line.slice(i, i + CODE_FENCE_PREFIX)) };
-}
-function isBlockquoteMarker(text, i, textStart) {
-  const floor = Math.max(0, i - BLOCK_PREFIX_MAX);
-  for (let j = i - 1; j >= floor; j--) {
-    const c = text[j];
-    if (c === "\n") return true;
-    if (c !== ">" && c !== " " && c !== "	") return false;
-  }
-  return floor === 0 && textStart === 0;
-}
-var QUOTE_CHARS = ['"', "'", "`"];
-var CURLY_QUOTE_OPEN = { "\u201C": "\u201D", "\u2018": "\u2019" };
-var QUOTE_LINE_SCAN = 4e3;
-var WORD_CHAR = /[\p{L}\p{N}_]/u;
-function isQuoteDelimiter(text, i) {
-  return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
-}
-
-// src/paint.ts
-var paintMethods = {
+// src/paint-color.ts
+var paintColorMethods = {
   getActiveColor() {
     const baseColor = this.getBaseColor();
     if (!this.look.speedDemon) return baseColor;
@@ -6492,7 +6482,11 @@ var paintMethods = {
       b = hot[2] + (white[2] - hot[2]) * t;
     }
     return `#${(1 << 24 | Math.round(r) << 16 | Math.round(g) << 8 | Math.round(b)).toString(16).slice(1)}`;
-  },
+  }
+};
+
+// src/paint-blink.ts
+var paintBlinkMethods = {
   // The raw blink cycle: 1 while the caret is "on", 0 while it's "off", eased
   // through the two transitions, and pinned at 1 during the post-move hold.
   //
@@ -6511,12 +6505,42 @@ var paintMethods = {
     if (!(elapsed > 0)) return 1;
     const speed = Math.max(0, this.look.blinkSpeed);
     const stopAfter = Math.max(0, Math.round(this.look.blinkStopAfter ?? 0));
-    if (stopAfter > 0 && speed > 0 && elapsed >= stopAfter * (2500 / speed)) return 1;
+    if (stopAfter > 0 && speed > 0 && elapsed >= stopAfter * blinkSegments(speed).period) return 1;
     return blinkAlphaAt(elapsed, speed, this.look.blinkOnOffBalance ?? 0.5, this.look.blinkFade ?? 0.15);
   },
   // What the blink does to opacity. Breathing swaps the fade out for a size
   // change, so the caret keeps full opacity throughout - never disappearing is
   // the entire point of that option.
+  // When the blink next changes, for the frame governor: whether `now` is
+  // inside one of the two fades (the loop must be awake, warm gear), and how
+  // many ms until the phase next crosses into or out of a fade. Infinity
+  // when the caret does not blink: off, speed 0, or gone solid (blink-to-
+  // solid). During the post-move hold it is the hold's remainder plus the
+  // lit segment of the first cycle. The clock and the segments are exactly
+  // blinkPhase's, so what this schedules is what that will paint; a test
+  // sweeps the two against each other. The idle gear used to sleep its
+  // heartbeat through a fade's start and catch it up to 200 ms in, so the
+  // caret popped where it should have eased.
+  blinkWindow(now) {
+    const none = { fading: false, msToNext: Infinity };
+    if (!this.look.blinkingEnabled) return none;
+    let holdMs = 0;
+    if (this.look.smoothEnabled && this.look.smoothStopBlinking) holdMs = 450;
+    const delayMs = Math.max(0, this.look.blinkDelayMs ?? 0);
+    if (delayMs > holdMs) holdMs = delayMs;
+    const speed = Math.max(0, this.look.blinkSpeed);
+    if (speed <= 0) return none;
+    const seg = blinkSegments(speed, this.look.blinkOnOffBalance ?? 0.5, this.look.blinkFade ?? 0.15);
+    const elapsed = now - (this.lastMoveTime + holdMs);
+    const stopAfter = Math.max(0, Math.round(this.look.blinkStopAfter ?? 0));
+    if (stopAfter > 0 && elapsed >= stopAfter * seg.period) return none;
+    if (!(elapsed > 0)) return { fading: false, msToNext: -elapsed + seg.p1 * seg.period };
+    const phase = elapsed % seg.period / seg.period;
+    if (phase < seg.p1) return { fading: false, msToNext: (seg.p1 - phase) * seg.period };
+    if (phase < seg.p2) return { fading: true, msToNext: (seg.p2 - phase) * seg.period };
+    if (phase < seg.p3) return { fading: false, msToNext: (seg.p3 - phase) * seg.period };
+    return { fading: true, msToNext: (1 - phase) * seg.period };
+  },
   blinkAlpha(now) {
     if (this.look.blinkBreathing) return 1;
     return this.blinkPhase(now);
@@ -6531,113 +6555,11 @@ var paintMethods = {
     if (!this.look.blinkingEnabled || !this.look.blinkBreathing) return 1;
     const depth = Math.max(0, Math.min(0.9, this.look.blinkBreathDepth ?? 0.2));
     return 1 - depth * (1 - this.blinkPhase(now));
-  },
-  // The cursor's own damage bounds, in client coordinates: the interpolated
-  // caret, the entire smear quad (which overshoots well past the caret on a
-  // fast move), any held character and the serifs, padded for glow
-  // (shadowBlur maxes at 10), outline width, antialiasing and a Signal Glitch
-  // throw. Marked dirty once from draw() rather than threaded through every
-  // branch of drawBoxCursor/drawGenericCaret - and read by _frameNeed to place
-  // the canvas, so the region and the damage rect cannot disagree.
-  // Null when there is no caret.
-  _cursorBounds() {
-    const a = this.animActive;
-    if (!a) return null;
-    let x0 = a.x, y0 = a.top;
-    let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
-    let y1 = a.top + (a.h || 0);
-    for (const src of [this.smearQuad, this.smearShape]) {
-      if (!src) continue;
-      for (const k of Object.keys(src)) {
-        if (src[k].x < x0) x0 = src[k].x;
-        if (src[k].y < y0) y0 = src[k].y;
-        if (src[k].x > x1) x1 = src[k].x;
-        if (src[k].y > y1) y1 = src[k].y;
-      }
-    }
-    if (this.styleFor("cursorStyle") === "Line" && this.look.lineSerifs) {
-      const halfSpan = Math.max(
-        SERIF_MIN_SPAN_PX,
-        Math.min(a.actualCharWidth || 0, (a.h || 0) * SERIF_MAX_SPAN_RATIO)
-      ) / 2;
-      const cx = a.x + (a.w || 0) / 2;
-      if (cx - halfSpan < x0) x0 = cx - halfSpan;
-      if (cx + halfSpan > x1) x1 = cx + halfSpan;
-    }
-    let pad = 24 + Math.max(0, this.look.caretWidthPx || 0);
-    if (this.look.crtEffect && this.look.glow) {
-      pad += 10 * (this.glowHeatScale() - 1);
-    }
-    if (this.glitch) {
-      const st = Math.max(0, Math.min(2.5, this.look.crtGlitchStrength ?? 1));
-      const abr = Math.max(0, Math.min(3, this.look.crtGlitchAberration ?? 1));
-      pad += 14 * st * 2.2 + 3.2 * abr + (a.w || 0) * 0.3 + 4;
-    }
-    return { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
-  },
-  draw() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    const r = this._canvasRect;
-    if (!r) return;
-    const rx0 = r.x, ry0 = r.y, rx1 = r.x + r.w, ry1 = r.y + r.h;
-    if (!DIRTY_RECT_CLEAR || this._dirtyFull) {
-      ctx.clearRect(rx0, ry0, r.w, r.h);
-      this._dirtyFull = false;
-    } else if (this._dirtyPrev) {
-      const p = this._dirtyPrev;
-      ctx.clearRect(p.x, p.y, p.w, p.h);
-    }
-    this._dirty = null;
-    this.drawLettersParticles();
-    this.drawBracketTether();
-    this.drawStardust();
-    this.drawFlamePixels();
-    this.drawHotHead();
-    this.drawThunderbolts();
-    this.drawFireworks();
-    const a = this.animActive;
-    const cb = this._cursorBounds();
-    const breath = a ? this.breathScale(performance.now()) : 1;
-    const breathing = breath < 0.999;
-    if (breathing && a) {
-      const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
-      const cy = a.top + (a.h || 0) / 2;
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.scale(breath, breath);
-      ctx.translate(-cx, -cy);
-    }
-    this.applyCanvasBlend();
-    switch (this.styleFor("cursorStyle")) {
-      case "Line":
-        this.drawGenericCaret(false);
-        break;
-      case "Underline":
-        this.drawGenericCaret(true);
-        break;
-      case "Box":
-        this.drawBoxCursor();
-        break;
-    }
-    if (breathing) ctx.restore();
-    const secBounds = this.drawFullSecondaries();
-    this.drawSecondaryCarets();
-    const e = this._dirty;
-    this._dirtyRaw = e ? { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 } : null;
-    if (cb) this._markDirty(cb.x0, cb.y0, cb.x1 - cb.x0, cb.y1 - cb.y0);
-    for (const b of secBounds) this._markDirty(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
-    const d = this._dirty;
-    if (!d) {
-      this._dirtyPrev = null;
-      return;
-    }
-    const cx0 = Math.max(rx0, Math.floor(d.x0) - 2);
-    const cy0 = Math.max(ry0, Math.floor(d.y0) - 2);
-    const cx1 = Math.min(rx1, Math.ceil(d.x1) + 2);
-    const cy1 = Math.min(ry1, Math.ceil(d.y1) + 2);
-    this._dirtyPrev = cx1 > cx0 && cy1 > cy0 ? { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 } : null;
-  },
+  }
+};
+
+// src/paint-shape.ts
+var paintShapeMethods = {
   // The corner radius for a shape whose narrow axis is `minor` px.
   //
   // Rounding is a toggle, not a dial, so this decides the radius - and it is
@@ -6753,6 +6675,308 @@ var paintMethods = {
     this.traceRoundedRect(ctx, x, y, w, h, r);
     ctx.fill();
   },
+  // The two serif brackets of an I-beam caret, as corner quads ready to add
+  // to the stem's path.
+  //
+  // Two things this fixes over the pair of fillRects it replaces.
+  //
+  // ANCHORING. fillCursorShape ignores the rect it is handed whenever Motion
+  // Smear is on and fills the spring's quad instead - but the serifs were
+  // positioned from `active`, the RESTING geometry. So the moment the caret
+  // moved, the stem leaned and stretched away while the serifs stayed nailed
+  // to where it had been, leaving two horizontal bars floating next to a
+  // detached stem. With smear on by default that was the common case, not an
+  // edge case. Here they take their centres from the smeared quad's own top
+  // and bottom edges, so they travel with the stem.
+  //
+  // They stay AXIS-ALIGNED while doing it. Shearing a serif with the quad
+  // makes it read as a broken glyph, which is what the original comment was
+  // rightly worried about - but the answer to that is to keep them level,
+  // not to leave them behind.
+  //
+  // SHAPE. A real I-beam's serifs are brackets: they thin as they approach
+  // the stem rather than butting into it at full weight. Each one is a
+  // trapezoid, widest at its outer edge, narrowing by SERIF_TAPER where it
+  // meets the stem. Returns the union bounds too, so the caller can size a
+  // gradient or pattern over the whole glyph rather than the stem alone.
+  serifQuads(active, rx, rw) {
+    const stem = rw;
+    const lineH = active.h;
+    const thickness = Math.max(
+      1,
+      Math.round(Math.min(stem * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO))
+    );
+    const charW = active.actualCharWidth;
+    const raw = charW && charW > 0 ? charW : stem * 7;
+    const span = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO));
+    const c = this.cursorCorners(rx, active.top, rw, lineH);
+    const dir = this._smearDir;
+    const anchor = (a, b) => {
+      const ex = b.x - a.x, ey = b.y - a.y;
+      const len = Math.hypot(ex, ey);
+      if (!(len > 1e-3)) return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const aLeads = !!dir && ex * dir.x + ey * dir.y < 0;
+      const lead = aLeads ? a : b;
+      const sign = aLeads ? -1 : 1;
+      const back = Math.min(len, stem) / 2;
+      return {
+        x: lead.x - sign * (ex / len) * back,
+        y: lead.y - sign * (ey / len) * back
+      };
+    };
+    const top = anchor(c.tl, c.tr), bot = anchor(c.bl, c.br);
+    const topCx = top.x, topCy = top.y;
+    const botCx = bot.x, botCy = bot.y;
+    const half = span / 2;
+    const inset = half * SERIF_TAPER;
+    const quads = [
+      {
+        tl: { x: topCx - half, y: topCy },
+        tr: { x: topCx + half, y: topCy },
+        br: { x: topCx + half - inset, y: topCy + thickness },
+        bl: { x: topCx - half + inset, y: topCy + thickness }
+      },
+      {
+        tl: { x: botCx - half + inset, y: botCy - thickness },
+        tr: { x: botCx + half - inset, y: botCy - thickness },
+        br: { x: botCx + half, y: botCy },
+        bl: { x: botCx - half, y: botCy }
+      }
+    ];
+    return {
+      quads,
+      left: Math.min(topCx, botCx) - half,
+      right: Math.max(topCx, botCx) + half,
+      // A serif is a thin bar, so it rounds on its own thickness rather than
+      // on the stem's width - otherwise a rounded Box-sized radius would eat
+      // the whole bracket.
+      radius: this.cornerRadius(thickness)
+    };
+  },
+  // The steps the two caret painters share (drawGenericCaret for Line and
+  // Underline, drawBoxCursor for Box): the trail pass, arming the CRT glow,
+  // the glitch state, the body's paint. They were two parallel copies of the
+  // same structure, which is how the two could drift apart at all. The
+  // goldens hold the two painters' ops identical to before the extraction.
+  //
+  // The trail: one save/restore round the ghosts, and only with a trail to
+  // paint - the pair exists to undo the shadow the neon ghosts arm, and
+  // with CRT off (or every ghost faded) it undid nothing. A neon ghost is
+  // the caret's own footprint as a glowing tube (the bar for Underline, the
+  // char box for Box, filled even when the box is hollow - a hollow outline
+  // of a glowing tail reads as noise); a plain ghost is the flat trail
+  // paint, built from the bar's own rect for Underline (a ramp spanning the
+  // whole line height would show only the sliver that falls across the
+  // bar), stroked as an inset outline for a hollow Box (canvas strokes
+  // straddle the path, so the outline lands inside the footprint the filled
+  // dot would occupy), filled otherwise.
+  _paintTrail(ctx, style, color, bodyOpacity, strokeW) {
+    const settings = this.look;
+    if (!settings.crtEffect || !this.trail.length) return;
+    ctx.save();
+    this.forEachTrailPoint((p, alpha, age) => {
+      const a = alpha * bodyOpacity;
+      if (settings.crtNeon) {
+        if (style === "Underline") {
+          const uThickness = this.underlineThickness(p.h);
+          const ty = p.y + p.h - uThickness;
+          this.drawNeonGhost(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, a, age, color);
+        } else {
+          this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, a, age, color);
+        }
+      } else if (style === "Underline") {
+        const uThickness = this.underlineThickness(p.h);
+        const ty = p.y + p.h - uThickness;
+        ctx.fillStyle = this.trailPaint(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, a, age, color);
+        this.fillTrailRect(ctx, p.x, ty, p.w, uThickness);
+      } else if (style === "Box" && strokeW > 0) {
+        ctx.strokeStyle = this.trailPaint(ctx, p, a, age, color);
+        ctx.lineWidth = strokeW;
+        const inset = strokeW / 2;
+        const iw = Math.max(0, p.w - strokeW), ih = Math.max(0, p.h - strokeW);
+        const rr = this.cornerRadius(Math.min(iw, ih));
+        if (rr > 0.01) {
+          ctx.beginPath();
+          this.traceRoundedRect(ctx, p.x + inset, p.y + inset, iw, ih, rr);
+          ctx.stroke();
+        } else {
+          ctx.strokeRect(p.x + inset, p.y + inset, iw, ih);
+        }
+      } else {
+        ctx.fillStyle = this.trailPaint(ctx, p, a, age, color);
+        this.fillTrailRect(ctx, p.x, p.y, p.w, p.h);
+      }
+    });
+    ctx.restore();
+  },
+  // The CRT glow: a shadow in the caret's colour, its blur scaled by the
+  // blink (it fades with the caret) and by Speed demon's heat. `blur` is
+  // the style's base blur times the blink alpha.
+  _armGlow(ctx, color, blur) {
+    const settings = this.look;
+    if (settings.crtEffect && settings.glow) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = blur * this.glowHeatScale();
+    }
+  },
+  // A live Signal Glitch burst, or null. Resolved before the body's paint is
+  // built, so a burst skips the (possibly expensive) beam paint it would
+  // discard.
+  _glitchNow(now) {
+    const settings = this.look;
+    return settings.crtEffect && settings.crtGlitch ? this.glitchState(now) : null;
+  },
+  // The paint for the caret's body over the rect it will actually cover: the
+  // energy beam when it is on, otherwise the flat colour or the gradient.
+  _bodyPaint(x, y, w, h, color, alpha) {
+    return this.look.energyEffect ? this.energyPaint(x, y, w, h, color, alpha) : this.cursorPaint(x, y, w, h, color, alpha);
+  },
+  drawGenericCaret(isUnderline = false) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const settings = this.look;
+    const active = this.animActive;
+    const now = performance.now();
+    const trailColor = this.getActiveColor();
+    const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
+    const bodyOpacity = this.styleFor("cursorTranslucent") ? opacity * TRANSLUCENT_ALPHA : opacity;
+    this._paintTrail(ctx, isUnderline ? "Underline" : "Line", trailColor, bodyOpacity, 0);
+    if (!active) return;
+    const blinkAlpha2 = this.blinkAlpha(now);
+    const color = this.getActiveColor() || active.textColor || "#ffffff";
+    ctx.save();
+    this._armGlow(ctx, color, 8 * blinkAlpha2);
+    let rx, ry, rw, rh;
+    if (isUnderline) {
+      const uThickness = this.underlineThickness(active.h);
+      rx = active.x;
+      ry = active.top + active.h - uThickness;
+      rw = active.actualCharWidth;
+      rh = uThickness;
+    } else {
+      rx = active.x;
+      ry = active.top;
+      rw = this.renderWidth(active);
+      rh = active.h;
+    }
+    const gsGen = this._glitchNow(now);
+    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
+    const serifs = wantSerifs ? this.serifQuads(active, rx, rw) : null;
+    if (gsGen) {
+      this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha2 * bodyOpacity, gsGen);
+    } else {
+      let px = rx, pw = rw;
+      if (serifs) {
+        px = Math.min(rx, serifs.left);
+        pw = Math.max(rx + rw, serifs.right) - px;
+      }
+      ctx.fillStyle = this._bodyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha2 * bodyOpacity);
+      ctx.beginPath();
+      this.traceQuad(
+        ctx,
+        this.cursorCorners(rx, ry, rw, rh),
+        this.cornerRadius(Math.min(rw, rh))
+      );
+      if (serifs) {
+        for (const q of serifs.quads) this.traceQuad(ctx, q, serifs.radius);
+      }
+      ctx.fill();
+    }
+    ctx.restore();
+  },
+  drawBoxCursor() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const settings = this.look;
+    const now = performance.now();
+    const color = this.getActiveColor();
+    const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
+    const hollow = this.styleFor("boxHollow");
+    const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
+    const translucent = !!this.styleFor("cursorTranslucent");
+    const bodyOpacity = translucent ? opacity * TRANSLUCENT_ALPHA : opacity;
+    this._paintTrail(ctx, "Box", color, bodyOpacity, strokeW);
+    const active = this.animActive;
+    if (active) {
+      const blinkAlpha2 = this.blinkAlpha(now);
+      const renderW = this.renderWidth(active);
+      ctx.save();
+      this._armGlow(ctx, color, 10 * blinkAlpha2);
+      const gsBox = this._glitchNow(now);
+      if (gsBox) {
+        this.paintGlitchRect(
+          ctx,
+          active.x,
+          active.top,
+          renderW,
+          active.h,
+          color,
+          0.9 * blinkAlpha2 * bodyOpacity,
+          gsBox
+        );
+      } else {
+        const paintStyle = this._bodyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha2 * bodyOpacity);
+        if (hollow) {
+          ctx.strokeStyle = paintStyle;
+          ctx.lineWidth = strokeW;
+          ctx.lineJoin = "miter";
+          ctx.beginPath();
+          this.traceQuad(
+            ctx,
+            this.cursorCorners(active.x, active.top, renderW, active.h),
+            this.cornerRadius(Math.min(renderW, active.h))
+          );
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = paintStyle;
+          this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
+        }
+      }
+      ctx.restore();
+      const displayChar = this.pending ? this.pending.holdChar : active.holdChar || active.char;
+      const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha2);
+      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar && glyphAlpha >= 0.01) {
+        ctx.save();
+        ctx.globalAlpha = glyphAlpha;
+        const glyphMode = this.styleFor("glyphColorMode") || "contrast";
+        if (this._glyphColorFor !== color || this._glyphColorMode !== glyphMode) {
+          this._glyphColorFor = color;
+          this._glyphColorMode = glyphMode;
+          this._glyphColorVal = readableGlyphColor(color, glyphMode);
+        }
+        ctx.fillStyle = this._glyphColorVal;
+        ctx.font = this.fontString(active.fontSize, active.fontFamily, active.fontWeight, active.fontStyle);
+        const metricKey = ctx.font + "|" + displayChar;
+        let gm = this._glyphMetrics;
+        if (!gm || this._glyphMetricKey !== metricKey) {
+          const metrics = ctx.measureText(displayChar);
+          gm = this._glyphMetrics = {
+            ascent: metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent ?? active.fontSize * 0.8,
+            descent: metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent ?? active.fontSize * 0.2
+          };
+          this._glyphMetricKey = metricKey;
+        }
+        const { ascent, descent } = gm;
+        const glyphBoxHeight = ascent + descent;
+        const leading = active.h - glyphBoxHeight;
+        const baselineY = active.top + ascent + leading / 2;
+        const glyphAdvance = Math.max(1, (active.actualCharWidth ?? renderW) - (active.letterSpacing || 0));
+        const dpr = this._canvasDpr || 1;
+        const region = this._canvasRect;
+        const ox = region ? region.x : 0, oy = region ? region.y : 0;
+        const snapX = (v) => Math.round((v - ox) * dpr) / dpr + ox;
+        const snapY = (v) => Math.round((v - oy) * dpr) / dpr + oy;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(displayChar, snapX(active.x + glyphAdvance / 2), snapY(baselineY));
+        ctx.restore();
+      }
+    }
+  }
+};
+
+// src/paint-energy.ts
+var paintEnergyMethods = {
   // Chooses how the Energy Beam paints the cursor.
   //
   // Aurora with any waviness becomes a genuine 2D field (auroraPattern); every
@@ -6933,266 +7157,54 @@ var paintMethods = {
       grad.addColorStop(pos, `rgba(${r}, ${g}, ${b}, ${alpha})`);
     }
     return grad;
-  },
-  // The two serif brackets of an I-beam caret, as corner quads ready to add
-  // to the stem's path.
-  //
-  // Two things this fixes over the pair of fillRects it replaces.
-  //
-  // ANCHORING. fillCursorShape ignores the rect it is handed whenever Motion
-  // Smear is on and fills the spring's quad instead - but the serifs were
-  // positioned from `active`, the RESTING geometry. So the moment the caret
-  // moved, the stem leaned and stretched away while the serifs stayed nailed
-  // to where it had been, leaving two horizontal bars floating next to a
-  // detached stem. With smear on by default that was the common case, not an
-  // edge case. Here they take their centres from the smeared quad's own top
-  // and bottom edges, so they travel with the stem.
-  //
-  // They stay AXIS-ALIGNED while doing it. Shearing a serif with the quad
-  // makes it read as a broken glyph, which is what the original comment was
-  // rightly worried about - but the answer to that is to keep them level,
-  // not to leave them behind.
-  //
-  // SHAPE. A real I-beam's serifs are brackets: they thin as they approach
-  // the stem rather than butting into it at full weight. Each one is a
-  // trapezoid, widest at its outer edge, narrowing by SERIF_TAPER where it
-  // meets the stem. Returns the union bounds too, so the caller can size a
-  // gradient or pattern over the whole glyph rather than the stem alone.
-  serifQuads(active, rx, rw) {
-    const stem = rw;
-    const lineH = active.h;
-    const thickness = Math.max(
-      1,
-      Math.round(Math.min(stem * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO))
-    );
-    const charW = active.actualCharWidth;
-    const raw = charW && charW > 0 ? charW : stem * 7;
-    const span = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO));
-    const c = this.cursorCorners(rx, active.top, rw, lineH);
-    const dir = this._smearDir;
-    const anchor = (a, b) => {
-      const ex = b.x - a.x, ey = b.y - a.y;
-      const len = Math.hypot(ex, ey);
-      if (!(len > 1e-3)) return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      const aLeads = !!dir && ex * dir.x + ey * dir.y < 0;
-      const lead = aLeads ? a : b;
-      const sign = aLeads ? -1 : 1;
-      const back = Math.min(len, stem) / 2;
-      return {
-        x: lead.x - sign * (ex / len) * back,
-        y: lead.y - sign * (ey / len) * back
-      };
-    };
-    const top = anchor(c.tl, c.tr), bot = anchor(c.bl, c.br);
-    const topCx = top.x, topCy = top.y;
-    const botCx = bot.x, botCy = bot.y;
-    const half = span / 2;
-    const inset = half * SERIF_TAPER;
-    const quads = [
-      {
-        tl: { x: topCx - half, y: topCy },
-        tr: { x: topCx + half, y: topCy },
-        br: { x: topCx + half - inset, y: topCy + thickness },
-        bl: { x: topCx - half + inset, y: topCy + thickness }
-      },
-      {
-        tl: { x: botCx - half + inset, y: botCy - thickness },
-        tr: { x: botCx + half - inset, y: botCy - thickness },
-        br: { x: botCx + half, y: botCy },
-        bl: { x: botCx - half, y: botCy }
-      }
-    ];
-    return {
-      quads,
-      left: Math.min(topCx, botCx) - half,
-      right: Math.max(topCx, botCx) + half,
-      // A serif is a thin bar, so it rounds on its own thickness rather than
-      // on the stem's width - otherwise a rounded Box-sized radius would eat
-      // the whole bracket.
-      radius: this.cornerRadius(thickness)
-    };
-  },
-  drawGenericCaret(isUnderline = false) {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    const settings = this.look;
-    const active = this.animActive;
-    const now = performance.now();
-    const trailColor = this.getActiveColor();
-    const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
-    const bodyOpacity = this.styleFor("cursorTranslucent") ? opacity * TRANSLUCENT_ALPHA : opacity;
-    ctx.save();
-    this.forEachTrailPoint((p, alpha, age) => {
-      if (settings.crtNeon) {
-        if (isUnderline) {
-          const uThickness = this.underlineThickness(p.h);
-          const ty = p.y + p.h - uThickness;
-          this.drawNeonGhost(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * bodyOpacity, age, trailColor);
-        } else {
-          this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * bodyOpacity, age, trailColor);
-        }
-      } else if (isUnderline) {
-        const uThickness = this.underlineThickness(p.h);
-        const ty = p.y + p.h - uThickness;
-        ctx.fillStyle = this.trailPaint(ctx, { x: p.x, y: ty, w: p.w, h: uThickness }, alpha * bodyOpacity, age, trailColor);
-        this.fillTrailRect(ctx, p.x, ty, p.w, uThickness);
-      } else {
-        ctx.fillStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, trailColor);
-        this.fillTrailRect(ctx, p.x, p.y, p.w, p.h);
-      }
-    });
-    ctx.restore();
-    if (!active) return;
-    const blinkAlpha2 = this.blinkAlpha(now);
-    const color = this.getActiveColor() || active.textColor || "#ffffff";
-    ctx.save();
-    if (settings.crtEffect && settings.glow) {
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 8 * blinkAlpha2 * this.glowHeatScale();
+  }
+};
+
+// src/text.ts
+var BRACKET_OPEN = { "(": ")", "[": "]", "{": "}", "<": ">" };
+var BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{", ">": "<" };
+var BRACKET_SCAN_LIMIT = 2e4;
+var CODE_FENCE_RE = /^ {0,3}(?:`{3,}|~{3,})/;
+var CODE_FENCE_PREFIX = 8;
+var BLOCK_PREFIX_MAX = 64;
+var BLOCK_HEAD_MAX = BLOCK_PREFIX_MAX + CODE_FENCE_PREFIX;
+var BLOCK_LINE_LOOKBACK = 1024;
+function blockLineInfo(line) {
+  let i = 0;
+  let depth = 0;
+  for (; ; ) {
+    let j = i;
+    let spaces = 0;
+    while (j < line.length && (line[j] === " " || line[j] === "	") && spaces < 3) {
+      j++;
+      spaces++;
     }
-    let rx, ry, rw, rh;
-    if (isUnderline) {
-      const uThickness = this.underlineThickness(active.h);
-      rx = active.x;
-      ry = active.top + active.h - uThickness;
-      rw = active.actualCharWidth;
-      rh = uThickness;
-    } else {
-      rx = active.x;
-      ry = active.top;
-      rw = this.renderWidth(active);
-      rh = active.h;
-    }
-    const gsGen = settings.crtEffect && settings.crtGlitch ? this.glitchState(now) : null;
-    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
-    const serifs = wantSerifs ? this.serifQuads(active, rx, rw) : null;
-    if (gsGen) {
-      this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha2 * bodyOpacity, gsGen);
-    } else {
-      let px = rx, pw = rw;
-      if (serifs) {
-        px = Math.min(rx, serifs.left);
-        pw = Math.max(rx + rw, serifs.right) - px;
-      }
-      ctx.fillStyle = settings.energyEffect ? this.energyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha2 * bodyOpacity) : this.cursorPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha2 * bodyOpacity);
-      ctx.beginPath();
-      this.traceQuad(
-        ctx,
-        this.cursorCorners(rx, ry, rw, rh),
-        this.cornerRadius(Math.min(rw, rh))
-      );
-      if (serifs) {
-        for (const q of serifs.quads) this.traceQuad(ctx, q, serifs.radius);
-      }
-      ctx.fill();
-    }
-    ctx.restore();
-  },
-  // The plain fallback: a solid 2px vertical line for every non-primary caret
-  // PAST SECONDARY_FULL_MAX. The first SECONDARY_FULL_MAX get the primary's
-  // whole pipeline instead (drawFullSecondaries); this is what the rest
-  // are, and what every secondary was before that. Blinks in sync with the
-  // main cursor so all carets fade together.
-  //
-  // Colour follows the primary cursor, including its Gradient: with Gradient
-  // on, each secondary caret gets the whole ramp down its own height, the same
-  // way cursorPaint() paints the primary one. It used to take getActiveColor()
-  // in every case, which for a gradient cursor is the ramp's FIRST STOP - so a
-  // multi-cursor edit put one caret in full colour and the rest in a flat slice
-  // of it, which reads as the extra carets being a different, wrong colour.
-  //
-  // The ramp is resolved ONCE per frame, not once per caret. A CanvasGradient
-  // is tied to absolute canvas coordinates, so each caret does need its own
-  // object - but the expensive part (walking the stops, applying Speed Demon's
-  // heat, building an rgba() string per stop) does not depend on position, and
-  // multi-cursor edits are exactly where the caret count can run into the
-  // hundreds. Same reasoning as the firework sparks' baked palette.
-  drawSecondaryCarets() {
-    const carets = this.secondaryCarets;
-    if (!carets || carets.length === 0) return;
-    const ctx = this.ctx;
-    if (!ctx) return;
-    const opacity = Math.max(0, Math.min(1, this.look.cursorOpacity ?? 1));
-    const alpha = this.blinkAlpha(performance.now()) * opacity;
-    if (alpha <= 0.01) return;
-    const strokeAlpha = 0.9 * alpha;
-    let ramp = null;
-    if (this.look.gradientEnabled) {
-      ramp = this.gradientStops().map((hex) => {
-        const [r, g, b] = hexToRgbTuple(hex);
-        return `rgba(${r}, ${g}, ${b}, ${strokeAlpha})`;
-      });
-    }
-    ctx.save();
-    ctx.lineWidth = 2;
-    ctx.lineCap = this.styleFor("cursorRounded") ? "round" : "butt";
-    if (!ramp) ctx.strokeStyle = hexToRgba(this.getActiveColor(), strokeAlpha);
-    for (const c of carets) {
-      const x = Math.round(c.x) + 0.5;
-      const h = c.bottom - c.top;
-      if (ramp) {
-        if (h > 0) {
-          const grad = ctx.createLinearGradient(x, c.top, x, c.bottom);
-          for (let i = 0; i < ramp.length; i++) {
-            grad.addColorStop(i / (ramp.length - 1), ramp[i]);
-          }
-          ctx.strokeStyle = grad;
-        } else {
-          ctx.strokeStyle = ramp[0];
-        }
-      }
-      this._markDirty(x - 3, c.top - 2, 6, h + 4);
-      ctx.beginPath();
-      ctx.moveTo(x, c.top);
-      ctx.lineTo(x, c.bottom);
-      ctx.stroke();
-    }
-    ctx.restore();
-  },
-  // Draw every full-effect secondary with the primary's own painters, and
-  // return each one's damage bounds for draw() to mark after its snapshot
-  // (see the note on _dirtyRaw there: a cursor's own bounds must not be in
-  // the effects-only union).
-  drawFullSecondaries() {
-    const states = this._secondaries;
-    const bounds = [];
-    if (!states || states.length === 0) return bounds;
-    const ctx = this.ctx;
-    if (!ctx) return bounds;
-    const style = this.styleFor("cursorStyle");
-    for (const st of states) {
-      if (!st.animActive) continue;
-      this._withCaret(st, () => {
-        const a = this.animActive;
-        if (!a) return;
-        const cb = this._cursorBounds();
-        if (cb) bounds.push(cb);
-        const breath = this.breathScale(performance.now());
-        const breathing = breath < 0.999;
-        if (breathing) {
-          const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
-          const cy = a.top + (a.h || 0) / 2;
-          ctx.save();
-          ctx.translate(cx, cy);
-          ctx.scale(breath, breath);
-          ctx.translate(-cx, -cy);
-        }
-        switch (style) {
-          case "Line":
-            this.drawGenericCaret(false);
-            break;
-          case "Underline":
-            this.drawGenericCaret(true);
-            break;
-          case "Box":
-            this.drawBoxCursor();
-            break;
-        }
-        if (breathing) ctx.restore();
-      });
-    }
-    return bounds;
-  },
+    if (line[j] !== ">") break;
+    depth++;
+    i = j + 1;
+    if (line[i] === " ") i++;
+  }
+  return { depth, fence: CODE_FENCE_RE.test(line.slice(i, i + CODE_FENCE_PREFIX)) };
+}
+function isBlockquoteMarker(text, i, textStart) {
+  const floor = Math.max(0, i - BLOCK_PREFIX_MAX);
+  for (let j = i - 1; j >= floor; j--) {
+    const c = text[j];
+    if (c === "\n") return true;
+    if (c !== ">" && c !== " " && c !== "	") return false;
+  }
+  return floor === 0 && textStart === 0;
+}
+var QUOTE_CHARS = ['"', "'", "`"];
+var CURLY_QUOTE_OPEN = { "\u201C": "\u201D", "\u2018": "\u2019" };
+var QUOTE_LINE_SCAN = 4e3;
+var WORD_CHAR = /[\p{L}\p{N}_]/u;
+function isQuoteDelimiter(text, i) {
+  return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
+}
+
+// src/paint-tether.ts
+var paintTetherMethods = {
   // ---- Bracket Tether ----------------------------------------------------
   // Find the position of the bracket matching the one at `at`, or -1.
   //
@@ -7644,150 +7656,120 @@ var paintMethods = {
       }
     }
     return out;
-  },
-  // Puts the canvas layer into (or back out of) a blend mode, which is what
-  // cursorTranslucent actually is.
+  }
+};
+
+// src/paint-secondaries.ts
+var paintSecondariesMethods = {
+  // The plain fallback: a solid 2px vertical line for every non-primary caret
+  // PAST SECONDARY_FULL_MAX. The first SECONDARY_FULL_MAX get the primary's
+  // whole pipeline instead (drawFullSecondaries); this is what the rest
+  // are, and what every secondary was before that. Blinks in sync with the
+  // main cursor so all carets fade together.
   //
-  // This CANNOT be done with ctx.globalCompositeOperation. The cursor canvas
-  // is its own layer stacked over the editor, so a canvas-level "multiply"
-  // blends against what this canvas has already painted this frame - nothing,
-  // it was just cleared - not against the text underneath. Real backdrop
-  // blending has to come from CSS.
+  // Colour follows the primary cursor, including its Gradient: with Gradient
+  // on, each secondary caret gets the whole ramp down its own height, the same
+  // way cursorPaint() paints the primary one. It used to take getActiveColor()
+  // in every case, which for a gradient cursor is the ramp's FIRST STOP - so a
+  // multi-cursor edit put one caret in full colour and the rest in a flat slice
+  // of it, which reads as the extra carets being a different, wrong colour.
   //
-  // And it has to go on the WRAPPER, not the canvas. The wrapper is
-  // position:fixed with a z-index, which makes it a stacking context, and a
-  // stacking context confines its descendants' blending to itself: a
-  // mix-blend-mode on the canvas inside would blend against the wrapper's own
-  // empty background and produce no visible change at all. On the wrapper the
-  // blend applies to the whole group against its parent's content - i.e. the
-  // editor. (Which also means an `isolation: isolate` anywhere between the
-  // wrapper and .app-container would silently turn this feature off. Don't
-  // add one, in either file.)
-  //
-  // Multiply darkens and screen lightens, so which of the two reads as ink on
-  // the page depends on what's behind it: multiply on a light theme, screen
-  // on a dark one. Picking by theme keeps the cursor legible in both instead
-  // of sinking into the background in one of them.
-  //
-  // Called from the draw dispatch, before the per-style branch, so it runs on
-  // every frame regardless of style - including the frames that have to CLEAR
-  // it. Writes only on change: a blend-mode style write forces the compositor
-  // to re-evaluate the layer, so doing it per frame would cost real work to
-  // set the value it already had.
-  applyCanvasBlend() {
-    const el = this.canvasWrapper;
-    if (!el) return;
-    const want = this.styleFor("cursorTranslucent") ? this.isDarkTheme() ? "screen" : "multiply" : "normal";
-    if (this._canvasBlend === want) return;
-    this._canvasBlend = want;
-    el.style.mixBlendMode = want;
-  },
-  drawBoxCursor() {
+  // The ramp is resolved ONCE per frame, not once per caret. A CanvasGradient
+  // is tied to absolute canvas coordinates, so each caret does need its own
+  // object - but the expensive part (walking the stops, applying Speed Demon's
+  // heat, building an rgba() string per stop) does not depend on position, and
+  // multi-cursor edits are exactly where the caret count can run into the
+  // hundreds. Same reasoning as the firework sparks' baked palette.
+  drawSecondaryCarets() {
+    const carets = this.secondaryCarets;
+    if (!carets || carets.length === 0) return;
     const ctx = this.ctx;
     if (!ctx) return;
-    const settings = this.look;
-    const now = performance.now();
-    const color = this.getActiveColor();
-    const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
-    const hollow = this.styleFor("boxHollow");
-    const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
-    const translucent = !!this.styleFor("cursorTranslucent");
-    const bodyOpacity = translucent ? opacity * TRANSLUCENT_ALPHA : opacity;
-    ctx.save();
-    this.forEachTrailPoint((p, alpha, age) => {
-      if (settings.crtNeon) {
-        this.drawNeonGhost(ctx, { x: p.x, y: p.y, w: p.w, h: p.h }, alpha * bodyOpacity, age, color);
-      } else if (hollow) {
-        ctx.strokeStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, color);
-        ctx.lineWidth = strokeW;
-        const inset = strokeW / 2;
-        const iw = Math.max(0, p.w - strokeW), ih = Math.max(0, p.h - strokeW);
-        const rr = this.cornerRadius(Math.min(iw, ih));
-        if (rr > 0.01) {
-          ctx.beginPath();
-          this.traceRoundedRect(ctx, p.x + inset, p.y + inset, iw, ih, rr);
-          ctx.stroke();
-        } else {
-          ctx.strokeRect(p.x + inset, p.y + inset, iw, ih);
-        }
-      } else {
-        ctx.fillStyle = this.trailPaint(ctx, p, alpha * bodyOpacity, age, color);
-        this.fillTrailRect(ctx, p.x, p.y, p.w, p.h);
-      }
-    });
-    ctx.restore();
-    const active = this.animActive;
-    if (active) {
-      const blinkAlpha2 = this.blinkAlpha(now);
-      const renderW = this.renderWidth(active);
-      ctx.save();
-      if (settings.crtEffect && settings.glow) {
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 10 * blinkAlpha2 * this.glowHeatScale();
-      }
-      const gsBox = settings.crtEffect && settings.crtGlitch ? this.glitchState(now) : null;
-      if (gsBox) {
-        this.paintGlitchRect(
-          ctx,
-          active.x,
-          active.top,
-          renderW,
-          active.h,
-          color,
-          0.9 * blinkAlpha2 * bodyOpacity,
-          gsBox
-        );
-      } else {
-        const paintStyle = settings.energyEffect ? this.energyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha2 * bodyOpacity) : this.cursorPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha2 * bodyOpacity);
-        if (hollow) {
-          ctx.strokeStyle = paintStyle;
-          ctx.lineWidth = strokeW;
-          ctx.lineJoin = "miter";
-          ctx.beginPath();
-          this.traceQuad(
-            ctx,
-            this.cursorCorners(active.x, active.top, renderW, active.h),
-            this.cornerRadius(Math.min(renderW, active.h))
-          );
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = paintStyle;
-          this.fillCursorShape(ctx, active.x, active.top, renderW, active.h);
-        }
-      }
-      ctx.restore();
-      const displayChar = this.pending ? this.pending.holdChar : active.holdChar || active.char;
-      const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha2);
-      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar && glyphAlpha >= 0.01) {
-        ctx.save();
-        ctx.globalAlpha = glyphAlpha;
-        const glyphMode = this.styleFor("glyphColorMode") || "contrast";
-        if (this._glyphColorFor !== color || this._glyphColorMode !== glyphMode) {
-          this._glyphColorFor = color;
-          this._glyphColorMode = glyphMode;
-          this._glyphColorVal = readableGlyphColor(color, glyphMode);
-        }
-        ctx.fillStyle = this._glyphColorVal;
-        ctx.font = this.fontString(active.fontSize, active.fontFamily, active.fontWeight, active.fontStyle);
-        const metrics = ctx.measureText(displayChar);
-        const ascent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent ?? active.fontSize * 0.8;
-        const descent = metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent ?? active.fontSize * 0.2;
-        const glyphBoxHeight = ascent + descent;
-        const leading = active.h - glyphBoxHeight;
-        const baselineY = active.top + ascent + leading / 2;
-        const glyphAdvance = Math.max(1, (active.actualCharWidth ?? renderW) - (active.letterSpacing || 0));
-        const dpr = this._canvasDpr || 1;
-        const region = this._canvasRect;
-        const ox = region ? region.x : 0, oy = region ? region.y : 0;
-        const snapX = (v) => Math.round((v - ox) * dpr) / dpr + ox;
-        const snapY = (v) => Math.round((v - oy) * dpr) / dpr + oy;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "alphabetic";
-        ctx.fillText(displayChar, snapX(active.x + glyphAdvance / 2), snapY(baselineY));
-        ctx.restore();
-      }
+    const opacity = Math.max(0, Math.min(1, this.look.cursorOpacity ?? 1));
+    const alpha = this.blinkAlpha(performance.now()) * opacity;
+    if (alpha <= 0.01) return;
+    const strokeAlpha = 0.9 * alpha;
+    let ramp = null;
+    if (this.look.gradientEnabled) {
+      ramp = this.gradientStops().map((hex) => {
+        const [r, g, b] = hexToRgbTuple(hex);
+        return `rgba(${r}, ${g}, ${b}, ${strokeAlpha})`;
+      });
     }
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.lineCap = this.styleFor("cursorRounded") ? "round" : "butt";
+    if (!ramp) ctx.strokeStyle = hexToRgba(this.getActiveColor(), strokeAlpha);
+    for (const c of carets) {
+      const x = Math.round(c.x) + 0.5;
+      const h = c.bottom - c.top;
+      if (ramp) {
+        if (h > 0) {
+          const grad = ctx.createLinearGradient(x, c.top, x, c.bottom);
+          for (let i = 0; i < ramp.length; i++) {
+            grad.addColorStop(i / (ramp.length - 1), ramp[i]);
+          }
+          ctx.strokeStyle = grad;
+        } else {
+          ctx.strokeStyle = ramp[0];
+        }
+      }
+      this._markDirty(x - 3, c.top - 2, 6, h + 4);
+      ctx.beginPath();
+      ctx.moveTo(x, c.top);
+      ctx.lineTo(x, c.bottom);
+      ctx.stroke();
+    }
+    ctx.restore();
   },
+  // Draw every full-effect secondary with the primary's own painters, and
+  // return each one's damage bounds for draw() to mark after its snapshot
+  // (see the note on _dirtyRaw there: a cursor's own bounds must not be in
+  // the effects-only union).
+  drawFullSecondaries() {
+    const states = this._secondaries;
+    const bounds = [];
+    if (!states || states.length === 0) return bounds;
+    const ctx = this.ctx;
+    if (!ctx) return bounds;
+    const style = this.styleFor("cursorStyle");
+    for (const st of states) {
+      if (!st.animActive) continue;
+      this._withCaret(st, () => {
+        const a = this.animActive;
+        if (!a) return;
+        const cb = this._cursorBounds();
+        if (cb) bounds.push(cb);
+        const breath = this.breathScale(performance.now());
+        const breathing = breath < 0.999;
+        if (breathing) {
+          const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+          const cy = a.top + (a.h || 0) / 2;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.scale(breath, breath);
+          ctx.translate(-cx, -cy);
+        }
+        switch (style) {
+          case "Line":
+            this.drawGenericCaret(false);
+            break;
+          case "Underline":
+            this.drawGenericCaret(true);
+            break;
+          case "Box":
+            this.drawBoxCursor();
+            break;
+        }
+        if (breathing) ctx.restore();
+      });
+    }
+    return bounds;
+  }
+};
+
+// src/paint-smear.ts
+var paintSmearMethods = {
   updateSmearQuad() {
     const now = performance.now();
     if (!this._smearDtT) this._smearDtT = now;
@@ -7818,6 +7800,12 @@ var paintMethods = {
       this.smearShape = this.smearQuad;
       this._smearMoving = false;
       return;
+    }
+    {
+      const lead2 = this._smearLead, trail2 = this._smearTrail, q = this.smearQuad;
+      if (!this._smearMoving && this.smearShape === q && lead2.x === target.x && lead2.y === target.y && lead2.vx === 0 && lead2.vy === 0 && trail2.x === target.x && trail2.y === target.y && q.tl.x === target.x && q.tl.y === target.y && q.tr.x === target.x + rect.w && q.tr.y === target.y && q.br.x === target.x + rect.w && q.br.y === target.y + rect.h && q.bl.x === target.x && q.bl.y === target.y + rect.h) {
+        return;
+      }
     }
     const center = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
     let dirX = 0, dirY = 0;
@@ -7877,7 +7865,7 @@ var paintMethods = {
       c.vx = lead.vx + (tvx - lead.vx) * f;
       c.vy = lead.vy + (tvy - lead.vy) * f;
       const tx = target.x + o.x, ty = target.y + o.y;
-      if (Math.abs(c.x - tx) > 0.5 || Math.abs(c.y - ty) > 0.5 || Math.abs(c.vx) > 0.1 || Math.abs(c.vy) > 0.1) moving = true;
+      if (Math.abs(c.x - tx) > 0.5 || Math.abs(c.y - ty) > 0.5 || Math.abs(c.vx) > SMEAR_SETTLE_V || Math.abs(c.vy) > SMEAR_SETTLE_V) moving = true;
     }
     this._smearMoving = moving;
     this.applySmearTaper({
@@ -8076,6 +8064,165 @@ var paintMethods = {
     }
     return s;
   }
+};
+
+// src/paint-frame.ts
+var paintFrameMethods = {
+  // The cursor's own damage bounds, in client coordinates: the interpolated
+  // caret, the entire smear quad (which overshoots well past the caret on a
+  // fast move), any held character and the serifs, padded for glow
+  // (shadowBlur maxes at 10), outline width, antialiasing and a Signal Glitch
+  // throw. Marked dirty once from draw() rather than threaded through every
+  // branch of drawBoxCursor/drawGenericCaret - and read by _frameNeed to place
+  // the canvas, so the region and the damage rect cannot disagree.
+  // Null when there is no caret.
+  _cursorBounds() {
+    const a = this.animActive;
+    if (!a) return null;
+    let x0 = a.x, y0 = a.top;
+    let x1 = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
+    let y1 = a.top + (a.h || 0);
+    for (const src of [this.smearQuad, this.smearShape]) {
+      if (!src) continue;
+      for (const k of Object.keys(src)) {
+        if (src[k].x < x0) x0 = src[k].x;
+        if (src[k].y < y0) y0 = src[k].y;
+        if (src[k].x > x1) x1 = src[k].x;
+        if (src[k].y > y1) y1 = src[k].y;
+      }
+    }
+    if (this.styleFor("cursorStyle") === "Line" && this.look.lineSerifs) {
+      const halfSpan = Math.max(
+        SERIF_MIN_SPAN_PX,
+        Math.min(a.actualCharWidth || 0, (a.h || 0) * SERIF_MAX_SPAN_RATIO)
+      ) / 2;
+      const cx = a.x + (a.w || 0) / 2;
+      if (cx - halfSpan < x0) x0 = cx - halfSpan;
+      if (cx + halfSpan > x1) x1 = cx + halfSpan;
+    }
+    let pad = 24 + Math.max(0, this.look.caretWidthPx || 0);
+    if (this.look.crtEffect && this.look.glow) {
+      pad += 10 * (this.glowHeatScale() - 1);
+    }
+    if (this.glitch) {
+      const st = Math.max(0, Math.min(2.5, this.look.crtGlitchStrength ?? 1));
+      const abr = Math.max(0, Math.min(3, this.look.crtGlitchAberration ?? 1));
+      pad += 14 * st * 2.2 + 3.2 * abr + (a.w || 0) * 0.3 + 4;
+    }
+    return { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
+  },
+  draw() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const r = this._canvasRect;
+    if (!r) return;
+    const rx0 = r.x, ry0 = r.y, rx1 = r.x + r.w, ry1 = r.y + r.h;
+    if (!DIRTY_RECT_CLEAR || this._dirtyFull) {
+      ctx.clearRect(rx0, ry0, r.w, r.h);
+      this._dirtyFull = false;
+    } else if (this._dirtyPrev) {
+      const p = this._dirtyPrev;
+      ctx.clearRect(p.x, p.y, p.w, p.h);
+    }
+    this._dirty = null;
+    this.drawLettersParticles();
+    this.drawBracketTether();
+    this.drawStardust();
+    this.drawFlamePixels();
+    this.drawHotHead();
+    this.drawThunderbolts();
+    this.drawFireworks();
+    const a = this.animActive;
+    const cb = this._cursorBounds();
+    const breath = a ? this.breathScale(performance.now()) : 1;
+    const breathing = breath < 0.999;
+    if (breathing && a) {
+      const cx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+      const cy = a.top + (a.h || 0) / 2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(breath, breath);
+      ctx.translate(-cx, -cy);
+    }
+    this.applyCanvasBlend();
+    switch (this.styleFor("cursorStyle")) {
+      case "Line":
+        this.drawGenericCaret(false);
+        break;
+      case "Underline":
+        this.drawGenericCaret(true);
+        break;
+      case "Box":
+        this.drawBoxCursor();
+        break;
+    }
+    if (breathing) ctx.restore();
+    const secBounds = this.drawFullSecondaries();
+    this.drawSecondaryCarets();
+    const e = this._dirty;
+    this._dirtyRaw = e ? { x0: e.x0, y0: e.y0, x1: e.x1, y1: e.y1 } : null;
+    if (cb) this._markDirty(cb.x0, cb.y0, cb.x1 - cb.x0, cb.y1 - cb.y0);
+    for (const b of secBounds) this._markDirty(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+    const d = this._dirty;
+    if (!d) {
+      this._dirtyPrev = null;
+      return;
+    }
+    const cx0 = Math.max(rx0, Math.floor(d.x0) - 2);
+    const cy0 = Math.max(ry0, Math.floor(d.y0) - 2);
+    const cx1 = Math.min(rx1, Math.ceil(d.x1) + 2);
+    const cy1 = Math.min(ry1, Math.ceil(d.y1) + 2);
+    this._dirtyPrev = cx1 > cx0 && cy1 > cy0 ? { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 } : null;
+  },
+  // Puts the canvas layer into (or back out of) a blend mode, which is what
+  // cursorTranslucent actually is.
+  //
+  // This CANNOT be done with ctx.globalCompositeOperation. The cursor canvas
+  // is its own layer stacked over the editor, so a canvas-level "multiply"
+  // blends against what this canvas has already painted this frame - nothing,
+  // it was just cleared - not against the text underneath. Real backdrop
+  // blending has to come from CSS.
+  //
+  // And it has to go on the WRAPPER, not the canvas. The wrapper is
+  // position:fixed with a z-index, which makes it a stacking context, and a
+  // stacking context confines its descendants' blending to itself: a
+  // mix-blend-mode on the canvas inside would blend against the wrapper's own
+  // empty background and produce no visible change at all. On the wrapper the
+  // blend applies to the whole group against its parent's content - i.e. the
+  // editor. (Which also means an `isolation: isolate` anywhere between the
+  // wrapper and .app-container would silently turn this feature off. Don't
+  // add one, in either file.)
+  //
+  // Multiply darkens and screen lightens, so which of the two reads as ink on
+  // the page depends on what's behind it: multiply on a light theme, screen
+  // on a dark one. Picking by theme keeps the cursor legible in both instead
+  // of sinking into the background in one of them.
+  //
+  // Called from the draw dispatch, before the per-style branch, so it runs on
+  // every frame regardless of style - including the frames that have to CLEAR
+  // it. Writes only on change: a blend-mode style write forces the compositor
+  // to re-evaluate the layer, so doing it per frame would cost real work to
+  // set the value it already had.
+  applyCanvasBlend() {
+    const el = this.canvasWrapper;
+    if (!el) return;
+    const want = this.styleFor("cursorTranslucent") ? this.isDarkTheme() ? "screen" : "multiply" : "normal";
+    if (this._canvasBlend === want) return;
+    this._canvasBlend = want;
+    el.style.mixBlendMode = want;
+  }
+};
+
+// src/paint.ts
+var paintMethods = {
+  ...paintColorMethods,
+  ...paintBlinkMethods,
+  ...paintShapeMethods,
+  ...paintEnergyMethods,
+  ...paintTetherMethods,
+  ...paintSecondariesMethods,
+  ...paintSmearMethods,
+  ...paintFrameMethods
 };
 
 // src/torch-paint.ts
@@ -8281,7 +8428,8 @@ var torchMethods = {
         return;
       }
       const caps = this._frameCaps();
-      const delay = this._torchGear === "pulse" ? caps.torchPulseMs : caps.torchIdleMs;
+      const idleMs = Math.min(caps.torchIdleMs, Math.max(1, Math.ceil(this._torchIdleWakeMs || caps.torchIdleMs)));
+      const delay = this._torchGear === "pulse" ? caps.torchPulseMs : idleMs;
       this._torchIdleT = window.setTimeout(() => {
         this._torchIdleT = 0;
         if (this.torchEngineActive) this.torchRaf = window.requestAnimationFrame(tick);
@@ -8290,6 +8438,7 @@ var torchMethods = {
     const tick = () => {
       if (!this.torchEngineActive) return;
       this._torchGear = "idle";
+      this._torchIdleWakeMs = 0;
       try {
         {
           if (this.presentationActive()) {
@@ -8366,8 +8515,11 @@ var torchMethods = {
               let radius = this.look.overlayRadius;
               if (pulse) {
                 const depth = Math.max(0, Math.min(1, this.look.overlayBlinkDepth ?? 0.25));
-                radius *= 1 - depth * (1 - this.blinkPhase(performance.now()));
-                if (this._torchGear === "idle") this._torchGear = "pulse";
+                const tNow = performance.now();
+                radius *= 1 - depth * (1 - this.blinkPhase(tNow));
+                const w = this.blinkWindow(tNow);
+                if (w.fading && this._torchGear === "idle") this._torchGear = "pulse";
+                this._torchIdleWakeMs = w.msToNext;
               }
               const rKey = Math.max(1, Math.round(radius));
               this._lastTorchRadius = rKey;
@@ -8909,10 +9061,15 @@ var vimMethods = {
       this.vimStatusEl.addClass?.("cursor-smith-vim-status");
       this.vimStatusEl.addClass("cursor-smith-vim-status");
       this._vimStatusSig = null;
+      if (!this._vimStatusTimer) this._vimStatusTimer = window.setInterval(() => this.updateVimStatusBar(), 250);
     } else if (!wanted && this.vimStatusEl) {
       this.vimStatusEl.remove();
       this.vimStatusEl = null;
       this._vimStatusSig = null;
+      if (this._vimStatusTimer) {
+        window.clearInterval(this._vimStatusTimer);
+        this._vimStatusTimer = 0;
+      }
     }
     this.updateVimStatusBar();
   },
@@ -9094,13 +9251,15 @@ var engineMethods = {
         this.canvasRaf = window.requestAnimationFrame(tick);
         return;
       }
+      const idleMs = Math.min(caps.idleMs, Math.max(1, Math.ceil(this._idleWakeMs || caps.idleMs)));
       this._canvasIdleT = window.setTimeout(() => {
         this._canvasIdleT = 0;
         if (this.canvasEngineActive) this.canvasRaf = window.requestAnimationFrame(tick);
-      }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : caps.idleMs);
+      }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : idleMs);
     };
     const tick = () => {
       if (!this.canvasEngineActive) return;
+      this._lastTickT = performance.now();
       const perf = this._perf;
       if ((this._canvasGear || "hot") === "hot") {
         const n = performance.now();
@@ -9132,6 +9291,7 @@ var engineMethods = {
             this._drawSig = null;
           }
           this._canvasGear = "idle";
+          this._idleWakeMs = 0;
           schedule();
           return;
         }
@@ -9215,109 +9375,13 @@ var engineMethods = {
           }
           this.maybeSpawnStardust();
           const nowT = performance.now();
-          const eff = this.look;
-          const animating = this._isAnimating(nowT);
-          const energyShimmer = !!eff.energyEffect && !!this.lastActive;
-          const recentInput = nowT - (this._lastActivityT || 0) < 1200;
-          let blinkFading = false;
-          let blinkBucket = 1;
-          if (eff.blinkingEnabled && this.lastActive) {
-            const a = this.blinkPhase(nowT);
-            blinkFading = a > 0.02 && a < 0.98;
-            blinkBucket = a >= 0.5 ? 1 : 0;
-          }
-          const stardustLive = this.stardust.length > 0;
-          const stardustActive = stardustLive || this.stardustArmed();
-          this._canvasGear = animating || recentInput ? "hot" : blinkFading || stardustActive ? "warm" : energyShimmer ? "energy" : "idle";
-          if (perf) {
-            const why = this._smoothMoving ? "glide" : this.pending ? "pending move" : this.trail && this.trail.length > 0 ? "trail" : this.particles && this.particles.length > 0 ? "particles" : this.flamePixels && this.flamePixels.length > 0 || this.flameEmbers && this.flameEmbers.length > 0 ? "pixels" : this.thunderbolts && this.thunderbolts.length > 0 || this.fireworks && this.fireworks.length > 0 ? "pops" : this.glitch && nowT - this.glitch.start < this.glitch.dur ? "glitch" : this.heat > 0 ? "heat" : this._smearMoving ? "smear" : !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) ? "fire" : animating ? "secondaries" : recentInput ? "input:" + (this._lastActivityKind || "?") : blinkFading ? "blink" : stardustActive ? "stardust" : energyShimmer ? "energy" : "idle";
-            perf.why[why] = (perf.why[why] || 0) + 1;
-          }
-          const staticFrame = !animating && !blinkFading && !energyShimmer && !stardustLive;
+          const g = this._decideGear(nowT, !!perf);
+          this._canvasGear = g.gear;
+          this._idleWakeMs = g.idleWake;
+          if (perf) perf.why[g.why] = (perf.why[g.why] || 0) + 1;
           let doDraw = true;
-          if (staticFrame) {
-            const la = this.lastActive;
-            const isDark = this.canvas ? this.canvas.ownerDocument.body.classList.contains("theme-dark") : true;
-            const sec = this.secondaryCarets && this.secondaryCarets.length ? this.secondaryCarets.map((c) => (c.x | 0) + ":" + (c.top | 0) + ":" + (c.bottom | 0)).join(",") : "";
-            const bt = this.bracketTether && this.bracketTether.length ? this.bracketTether.map((s) => (s.x1 | 0) + ":" + (s.y1 | 0) + ":" + (s.x2 | 0) + ":" + (s.y2 | 0)).join(",") : "";
-            const sig = [
-              _vimMode,
-              blinkBucket,
-              isDark,
-              la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," + Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
-              eff.cursorStyle,
-              eff.colorDark,
-              eff.colorLight,
-              eff.caretWidthPx,
-              // crtEffect gates glow, and boxHollowWidth/lineSerifs change the
-              // painted shape - all three were missing here, so toggling them
-              // on a settled cursor matched the previous signature and the
-              // frame was skipped: the change appeared to do nothing until the
-              // next keystroke woke the loop.
-              eff.cursorOpacity,
-              eff.crtEffect,
-              eff.glow,
-              eff.showChar,
-              eff.crtNeon,
-              eff.crtNeonGradient,
-              eff.boxHollow,
-              eff.boxHollowWidth,
-              eff.lineSerifs,
-              // Same reason again: it changes the painted pixels of a settled
-              // cursor, so without it here the frame is skipped and the toggle
-              // does nothing visible until the next keystroke wakes the loop.
-              eff.cursorTranslucent,
-              eff.underlineWidthPx,
-              sec,
-              bt,
-              eff.bracketTetherStrength,
-              // The full-effect secondaries: position, shape and smear quad
-              // each, for the same reasons `la` and _smearSig() are here.
-              this._secondariesSig(),
-              // Breathing changes the painted size during a hold, where
-              // blinkBucket alone can't tell the two states apart: switching it
-              // on while the caret sat in the dark half of the cycle matched
-              // the previous signature exactly, so the frame was skipped and
-              // the option appeared to do nothing until the next fade.
-              eff.blinkBreathing,
-              eff.blinkBreathDepth,
-              // Same reasoning as the line above: every one of these changes
-              // the painted pixels, so leaving them out would make editing a
-              // gradient on a settled cursor appear to do nothing until the
-              // next keystroke woke the loop.
-              eff.gradientEnabled,
-              eff.gradientCount,
-              eff.gradientDark1,
-              eff.gradientDark2,
-              eff.gradientDark3,
-              eff.gradientDark4,
-              eff.gradientLight1,
-              eff.gradientLight2,
-              eff.gradientLight3,
-              eff.gradientLight4,
-              // The smear quad's own corners. Everything else here is a
-              // property of the caret or of the settings; the quad is neither.
-              // It is a spring with its own state, and it keeps deforming for
-              // as long as it takes to settle AFTER the caret has stopped -
-              // during which `la` is frozen and every other term is unchanged,
-              // so the signature matched, the frame was skipped, and whatever
-              // the last drawn frame painted stayed on screen as a stale
-              // stretched ghost. On a slow trailing stiffness that is ~45
-              // skipped frames with the quad up to 50px off its target.
-              //
-              // This was always latent. It only became visible once the
-              // trailing corners started keeping their trailing stiffness
-              // through the settle: before that they snapped in at LEADING
-              // stiffness the instant the caret stopped, so the quad was back
-              // on target within a frame or two and there was nothing left to
-              // strand.
-              //
-              // Uses smearCorners() rather than smearQuad, because the taper
-              // is what actually gets painted. Rounded to half-pixels, the
-              // same quantisation `la` uses - the point is to notice movement
-              // that changes painted pixels, not to wake for float noise.
-              this._smearSig()
-            ].join("|");
+          if (g.staticFrame) {
+            const sig = this._frameSignature(_vimMode, g.blinkBucket);
             if (sig === this._drawSig) doDraw = false;
             else this._drawSig = sig;
           } else {
@@ -9350,6 +9414,8 @@ var engineMethods = {
     };
     this._canvasTick = tick;
     this._canvasGear = "hot";
+    this._idleWakeMs = 0;
+    this._lastTickT = performance.now();
     this.canvasRaf = window.requestAnimationFrame(tick);
   },
   // (Re)allocate the backing store for the current canvas region. This used
@@ -9574,7 +9640,7 @@ var engineMethods = {
   //
   // Extracted from the canvas tick so it can be TESTED. Missing an entry here is
   // the one effect-authoring mistake that is both silent and user-visible: the
-  // loop judges the frame static, drops to its 100ms idle heartbeat, and the
+  // loop judges the frame static, drops to its idle heartbeat, and the
   // effect freezes mid-animation whenever nothing else happens to be moving. It
   // was previously guarded by a comment alone while every other effect invariant
   // in this file had coverage. See test.js, "frame governor".
@@ -9584,14 +9650,15 @@ var engineMethods = {
   // a side effect) would retire it before the frame that should have painted it.
   // ---------------------------------------------------------------------------
   _isAnimating(nowT) {
-    return !!this._smoothMoving || !!this.pending || this.trail && this.trail.length > 0 || this.particles && this.particles.length > 0 || // flamePixels are aged inside draw(), so a skipped frame would
+    const crt = !!this.look.crtEffect;
+    return !!this._smoothMoving || !!this.pending || crt && this.trail && this.trail.length > 0 || this.particles && this.particles.length > 0 || // flamePixels are aged inside draw(), so a skipped frame would
     // freeze a burst mid-flight rather than letting it expire.
     this.flamePixels && this.flamePixels.length > 0 || // Same again for Hot-head's fire, aged in its own draw call.
     this.flameEmbers && this.flameEmbers.length > 0 || // ...and the effect itself, not just its live particles. While
     // Hot-head is on the fire is continuously animating by definition,
     // and the particle test alone has a hole in it: the instant the
     // pool empties the loop would judge the frame static, drop to the
-    // 100ms idle heartbeat, and the next spawn would arrive as one
+    // idle heartbeat, and the next spawn would arrive as one
     // lumpy burst instead of a steady flame.
     !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) || // Same reasoning: a bolt is aged and expired inside its draw call,
     // so a skipped frame would leave one frozen on screen.
@@ -9608,7 +9675,7 @@ var engineMethods = {
     // CARET_STATE_FIELDS), and a settling spring or a live trail on any of
     // them needs frames exactly as the primary's does. A pure read of the
     // bundles, nothing swapped in.
-    this._secondaries && this._secondaries.some((c) => !!c._smoothMoving || !!c.pending || !!c._smearMoving || c.trail && c.trail.length > 0 || !!c.glitch && nowT - c.glitch.start < c.glitch.dur || // Hot-head feeding on a secondary, same test as the primary's above.
+    this._secondaries && this._secondaries.some((c) => !!c._smoothMoving || !!c.pending || !!c._smearMoving || crt && c.trail && c.trail.length > 0 || !!c.glitch && nowT - c.glitch.start < c.glitch.dur || // Hot-head feeding on a secondary, same test as the primary's above.
     !!this.styleFor("hotHead") && !!c.animActive && this._hotFeedingAt(c._hotActiveT, nowT)) || // Precise: the spring reports whether any corner is still off its
     // target or carrying velocity. This used to be a 1200ms window
     // after the last motion, which was a workaround for a timestamp
@@ -9618,6 +9685,75 @@ var engineMethods = {
     // weight - it just held the hot gear for an extra 1.2s after every
     // smear finished.
     !!this._smearMoving;
+  },
+  // The gear for this frame and what decided it; the tick applies the
+  // result. Pure reads. `why` is the first reason that held, for the
+  // report's "awake because", built only when a report is running.
+  //
+  // Gears: anything genuinely in motion (_isAnimating) or an input within
+  // INPUT_HOT_MS is hot; a blink fade or armed stardust is warm; the energy
+  // shimmer alone is its own slow gear - it is driven by wall clock and has
+  // to keep repainting, but at ~1.7 s a cycle 20 fps is fifty samples and
+  // looks identical to sixty; otherwise idle. Stardust deliberately never
+  // claims hot: it runs *because* nothing is happening, and a slow drift is
+  // smooth at the warm gear; `armed` rather than "motes alive" keeps the
+  // loop warm through the gaps between emissions, where the idle heartbeat
+  // would make the spawn cadence stutter. The blink's window is phase-based
+  // (blinkWindow), so the warm gear covers a fade from its first frame.
+  _decideGear(nowT, wantWhy) {
+    const eff = this.look;
+    const animating = this._isAnimating(nowT);
+    const energyShimmer = !!eff.energyEffect && !!this.lastActive;
+    const recentInput = nowT - (this._lastActivityT || 0) < INPUT_HOT_MS;
+    let blinkFading = false;
+    let blinkBucket = 1;
+    let idleWake = Infinity;
+    if (eff.blinkingEnabled && this.lastActive) {
+      const a = this.blinkPhase(nowT);
+      blinkBucket = a >= 0.5 ? 1 : 0;
+      const w = this.blinkWindow(nowT);
+      blinkFading = w.fading;
+      idleWake = w.msToNext;
+    }
+    const stardustLive = this.stardust.length > 0;
+    const stardustActive = stardustLive || this.stardustArmed();
+    const gear = animating || recentInput ? "hot" : blinkFading || stardustActive ? "warm" : energyShimmer ? "energy" : "idle";
+    const staticFrame = !animating && !blinkFading && !energyShimmer && !stardustLive;
+    let why = "";
+    if (wantWhy) {
+      why = this._smoothMoving ? "glide" : this.pending ? "pending move" : eff.crtEffect && this.trail && this.trail.length > 0 ? "trail" : this.particles && this.particles.length > 0 ? "particles" : this.flamePixels && this.flamePixels.length > 0 || this.flameEmbers && this.flameEmbers.length > 0 ? "pixels" : this.thunderbolts && this.thunderbolts.length > 0 || this.fireworks && this.fireworks.length > 0 ? "pops" : this.glitch && nowT - this.glitch.start < this.glitch.dur ? "glitch" : this.heat > 0 ? "heat" : this._smearMoving ? "smear" : !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) ? "fire" : animating ? "secondaries" : recentInput ? "input:" + (this._lastActivityKind || "?") : blinkFading ? "blink" : stardustActive ? "stardust" : energyShimmer ? "energy" : "idle";
+    }
+    return { gear, staticFrame, blinkBucket, idleWake, why };
+  },
+  // What a static frame would paint, as a string; when it matches the last
+  // frame's the draw is skipped. The look's part is ONE number, the look
+  // generation (_lookGen: bumped by saveSettings, a preset, the
+  // reduced-motion query flipping - every path that changes what
+  // this.look answers), instead of a list of every look key that reaches a
+  // pixel. That list was kept by hand, and eight of its entries were bug
+  // fixes: a toggle that "did nothing until the next keystroke" because the
+  // key was missing here. The rest is what changes without a setting: the
+  // Vim mode (its own look), the blink's half, the theme, the caret's place,
+  // shape and glyph to the half-pixel, the plain secondaries, the tether,
+  // the full secondaries and the smear quad (a spring with its own state;
+  // it keeps deforming after the caret has stopped, and without it here a
+  // settled frame stranded a stretched ghost on screen).
+  _frameSignature(vimMode, blinkBucket) {
+    const la = this.lastActive;
+    const isDark = this.canvas ? this.canvas.ownerDocument.body.classList.contains("theme-dark") : true;
+    const sec = this.secondaryCarets && this.secondaryCarets.length ? this.secondaryCarets.map((c) => (c.x | 0) + ":" + (c.top | 0) + ":" + (c.bottom | 0)).join(",") : "";
+    const bt = this.bracketTether && this.bracketTether.length ? this.bracketTether.map((s) => (s.x1 | 0) + ":" + (s.y1 | 0) + ":" + (s.x2 | 0) + ":" + (s.y2 | 0)).join(",") : "";
+    return [
+      vimMode,
+      this._lookGen | 0,
+      blinkBucket,
+      isDark,
+      la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," + Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
+      sec,
+      bt,
+      this._secondariesSig(),
+      this._smearSig()
+    ].join("|");
   },
   _markDirty(x, y, w, h) {
     const d = this._dirty;
@@ -9655,7 +9791,8 @@ var engineMethods = {
   //   hot  — continuous rAF (capped near 60fps on high-refresh displays),
   //          while input is recent or any animation is genuinely in flight
   //   warm — ~30fps, only while a blink fade is mid-transition
-  //   idle — ~10fps heartbeat that re-checks state and repaints ONLY if the
+  //   idle — a 200 ms heartbeat (or the blink's next fade, if sooner) that
+  //          re-checks state and repaints ONLY if the
   //          picture changed; with a static, non-fading cursor the canvas
   //          isn't touched at all, so idle cost approaches zero
   // Input events snap the loops back to hot instantly (the pending idle
@@ -9665,13 +9802,31 @@ var engineMethods = {
   // loop right now instead of letting it sleep out its timeout.
   // Anything that can move the caret on screen bumps this; the geometry
   // caches (cmCaretCoords, getPaneRect, the secondaries') are keyed on it.
+  // Layout may have moved the caret: drop the geometry caches and have the
+  // loop look now rather than on the heartbeat. Cheap when it finds nothing
+  // (one tick, a signature that matches, no draw), and it is what lets a
+  // sidebar animating shut, or a slider dragged in the settings window
+  // (saveSettings calls this), move the caret on the next frame instead of
+  // up to a heartbeat later.
   _invalidateLayout() {
     this._layoutGen = (this._layoutGen | 0) + 1;
+    this._wakeLoop();
   },
-  _markActivity(kind = "") {
-    this._lastActivityT = performance.now();
-    if (kind) this._lastActivityKind = kind;
+  // The caret's computed style may have changed under it - css-change, a
+  // layout change, a resize (which is also how a zoom arrives). The style
+  // cache in cmCaretCoords is keyed on this generation. Kept apart from the
+  // layout generation, which every scroll and keystroke bumps: a scroll
+  // moves the caret, it does not change the font under it, and re-reading
+  // computed styles and hit-testing the line on every scroll event was the
+  // alternative.
+  _invalidateStyle() {
+    this._styleGen = (this._styleGen | 0) + 1;
     this._invalidateLayout();
+  },
+  // A dozing loop (warm, energy or idle: parked on a timeout) is put on the
+  // next frame. A hot loop is already on requestAnimationFrame and needs
+  // nothing, and a tick in progress has no timeout to cancel.
+  _wakeLoop() {
     if (this._canvasIdleT) {
       window.clearTimeout(this._canvasIdleT);
       this._canvasIdleT = 0;
@@ -9679,6 +9834,54 @@ var engineMethods = {
         this.canvasRaf = window.requestAnimationFrame(this._canvasTick);
       }
     }
+  },
+  // The frame loop's watchdog, on an interval from onload. The plugin hides
+  // Obsidian's caret and draws its own, so a loop that stops - a frame that
+  // threw before it rescheduled, an animation frame that never came back -
+  // leaves the editor with no caret at all, the worst thing this plugin can
+  // do. A parked loop still ticks at the idle heartbeat, so a visible
+  // document with no tick for WATCHDOG_STALE_MS is a dead loop: it is
+  // restarted (enable), the console says so, and on the second stall the
+  // native caret is handed back (hideNativeActive reads _watchdogGaveUp)
+  // until the plugin is next enabled by hand. Not a stall: a hidden
+  // document (no animation frames by design), or an interval that was
+  // itself late by as much - the main thread was blocked, and the loop
+  // never had a chance. Trips are forgotten after a healthy minute.
+  _watchdog(now) {
+    const lastRun = this._watchdogLastT || now;
+    this._watchdogLastT = now;
+    if (!this.canvasEngineActive) return;
+    const doc = this.canvas && this.canvas.ownerDocument || document;
+    if (doc.visibilityState === "hidden" || now - lastRun > WATCHDOG_INTERVAL_MS * 1.5) {
+      this._lastTickT = now;
+      return;
+    }
+    const silent = now - (this._lastTickT || now);
+    if (silent < WATCHDOG_STALE_MS) {
+      if (this._watchdogTrips && now - (this._watchdogTripT || 0) > 6e4) this._watchdogTrips = 0;
+      return;
+    }
+    this._watchdogTrips = (this._watchdogTrips | 0) + 1;
+    this._watchdogTripT = now;
+    this._reportOnce("watchdog, stall " + this._watchdogTrips, new Error(`no frame for ${Math.round(silent)} ms: restarting the loop`));
+    try {
+      this.enable();
+    } catch (e) {
+      this._reportOnce("watchdog restart", e);
+    }
+    if (this._watchdogTrips >= 2) {
+      this._watchdogGaveUp = true;
+      try {
+        this.applyBodyClasses();
+      } catch (e) {
+        this._reportOnce("watchdog body classes", e);
+      }
+    }
+  },
+  _markActivity(kind = "") {
+    this._lastActivityT = performance.now();
+    if (kind) this._lastActivityKind = kind;
+    this._invalidateLayout();
     this._wakeTorch();
   },
   // A ResizeObserver on the active editor's content and scroller: an embed
@@ -9725,6 +9928,41 @@ var engineMethods = {
     const active = doc && doc.activeElement;
     if (active && active !== doc.body && contains(active)) return true;
     return false;
+  },
+  // Whether the document's selection is somewhere else than when this last
+  // answered. Android's WebView, and CodeMirror re-syncing the DOM selection
+  // to its own, fire selectionchange with the caret exactly where it was;
+  // each used to buy INPUT_HOT_MS of the hot gear. Compared, not stamped:
+  // the editor's selection (its document, anchor, head, assoc and range
+  // count) while the editor has focus, a field's own selection when a field
+  // does, the DOM selection's two ends otherwise. When in doubt (a probe
+  // throws), the answer is yes.
+  _selectionMoved(doc) {
+    let sig;
+    try {
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      if (view && view.hasFocus && view.dom.ownerDocument === doc) {
+        const sel = view.state.selection;
+        const m = sel.main;
+        sig = { a: view.state.doc, b: null, n: m.anchor, h: m.head, o: m.assoc || 0, k: sel.ranges.length };
+      } else {
+        const el = doc.activeElement;
+        const start = el ? el.selectionStart : null;
+        if (el && typeof start === "number") {
+          sig = { a: el, b: null, n: start, h: el.selectionEnd ?? start, o: 0, k: 1 };
+        } else {
+          const s = doc.getSelection();
+          sig = s ? { a: s.anchorNode, b: s.focusNode, n: s.anchorOffset, h: s.focusOffset, o: 0, k: s.rangeCount } : { a: null, b: null, n: -1, h: -1, o: 0, k: 0 };
+        }
+      }
+    } catch {
+      this._selSig = null;
+      return true;
+    }
+    const prev = this._selSig;
+    this._selSig = sig;
+    if (!prev) return true;
+    return prev.a !== sig.a || prev.b !== sig.b || prev.n !== sig.n || prev.h !== sig.h || prev.o !== sig.o || prev.k !== sig.k;
   },
   // Count what the loop does for `seconds`, then put a report on the
   // clipboard (and in the console). The counters live on this._perf and
@@ -9885,11 +10123,11 @@ var caretsMethods = {
   // Multi-cursor: full effects on secondary carets
   // =========================================================================
   // Every non-primary caret up to SECONDARY_FULL_MAX gets the primary's whole
-  // pipeline rather than a 2px line. Nothing in that pipeline was rewritten to
-  // take a caret argument; it reads and writes the fields in CARET_STATE_FIELDS
-  // on `this`, so each secondary keeps a bundle of those fields and _withCaret
-  // swaps it in, runs the primary's own code, and saves the bundle back. The
-  // cost of the swap is a few dozen property writes per caret per frame.
+  // pipeline rather than a 2px line. Nothing in that pipeline takes a caret
+  // argument; it reads and writes the fields in CARET_STATE_FIELDS on
+  // `this`, and those are accessors over the current caret's state object
+  // (this._caret), so _withCaret makes a secondary's bundle current with one
+  // pointer, runs the primary's own code, and points back.
   //
   // What is per caret: position, smoothing, the smear spring, the trail,
   // the pending (Move Delay) state, a Signal Glitch burst, and the pop
@@ -9897,54 +10135,42 @@ var caretsMethods = {
   // trail). What stays global: the blink clock (lastMoveTime - every caret
   // blinks with the primary), Speed Demon's heat, Thunderstrike, Fireworks,
   // Hot-head and Stardust, which follow the primary only.
-  // Copy the caret fields out of `this` into `into` (a bundle), and back.
-  // References, not clones: the bundle IS the state while it is swapped out.
-  _saveCaretState(into) {
-    const dst = into, src = this;
-    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
-    return into;
-  },
-  _loadCaretState(from) {
-    const dst = this, src = from;
-    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
-  },
-  // A bundle in the state a fresh engine has. Taken from _resetEngineState
-  // itself, on a scratch object, so the two cannot drift.
+  // A caret's state is an object (CaretState): the primary's is this._caret,
+  // a full-effect secondary's is its bundle in this._secondaries. Every
+  // per-caret field (CARET_STATE_FIELDS) is an accessor on the class that
+  // forwards to this._caret (the end of plugin.ts), so the pipeline
+  // addresses whichever caret is current as `this.x`, and switching carets
+  // is one pointer. Until 1.5.8 _withCaret copied the forty fields into a
+  // scratch bundle and the secondary's in, ran the code, and copied both
+  // back - twice per secondary per frame - and three of the smear's fields
+  // were missing from the list, so every secondary's spring integrated the
+  // primary's points toward its own target.
+  // A bundle in the state a fresh engine has: the reset, run by a scratch
+  // engine whose caret is the new object, so the two cannot drift.
   _freshCaretState() {
+    const fresh = {};
     const scratch = Object.create(Object.getPrototypeOf(this));
+    scratch._caret = fresh;
     scratch._resetEngineState();
-    const out = {};
-    const dst = out, src = scratch;
-    for (const k of CARET_STATE_FIELDS) dst[k] = src[k];
-    return out;
+    return fresh;
   },
-  // Run `fn` with `state` swapped into `this`, then save whatever fn did back
-  // into `state` and restore the primary. Re-entrant only in the sense that
-  // the primary's fields are always what is put back, whatever fn threw.
-  //
-  // The primary's fields are parked in a scratch bundle from a small pool
-  // indexed by nesting depth, not a fresh object: with forty fields and a
-  // handful of swaps per secondary per frame, allocating one each time was
-  // measurable GC churn at ten carets.
+  // Run `fn` with `state` as the current caret, then put the primary back.
+  // Nothing is copied: the state object is the caret before, during and
+  // after. Re-entrant - a nested swap restores the outer one - and the
+  // primary is always what is put back, whatever fn threw.
   _withCaret(state, fn) {
-    const depth = this._swapDepth | 0;
-    const pool = this._swapPool || (this._swapPool = []);
-    const saved = pool[depth] || (pool[depth] = {});
-    this._saveCaretState(saved);
+    const prev = this._caret;
     const pass = this._caretPass;
     const owner = this._caretOwner;
-    this._swapDepth = depth + 1;
-    this._loadCaretState(state);
+    this._caret = state;
     this._caretPass = "secondary";
     this._caretOwner = state;
     try {
       return fn();
     } finally {
-      this._saveCaretState(state);
-      this._loadCaretState(saved);
+      this._caret = prev;
       this._caretPass = pass;
       this._caretOwner = owner;
-      this._swapDepth = depth;
     }
   },
   // The selection changed shape: a range was added or removed, or a different
@@ -9966,7 +10192,7 @@ var caretsMethods = {
       this._secondaries = [];
       return;
     }
-    const candidates = [{ state: this._saveCaretState({}), pos: this.lastActive ? this.lastActive.pos : null }];
+    const candidates = [{ state: this._caret, pos: this.lastActive ? this.lastActive.pos : null }];
     for (const c of this._secondaries) candidates.push({ state: c, pos: c.lastActive ? c.lastActive.pos : null });
     const take = (head) => {
       let best = -1, bestD = SECONDARY_MATCH_WINDOW + 1, bestCand = null;
@@ -9985,7 +10211,7 @@ var caretsMethods = {
       return bestCand.state;
     };
     const main = take(sel.ranges[mainIndex].head) || this._freshCaretState();
-    this._loadCaretState(main);
+    this._caret = main;
     const next = [];
     for (let i = 0; i < sel.ranges.length && next.length < SECONDARY_FULL_MAX; i++) {
       if (i === mainIndex) continue;
@@ -10434,6 +10660,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this._torchGlowKey = "";
     this._chromeCache = null;
     this._caretStyleCache = null;
+    this._styleGen = 0;
     this._uiModeSwitching = false;
     this.addCommand({
       id: "cycle-preset",
@@ -10457,10 +10684,18 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     });
     this.settingTab = new CursorSmithSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
-    this.registerInterval(window.setInterval(() => this.updateVimStatusBar(), 250));
+    this._lookGen = 0;
+    this._lastTickT = 0;
+    this._watchdogTrips = 0;
+    this._watchdogTripT = 0;
+    this._watchdogLastT = 0;
+    this._watchdogGaveUp = false;
+    this._vimStatusTimer = 0;
+    this.registerInterval(window.setInterval(() => this._watchdog(performance.now()), WATCHDOG_INTERVAL_MS));
     for (const ev of ["css-change", "layout-change", "active-leaf-change", "resize"]) {
+      const style = ev !== "active-leaf-change";
       try {
-        this.registerEvent(this.app.workspace.on(ev, () => this._invalidateLayout()));
+        this.registerEvent(this.app.workspace.on(ev, () => style ? this._invalidateStyle() : this._invalidateLayout()));
       } catch {
       }
     }
@@ -10480,6 +10715,18 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   }
   onunload() {
     this.disable();
+    if (this._reduceMQ && this._reduceMQHandler && typeof this._reduceMQ.removeEventListener === "function") {
+      try {
+        this._reduceMQ.removeEventListener("change", this._reduceMQHandler);
+      } catch {
+      }
+    }
+    this._reduceMQ = null;
+    this._reduceMQHandler = null;
+    if (this._vimStatusTimer) {
+      window.clearInterval(this._vimStatusTimer);
+      this._vimStatusTimer = 0;
+    }
     if (this._vimNormalRetryT) {
       window.clearTimeout(this._vimNormalRetryT);
       this._vimNormalRetryT = 0;
@@ -10586,7 +10833,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
       this._lastOverlayRect = "";
       this._canvasRect = null;
       this._caretStyleCache = null;
-      this._markActivity();
+      this._markActivity("resize");
     };
     doc.addEventListener("mousemove", onMouseMove);
     doc.addEventListener("keydown", onKeyDown, true);
@@ -10594,7 +10841,10 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     const onScrollLike = (e) => {
       if (this._scrollMovesCaret(e.target, doc)) this._markActivity(e.type);
     };
-    doc.addEventListener("selectionchange", onActivity);
+    const onSelectionChange = () => {
+      if (this._selectionMoved(doc)) this._markActivity("selectionchange");
+    };
+    doc.addEventListener("selectionchange", onSelectionChange);
     doc.addEventListener("mousedown", onActivity, true);
     doc.addEventListener("focusin", onActivity, true);
     doc.addEventListener("wheel", onScrollLike, { capture: true, passive: true });
@@ -10615,11 +10865,11 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
       doc.removeEventListener("beforeinput", onBeforeInput, true);
-      doc.removeEventListener("selectionchange", onActivity);
+      doc.removeEventListener("selectionchange", onSelectionChange);
       doc.removeEventListener("mousedown", onActivity, true);
       doc.removeEventListener("focusin", onActivity, true);
-      doc.removeEventListener("wheel", onActivity, { capture: true });
-      doc.removeEventListener("scroll", onActivity, { capture: true });
+      doc.removeEventListener("wheel", onScrollLike, { capture: true });
+      doc.removeEventListener("scroll", onScrollLike, { capture: true });
       if (win) {
         win.removeEventListener("resize", onResize);
         win.removeEventListener("focus", onWindowFocusChange);
@@ -10630,7 +10880,8 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
-    this._effCache = null;
+    this._lookChanged();
+    this._wakeLoop();
     try {
       this.applyBodyClasses();
     } catch (e) {
@@ -10707,9 +10958,16 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     try {
       if (!this._reduceMQ) {
         const win = this.canvas && this.canvas.ownerDocument.defaultView || window;
-        this._reduceMQ = win.matchMedia("(prefers-reduced-motion: reduce)");
+        const mq = win.matchMedia("(prefers-reduced-motion: reduce)");
+        this._reduceMQ = mq;
+        this._reduceMatches = !!mq.matches;
+        this._reduceMQHandler = (e) => {
+          this._reduceMatches = !!e.matches;
+          this._lookChanged();
+        };
+        if (typeof mq.addEventListener === "function") mq.addEventListener("change", this._reduceMQHandler);
       }
-      return !!this._reduceMQ.matches;
+      return this._reduceMatches;
     } catch {
       return false;
     }
@@ -10745,6 +11003,14 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   // put back.
   get look() {
     return this.effectiveSettings(this.currentVimMode());
+  }
+  // Something changed what `look` answers: a save, a preset, the
+  // reduced-motion query. Drops the memo and bumps the look generation the
+  // static-frame signature carries (_frameSignature), so the next frame is
+  // painted whatever else matched.
+  _lookChanged() {
+    this._effCache = null;
+    this._lookGen = (this._lookGen | 0) + 1;
   }
   // Thin passthrough kept for the draw-path reads that take a key by name.
   styleFor(key) {
@@ -10806,6 +11072,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   // because with Note Editor Only on the answer changes with FOCUS and not
   // only when a setting is saved.
   hideNativeActive() {
+    if (this._watchdogGaveUp) return false;
     if (!this.settings.hideNativeCaret) return false;
     if (!this.settings.noteEditorOnly) return true;
     return this.noteEditorFocused();
@@ -10909,6 +11176,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   // ---------------------------------------------------------------------------
   _resetEngineState() {
     this._reported = /* @__PURE__ */ new Set();
+    if (!this._caret) this._caret = {};
     this.trail = [];
     this.particles = [];
     this.flamePixels = [];
@@ -10950,13 +11218,27 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.lastMoveTime = 0;
     this.typingSpeedMod = 1;
     this._catchUpBoost = 1;
+    this._smoothMoving = false;
+    this._smoothLastT = 0;
+    this._typingBoostSm = null;
+    this._hotEmitFrom = null;
+    this._hotActiveT = 0;
+    this._lastHotT = 0;
+    this._hotShiftTick = 0;
+    this._hotEngulfUntil = 0;
     this.heat = 0;
     this._lastSparkT = 0;
     this._popRainbowHue = 0;
     this._hideNativeSig = null;
+    this._selSig = null;
+    this._idleWakeMs = 0;
+    this._glyphMetricKey = null;
+    this._glyphMetrics = null;
+    this._hotFill = null;
   }
   enable() {
     this.disable();
+    this._watchdogGaveUp = false;
     this.enableCanvasEngine();
     if (this.torchPossible()) this.enableTorchOverlay();
   }
@@ -10966,6 +11248,20 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   }
 };
 Object.assign(CursorSmithPlugin.prototype, measureMethods, effectsMethods, paintMethods, torchMethods, libraryMethods, vimMethods, engineMethods, caretsMethods);
+for (const key of CARET_STATE_FIELDS) {
+  Object.defineProperty(CursorSmithPlugin.prototype, key, {
+    configurable: true,
+    enumerable: false,
+    get() {
+      const c = this._caret;
+      return c ? c[key] : void 0;
+    },
+    set(value) {
+      const c = this._caret || (this._caret = {});
+      c[key] = value;
+    }
+  });
+}
 
 // src/main.ts
 var main_default = CursorSmithPlugin;

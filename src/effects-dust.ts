@@ -232,6 +232,7 @@ export const effectsDustMethods = {
   },
 
   drawFlamePixels(this: CursorSmithPlugin) {
+    if (!this.flamePixels.length) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const now = performance.now();
@@ -255,6 +256,11 @@ export const effectsDustMethods = {
       gy = Math.cos(rad) * mag;
     }
 
+    // One save/restore round the pool, not one per particle (a third of this
+    // painter's time with a burst in flight, measured). The alpha is the one
+    // state set per particle; the stroke settings a tail sets are set again
+    // by the next tail.
+    ctx.save();
     this.flamePixels = this.flamePixels.filter(p => {
       // Per-particle lifetime: Pixel Trail pixels carry their own `life`;
       // sparks and debris that never set one fall back to the original 0.4s.
@@ -275,7 +281,6 @@ export const effectsDustMethods = {
       const curX = p.x + p.vx * elapsed + pgx * 0.5 * elapsed * elapsed;
       const curY = p.y + p.vy * elapsed + pgy * 0.5 * elapsed * elapsed;
 
-      ctx.save();
       ctx.globalAlpha = Math.max(0, p.alpha);
 
       if (p.spark && trailAmt > 0) {
@@ -309,17 +314,17 @@ export const effectsDustMethods = {
       ctx.fillStyle = p.color;
       ctx.fillRect(curX, curY, p.size, p.size);
       this._markDirty(curX - 1, curY - 1, (p.size || 1) + 2, (p.size || 1) + 2);
-      ctx.restore();
 
       return true;
     });
+    ctx.restore();
   },
 
   // ---- Stardust ----------------------------------------------------------
   // Whether the effect is switched on AND currently emitting. Split out from
   // maybeSpawnStardust() because the frame governor needs the same answer: an
   // armed-but-not-yet-emitting cursor still has to be woken often enough to
-  // emit on time, or the first mote would wait out a 100ms idle heartbeat.
+  // emit on time, or the first mote would wait out an idle heartbeat.
   stardustArmed(this: CursorSmithPlugin): boolean {
     const s = this.look;
     if (!s.stardustEnabled) return false;
@@ -336,7 +341,7 @@ export const effectsDustMethods = {
   // Emit a slow stream of drifting motes from the caret while it sits idle.
   //
   // Rate-limited by wall clock rather than per frame: the governor runs this
-  // at ~30fps while stardust is alive but drops to ~10fps in the gaps, so a
+  // at ~30fps while stardust is alive but drops to ~5fps in the gaps, so a
   // per-frame probability would quietly change density with the gear.
   maybeSpawnStardust(this: CursorSmithPlugin) {
     if (!this.stardustArmed()) return;
@@ -414,9 +419,14 @@ export const effectsDustMethods = {
   // both drift speed and lifetime with the gear.
   drawStardust(this: CursorSmithPlugin) {
     if (!this.stardust.length) return;
+    const ctx = this.ctx;
+    if (!ctx) return;
     const now = performance.now();
     const opacity = Math.max(0, Math.min(1, this.look.cursorOpacity ?? 1));
 
+    // One save/restore round the swarm, not one per mote: paintMote sets the
+    // alpha and the colour, nothing that has to be undone per mote.
+    ctx.save();
     this.stardust = this.stardust.filter((p) => {
       const elapsed = (now - p.start) / 1000;
       if (elapsed > p.life) return false;
@@ -452,6 +462,7 @@ export const effectsDustMethods = {
 
       return this.paintMote(p, curX, curY, alpha);
     });
+    ctx.restore();
   },
 
   // Shared tail of drawStardust for both motion modes: paint one mote and
@@ -459,11 +470,9 @@ export const effectsDustMethods = {
   paintMote(this: CursorSmithPlugin, p: StardustMote, x: number, y: number, alpha: number) {
     const ctx = this.ctx;
     if (!ctx) return;
-    ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
     ctx.fillRect(x, y, p.size, p.size);
-    ctx.restore();
     this._markDirty(x - 1, y - 1, p.size + 2, p.size + 2);
     return true;
   },

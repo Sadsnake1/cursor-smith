@@ -102,25 +102,32 @@ export function isTextCaretHost(el: Element | null): el is HTMLElement {
   return false;
 }
 
-export function blinkAlphaAt(nowMs: number, speed: number, onOffBalance = 0.5, fade = 0.15): number {
-  if (speed <= 0) return 1;
-  const period = 2500 / speed; 
-  const phase = (nowMs % period) / period; 
-  // Fraction of the period spent fading, per side. Clamped below 0.5 so the two
-  // fades never overrun the cycle; at exactly 0.5 the holds are gone and the
-  // blink is one continuous ease down-and-up (a gentle "breathing" fade).
+// Where the fades sit in one blink period, as fractions of it: [0, p1) the
+// caret is lit, [p1, p2) it fades out, [p2, p3) it is dark, [p3, 1) it fades
+// back in. The same clamps as blinkAlphaAt, which walks the same segments
+// (a test sweeps the two against each other); the tick reads this to sleep
+// through the two holds and wake for the two fades on time (blinkWindow),
+// where it used to wake on the idle heartbeat and catch a fade already a
+// third gone.
+export function blinkSegments(speed: number, onOffBalance = 0.5, fade = 0.15) {
+  const period = 2500 / speed;
   fade = Math.max(0.02, Math.min(0.5, fade ?? 0.15));
   const balance = Math.max(0.1, Math.min(0.9, onOffBalance));
-  const hold = 1 - fade * 2; 
-  const onHold = hold * balance;
-  const offHold = hold * (1 - balance);
-  const p1 = onHold;
+  const hold = 1 - fade * 2;
+  const p1 = hold * balance;
   const p2 = p1 + fade;
-  const p3 = p2 + offHold;
-  let a;
-  if (phase < p1) a = 1;
-  else if (phase < p2) a = 1 - easeInOutSine((phase - p1) / fade);
-  else if (phase < p3) a = 0;
-  else a = easeInOutSine((phase - p3) / fade);
-  return a;
+  const p3 = p2 + hold * (1 - balance);
+  return { period, p1, p2, p3, fade };
+}
+
+export function blinkAlphaAt(nowMs: number, speed: number, onOffBalance = 0.5, fade = 0.15): number {
+  if (speed <= 0) return 1;
+  // The segments are blinkSegments' - one clock, read here for the alpha
+  // and by blinkWindow for the next boundary.
+  const s = blinkSegments(speed, onOffBalance, fade);
+  const phase = (nowMs % s.period) / s.period;
+  if (phase < s.p1) return 1;
+  if (phase < s.p2) return 1 - easeInOutSine((phase - s.p1) / s.fade);
+  if (phase < s.p3) return 0;
+  return easeInOutSine((phase - s.p3) / s.fade);
 }

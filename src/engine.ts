@@ -17,6 +17,9 @@ import {
   CANVAS_REGION_SHRINK_MS,
   CANVAS_REGION_SHRINK_RATIO,
   FRAME_CAPS,
+  INPUT_HOT_MS,
+  WATCHDOG_INTERVAL_MS,
+  WATCHDOG_STALE_MS,
 } from "./constants";
 import { fitCanvasRegion, wrapperClipForStatusBar } from "./geometry";
 import { presetToCode } from "./share";
@@ -24,11 +27,13 @@ import type { EditorView } from "@codemirror/view";
 import type {
   Bounds,
   CursorSmithSettings,
+  GearDecision,
   PerfCounters,
   Rect,
   ReportApp,
   ReportNavigator,
   ReportWindow,
+  SelectionSig,
   SettingKey,
   TrailPointCallback,
 } from "./types";
@@ -197,14 +202,19 @@ export const engineMethods = {
         this.canvasRaf = window.requestAnimationFrame(tick);
         return;
       }
+      // The idle gear sleeps until the heartbeat or the blink's next fade,
+      // whichever is sooner: a fade caught on the heartbeat started late.
+      const idleMs = Math.min(caps.idleMs, Math.max(1, Math.ceil(this._idleWakeMs || caps.idleMs)));
       this._canvasIdleT = window.setTimeout(() => {
         this._canvasIdleT = 0;
         if (this.canvasEngineActive) this.canvasRaf = window.requestAnimationFrame(tick);
-      }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : caps.idleMs);
+      }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : idleMs);
     };
 
     const tick = () => {
       if (!this.canvasEngineActive) return;
+      // For the watchdog: the loop is alive.
+      this._lastTickT = performance.now();
       // Hot-gear frame cap: on 120Hz ProMotion displays rAF fires every
       // ~8ms; a cursor gains nothing above ~60fps, so skip alternate
       // frames. The skipped wake-up is just a reschedule, costing ~nothing.
@@ -266,6 +276,7 @@ export const engineMethods = {
             this._drawSig = null;
           }
           this._canvasGear = "idle";
+          this._idleWakeMs = 0;
           schedule();
           return;
         }
@@ -424,170 +435,20 @@ export const engineMethods = {
 
           // ---- Gear decision + draw skip -------------------------------
           const nowT = performance.now();
-          const eff = this.look; // the effective (mode-merged) object
-          // Anything genuinely in motion demands continuous frames.
-          const animating = this._isAnimating(nowT);
-          // The energy gradient is driven by wall clock, so it does have to
-          // keep repainting - but it is a slow shimmer (roughly a 1.7s period
-          // at speed 1), not motion. Repainting it at display rate is pure
-          // waste; ~30fps is 50 samples per cycle and looks identical. It
-          // therefore gets the warm gear rather than counting as `animating`,
-          // which would pin the loop at 60fps for as long as it's switched on.
-          const energyShimmer = !!eff.energyEffect && !!this.lastActive;
-          const recentInput = nowT - (this._lastActivityT || 0) < 1200;
-          // Blink: the long hold phases need no frames at all; only the two
-          // short fades per cycle animate. Warm gear (30fps) covers a fade's
-          // ~300ms ease smoothly.
-          let blinkFading = false;
-          let blinkBucket = 1;
-          if (eff.blinkingEnabled && this.lastActive) {
-            // The phase, not the alpha: with Breathing on the alpha is pinned
-            // at 1 while the caret is still visibly changing size, so keying
-            // the gear off alpha would park the loop mid-breath.
-            const a = this.blinkPhase(nowT);
-            blinkFading = a > 0.02 && a < 0.98;
-            blinkBucket = a >= 0.5 ? 1 : 0;
-          }
-          // Stardust deliberately does NOT count as `animating`. In its
-          // default mode it runs *because* nothing is happening, so treating
-          // live motes as motion would pin the hot gear (60fps) for as long as
-          // the user leaves the window alone - the exact opposite of what
-          // idling should cost. A slow upward drift is perfectly smooth at the
-          // warm gear's 30fps, so it asks for that instead. (With Always On
-          // the effect never stands down, so the loop simply never reaches the
-          // idle gear while a caret exists; that is the option's stated cost,
-          // and it still must not escalate to hot.)
-          //
-          // `armed` rather than just "motes alive" keeps the loop warm through
-          // the gaps between emissions too; at the 100ms idle heartbeat the
-          // spawn cadence would visibly stutter.
-          const stardustLive = this.stardust.length > 0;
-          const stardustActive = stardustLive || this.stardustArmed();
-          this._canvasGear =
-            animating || recentInput ? "hot"
-              : blinkFading || stardustActive ? "warm"
-              : energyShimmer ? "energy"
-              : "idle";
-
+          const g = this._decideGear(nowT, !!perf);
+          this._canvasGear = g.gear;
+          this._idleWakeMs = g.idleWake;
+          if (perf) perf.why[g.why] = (perf.why[g.why] || 0) + 1;
           // Skip the clear+redraw entirely when the rendered picture would be
-          // identical — the canvas simply keeps showing the last frame. This is
-          // what takes true idle to ~0% GPU.
-          //
-          // Gated on the static test rather than on the idle gear, because
-          // recentInput holds the HOT gear for 1200ms after every keystroke:
-          // without this, a settled cursor was still fully repainted ~72 times
-          // per keypress against an unchanged picture. The signature
-          // deliberately omits trail/particle/sub-pixel state, so it is only
-          // trustworthy while nothing is animating; blinkFading is excluded too
-          // since the two-state blinkBucket can't represent a mid-fade alpha.
-          // stardustLive (not stardustActive): armed-with-no-motes paints
-          // nothing new, so those frames can still be skipped as static.
-          // The report's "why": the first reason that put this tick in its
-          // gear. A phone report read "hot 78%" over ten seconds of doing
-          // nothing, and nothing in it said what kept the loop awake.
-          if (perf) {
-            const why = this._smoothMoving ? "glide"
-              : this.pending ? "pending move"
-              : this.trail && this.trail.length > 0 ? "trail"
-              : this.particles && this.particles.length > 0 ? "particles"
-              : (this.flamePixels && this.flamePixels.length > 0) || (this.flameEmbers && this.flameEmbers.length > 0) ? "pixels"
-              : (this.thunderbolts && this.thunderbolts.length > 0) || (this.fireworks && this.fireworks.length > 0) ? "pops"
-              : this.glitch && nowT - this.glitch.start < this.glitch.dur ? "glitch"
-              : this.heat > 0 ? "heat"
-              : this._smearMoving ? "smear"
-              : !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) ? "fire"
-              : animating ? "secondaries"
-              : recentInput ? "input:" + (this._lastActivityKind || "?")
-              : blinkFading ? "blink"
-              : stardustActive ? "stardust"
-              : energyShimmer ? "energy"
-              : "idle";
-            perf.why[why] = (perf.why[why] || 0) + 1;
-          }
-
-          const staticFrame = !animating && !blinkFading && !energyShimmer && !stardustLive;
+          // identical - the canvas simply keeps showing the last frame. This
+          // is what takes true idle to ~0% GPU, and what makes the hot gear's
+          // post-input window cheap: a settled cursor is not repainted against
+          // an unchanged picture. Only on a static frame: the signature omits
+          // trail, particle and sub-pixel spring state, so it is trustworthy
+          // only while nothing is animating (see _frameSignature).
           let doDraw = true;
-          if (staticFrame) {
-            const la = this.lastActive;
-            const isDark = this.canvas
-              ? this.canvas.ownerDocument.body.classList.contains("theme-dark")
-              : true;
-            // The record carries `top` and `bottom`, not `y`: a `c.y` here
-            // used to read undefined, so a secondary moving vertically never
-            // changed the signature and a settled frame could keep showing it
-            // in its old place.
-            const sec = this.secondaryCarets && this.secondaryCarets.length
-              ? this.secondaryCarets
-                  .map((c) => (c.x | 0) + ":" + (c.top | 0) + ":" + (c.bottom | 0))
-                  .join(",")
-              : "";
-            // The tether moves without the caret moving (scrolling, or an edit
-            // that shifts the match), so it needs its own term here or a
-            // settled frame would keep showing a stale line.
-            const bt = this.bracketTether && this.bracketTether.length
-              ? this.bracketTether
-                  .map((s) => (s.x1 | 0) + ":" + (s.y1 | 0) + ":" + (s.x2 | 0) + ":" + (s.y2 | 0))
-                  .join(",")
-              : "";
-            const sig = [
-              _vimMode, blinkBucket, isDark,
-              la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," +
-                   Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
-              eff.cursorStyle, eff.colorDark, eff.colorLight, eff.caretWidthPx,
-              // crtEffect gates glow, and boxHollowWidth/lineSerifs change the
-              // painted shape - all three were missing here, so toggling them
-              // on a settled cursor matched the previous signature and the
-              // frame was skipped: the change appeared to do nothing until the
-              // next keystroke woke the loop.
-              eff.cursorOpacity, eff.crtEffect, eff.glow, eff.showChar,
-              eff.crtNeon, eff.crtNeonGradient,
-              eff.boxHollow, eff.boxHollowWidth, eff.lineSerifs,
-              // Same reason again: it changes the painted pixels of a settled
-              // cursor, so without it here the frame is skipped and the toggle
-              // does nothing visible until the next keystroke wakes the loop.
-              eff.cursorTranslucent,
-              eff.underlineWidthPx, sec, bt, eff.bracketTetherStrength,
-              // The full-effect secondaries: position, shape and smear quad
-              // each, for the same reasons `la` and _smearSig() are here.
-              this._secondariesSig(),
-              // Breathing changes the painted size during a hold, where
-              // blinkBucket alone can't tell the two states apart: switching it
-              // on while the caret sat in the dark half of the cycle matched
-              // the previous signature exactly, so the frame was skipped and
-              // the option appeared to do nothing until the next fade.
-              eff.blinkBreathing, eff.blinkBreathDepth,
-              // Same reasoning as the line above: every one of these changes
-              // the painted pixels, so leaving them out would make editing a
-              // gradient on a settled cursor appear to do nothing until the
-              // next keystroke woke the loop.
-              eff.gradientEnabled, eff.gradientCount,
-              eff.gradientDark1, eff.gradientDark2,
-              eff.gradientDark3, eff.gradientDark4,
-              eff.gradientLight1, eff.gradientLight2,
-              eff.gradientLight3, eff.gradientLight4,
-              // The smear quad's own corners. Everything else here is a
-              // property of the caret or of the settings; the quad is neither.
-              // It is a spring with its own state, and it keeps deforming for
-              // as long as it takes to settle AFTER the caret has stopped -
-              // during which `la` is frozen and every other term is unchanged,
-              // so the signature matched, the frame was skipped, and whatever
-              // the last drawn frame painted stayed on screen as a stale
-              // stretched ghost. On a slow trailing stiffness that is ~45
-              // skipped frames with the quad up to 50px off its target.
-              //
-              // This was always latent. It only became visible once the
-              // trailing corners started keeping their trailing stiffness
-              // through the settle: before that they snapped in at LEADING
-              // stiffness the instant the caret stopped, so the quad was back
-              // on target within a frame or two and there was nothing left to
-              // strand.
-              //
-              // Uses smearCorners() rather than smearQuad, because the taper
-              // is what actually gets painted. Rounded to half-pixels, the
-              // same quantisation `la` uses - the point is to notice movement
-              // that changes painted pixels, not to wake for float noise.
-              this._smearSig(),
-            ].join("|");
+          if (g.staticFrame) {
+            const sig = this._frameSignature(_vimMode, g.blinkBucket);
             if (sig === this._drawSig) doDraw = false;
             else this._drawSig = sig;
           } else {
@@ -624,6 +485,8 @@ export const engineMethods = {
     };
     this._canvasTick = tick;
     this._canvasGear = "hot";
+    this._idleWakeMs = 0;
+    this._lastTickT = performance.now();
     this.canvasRaf = window.requestAnimationFrame(tick);
   },
 
@@ -860,7 +723,7 @@ export const engineMethods = {
   //
   // Extracted from the canvas tick so it can be TESTED. Missing an entry here is
   // the one effect-authoring mistake that is both silent and user-visible: the
-  // loop judges the frame static, drops to its 100ms idle heartbeat, and the
+  // loop judges the frame static, drops to its idle heartbeat, and the
   // effect freezes mid-animation whenever nothing else happens to be moving. It
   // was previously guarded by a comment alone while every other effect invariant
   // in this file had coverage. See test.js, "frame governor".
@@ -870,10 +733,15 @@ export const engineMethods = {
   // a side effect) would retire it before the frame that should have painted it.
   // ---------------------------------------------------------------------------
   _isAnimating(this: CursorSmithPlugin, nowT: number) {
+    // Trail ghosts are painted only under the CRT effect (forEachTrailPoint)
+    // and pushTrail records none without it; a trail recorded while it was
+    // on may still be fading after it is switched off, and that must not
+    // hold the hot gear for something nobody can see.
+    const crt = !!this.look.crtEffect;
     return (
       !!this._smoothMoving ||
       !!this.pending ||
-      (this.trail && this.trail.length > 0) ||
+      (crt && this.trail && this.trail.length > 0) ||
       (this.particles && this.particles.length > 0) ||
       // flamePixels are aged inside draw(), so a skipped frame would
       // freeze a burst mid-flight rather than letting it expire.
@@ -884,7 +752,7 @@ export const engineMethods = {
       // Hot-head is on the fire is continuously animating by definition,
       // and the particle test alone has a hole in it: the instant the
       // pool empties the loop would judge the frame static, drop to the
-      // 100ms idle heartbeat, and the next spawn would arrive as one
+      // idle heartbeat, and the next spawn would arrive as one
       // lumpy burst instead of a steady flame.
       (!!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT)) ||
       // Same reasoning: a bolt is aged and expired inside its draw call,
@@ -908,7 +776,7 @@ export const engineMethods = {
       // bundles, nothing swapped in.
       (this._secondaries && this._secondaries.some((c) =>
         !!c._smoothMoving || !!c.pending || !!c._smearMoving ||
-        (c.trail && c.trail.length > 0) ||
+        (crt && c.trail && c.trail.length > 0) ||
         (!!c.glitch && (nowT - c.glitch.start) < c.glitch.dur) ||
         // Hot-head feeding on a secondary, same test as the primary's above.
         (!!this.styleFor("hotHead") && !!c.animActive && this._hotFeedingAt(c._hotActiveT, nowT)))) ||
@@ -922,6 +790,103 @@ export const engineMethods = {
       // smear finished.
       !!this._smearMoving
     );
+  },
+
+  // The gear for this frame and what decided it; the tick applies the
+  // result. Pure reads. `why` is the first reason that held, for the
+  // report's "awake because", built only when a report is running.
+  //
+  // Gears: anything genuinely in motion (_isAnimating) or an input within
+  // INPUT_HOT_MS is hot; a blink fade or armed stardust is warm; the energy
+  // shimmer alone is its own slow gear - it is driven by wall clock and has
+  // to keep repainting, but at ~1.7 s a cycle 20 fps is fifty samples and
+  // looks identical to sixty; otherwise idle. Stardust deliberately never
+  // claims hot: it runs *because* nothing is happening, and a slow drift is
+  // smooth at the warm gear; `armed` rather than "motes alive" keeps the
+  // loop warm through the gaps between emissions, where the idle heartbeat
+  // would make the spawn cadence stutter. The blink's window is phase-based
+  // (blinkWindow), so the warm gear covers a fade from its first frame.
+  _decideGear(this: CursorSmithPlugin, nowT: number, wantWhy: boolean): GearDecision {
+    const eff = this.look;
+    const animating = this._isAnimating(nowT);
+    const energyShimmer = !!eff.energyEffect && !!this.lastActive;
+    const recentInput = nowT - (this._lastActivityT || 0) < INPUT_HOT_MS;
+    let blinkFading = false;
+    let blinkBucket = 1;
+    let idleWake = Infinity;
+    if (eff.blinkingEnabled && this.lastActive) {
+      // The phase, not the alpha: with Breathing on the alpha is pinned at 1
+      // while the caret is still visibly changing size.
+      const a = this.blinkPhase(nowT);
+      blinkBucket = a >= 0.5 ? 1 : 0;
+      const w = this.blinkWindow(nowT);
+      blinkFading = w.fading;
+      idleWake = w.msToNext;
+    }
+    const stardustLive = this.stardust.length > 0;
+    const stardustActive = stardustLive || this.stardustArmed();
+    const gear = animating || recentInput ? "hot"
+      : blinkFading || stardustActive ? "warm"
+      : energyShimmer ? "energy"
+      : "idle";
+    // stardustLive, not stardustActive: armed with no motes paints nothing
+    // new, so those frames can still be skipped as static.
+    const staticFrame = !animating && !blinkFading && !energyShimmer && !stardustLive;
+    let why = "";
+    if (wantWhy) {
+      why = this._smoothMoving ? "glide"
+        : this.pending ? "pending move"
+        : eff.crtEffect && this.trail && this.trail.length > 0 ? "trail"
+        : this.particles && this.particles.length > 0 ? "particles"
+        : (this.flamePixels && this.flamePixels.length > 0) || (this.flameEmbers && this.flameEmbers.length > 0) ? "pixels"
+        : (this.thunderbolts && this.thunderbolts.length > 0) || (this.fireworks && this.fireworks.length > 0) ? "pops"
+        : this.glitch && nowT - this.glitch.start < this.glitch.dur ? "glitch"
+        : this.heat > 0 ? "heat"
+        : this._smearMoving ? "smear"
+        : !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) ? "fire"
+        : animating ? "secondaries"
+        : recentInput ? "input:" + (this._lastActivityKind || "?")
+        : blinkFading ? "blink"
+        : stardustActive ? "stardust"
+        : energyShimmer ? "energy"
+        : "idle";
+    }
+    return { gear, staticFrame, blinkBucket, idleWake, why };
+  },
+
+  // What a static frame would paint, as a string; when it matches the last
+  // frame's the draw is skipped. The look's part is ONE number, the look
+  // generation (_lookGen: bumped by saveSettings, a preset, the
+  // reduced-motion query flipping - every path that changes what
+  // this.look answers), instead of a list of every look key that reaches a
+  // pixel. That list was kept by hand, and eight of its entries were bug
+  // fixes: a toggle that "did nothing until the next keystroke" because the
+  // key was missing here. The rest is what changes without a setting: the
+  // Vim mode (its own look), the blink's half, the theme, the caret's place,
+  // shape and glyph to the half-pixel, the plain secondaries, the tether,
+  // the full secondaries and the smear quad (a spring with its own state;
+  // it keeps deforming after the caret has stopped, and without it here a
+  // settled frame stranded a stretched ghost on screen).
+  _frameSignature(this: CursorSmithPlugin, vimMode: string | null, blinkBucket: number): string {
+    const la = this.lastActive;
+    const isDark = this.canvas
+      ? this.canvas.ownerDocument.body.classList.contains("theme-dark")
+      : true;
+    // The record carries `top` and `bottom`, not `y`.
+    const sec = this.secondaryCarets && this.secondaryCarets.length
+      ? this.secondaryCarets.map((c) => (c.x | 0) + ":" + (c.top | 0) + ":" + (c.bottom | 0)).join(",")
+      : "";
+    // The tether moves without the caret moving (a scroll, an edit that
+    // shifts the match).
+    const bt = this.bracketTether && this.bracketTether.length
+      ? this.bracketTether.map((s) => (s.x1 | 0) + ":" + (s.y1 | 0) + ":" + (s.x2 | 0) + ":" + (s.y2 | 0)).join(",")
+      : "";
+    return [
+      vimMode, this._lookGen | 0, blinkBucket, isDark,
+      la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," +
+           Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
+      sec, bt, this._secondariesSig(), this._smearSig(),
+    ].join("|");
   },
 
   _markDirty(this: CursorSmithPlugin, x: number, y: number, w: number, h: number) {
@@ -968,7 +933,8 @@ export const engineMethods = {
   //   hot  — continuous rAF (capped near 60fps on high-refresh displays),
   //          while input is recent or any animation is genuinely in flight
   //   warm — ~30fps, only while a blink fade is mid-transition
-  //   idle — ~10fps heartbeat that re-checks state and repaints ONLY if the
+  //   idle — a 200 ms heartbeat (or the blink's next fade, if sooner) that
+  //          re-checks state and repaints ONLY if the
   //          picture changed; with a static, non-fading cursor the canvas
   //          isn't touched at all, so idle cost approaches zero
   // Input events snap the loops back to hot instantly (the pending idle
@@ -979,14 +945,33 @@ export const engineMethods = {
   // loop right now instead of letting it sleep out its timeout.
   // Anything that can move the caret on screen bumps this; the geometry
   // caches (cmCaretCoords, getPaneRect, the secondaries') are keyed on it.
+  // Layout may have moved the caret: drop the geometry caches and have the
+  // loop look now rather than on the heartbeat. Cheap when it finds nothing
+  // (one tick, a signature that matches, no draw), and it is what lets a
+  // sidebar animating shut, or a slider dragged in the settings window
+  // (saveSettings calls this), move the caret on the next frame instead of
+  // up to a heartbeat later.
   _invalidateLayout(this: CursorSmithPlugin) {
     this._layoutGen = (this._layoutGen | 0) + 1;
+    this._wakeLoop();
   },
 
-  _markActivity(this: CursorSmithPlugin, kind = "") {
-    this._lastActivityT = performance.now();
-    if (kind) this._lastActivityKind = kind;
+  // The caret's computed style may have changed under it - css-change, a
+  // layout change, a resize (which is also how a zoom arrives). The style
+  // cache in cmCaretCoords is keyed on this generation. Kept apart from the
+  // layout generation, which every scroll and keystroke bumps: a scroll
+  // moves the caret, it does not change the font under it, and re-reading
+  // computed styles and hit-testing the line on every scroll event was the
+  // alternative.
+  _invalidateStyle(this: CursorSmithPlugin) {
+    this._styleGen = (this._styleGen | 0) + 1;
     this._invalidateLayout();
+  },
+
+  // A dozing loop (warm, energy or idle: parked on a timeout) is put on the
+  // next frame. A hot loop is already on requestAnimationFrame and needs
+  // nothing, and a tick in progress has no timeout to cancel.
+  _wakeLoop(this: CursorSmithPlugin) {
     if (this._canvasIdleT) {
       window.clearTimeout(this._canvasIdleT);
       this._canvasIdleT = 0;
@@ -994,6 +979,48 @@ export const engineMethods = {
         this.canvasRaf = window.requestAnimationFrame(this._canvasTick);
       }
     }
+  },
+
+  // The frame loop's watchdog, on an interval from onload. The plugin hides
+  // Obsidian's caret and draws its own, so a loop that stops - a frame that
+  // threw before it rescheduled, an animation frame that never came back -
+  // leaves the editor with no caret at all, the worst thing this plugin can
+  // do. A parked loop still ticks at the idle heartbeat, so a visible
+  // document with no tick for WATCHDOG_STALE_MS is a dead loop: it is
+  // restarted (enable), the console says so, and on the second stall the
+  // native caret is handed back (hideNativeActive reads _watchdogGaveUp)
+  // until the plugin is next enabled by hand. Not a stall: a hidden
+  // document (no animation frames by design), or an interval that was
+  // itself late by as much - the main thread was blocked, and the loop
+  // never had a chance. Trips are forgotten after a healthy minute.
+  _watchdog(this: CursorSmithPlugin, now: number) {
+    const lastRun = this._watchdogLastT || now;
+    this._watchdogLastT = now;
+    if (!this.canvasEngineActive) return;
+    const doc = (this.canvas && this.canvas.ownerDocument) || document;
+    if (doc.visibilityState === "hidden" || now - lastRun > WATCHDOG_INTERVAL_MS * 1.5) {
+      this._lastTickT = now;
+      return;
+    }
+    const silent = now - (this._lastTickT || now);
+    if (silent < WATCHDOG_STALE_MS) {
+      if (this._watchdogTrips && now - (this._watchdogTripT || 0) > 60000) this._watchdogTrips = 0;
+      return;
+    }
+    this._watchdogTrips = (this._watchdogTrips | 0) + 1;
+    this._watchdogTripT = now;
+    this._reportOnce("watchdog, stall " + this._watchdogTrips, new Error(`no frame for ${Math.round(silent)} ms: restarting the loop`));
+    try { this.enable(); } catch (e) { this._reportOnce("watchdog restart", e); }
+    if (this._watchdogTrips >= 2) {
+      this._watchdogGaveUp = true;
+      try { this.applyBodyClasses(); } catch (e) { this._reportOnce("watchdog body classes", e); }
+    }
+  },
+
+  _markActivity(this: CursorSmithPlugin, kind = "") {
+    this._lastActivityT = performance.now();
+    if (kind) this._lastActivityKind = kind;
+    this._invalidateLayout();
     this._wakeTorch();
   },
 
@@ -1032,6 +1059,45 @@ export const engineMethods = {
     const active = doc && doc.activeElement;
     if (active && active !== doc.body && contains(active)) return true;
     return false;
+  },
+
+  // Whether the document's selection is somewhere else than when this last
+  // answered. Android's WebView, and CodeMirror re-syncing the DOM selection
+  // to its own, fire selectionchange with the caret exactly where it was;
+  // each used to buy INPUT_HOT_MS of the hot gear. Compared, not stamped:
+  // the editor's selection (its document, anchor, head, assoc and range
+  // count) while the editor has focus, a field's own selection when a field
+  // does, the DOM selection's two ends otherwise. When in doubt (a probe
+  // throws), the answer is yes.
+  _selectionMoved(this: CursorSmithPlugin, doc: Document): boolean {
+    let sig: SelectionSig;
+    try {
+      const view = this.app.workspace.activeEditor?.editor?.cm;
+      if (view && view.hasFocus && view.dom.ownerDocument === doc) {
+        const sel = view.state.selection;
+        const m = sel.main;
+        sig = { a: view.state.doc, b: null, n: m.anchor, h: m.head, o: m.assoc || 0, k: sel.ranges.length };
+      } else {
+        const el = doc.activeElement as HTMLInputElement | null;
+        const start = el ? el.selectionStart : null;
+        if (el && typeof start === "number") {
+          sig = { a: el, b: null, n: start, h: el.selectionEnd ?? start, o: 0, k: 1 };
+        } else {
+          const s = doc.getSelection();
+          sig = s
+            ? { a: s.anchorNode, b: s.focusNode, n: s.anchorOffset, h: s.focusOffset, o: 0, k: s.rangeCount }
+            : { a: null, b: null, n: -1, h: -1, o: 0, k: 0 };
+        }
+      }
+    } catch {
+      // A probe threw (a document or editor mid-teardown): when in doubt, wake.
+      this._selSig = null;
+      return true;
+    }
+    const prev = this._selSig;
+    this._selSig = sig;
+    if (!prev) return true;
+    return prev.a !== sig.a || prev.b !== sig.b || prev.n !== sig.n || prev.h !== sig.h || prev.o !== sig.o || prev.k !== sig.k;
   },
 
   // Count what the loop does for `seconds`, then put a report on the

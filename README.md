@@ -8,7 +8,7 @@
 
   <h1>Cursor-Smith</h1>
 
-  <p><strong>Forge your own cursor.</strong><br>
+  <p><strong>Forge your own cursor!</strong><br>
   The most advanced cursor engine there is. Desktop and mobile.</p>
 
 </div>

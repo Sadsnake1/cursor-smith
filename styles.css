@@ -656,7 +656,8 @@ button.cursor-smith-pcard-use:hover {
   position: fixed;
   overflow: hidden;
   pointer-events: none;
-  z-index: 10000;
+  /* Above the torch's darkness (10010) and glow (10011); see there. */
+  z-index: 10012;
   top: 0;
   left: 0;
   width: 0;
@@ -799,7 +800,15 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   left: 0;
   width: 0;
   height: 0;
-  z-index: 9990;
+  /* 10010, the glow 10011 and the caret canvas 10012, in that order: above
+     all of Word-Smith's chrome while the editor is focused - its letterbox
+     masks (10003), status bar (10006), titlebar (10007) and Vim panel
+     (10008); 20-24 on blur - and below its overlays (10050 and up). At
+     9990 the bands read lit while typing and dark once focus left the
+     note; at 10004 its bar and the sidebars' headers stayed lit under a
+     full-window torch. Nothing of Obsidian's sits between (its own layers
+     stop at the tooltip's 70). */
+  z-index: 10010;
   opacity: 1;
   transition: opacity 0.2s ease;
 }
@@ -825,7 +834,7 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   left: 0;
   width: 0;
   height: 0;
-  z-index: 9991;
+  z-index: 10011;
   mix-blend-mode: screen;
   opacity: var(--torch-glow, 0);
 }

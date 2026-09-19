@@ -142,6 +142,7 @@ export const engineMethods = {
     this._drawSig = null;
     this._caretGeoCache = null;
     this._paneRectCache = null;
+    this._mainRectCache = null;
     this._observeEditorLayout(null);
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {

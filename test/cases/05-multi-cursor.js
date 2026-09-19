@@ -663,6 +663,8 @@ section("multi-cursor: full effects on secondary carets");
         fillRect(x, y, w, h) { ops.push({ op: "fill", x, y, w, h, fill: this._fill, mode: this._op }); },
         createRadialGradient(x0, y0, r0, x1, y1, r1) { const g = { kind: "radial", x: x1, y: y1, r: r1, stops: [], addColorStop(o, c) { g.stops.push([o, c]); } }; ops.push({ op: "gradient", g }); return g; },
         setTransform(...m) { ops.push({ op: "transform", m }); },
+        save() { ops.push({ op: "save" }); }, restore() { ops.push({ op: "restore" }); },
+        beginPath() { ops.push({ op: "path" }); }, rect(x, y, w, h) { ops.push({ op: "rect", x, y, w, h }); }, clip() { ops.push({ op: "clip" }); },
       };
       return ctx;
     };
@@ -684,6 +686,20 @@ section("multi-cursor: full effects on secondary carets");
     const cores = glow.ops.filter((o) => o.op === "fill");
     ok("glow: one warm core per light at 0.6x the radius, additive",
        cores.length === 2 && cores.every((f) => f.mode === "source-over" && f.fill.r === 150) && cores[0].fill.stops[0][1] === "rgba(255, 150, 60, 0.4)" && cores[0].fill.stops[2][0] === 0.75, cores.map((f) => f.fill.stops));
+    // Regions: with the sidebars spared the painting is confined to the
+    // note tabs - a clip of their rectangles, in the layer's coordinates -
+    // and nothing outside them is touched. Without regions, no clip at all.
+    const dr = recCtx();
+    T.paintTorchDarkness(dr, 800, 600, [{ x: 10, y: 20 }], 250, 0.92, [{ left: 0, top: 0, width: 400, height: 600, right: 400, bottom: 600 }, { left: 500, top: 100, width: 300, height: 500, right: 800, bottom: 600 }]);
+    const names = dr.ops.map((o) => o.op);
+    ok("darkness with regions: cleared whole, then clipped to the regions before the fill, restored after",
+       names.slice(0, 7).join() === "composite,clear,save,path,rect,rect,clip" && names[names.length - 1] === "restore", names);
+    const rects = dr.ops.filter((o) => o.op === "rect");
+    ok("...the clip is the regions themselves", rects[0].x === 0 && rects[0].w === 400 && rects[0].h === 600 && rects[1].x === 500 && rects[1].y === 100 && rects[1].h === 500, rects);
+    ok("...and without regions there is no clip", !dark.ops.some((o) => o.op === "clip" || o.op === "save"));
+    const gr = recCtx();
+    T.paintTorchGlow(gr, 800, 600, [{ x: 10, y: 20 }], 250, "255, 150, 60", [{ left: 0, top: 0, width: 400, height: 600, right: 400, bottom: 600 }]);
+    ok("glow with regions: the same clip, and none without", gr.ops.some((o) => o.op === "clip") && gr.ops[gr.ops.length - 1].op === "restore" && !glow.ops.some((o) => o.op === "clip"));
     // The backing store is a quarter of the layer, and only reallocated on a
     // size change.
     const el = { width: 0, height: 0, getContext: () => recCtx() };

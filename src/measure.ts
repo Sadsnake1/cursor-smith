@@ -12,7 +12,7 @@ import { View } from "obsidian";
 import { CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS } from "./constants";
 import { isTextCaretHost } from "./motion";
 import type { EditorView } from "@codemirror/view";
-import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle } from "./types";
+import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache } from "./types";
 import type CursorSmithPlugin from "./plugin";
 
 export const measureMethods = {
@@ -1030,16 +1030,16 @@ export const measureMethods = {
     // and we need to cover the gap between titlebar bottom and tab bar bottom.
 
     // No bottom clamp for the status bar. It sits above our overlay via its
-    // own stacking context (the overlay is z-index:9990 and the status bar
+    // own stacking context (the overlay is z-index:10004 and the status bar
     // renders on top naturally). Clamping to sb.top was incorrectly cutting
     // the torch overlay short before the status bar, leaving the bottom of
     // the note unilluminated. The original file had no bottom clamp here.
 
     // Bottom inset: the height a visibly-rendered status bar occupies at the
     // window's bottom edge. This is deliberately NOT applied to the torch
-    // overlay (z-9990) - that renders beneath the status bar and is meant to
+    // overlay (z-10004) - that renders beneath the status bar and is meant to
     // reach the window bottom, which is the illumination regression the note
-    // above is about. It is applied only to the cursor CANVAS (z-9999), which
+    // above is about. It is applied only to the cursor CANVAS (z-10006), which
     // would otherwise paint over the status bar (worst while scrolling, when
     // the pane's own bottom briefly reaches the window edge). An
     // invisible-but-in-flow status bar is skipped, same as the top clamp.
@@ -1205,12 +1205,59 @@ export const measureMethods = {
     return out;
   },
 
+  // The workspace's main area: the root split, which is every tab group
+  // and nothing of the docks, the ribbon or the status bar - the torch
+  // overlay's box with "Keep sidebars lit" on - and, within it, the NOTE
+  // TABS: the rectangle of each tab group whose front tab is a note (a
+  // markdown view; Obsidian hides the group's other tabs with an inline
+  // display: none). Those are what the torch darkens: not the active
+  // editor's pane (one lit tab beside a dark one undid the effect, and the
+  // pane changed with focus), and not the views beside the notes either
+  // (Word-Smith's History, Export and Organizer, a graph, an empty tab -
+  // "not ok" dark). Both clamped below a visible titlebar like the pane.
+  // The rect is null where there is no root split and no workspace (the
+  // torch then dims the window). Cached like the pane, on the layout
+  // generation and the geometry TTL.
+  _mainArea(this: CursorSmithPlugin, doc: Document): MainRectCache {
+    const now = performance.now();
+    const mc = this._mainRectCache;
+    if (mc && mc.doc === doc && mc.gen === (this._layoutGen | 0) && (now - mc.t) < GEOMETRY_TTL_MS) return mc;
+    const rootEl = doc.querySelector(".workspace-split.mod-root") || doc.querySelector(".workspace");
+    const box = rootEl ? this._paneRectFrom(rootEl.getBoundingClientRect(), rootEl) : null;
+    const rect = box && box.width > 0 && box.height > 0 ? box : null;
+    const notes: Box[] = [];
+    if (rootEl) {
+      for (const group of Array.from(rootEl.querySelectorAll(".workspace-tabs"))) {
+        let front: Element | null = null;
+        for (const leaf of Array.from(group.querySelectorAll(":scope > .workspace-tab-container > .workspace-leaf"))) {
+          if ((leaf as HTMLElement).style.display !== "none") { front = leaf; break; }
+        }
+        const content = front && front.querySelector(":scope > .workspace-leaf-content");
+        if (!content || content.getAttribute("data-type") !== "markdown") continue;
+        const b = this._paneRectFrom(group.getBoundingClientRect(), group);
+        if (b && b.width > 0 && b.height > 0) notes.push(b);
+      }
+    }
+    this._mainRectCache = { doc, gen: this._layoutGen | 0, t: now, rect, notes };
+    return this._mainRectCache;
+  },
+
+  getMainAreaRect(this: CursorSmithPlugin, doc: Document): Box | null {
+    return this._mainArea(doc).rect;
+  },
+
+  // The note tabs' rectangles (client coordinates); empty when no note is
+  // in front anywhere in the main area.
+  getNoteTabRects(this: CursorSmithPlugin, doc: Document): Box[] {
+    return this._mainArea(doc).notes;
+  },
+
   _paneRectFrom(this: CursorSmithPlugin, rect: DOMRect, rootEl: Element): Box | null {
 
     // Clipping to the pane's own rect assumes the titlebar/status bar take
     // up real space in flow, pushing the pane to stop short of them. Some
     // themes float those bars over the pane instead (fixed/absolute), so
-    // the pane's rect extends underneath - and our z-index 10000 canvas
+    // the pane's rect extends underneath - and our z-index 10006 canvas
     // would paint over them, with the same drag-breaking consequence as
     // the full-viewport case for the titlebar. Clamp against the cached
     // chrome insets (cheap - no extra layout reads per frame).

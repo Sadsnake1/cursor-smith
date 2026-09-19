@@ -1,5 +1,5 @@
 import { TORCH_CANVAS_SCALE } from "./constants";
-import type { Pt } from "./types";
+import type { Box, Pt } from "./types";
 
 // The torch's two layers, painted. Both used to be DOM elements carrying a
 // CSS radial-gradient positioned by custom properties, which cost a
@@ -24,11 +24,28 @@ import type { Pt } from "./types";
 // `w`/`h` are the layer's CSS size, `spots` in its own coordinates; the
 // context is expected to carry the TORCH_CANVAS_SCALE transform
 // (torchCanvasContext). Pure so the painting can be tested on a recorder.
-export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: number, spots: Pt[], radiusPx: number, darkness: number) {
+//
+// `regions`, when given, confines the painting to those rectangles (the
+// layer's coordinates, a clip): with the sidebars spared the darkness
+// covers the note tabs of the main area and not the views beside them
+// (Word-Smith's History or Organizer, a graph, an empty tab). Nothing
+// outside a region is touched, so the layer stays clear there. Absent, the
+// whole layer is painted, as before.
+function clipToRegions(ctx: CanvasRenderingContext2D, regions: Box[] | null | undefined): boolean {
+  if (!regions) return false;
+  ctx.save();
+  ctx.beginPath();
+  for (const b of regions) ctx.rect(b.left, b.top, b.width, b.height);
+  ctx.clip();
+  return true;
+}
+
+export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: number, spots: Pt[], radiusPx: number, darkness: number, regions?: Box[] | null) {
   const d = Math.max(0, Math.min(1, darkness));
   const r = Math.max(1, radiusPx);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, w, h);
+  const clipped = clipToRegions(ctx, regions);
   ctx.fillStyle = `rgba(0, 0, 0, ${d})`;
   ctx.fillRect(0, 0, w, h);
   ctx.globalCompositeOperation = "destination-out";
@@ -42,12 +59,14 @@ export function paintTorchDarkness(ctx: CanvasRenderingContext2D, w: number, h: 
     ctx.fillRect(sp.x - r, sp.y - r, r * 2, r * 2);
   }
   ctx.globalCompositeOperation = "source-over";
+  if (clipped) ctx.restore();
 }
 
-export function paintTorchGlow(ctx: CanvasRenderingContext2D, w: number, h: number, spots: Pt[], radiusPx: number, warmRgb: string) {
+export function paintTorchGlow(ctx: CanvasRenderingContext2D, w: number, h: number, spots: Pt[], radiusPx: number, warmRgb: string, regions?: Box[] | null) {
   const r = Math.max(1, radiusPx * 0.6);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, w, h);
+  const clipped = clipToRegions(ctx, regions);
   for (const sp of spots) {
     const g = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, r);
     g.addColorStop(0, `rgba(${warmRgb}, 0.4)`);
@@ -56,6 +75,7 @@ export function paintTorchGlow(ctx: CanvasRenderingContext2D, w: number, h: numb
     ctx.fillStyle = g;
     ctx.fillRect(sp.x - r, sp.y - r, r * 2, r * 2);
   }
+  if (clipped) ctx.restore();
 }
 
 // Size a torch canvas's backing store for a layer of w x h CSS pixels and

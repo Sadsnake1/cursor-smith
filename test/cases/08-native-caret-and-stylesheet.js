@@ -93,6 +93,20 @@ section("the stylesheet hides every native cursor, and its blink");
     const open = sheet.indexOf("{", i);
     return sheet.slice(open, sheet.indexOf("}", open));
   };
+  // The torch's layers and the caret canvas, in order and above all of
+  // Word-Smith's chrome while the editor is focused: its letterbox masks
+  // (10003), status bar (10006), titlebar (10007) and Vim panel (10008);
+  // 20-24 on blur. At 9990/9991/10000 the bands were lit while typing and
+  // dark once focus left the note; at 10004 its bar and the sidebars'
+  // headers stayed lit under a full-window torch. Below 10050, its
+  // overlays. Nothing of Obsidian's sits between (its layers stop at the
+  // tooltip's 70).
+  {
+    const z = (sel) => { const m = /z-index:\s*(\d+)/.exec(ruleFor(css, sel) || ""); return m ? Number(m[1]) : NaN; };
+    const torch = z(".cursor-smith-torch-overlay {"), glow = z(".cursor-smith-torch-glow {"), canvas = z(".cursor-smith-wrapper {");
+    ok("the torch, its glow and the caret canvas stack in that order", torch < glow && glow < canvas, [torch, glow, canvas]);
+    ok("...all above 10008 (Word-Smith's focused chrome: masks, status bar, titlebar, Vim panel) and below 10050 (its overlays)", torch > 10008 && canvas < 10050, [torch, glow, canvas]);
+  }
   ok("styles.css hides the secondary native cursor",
      /display:\s*none/.test(ruleFor(css, ".cm-cursor-secondary") || ""));
   ok("main.js injects no stylesheet of its own",
@@ -169,7 +183,7 @@ section("the plugin review's rules (static styles, settings headings)");
   for (const [name, sheet] of [["styles.css", css]]) {
     const w = ruleFor(sheet, ".cursor-smith-wrapper {");
     ok(`${name} lays out the canvas wrapper`,
-       has(w, "position: fixed") && has(w, "overflow: hidden") && has(w, "pointer-events: none") && has(w, "z-index: 10000"), w);
+       has(w, "position: fixed") && has(w, "overflow: hidden") && has(w, "pointer-events: none") && has(w, "z-index: 10012"), w);
     ok(`${name} collapses it until the tick sizes it`,
        has(w, "width: 0") && has(w, "height: 0") && has(w, "top: 0") && has(w, "left: 0"));
     const c = ruleFor(sheet, ".cursor-smith-canvas {");
@@ -207,7 +221,7 @@ section("the plugin review's rules (static styles, settings headings)");
   ok("the manifest asks for the Obsidian this needs",
      JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "manifest.json"), "utf8")).minAppVersion === "1.13.7");
   ok("...and versions.json says so for this release",
-     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "versions.json"), "utf8"))["1.5.8"] === "1.13.7");
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "versions.json"), "utf8"))["1.5.9"] === "1.13.7");
 }
 
 // ---------------------------------------------------------------------------

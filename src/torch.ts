@@ -13,8 +13,12 @@ import { torchFlickerScale } from "./motion";
 import { VIM_MODE_KEYS } from "./settings";
 import { paintTorchDarkness, paintTorchGlow, torchCanvasContext } from "./torch-paint";
 import type { EditorView } from "@codemirror/view";
-import type { Pt } from "./types";
+import type { Box, Pt } from "./types";
 import type CursorSmithPlugin from "./plugin";
+
+// The regions' part of a painter's dedupe key.
+const regionsKey = (regions: Box[] | null | undefined) =>
+  regions ? regions.map((b) => Math.round(b.left) + "," + Math.round(b.top) + "," + Math.round(b.width) + "," + Math.round(b.height)).join(";") : "";
 
 export const torchMethods = {
   // Whether the torch overlay engine might be needed: either the global cursor
@@ -51,10 +55,17 @@ export const torchMethods = {
     // already existing to pick a document. With no view (refocus, no note
     // open) and no overlay yet, the old code threw and the torch rAF loop
     // died silently.
+    //
+    // Never activeDocument. Since Obsidian 1.13 that is the settings window
+    // while it is being used, and with no note active (a non-note leaf in
+    // front) and no overlay yet - the effect just switched on from a
+    // preset's chip - the old chain created the overlay THERE, and with no
+    // editor pane in that window to spare, it dimmed the whole settings
+    // window. The torch is a reading light over the editor: the editor's
+    // window, or where the overlay already is, or the main window.
     const targetDoc =
       (view && view.dom.ownerDocument) ||
       (this.overlay && this.overlay.ownerDocument) ||
-      (typeof activeDocument !== "undefined" && activeDocument) ||
       document;
     if (this.overlay && this.overlay.ownerDocument !== targetDoc) {
       this.overlay.remove();
@@ -92,28 +103,37 @@ export const torchMethods = {
   // Paint the darkness layer for these lights, if anything about the picture
   // changed since the last paint: a moved light, a new radius, a new size,
   // a new setting. A parked torch does not touch the bitmap.
-  _torchPaintDarkness(this: CursorSmithPlugin, spots: Pt[], radiusPx: number, darkness: number, w: number, h: number) {
+  // The note tabs' rectangles in the overlay's own coordinates, for the
+  // painters' clip; null with the whole overlay dark.
+  _torchLocalRegions(this: CursorSmithPlugin): Box[] | null {
+    const notes = this._torchRegions;
+    const box = this._overlayBox;
+    if (!notes || !box) return null;
+    return notes.map((b) => ({ left: b.left - box.left, top: b.top - box.top, width: b.width, height: b.height, right: b.right - box.left, bottom: b.bottom - box.top }));
+  },
+
+  _torchPaintDarkness(this: CursorSmithPlugin, spots: Pt[], radiusPx: number, darkness: number, w: number, h: number, regions?: Box[] | null) {
     const el = this.overlay;
     if (!el || typeof el.getContext !== "function") return;
     const key = w + "x" + h + "|" + radiusPx + "|" + darkness + "|" +
-      spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";");
+      spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";") + "|" + regionsKey(regions);
     if (key === this._torchDarkKey) return;
     const ctx = torchCanvasContext(el, w, h);
     if (!ctx) return;
     this._torchDarkKey = key;
-    paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness);
+    paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness, regions);
   },
 
-  _torchPaintGlow(this: CursorSmithPlugin, spots: Pt[], radiusPx: number, warmRgb: string, w: number, h: number) {
+  _torchPaintGlow(this: CursorSmithPlugin, spots: Pt[], radiusPx: number, warmRgb: string, w: number, h: number, regions?: Box[] | null) {
     const el = this.glowEl;
     if (!el || typeof el.getContext !== "function") return;
     const key = w + "x" + h + "|" + radiusPx + "|" + warmRgb + "|" +
-      spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";");
+      spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";") + "|" + regionsKey(regions);
     if (key === this._torchGlowKey) return;
     const ctx = torchCanvasContext(el, w, h);
     if (!ctx) return;
     this._torchGlowKey = key;
-    paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb);
+    paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb, regions);
   },
 
   // Build or tear down the additive glow layer.
@@ -156,6 +176,7 @@ export const torchMethods = {
       this._torchIdleT = 0;
     }
     this._torchTick = null;
+    this._torchRegions = null;
     this._torchDarkKey = "";
     this._lastTorchRadius = -1;
     this._lastGlowRect = "";      // glow layer dedupe stamps; see the torch tick
@@ -284,7 +305,7 @@ export const torchMethods = {
                 const box = this._overlayBox;
                 if (box) {
                   this._torchPaintDarkness([{ x: this.x - box.left, y: this.y - box.top }], next,
-                    this.look.overlayDarkness, box.width, box.height);
+                    this.look.overlayDarkness, box.width, box.height, this._torchLocalRegions());
                 }
                 // Still closing: hold the pulse cadence. Once it lands on 1px
                 // the gear stays "idle" and the loop drops to the heartbeat.
@@ -326,17 +347,31 @@ export const torchMethods = {
               // what updateOverlayTarget returned above.
               const spots = this.torchSpotlights(useMouse, lerp);
 
-              const r = this.getPaneRect(view);
-              // Sparing the sidebars means dimming only the editor pane, which
-              // only makes sense when the sidebars are side-by-side panes. On
-              // mobile they're sliding drawers over the content, so clipping to
-              // the pane just leaves the shading inconsistent - fall back to the
-              // full-viewport dim there regardless of the toggle.
+              // Sparing the sidebars means dimming the workspace's main area
+              // - every note tab in every tab group, none of the docks, the
+              // ribbon or the status bar (getMainAreaRect) - whichever leaf
+              // has focus. It was the active editor's pane: every other tab
+              // stayed lit (with a few tabs open the effect was gone), and
+              // with no active editor - a click in the sidebar - it fell back
+              // to the whole window, sidebars included.
+              //
+              // This only makes sense when the sidebars are side-by-side
+              // panes. On mobile they're sliding drawers over the content, so
+              // clipping to the main area just leaves the shading inconsistent
+              // - fall back to the full-viewport dim there regardless of the
+              // toggle.
               const isMobile = this.overlay.ownerDocument.body.classList.contains("is-mobile");
-              const usePane = r && this.look.overlaySpareSidebars && !isMobile;
+              const spare = !!this.look.overlaySpareSidebars && !isMobile;
+              const r = spare ? this.getMainAreaRect(this.overlay.ownerDocument) : null;
+              const usePane = !!r;
               // Even when not sparing the sidebars, the overlay must never
               // cover the titlebar - getFullViewportRect clamps around it.
               const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
+              // Within the main area, only the NOTE tabs are darkened: the
+              // views beside them (Word-Smith's History, Export and
+              // Organizer, a graph, an empty tab) stay lit. Null means the
+              // whole overlay is dark (the window, sidebars not spared).
+              const notes = usePane ? this.getNoteTabRects(this.overlay.ownerDocument) : null;
 
               const top = Math.round(rect.top);
               const left = Math.round(rect.left);
@@ -357,7 +392,9 @@ export const torchMethods = {
               // is itself a modal - so without this, opening the panel to turn
               // Blink Sync on would leave the torch pulsing away behind it for
               // as long as the panel stayed open.
-              const hideForModal = this.look.overlaySpareSidebars && this.modalOpen;
+              // ...and with no note in front anywhere in the main area there
+              // is nothing to darken: the torch stands down.
+              const hideForModal = spare && (this.modalOpen || (notes !== null && notes.length === 0));
 
               // Blink Sync: the spotlight breathes with the caret, opening to
               // full size while the caret is lit and closing as it fades out.
@@ -441,7 +478,9 @@ export const torchMethods = {
               // painters dedupe on a key, so a parked light costs nothing.
               const local = spots.map((sp) => ({ x: sp.x - left, y: sp.y - top }));
               this._overlayBox = { top, left, width, height };
-              this._torchPaintDarkness(local, rKey, this.look.overlayDarkness, width, height);
+              this._torchRegions = notes;
+              const regions = this._torchLocalRegions();
+              this._torchPaintDarkness(local, rKey, this.look.overlayDarkness, width, height, regions);
               if (glow) {
                 if (key !== this._lastGlowRect) {
                   this._lastGlowRect = key;
@@ -460,7 +499,7 @@ export const torchMethods = {
                   this._lastGlowAlpha = gAlpha;
                   glow.style.setProperty("--torch-glow", gAlpha);
                 }
-                this._torchPaintGlow(local, rKey, hexToRgb(this.look.overlayColor), width, height);
+                this._torchPaintGlow(local, rKey, hexToRgb(this.look.overlayColor), width, height, regions);
               }
 
               this.overlay.classList.toggle("cursor-smith-torch-hidden", !!hideForModal);
@@ -482,7 +521,24 @@ export const torchMethods = {
   // the secondaries get none (torchSpotlights).
   updateOverlayTarget(this: CursorSmithPlugin) {
     const mode = this.look.overlayFollowMode;
-    const caret = this.caretCoords();
+    // The torch lights the editor's window (ensureTorchOverlayForView). A
+    // caret or a pointer in another window - the settings window's search
+    // box, where the canvas follows the caret but the torch does not - is in
+    // that window's coordinates and no target here: the light stays where
+    // it was until the caret or the pointer is back.
+    // Nor a caret or a pointer outside the lit box (the sidebar's search
+    // field with "Keep sidebars lit" on): the light stays on the note.
+    const here = this.overlay ? this.overlay.ownerDocument : null;
+    const sameDoc = !here || !this.canvasWrapper || this.canvasWrapper.ownerDocument === here;
+    // ...and, with the sidebars spared, outside the note tabs (a caret in
+    // a lit view beside them: the History panel's search field).
+    const box = this._overlayBox;
+    const regions = this._torchRegions;
+    const inBox = (b: { left: number; top: number; width: number; height: number }, x: number, y: number) => x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height;
+    const inside = (x: number, y: number) => (!box || inBox(box, x, y)) && (!regions || regions.some((b) => inBox(b, x, y)));
+    const measured = sameDoc ? this.caretCoords() : null;
+    const caret = measured && inside(measured.x, (measured.top + measured.bottom) / 2) ? measured : null;
+    const mouseHere = (!here || !this._mouseDoc || this._mouseDoc === here) && inside(this.mouseX, this.mouseY);
     if (caret) {
       if (!this.lastCaret || caret.x !== this.lastCaret.x || caret.top !== this.lastCaret.top) {
         this.lastCaretMove = performance.now();
@@ -495,8 +551,10 @@ export const torchMethods = {
       (mode === "auto" && (performance.now() - this.lastMouseMove < 800 || !this.lastCaret));
 
     if (useMouse) {
-      this.tx = this.mouseX;
-      this.ty = this.mouseY;
+      if (mouseHere) {
+        this.tx = this.mouseX;
+        this.ty = this.mouseY;
+      }
     } else if (this.lastCaret) {
       this.tx = this.lastCaret.x;
       this.ty = (this.lastCaret.top + this.lastCaret.bottom) / 2;

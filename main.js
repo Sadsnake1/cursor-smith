@@ -2298,10 +2298,6 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   }
   hide() {
     super.hide();
-    if (this._valueObserver) {
-      this._valueObserver.disconnect();
-      this._valueObserver = null;
-    }
   }
   // Two things Obsidian's own rendering cannot be told to do go in after
   // it renders: the Effects entry's value becomes the icons of the effects
@@ -3444,7 +3440,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       [0.05, 1, 0.05],
       { depth: 2, fallback: 0.35, when: all(torch, on("overlayFlicker")) }
     ));
-    effects.push(toggle("Keep sidebars lit", "Dims only the editor, leaving sidebars and ribbon lit. Desktop only.", "overlaySpareSidebars", { depth: 1, when: torch }));
+    effects.push(toggle("Keep sidebars lit", "Darkens every note tab; sidebars, ribbon and other views stay lit. Desktop only.", "overlaySpareSidebars", { depth: 1, when: torch }));
     appearance.push(this.resetLinkRow("Appearance", resetCard("Appearance")));
     blinking.push(this.resetLinkRow("Blinking", resetCard("Blinking")));
     smooth.push(this.resetLinkRow("Smooth movement", resetCard("Smooth movement")));
@@ -4413,6 +4409,53 @@ var measureMethods = {
     const out = this._paneRectFrom(rect, rootEl);
     this._paneRectCache = { view, gen: this._layoutGen | 0, t: now, rect: out };
     return out;
+  },
+  // The workspace's main area: the root split, which is every tab group
+  // and nothing of the docks, the ribbon or the status bar - the torch
+  // overlay's box with "Keep sidebars lit" on - and, within it, the NOTE
+  // TABS: the rectangle of each tab group whose front tab is a note (a
+  // markdown view; Obsidian hides the group's other tabs with an inline
+  // display: none). Those are what the torch darkens: not the active
+  // editor's pane (one lit tab beside a dark one undid the effect, and the
+  // pane changed with focus), and not the views beside the notes either
+  // (Word-Smith's History, Export and Organizer, a graph, an empty tab -
+  // "not ok" dark). Both clamped below a visible titlebar like the pane.
+  // The rect is null where there is no root split and no workspace (the
+  // torch then dims the window). Cached like the pane, on the layout
+  // generation and the geometry TTL.
+  _mainArea(doc) {
+    const now = performance.now();
+    const mc = this._mainRectCache;
+    if (mc && mc.doc === doc && mc.gen === (this._layoutGen | 0) && now - mc.t < GEOMETRY_TTL_MS) return mc;
+    const rootEl = doc.querySelector(".workspace-split.mod-root") || doc.querySelector(".workspace");
+    const box = rootEl ? this._paneRectFrom(rootEl.getBoundingClientRect(), rootEl) : null;
+    const rect = box && box.width > 0 && box.height > 0 ? box : null;
+    const notes = [];
+    if (rootEl) {
+      for (const group of Array.from(rootEl.querySelectorAll(".workspace-tabs"))) {
+        let front = null;
+        for (const leaf of Array.from(group.querySelectorAll(":scope > .workspace-tab-container > .workspace-leaf"))) {
+          if (leaf.style.display !== "none") {
+            front = leaf;
+            break;
+          }
+        }
+        const content = front && front.querySelector(":scope > .workspace-leaf-content");
+        if (!content || content.getAttribute("data-type") !== "markdown") continue;
+        const b = this._paneRectFrom(group.getBoundingClientRect(), group);
+        if (b && b.width > 0 && b.height > 0) notes.push(b);
+      }
+    }
+    this._mainRectCache = { doc, gen: this._layoutGen | 0, t: now, rect, notes };
+    return this._mainRectCache;
+  },
+  getMainAreaRect(doc) {
+    return this._mainArea(doc).rect;
+  },
+  // The note tabs' rectangles (client coordinates); empty when no note is
+  // in front anywhere in the main area.
+  getNoteTabRects(doc) {
+    return this._mainArea(doc).notes;
   },
   _paneRectFrom(rect, rootEl) {
     const doc = rootEl.ownerDocument;
@@ -8226,11 +8269,20 @@ var paintMethods = {
 };
 
 // src/torch-paint.ts
-function paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness) {
+function clipToRegions(ctx, regions) {
+  if (!regions) return false;
+  ctx.save();
+  ctx.beginPath();
+  for (const b of regions) ctx.rect(b.left, b.top, b.width, b.height);
+  ctx.clip();
+  return true;
+}
+function paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness, regions) {
   const d = Math.max(0, Math.min(1, darkness));
   const r = Math.max(1, radiusPx);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, w, h);
+  const clipped = clipToRegions(ctx, regions);
   ctx.fillStyle = `rgba(0, 0, 0, ${d})`;
   ctx.fillRect(0, 0, w, h);
   ctx.globalCompositeOperation = "destination-out";
@@ -8244,11 +8296,13 @@ function paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness) {
     ctx.fillRect(sp.x - r, sp.y - r, r * 2, r * 2);
   }
   ctx.globalCompositeOperation = "source-over";
+  if (clipped) ctx.restore();
 }
-function paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb) {
+function paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb, regions) {
   const r = Math.max(1, radiusPx * 0.6);
   ctx.globalCompositeOperation = "source-over";
   ctx.clearRect(0, 0, w, h);
+  const clipped = clipToRegions(ctx, regions);
   for (const sp of spots) {
     const g = ctx.createRadialGradient(sp.x, sp.y, 0, sp.x, sp.y, r);
     g.addColorStop(0, `rgba(${warmRgb}, 0.4)`);
@@ -8257,6 +8311,7 @@ function paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb) {
     ctx.fillStyle = g;
     ctx.fillRect(sp.x - r, sp.y - r, r * 2, r * 2);
   }
+  if (clipped) ctx.restore();
 }
 function torchCanvasContext(el, w, h) {
   const bw = Math.max(1, Math.ceil(w * TORCH_CANVAS_SCALE));
@@ -8272,6 +8327,7 @@ function torchCanvasContext(el, w, h) {
 }
 
 // src/torch.ts
+var regionsKey = (regions) => regions ? regions.map((b) => Math.round(b.left) + "," + Math.round(b.top) + "," + Math.round(b.width) + "," + Math.round(b.height)).join(";") : "";
 var torchMethods = {
   // Whether the torch overlay engine might be needed: either the global cursor
   // uses it, or Vim cursors are on and some mode uses it. The torch tick then
@@ -8300,7 +8356,7 @@ var torchMethods = {
       this.disableTorchOverlay();
       return;
     }
-    const targetDoc = view && view.dom.ownerDocument || this.overlay && this.overlay.ownerDocument || typeof activeDocument !== "undefined" && activeDocument || document;
+    const targetDoc = view && view.dom.ownerDocument || this.overlay && this.overlay.ownerDocument || document;
     if (this.overlay && this.overlay.ownerDocument !== targetDoc) {
       this.overlay.remove();
       this.overlay = null;
@@ -8328,25 +8384,33 @@ var torchMethods = {
   // Paint the darkness layer for these lights, if anything about the picture
   // changed since the last paint: a moved light, a new radius, a new size,
   // a new setting. A parked torch does not touch the bitmap.
-  _torchPaintDarkness(spots, radiusPx, darkness, w, h) {
+  // The note tabs' rectangles in the overlay's own coordinates, for the
+  // painters' clip; null with the whole overlay dark.
+  _torchLocalRegions() {
+    const notes = this._torchRegions;
+    const box = this._overlayBox;
+    if (!notes || !box) return null;
+    return notes.map((b) => ({ left: b.left - box.left, top: b.top - box.top, width: b.width, height: b.height, right: b.right - box.left, bottom: b.bottom - box.top }));
+  },
+  _torchPaintDarkness(spots, radiusPx, darkness, w, h, regions) {
     const el = this.overlay;
     if (!el || typeof el.getContext !== "function") return;
-    const key = w + "x" + h + "|" + radiusPx + "|" + darkness + "|" + spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";");
+    const key = w + "x" + h + "|" + radiusPx + "|" + darkness + "|" + spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";") + "|" + regionsKey(regions);
     if (key === this._torchDarkKey) return;
     const ctx = torchCanvasContext(el, w, h);
     if (!ctx) return;
     this._torchDarkKey = key;
-    paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness);
+    paintTorchDarkness(ctx, w, h, spots, radiusPx, darkness, regions);
   },
-  _torchPaintGlow(spots, radiusPx, warmRgb, w, h) {
+  _torchPaintGlow(spots, radiusPx, warmRgb, w, h, regions) {
     const el = this.glowEl;
     if (!el || typeof el.getContext !== "function") return;
-    const key = w + "x" + h + "|" + radiusPx + "|" + warmRgb + "|" + spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";");
+    const key = w + "x" + h + "|" + radiusPx + "|" + warmRgb + "|" + spots.map((sp) => sp.x.toFixed(1) + "," + sp.y.toFixed(1)).join(";") + "|" + regionsKey(regions);
     if (key === this._torchGlowKey) return;
     const ctx = torchCanvasContext(el, w, h);
     if (!ctx) return;
     this._torchGlowKey = key;
-    paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb);
+    paintTorchGlow(ctx, w, h, spots, radiusPx, warmRgb, regions);
   },
   // Build or tear down the additive glow layer.
   //
@@ -8389,6 +8453,7 @@ var torchMethods = {
       this._torchIdleT = 0;
     }
     this._torchTick = null;
+    this._torchRegions = null;
     this._torchDarkKey = "";
     this._lastTorchRadius = -1;
     this._lastGlowRect = "";
@@ -8462,7 +8527,8 @@ var torchMethods = {
                     next,
                     this.look.overlayDarkness,
                     box.width,
-                    box.height
+                    box.height,
+                    this._torchLocalRegions()
                   );
                 }
                 if (next > 1) this._torchGear = "pulse";
@@ -8494,10 +8560,12 @@ var torchMethods = {
                 this.y = this.ty;
               }
               const spots = this.torchSpotlights(useMouse, lerp);
-              const r = this.getPaneRect(view);
               const isMobile = this.overlay.ownerDocument.body.classList.contains("is-mobile");
-              const usePane = r && this.look.overlaySpareSidebars && !isMobile;
+              const spare = !!this.look.overlaySpareSidebars && !isMobile;
+              const r = spare ? this.getMainAreaRect(this.overlay.ownerDocument) : null;
+              const usePane = !!r;
               const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
+              const notes = usePane ? this.getNoteTabRects(this.overlay.ownerDocument) : null;
               const top = Math.round(rect.top);
               const left = Math.round(rect.left);
               const width = Math.round(rect.width);
@@ -8510,7 +8578,7 @@ var torchMethods = {
                 this.overlay.style.width = width + "px";
                 this.overlay.style.height = height + "px";
               }
-              const hideForModal = this.look.overlaySpareSidebars && this.modalOpen;
+              const hideForModal = spare && (this.modalOpen || notes !== null && notes.length === 0);
               const pulse = !hideForModal && !!this.look.overlayBlinkSync && !!this.look.blinkingEnabled;
               let radius = this.look.overlayRadius;
               if (pulse) {
@@ -8535,7 +8603,9 @@ var torchMethods = {
               const glow = this._ensureGlowLayer(!hidden && baseI > 0);
               const local = spots.map((sp) => ({ x: sp.x - left, y: sp.y - top }));
               this._overlayBox = { top, left, width, height };
-              this._torchPaintDarkness(local, rKey, this.look.overlayDarkness, width, height);
+              this._torchRegions = notes;
+              const regions = this._torchLocalRegions();
+              this._torchPaintDarkness(local, rKey, this.look.overlayDarkness, width, height, regions);
               if (glow) {
                 if (key !== this._lastGlowRect) {
                   this._lastGlowRect = key;
@@ -8549,7 +8619,7 @@ var torchMethods = {
                   this._lastGlowAlpha = gAlpha;
                   glow.style.setProperty("--torch-glow", gAlpha);
                 }
-                this._torchPaintGlow(local, rKey, hexToRgb(this.look.overlayColor), width, height);
+                this._torchPaintGlow(local, rKey, hexToRgb(this.look.overlayColor), width, height, regions);
               }
               this.overlay.classList.toggle("cursor-smith-torch-hidden", !!hideForModal);
             }
@@ -8569,7 +8639,15 @@ var torchMethods = {
   // the secondaries get none (torchSpotlights).
   updateOverlayTarget() {
     const mode = this.look.overlayFollowMode;
-    const caret = this.caretCoords();
+    const here = this.overlay ? this.overlay.ownerDocument : null;
+    const sameDoc = !here || !this.canvasWrapper || this.canvasWrapper.ownerDocument === here;
+    const box = this._overlayBox;
+    const regions = this._torchRegions;
+    const inBox = (b, x, y) => x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height;
+    const inside = (x, y) => (!box || inBox(box, x, y)) && (!regions || regions.some((b) => inBox(b, x, y)));
+    const measured = sameDoc ? this.caretCoords() : null;
+    const caret = measured && inside(measured.x, (measured.top + measured.bottom) / 2) ? measured : null;
+    const mouseHere = (!here || !this._mouseDoc || this._mouseDoc === here) && inside(this.mouseX, this.mouseY);
     if (caret) {
       if (!this.lastCaret || caret.x !== this.lastCaret.x || caret.top !== this.lastCaret.top) {
         this.lastCaretMove = performance.now();
@@ -8578,8 +8656,10 @@ var torchMethods = {
     }
     const useMouse = mode === "mouse" || mode === "auto" && (performance.now() - this.lastMouseMove < 800 || !this.lastCaret);
     if (useMouse) {
-      this.tx = this.mouseX;
-      this.ty = this.mouseY;
+      if (mouseHere) {
+        this.tx = this.mouseX;
+        this.ty = this.mouseY;
+      }
     } else if (this.lastCaret) {
       this.tx = this.lastCaret.x;
       this.ty = (this.lastCaret.top + this.lastCaret.bottom) / 2;
@@ -9206,6 +9286,7 @@ var engineMethods = {
     this._drawSig = null;
     this._caretGeoCache = null;
     this._paneRectCache = null;
+    this._mainRectCache = null;
     this._observeEditorLayout(null);
     const docs = [document, ...Array.from(this.registeredDocuments)];
     for (const doc of docs) {
@@ -10647,6 +10728,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.mouseX = this.x;
     this.mouseY = this.y;
     this.lastMouseMove = 0;
+    this._mouseDoc = null;
     this.canvasEngineActive = false;
     this.torchEngineActive = false;
     this.canvasRaf = 0;
@@ -10727,6 +10809,10 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
       window.clearInterval(this._vimStatusTimer);
       this._vimStatusTimer = 0;
     }
+    if (this.settingTab && this.settingTab._valueObserver) {
+      this.settingTab._valueObserver.disconnect();
+      this.settingTab._valueObserver = null;
+    }
     if (this._vimNormalRetryT) {
       window.clearTimeout(this._vimNormalRetryT);
       this._vimNormalRetryT = 0;
@@ -10786,6 +10872,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     const onMouseMove = (e) => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
+      this._mouseDoc = doc;
       this.lastMouseMove = performance.now();
       this._wakeTorch();
     };

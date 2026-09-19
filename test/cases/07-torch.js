@@ -69,3 +69,117 @@ section("torch: glow layer and tuning");
   e.overlay = null;
   ok("no overlay, no glow layer", e._ensureGlowLayer(true) === null);
 }
+
+// ---------------------------------------------------------------------------
+section("torch: the settings window and the sidebar");
+
+// Three reports against the packed 1.5.8, all in the torch's choice of
+// window and box. The overlay was created in the settings window (no note
+// active, activeDocument the settings window since Obsidian 1.13) and
+// dimmed it whole; the light chased the settings window's search caret;
+// and with "Keep sidebars lit" on, the torch dimmed the active editor's
+// pane only - every other tab lit - and fell back to dimming the whole
+// window, sidebars included, the moment the note lost focus (a click in
+// the sidebar: activeEditor null). The spared-sidebars area is now the
+// workspace's main area, every note tab, whichever leaf has focus.
+{
+  const src = (f) => require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", f), "utf8");
+  const torch = src("torch.ts");
+  const chain = /ensureTorchOverlayForView\(this[^]*?const targetDoc =([^;]*);/.exec(torch);
+  ok("the overlay's document is the editor's, the overlay's own, or the main window's - never activeDocument", !!chain && /view[^]*overlay[^]*document/.test(chain[1]) && !/activeDocument/.test(chain[1]), chain && chain[1]);
+  ok("with the sidebars spared the torch dims the main area - every note tab - not the active editor's pane", /const r = spare \? this\.getMainAreaRect\(this\.overlay\.ownerDocument\) : null/.test(torch));
+  ok("...whichever leaf has focus: the tick reads no editor for its area", !/getPaneRect\(/.test(torch));
+  ok("...and darkens only the note tabs of it, standing down with none in front: the views beside them stay lit", /const notes = usePane \? this\.getNoteTabRects\(/.test(torch) && /hideForModal = spare && \(this\.modalOpen \|\| \(notes !== null && notes\.length === 0\)\)/.test(torch) && /_torchPaintDarkness\(local, rKey, this\.look\.overlayDarkness, width, height, regions\)/.test(torch));
+  ok("the pointer's window is recorded where the pointer is read", /this\._mouseDoc = doc;/.test(src("plugin.ts")));
+}
+
+// The main area: the root split - every tab group, none of the docks -
+// clamped below a visible titlebar like the pane, cached on the layout
+// generation; nothing where a document has no root split and no workspace.
+// And its note tabs: each tab group whose front tab (the one not hidden
+// with display: none) is a markdown view; the groups showing another view
+// - Word-Smith's History, an empty tab - are none of the torch's business.
+{
+  const m = Object.create(Plugin.prototype);
+  let measured = 0;
+  const leaf = (type, hidden) => ({ style: { display: hidden ? "none" : "" }, querySelector: () => ({ getAttribute: (n) => (n === "data-type" ? type : null) }) });
+  const group = (leaves, rect) => ({ ownerDocument: null, querySelectorAll: () => leaves, getBoundingClientRect: () => rect });
+  const groups = [
+    group([leaf("markdown", false), leaf("word-smith-history", true)], { top: 0, bottom: 700, left: 300, right: 800, width: 500, height: 700 }),
+    group([leaf("word-smith-history", false), leaf("markdown", true)], { top: 0, bottom: 700, left: 800, right: 1100, width: 300, height: 700 }),
+    group([leaf("markdown", true), leaf("markdown", false)], { top: 0, bottom: 350, left: 1100, right: 1300, width: 200, height: 350 }),
+    group([leaf("empty", false)], { top: 350, bottom: 700, left: 1100, right: 1300, width: 200, height: 350 }),
+  ];
+  const root = { ownerDocument: null, getBoundingClientRect: () => { measured++; return { top: 0, bottom: 700, left: 300, right: 1300, width: 1000, height: 700 }; }, querySelectorAll: (sel) => (sel === ".workspace-tabs" ? groups : []) };
+  const titlebar = { getBoundingClientRect: () => ({ top: 0, bottom: 40, height: 40 }) };
+  let hasRoot = true;
+  const doc = { body: { classList: { contains: () => false } }, defaultView: null, querySelector: (sel) => sel === ".workspace-split.mod-root" ? (hasRoot ? root : null) : sel === ".titlebar" ? titlebar : null };
+  root.ownerDocument = doc;
+  for (const g of groups) g.ownerDocument = doc;
+  const r = m.getMainAreaRect(doc);
+  ok("the main area is the root split, below the titlebar", !!r && r.left === 300 && r.right === 1300 && r.top === 40 && r.bottom === 700 && r.width === 1000 && r.height === 660, r);
+  const notes = m.getNoteTabRects(doc);
+  ok("the note tabs are the groups with a note in front, the titlebar clamp applied", notes.length === 2 && notes[0].left === 300 && notes[0].top === 40 && notes[0].width === 500 && notes[1].left === 1100 && notes[1].top === 40 && notes[1].height === 310, notes);
+  ok("...a group with a note behind another view is not one, nor an empty tab", !notes.some((b) => b.left === 800 || b.top === 350));
+  ok("...cached with the area: a second call measures nothing", m.getMainAreaRect(doc) === r && m.getNoteTabRects(doc) === notes && measured === 1, measured);
+  m._layoutGen = 1;
+  ok("...and a layout change measures again", m.getMainAreaRect(doc) !== r && measured === 2, measured);
+  hasRoot = false; m._layoutGen = 2;
+  ok("no root split and no workspace, no area: the torch dims the window instead", m.getMainAreaRect(doc) === null && m.getNoteTabRects(doc).length === 0);
+}
+
+// The target: a caret or a pointer in another window, or outside the lit
+// box, leaves the light where it is.
+{
+  const mainDoc = { name: "main" }, otherDoc = { name: "settings" };
+  const e = Object.create(Plugin.prototype);
+  // look is a getter on the prototype (derived from the settings); the fake gets its own.
+  Object.defineProperty(e, "look", { value: { overlayFollowMode: "caret" }, writable: true });
+  e.overlay = { ownerDocument: mainDoc };
+  e.canvasWrapper = { ownerDocument: otherDoc };
+  e._overlayBox = null;
+  e.lastCaret = { x: 100, top: 200, bottom: 220 };
+  e.lastCaretMove = 0; e.lastMouseMove = 0; e.mouseX = 0; e.mouseY = 0; e._mouseDoc = null;
+  e.tx = 100; e.ty = 210;
+  let measured = { x: 10, top: 20, bottom: 40 };
+  e.caretCoords = () => measured;
+  ok("a caret in another window is not a target: the light stays", e.updateOverlayTarget() === false && e.lastCaret.x === 100 && e.tx === 100 && e.ty === 210, [e.tx, e.ty]);
+  e.canvasWrapper.ownerDocument = mainDoc;
+  e.updateOverlayTarget();
+  ok("...a caret in the torch's window is", e.lastCaret === measured && e.tx === 10 && e.ty === 30, [e.tx, e.ty]);
+  e._overlayBox = { top: 0, left: 0, width: 50, height: 50 };
+  measured = { x: 200, top: 20, bottom: 40 };
+  e.updateOverlayTarget();
+  ok("a caret outside the lit box (the sidebar's search field, sidebars spared) is not", e.lastCaret.x === 10 && e.tx === 10, [e.tx, e.ty]);
+  measured = { x: 25, top: 20, bottom: 40 };
+  e.updateOverlayTarget();
+  ok("...one inside it is", e.lastCaret.x === 25 && e.tx === 25, [e.tx, e.ty]);
+  // Inside the box but outside every note tab - a caret in a lit view
+  // beside the notes, the History panel's search field - is not one either.
+  e._torchRegions = [{ left: 0, top: 0, width: 30, height: 50, right: 30, bottom: 50 }];
+  measured = { x: 40, top: 20, bottom: 40 };
+  e.updateOverlayTarget();
+  ok("a caret inside the area but outside the note tabs is not a target", e.lastCaret.x === 25 && e.tx === 25, [e.tx, e.ty]);
+  measured = { x: 20, top: 20, bottom: 40 };
+  e.updateOverlayTarget();
+  ok("...one in a note tab is", e.lastCaret.x === 20 && e.tx === 20, [e.tx, e.ty]);
+  e._torchRegions = null;
+  measured = { x: 25, top: 20, bottom: 40 };
+  e.updateOverlayTarget();
+  // The pointer, likewise.
+  e.look.overlayFollowMode = "mouse";
+  e.mouseX = 30; e.mouseY = 30; e._mouseDoc = otherDoc;
+  ok("a pointer last seen in another window is not a target", e.updateOverlayTarget() === true && e.tx === 25, [e.tx, e.ty]);
+  e._mouseDoc = mainDoc;
+  e.updateOverlayTarget();
+  ok("...one in the torch's window is", e.tx === 30 && e.ty === 30, [e.tx, e.ty]);
+  e.mouseX = 500;
+  e.updateOverlayTarget();
+  ok("...unless it is outside the lit box", e.tx === 30 && e.ty === 30, [e.tx, e.ty]);
+  e.mouseX = 40; e._mouseDoc = null;
+  e.updateOverlayTarget();
+  ok("a pointer never seen in any window yet counts as here", e.tx === 40, [e.tx, e.ty]);
+  e.overlay = null; e.mouseX = 45; e._mouseDoc = otherDoc; e._overlayBox = null;
+  e.updateOverlayTarget();
+  ok("with no overlay there is no window to be outside of", e.tx === 45, [e.tx, e.ty]);
+}

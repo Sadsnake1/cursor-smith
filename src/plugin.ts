@@ -27,6 +27,8 @@ import type {
   LetterParticle,
   Look,
   PaneRectCache,
+  MainRectCache,
+  Box,
   PerfCounters,
   Pt,
   Quad,
@@ -103,6 +105,9 @@ export default class CursorSmithPlugin extends Plugin {
   declare getCaretClipRect: MeasureMethods["getCaretClipRect"];
   declare _resolveClipChain: MeasureMethods["_resolveClipChain"];
   declare getPaneRect: MeasureMethods["getPaneRect"];
+  declare getMainAreaRect: MeasureMethods["getMainAreaRect"];
+  declare getNoteTabRects: MeasureMethods["getNoteTabRects"];
+  declare _mainArea: MeasureMethods["_mainArea"];
   declare _paneRectFrom: MeasureMethods["_paneRectFrom"];
   declare getActiveRect: MeasureMethods["getActiveRect"];
   declare renderWidth: MeasureMethods["renderWidth"];
@@ -202,6 +207,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare torchPossible: TorchMethods["torchPossible"];
   declare applyOverlayStyle: TorchMethods["applyOverlayStyle"];
   declare ensureTorchOverlayForView: TorchMethods["ensureTorchOverlayForView"];
+  declare _torchLocalRegions: TorchMethods["_torchLocalRegions"];
   declare _torchPaintDarkness: TorchMethods["_torchPaintDarkness"];
   declare _torchPaintGlow: TorchMethods["_torchPaintGlow"];
   declare _ensureGlowLayer: TorchMethods["_ensureGlowLayer"];
@@ -375,8 +381,12 @@ export default class CursorSmithPlugin extends Plugin {
   _nodeIdSeq!: number;
   _nodeIds!: WeakMap<Node, number> | null;
   _overlayBox!: { top: number; left: number; width: number; height: number } | null;
+  // The note tabs the torch darkens (client coordinates), null with the
+  // whole overlay dark; the painters' clip and the light's bounds.
+  _torchRegions!: Box[] | null;
   _overlaySig!: string;
   _paneRectCache!: PaneRectCache | null;
+  _mainRectCache!: MainRectCache | null;
   _pendingPresetName!: string;
   _pendingVimPresetName!: string;
   _perf!: PerfCounters | null;
@@ -461,6 +471,9 @@ export default class CursorSmithPlugin extends Plugin {
   lastCaret!: CaretRecord | null;
   lastCaretMove!: number;
   lastMouseMove!: number;
+  // The document the pointer was last seen in; its coordinates are that
+  // window's (updateOverlayTarget).
+  _mouseDoc!: Document | null;
   lastMoveTime!: number;
   modalObserver!: MutationObserver | null;
   modalOpen!: boolean;
@@ -633,6 +646,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.mouseX = this.x;
     this.mouseY = this.y;
     this.lastMouseMove = 0;
+    this._mouseDoc = null;
     
     this.canvasEngineActive = false;
     this.torchEngineActive = false;
@@ -795,6 +809,12 @@ export default class CursorSmithPlugin extends Plugin {
       window.clearInterval(this._vimStatusTimer);
       this._vimStatusTimer = 0;
     }
+    // The settings tab's decorate observer lives for the tab's life, not
+    // for one showing (see the tab's hide()); this is the one place it ends.
+    if (this.settingTab && this.settingTab._valueObserver) {
+      this.settingTab._valueObserver.disconnect();
+      this.settingTab._valueObserver = null;
+    }
     // Cancel any pending Normal-mode retry so it can't fire after unload.
     if (this._vimNormalRetryT) {
       window.clearTimeout(this._vimNormalRetryT);
@@ -861,6 +881,8 @@ export default class CursorSmithPlugin extends Plugin {
     const onMouseMove = (e: MouseEvent) => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
+      // Which window's coordinates those are (the torch's target reads it).
+      this._mouseDoc = doc;
       this.lastMouseMove = performance.now();
       // Wakes only the torch (which may be following the mouse) — moving the
       // pointer must not spin the cursor canvas up to full rate.

@@ -195,7 +195,13 @@ export class CursorSmithSettingTab extends PluginSettingTab {
 
   hide() {
     super.hide();
-    if (this._valueObserver) { this._valueObserver.disconnect(); this._valueObserver = null; }
+    // The decorate observer stays. Obsidian 1.13 does not ask for the
+    // definitions again when the tab is reopened - it re-renders the ones it
+    // has - so an observer dropped here was never recreated (watchEffectsValue
+    // runs from getSettingDefinitions), and from the second opening on every
+    // leading icon sat in its description and the Effects entry showed its
+    // names. A hidden tab mutates nothing, so a kept observer costs nothing;
+    // the plugin's onunload disconnects it.
   }
 
   // Two things Obsidian's own rendering cannot be told to do go in after
@@ -1420,7 +1426,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Flicker", "The light gutters like a candle.", "overlayFlicker", { depth: 1, gate: true, when: torch }));
     effects.push(slider("Flicker depth", "How far the flame swings. At 1 it gutters right out.", "overlayFlickerAmount", [0.05, 1, 0.05],
       { depth: 2, fallback: 0.35, when: all(torch, on("overlayFlicker")) }));
-    effects.push(toggle("Keep sidebars lit", "Dims only the editor, leaving sidebars and ribbon lit. Desktop only.", "overlaySpareSidebars", { depth: 1, when: torch }));
+    effects.push(toggle("Keep sidebars lit", "Darkens every note tab; sidebars, ribbon and other views stay lit. Desktop only.", "overlaySpareSidebars", { depth: 1, when: torch }));
     // Each tab ends with its reset.
     appearance.push(this.resetLinkRow("Appearance", resetCard("Appearance")));
     blinking.push(this.resetLinkRow("Blinking", resetCard("Blinking")));

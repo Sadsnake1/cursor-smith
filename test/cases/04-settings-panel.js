@@ -767,6 +767,18 @@ section("settings panel: the rail, the summaries, the resets, the cards");
       const before = info.children.length;
       rows.tab.decorateIcons();
       ok("...and a second pass has nothing to do", info.children.length === before && info.children[0] === icon);
+      // The observer lives for the tab's life: hide() keeps it. Obsidian
+      // 1.13 re-renders the kept definitions on reopen without asking for
+      // them again, so an observer dropped here was never recreated, and
+      // from the second opening on the icons sat in their descriptions.
+      const obs = rows.tab._valueObserver;
+      const spy = { disconnected: false, disconnect() { this.disconnected = true; } };
+      rows.tab._valueObserver = spy;
+      rows.tab.hide();
+      ok("hiding the tab keeps the decorate observer for the next opening", rows.tab._valueObserver === spy && !spy.disconnected);
+      rows.tab.watchEffectsValue();
+      ok("...and asking to watch again makes no second one", rows.tab._valueObserver === spy);
+      rows.tab._valueObserver = obs;
     }
     // ...and, once Obsidian has rendered the entry, wears their icons in
     // the value instead (displayValue is a string; the icons go in after).

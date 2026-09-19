@@ -77,6 +77,7 @@ export interface SecondaryStyleCache extends LineStyle { doc: Text; pos: number;
 export interface ChromeInsets { doc: Document; t: number; top: number; bottomInset: number; statusLeft: number; statusRight: number }
 export interface Box { top: number; bottom: number; left: number; right: number; width: number; height: number }
 export interface PaneRectCache { view: EditorView; gen: number; t: number; rect: Box | null }
+export interface MainRectCache { doc: Document; gen: number; t: number; rect: Box | null; notes: Box[] }
 export interface EffCache { mode: string | null; base: CursorSmithSettings; cfg: Look | null; reduce: boolean; obj: CursorSmithSettings }
 
 // One Vim mode's snapshot: every look key, typed by its default. Generated

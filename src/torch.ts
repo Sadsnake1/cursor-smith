@@ -92,10 +92,17 @@ export const torchMethods = {
     this._torchGlowKey = "";
       this.applyOverlayStyle();
       
-      this.modalOpen = !!targetDoc.querySelector(".modal-container");
-      this.modalObserver = new MutationObserver(() => {
+      // Two readings of the same watch: a modal (the desktop stand-down
+      // with the sidebars spared), and anything that covers the note on a
+      // phone - a modal, a menu, the bottom sheet (a menu too) - where
+      // the torch stands down for all of them (the tick; drawers are read
+      // off the workspace there).
+      const covered = () => {
         this.modalOpen = !!targetDoc.querySelector(".modal-container");
-      });
+        this._coverOpen = this.modalOpen || !!targetDoc.querySelector("body > .menu, .menu-container");
+      };
+      covered();
+      this.modalObserver = new MutationObserver(covered);
       this.modalObserver.observe(targetDoc.body, { childList: true });
     }
   },
@@ -205,6 +212,7 @@ export const torchMethods = {
     this.modalObserver?.disconnect();
     this.modalObserver = null;
     this.modalOpen = false;
+    this._coverOpen = false;
   },
 
   enableTorchOverlay(this: CursorSmithPlugin) {
@@ -355,13 +363,17 @@ export const torchMethods = {
               // with no active editor - a click in the sidebar - it fell back
               // to the whole window, sidebars included.
               //
-              // This only makes sense when the sidebars are side-by-side
-              // panes. On mobile they're sliding drawers over the content, so
-              // clipping to the main area just leaves the shading inconsistent
-              // - fall back to the full-viewport dim there regardless of the
-              // toggle.
+              // On a phone the note area is always the thing dimmed, whatever
+              // the toggle says (its line reads "Desktop only"): the side
+              // panes are drawers that slide OVER the note at Obsidian's
+              // popover layer, the bottom sheet and the menus sit higher still,
+              // and a whole-window dim covered every one of them ("it still
+              // darkens the sidepanes and the bottom menu and other small
+              // menus"). Dimming the note tabs only, and standing down while
+              // a drawer, a menu or a modal is open (below), is what leaves
+              // them lit.
               const isMobile = this.overlay.ownerDocument.body.classList.contains("is-mobile");
-              const spare = !!this.look.overlaySpareSidebars && !isMobile;
+              const spare = isMobile || !!this.look.overlaySpareSidebars;
               const r = spare ? this.getMainAreaRect(this.overlay.ownerDocument) : null;
               const usePane = !!r;
               // Even when not sparing the sidebars, the overlay must never
@@ -394,7 +406,16 @@ export const torchMethods = {
               // as long as the panel stayed open.
               // ...and with no note in front anywhere in the main area there
               // is nothing to darken: the torch stands down.
-              const hideForModal = spare && (this.modalOpen || (notes !== null && notes.length === 0));
+              //
+              // On a phone the torch stands down for anything that covers the
+              // note: a modal (the settings are one there, in the same
+              // document - not a window of their own as on desktop since
+              // 1.13), a menu or the bottom sheet (_coverOpen, from the
+              // observer above), and an open drawer (_drawerOpen, the
+              // workspace's own flags). Desktop with the sidebars not spared
+              // is unchanged: a whole-window dim covers a dialog too, and the
+              // light follows the caret into it.
+              const hideForModal = (spare && (this.modalOpen || (notes !== null && notes.length === 0))) || (isMobile && (this._coverOpen || this._drawerOpen()));
 
               // Blink Sync: the spotlight breathes with the caret, opening to
               // full size while the caret is lit and closing as it fades out.
@@ -587,6 +608,18 @@ export const torchMethods = {
       spots.push({ x: st.torchX, y: st.torchY });
     }
     return spots;
+  },
+
+  // A side pane open over the note: on a phone the drawers, on desktop the
+  // docks (only the phone reads it). The workspace's own flags, not the
+  // DOM: WorkspaceMobileDrawer and WorkspaceSidedock both carry
+  // `collapsed`.
+  _drawerOpen(this: CursorSmithPlugin): boolean {
+    try {
+      const ws = this.app.workspace;
+      const l = ws.leftSplit, r = ws.rightSplit;
+      return !!((l && !l.collapsed) || (r && !r.collapsed));
+    } catch { return false; /* a workspace mid-teardown */ }
   },
 
   // Torch-only wake: mouse movement retargets the spotlight but shouldn't

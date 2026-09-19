@@ -319,20 +319,32 @@ export const engineMethods = {
           // sizes force continuous compositor re-uploads - both showed up
           // as stutter with the smear effect on (worst on weak GPUs, e.g.
           // ChromeOS Crostini's virtualized one).
-          const top = Math.round(r.top);
+          let top = Math.round(r.top);
           const left = Math.round(r.left);
+          const width = Math.round(r.width);
+          let height = Math.round(r.height);
+          const ins = this._chromeInsets(this.canvas.ownerDocument);
+          // The bands and bars fixed over the editor that hide its own caret
+          // (CARET_COVERS: Word-Smith's letterbox masks, its status bar) hide
+          // ours too: the wrapper stops at their edges. Since the torch's
+          // layers moved above that chrome (§1.22) the canvas would paint
+          // over them otherwise - a caret line scrolled under the bar showed
+          // through it, and one under a band.
+          const coverTop = Math.max(top, Math.ceil(ins.coverTop));
+          const coverBottom = Math.min(top + height, Math.floor(ins.coverBottom));
+          if (coverTop > top || coverBottom < top + height) {
+            top = coverTop;
+            height = Math.max(0, coverBottom - coverTop);
+          }
           // Kept for Thunderstrike, which needs to know where the visible area
           // starts so a bolt can be launched from just above it and appear to
           // arrive from outside the pane.
           this._clipTop = top;
-          const width = Math.round(r.width);
-          let height = Math.round(r.height);
           // Keep the cursor canvas above the status bar. The editor pane's rect
           // can extend under a floating status bar, and while scrolling the
           // pane briefly reaches the window edge, so clamp the clip to the
           // status bar's top. No-op for an in-flow status bar (the pane already
           // stops above it) and on platforms with no status bar (inset is 0).
-          const ins = this._chromeInsets(this.canvas.ownerDocument);
           let clipPath = "";
           if (ins.bottomInset > 0) {
             const win = this.canvas.ownerDocument.defaultView || window;

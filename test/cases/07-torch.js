@@ -89,7 +89,21 @@ section("torch: the settings window and the sidebar");
   ok("the overlay's document is the editor's, the overlay's own, or the main window's - never activeDocument", !!chain && /view[^]*overlay[^]*document/.test(chain[1]) && !/activeDocument/.test(chain[1]), chain && chain[1]);
   ok("with the sidebars spared the torch dims the main area - every note tab - not the active editor's pane", /const r = spare \? this\.getMainAreaRect\(this\.overlay\.ownerDocument\) : null/.test(torch));
   ok("...whichever leaf has focus: the tick reads no editor for its area", !/getPaneRect\(/.test(torch));
-  ok("...and darkens only the note tabs of it, standing down with none in front: the views beside them stay lit", /const notes = usePane \? this\.getNoteTabRects\(/.test(torch) && /hideForModal = spare && \(this\.modalOpen \|\| \(notes !== null && notes\.length === 0\)\)/.test(torch) && /_torchPaintDarkness\(local, rKey, this\.look\.overlayDarkness, width, height, regions\)/.test(torch));
+  ok("on a phone the note area is always what is dimmed, whatever the toggle says", /const spare = isMobile \|\| !!this\.look\.overlaySpareSidebars;/.test(torch));
+  ok("...and the torch stands down for anything over the note there: a modal or a menu (the observer), an open drawer (the workspace's flags)", /\(isMobile && \(this\._coverOpen \|\| this\._drawerOpen\(\)\)\)/.test(torch) && /querySelector\("body > \.menu, \.menu-container"\)/.test(torch));
+  // The drawers, read off the workspace's own flags.
+  {
+    const d = Object.create(Plugin.prototype);
+    d.app = { workspace: { leftSplit: { collapsed: true }, rightSplit: { collapsed: true } } };
+    ok("both drawers collapsed: none open", d._drawerOpen() === false);
+    d.app.workspace.rightSplit.collapsed = false;
+    ok("...one expanded: open", d._drawerOpen() === true);
+    d.app = { workspace: { leftSplit: null, rightSplit: null } };
+    ok("...no splits at all: none open", d._drawerOpen() === false);
+    d.app = { get workspace() { throw new Error("gone"); } };
+    ok("...and a throw reads as none open", d._drawerOpen() === false);
+  }
+  ok("...and darkens only the note tabs of it, standing down with none in front: the views beside them stay lit", /const notes = usePane \? this\.getNoteTabRects\(/.test(torch) && /hideForModal = \(spare && \(this\.modalOpen \|\| \(notes !== null && notes\.length === 0\)\)\)/.test(torch) && /_torchPaintDarkness\(local, rKey, this\.look\.overlayDarkness, width, height, regions\)/.test(torch));
   ok("the pointer's window is recorded where the pointer is read", /this\._mouseDoc = doc;/.test(src("plugin.ts")));
 }
 
@@ -113,7 +127,8 @@ section("torch: the settings window and the sidebar");
   const root = { ownerDocument: null, getBoundingClientRect: () => { measured++; return { top: 0, bottom: 700, left: 300, right: 1300, width: 1000, height: 700 }; }, querySelectorAll: (sel) => (sel === ".workspace-tabs" ? groups : []) };
   const titlebar = { getBoundingClientRect: () => ({ top: 0, bottom: 40, height: 40 }) };
   let hasRoot = true;
-  const doc = { body: { classList: { contains: () => false } }, defaultView: null, querySelector: (sel) => sel === ".workspace-split.mod-root" ? (hasRoot ? root : null) : sel === ".titlebar" ? titlebar : null };
+  // The chrome insets read the covers off the document too (querySelectorAll, the window size).
+  const doc = { body: { classList: { contains: () => false } }, defaultView: { innerWidth: 1330, innerHeight: 702 }, querySelectorAll: () => [], querySelector: (sel) => sel === ".workspace-split.mod-root" ? (hasRoot ? root : null) : sel === ".titlebar" ? titlebar : null };
   root.ownerDocument = doc;
   for (const g of groups) g.ownerDocument = doc;
   const r = m.getMainAreaRect(doc);

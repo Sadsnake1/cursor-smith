@@ -9,7 +9,7 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS } from "./constants";
+import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS } from "./constants";
 import { isTextCaretHost } from "./motion";
 import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache } from "./types";
@@ -1080,7 +1080,24 @@ export const measureMethods = {
       }
     }
 
-    this._chromeCache = { doc, t: now, top, bottomInset, statusLeft, statusRight };
+    // The covers (CARET_COVERS): a visibly rendered element at least 40% of
+    // the window wide, in the upper half of the window, moves the canvas's
+    // top down to its bottom edge; in the lower half, the canvas's bottom
+    // up to its top edge. Word-Smith's two letterbox masks and its status
+    // bar are the three there are today; the read is cheap and cached with
+    // the rest of this.
+    let coverTop = 0;
+    let coverBottom = Number.POSITIVE_INFINITY;
+    const win2 = doc.defaultView || window;
+    for (const el of Array.from(doc.querySelectorAll<HTMLElement>(CARET_COVERS))) {
+      if (!this._isVisiblyRendered(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height <= 0 || r.width < win2.innerWidth * 0.4) continue;
+      if (r.top + r.height / 2 < win2.innerHeight / 2) coverTop = Math.max(coverTop, r.bottom);
+      else coverBottom = Math.min(coverBottom, r.top);
+    }
+
+    this._chromeCache = { doc, t: now, top, bottomInset, statusLeft, statusRight, coverTop, coverBottom };
     return this._chromeCache;
   },
 

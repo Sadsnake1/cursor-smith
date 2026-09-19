@@ -279,10 +279,31 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("...one inside it does, and so does a wheel over it", woke === 2, woke);
   }
 
+  // --- the covers: bands and bars fixed over the editor ----------------------------
+  // Word-Smith's letterbox masks and its status bar (CARET_COVERS) hide the
+  // editor's caret; since the layers moved above them (§1.22) they are below
+  // our canvas, so the chrome insets carry their edges and the wrapper stops
+  // there. A full-width element only; a narrow one is not a cover.
+  {
+    const e = mk();
+    e._isVisiblyRendered = () => true;
+    e._chromeCache = null;
+    const el = (left, top, width, height) => ({ getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }) });
+    const covers = [el(320, 78, 776, 79), el(320, 593, 776, 79), el(289, 672, 840, 30), el(600, 300, 100, 20)];
+    const doc = { body: { classList: { contains: () => false } }, defaultView: { innerWidth: 1330, innerHeight: 702 }, querySelector: () => null, querySelectorAll: (sel) => (sel === T.CARET_COVERS ? covers : []) };
+    const ins = e._chromeInsets(doc);
+    ok("the top band moves the canvas's top to its bottom edge", ins.coverTop === 157, ins.coverTop);
+    ok("the bottom band and the bar move its bottom to the higher of their tops", ins.coverBottom === 593, ins.coverBottom);
+    e._chromeCache = null;
+    const none = e._chromeInsets({ body: { classList: { contains: () => false } }, defaultView: { innerWidth: 1330, innerHeight: 702 }, querySelector: () => null, querySelectorAll: () => [] });
+    ok("with no covers the canvas is free: 0 and Infinity", none.coverTop === 0 && none.coverBottom === Infinity, [none.coverTop, none.coverBottom]);
+    ok("the selector names Word-Smith's masks and its bar", T.CARET_COVERS === ".ws-mask, .ws-status-bar");
+  }
+
   // --- geometry cache ----------------------------------------------------------
   {
     const e = mk();
-    e._chromeInsets = () => ({ top: 0, bottomInset: 0 });
+    e._chromeInsets = () => ({ top: 0, bottomInset: 0, coverTop: 0, coverBottom: Infinity });
     let coordsCalls = 0, rectCalls = 0;
     const docObj = { length: 100 };
     const lineEl = { closest: () => lineEl, contains: () => true, textContent: "abc" };
@@ -512,7 +533,7 @@ section("frame governor: resting more (1.5.8)");
   // --- the caret's style is re-read on a style change, not on every tick -------
   {
     const e = mk();
-    e._chromeInsets = () => ({ top: 0, bottomInset: 0 });
+    e._chromeInsets = () => ({ top: 0, bottomInset: 0, coverTop: 0, coverBottom: Infinity });
     let styleReads = 0, hits = 0;
     const lineEl = { closest: () => lineEl, contains: () => true, textContent: "abc" };
     const rootEl = { getBoundingClientRect: () => ({ top: 50, bottom: 650, left: 100, right: 900, width: 800, height: 600 }), ownerDocument: null };

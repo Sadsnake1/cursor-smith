@@ -216,6 +216,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare updateOverlayTarget: TorchMethods["updateOverlayTarget"];
   declare torchSpotlights: TorchMethods["torchSpotlights"];
   declare _wakeTorch: TorchMethods["_wakeTorch"];
+  declare _drawerOpen: TorchMethods["_drawerOpen"];
   // --- library.ts
   declare getUserPresets: LibraryMethods["getUserPresets"];
   declare saveUserPreset: LibraryMethods["saveUserPreset"];
@@ -478,6 +479,9 @@ export default class CursorSmithPlugin extends Plugin {
   lastMoveTime!: number;
   modalObserver!: MutationObserver | null;
   modalOpen!: boolean;
+  // A modal, a menu or the bottom sheet over the note (the torch's
+  // stand-down on a phone; the modal observer keeps it).
+  _coverOpen!: boolean;
   mouseX!: number;
   mouseY!: number;
   overlay!: HTMLCanvasElement | null;
@@ -640,6 +644,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.overlay = null;
     this.modalObserver = null;
     this.modalOpen = false;
+    this._coverOpen = false;
     this.x = this.tx = window.innerWidth / 2;
     this.y = this.ty = window.innerHeight / 2;
     this.lastCaret = null;

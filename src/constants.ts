@@ -209,6 +209,15 @@ export function keystrokeHeatWeight(kind: string, repeat: boolean) {
 // css-change, layout-change, a ResizeObserver on the editor content), so
 // this only backstops what has no event at all - an image finishing its
 // load inside a line, say - and bounds how stale the caret can briefly be.
+// Bands and bars another plugin fixes over the editor, above the editor's
+// own caret and - since the torch's layers moved above that plugin's chrome
+// (HANDOFF §1.22) - below ours: the cursor canvas is clipped to their edges
+// so our caret hides where the editor's would (a caret line scrolled under
+// the bar showed through it). Word-Smith's letterbox masks and its status
+// bar. Only a full-width one counts (_chromeInsets); a floating pill is the
+// status-bar clip's business.
+export const CARET_COVERS = ".ws-mask, .ws-status-bar";
+
 export const GEOMETRY_TTL_MS = 400;
 
 // How long the hot gear is held after the last input event, in ms. The event

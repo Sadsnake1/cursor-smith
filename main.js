@@ -42,6 +42,7 @@ function keystrokeHeatWeight(kind, repeat) {
   if (kind === "delete") return repeat ? 0.7 : 1;
   return repeat ? 0 : 1;
 }
+var CARET_COVERS = ".ws-mask, .ws-status-bar";
 var GEOMETRY_TTL_MS = 400;
 var INPUT_HOT_MS = 500;
 var CARET_STYLE_TTL_MS = 1e3;
@@ -4343,7 +4344,17 @@ var measureMethods = {
         statusRight = sb.right;
       }
     }
-    this._chromeCache = { doc, t: now, top, bottomInset, statusLeft, statusRight };
+    let coverTop = 0;
+    let coverBottom = Number.POSITIVE_INFINITY;
+    const win2 = doc.defaultView || window;
+    for (const el of Array.from(doc.querySelectorAll(CARET_COVERS))) {
+      if (!this._isVisiblyRendered(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height <= 0 || r.width < win2.innerWidth * 0.4) continue;
+      if (r.top + r.height / 2 < win2.innerHeight / 2) coverTop = Math.max(coverTop, r.bottom);
+      else coverBottom = Math.min(coverBottom, r.top);
+    }
+    this._chromeCache = { doc, t: now, top, bottomInset, statusLeft, statusRight, coverTop, coverBottom };
     return this._chromeCache;
   },
   // Full-window rect minus the window chrome. Never returns a rect that
@@ -8426,10 +8437,12 @@ var torchMethods = {
       this._lastGlowAlpha = "";
       this._torchGlowKey = "";
       this.applyOverlayStyle();
-      this.modalOpen = !!targetDoc.querySelector(".modal-container");
-      this.modalObserver = new MutationObserver(() => {
+      const covered = () => {
         this.modalOpen = !!targetDoc.querySelector(".modal-container");
-      });
+        this._coverOpen = this.modalOpen || !!targetDoc.querySelector("body > .menu, .menu-container");
+      };
+      covered();
+      this.modalObserver = new MutationObserver(covered);
       this.modalObserver.observe(targetDoc.body, { childList: true });
     }
   },
@@ -8533,6 +8546,7 @@ var torchMethods = {
     this.modalObserver?.disconnect();
     this.modalObserver = null;
     this.modalOpen = false;
+    this._coverOpen = false;
   },
   enableTorchOverlay() {
     this.torchEngineActive = true;
@@ -8613,7 +8627,7 @@ var torchMethods = {
               }
               const spots = this.torchSpotlights(useMouse, lerp);
               const isMobile = this.overlay.ownerDocument.body.classList.contains("is-mobile");
-              const spare = !!this.look.overlaySpareSidebars && !isMobile;
+              const spare = isMobile || !!this.look.overlaySpareSidebars;
               const r = spare ? this.getMainAreaRect(this.overlay.ownerDocument) : null;
               const usePane = !!r;
               const rect = usePane ? r : this.getFullViewportRect(this.overlay.ownerDocument);
@@ -8630,7 +8644,7 @@ var torchMethods = {
                 this.overlay.style.width = width + "px";
                 this.overlay.style.height = height + "px";
               }
-              const hideForModal = spare && (this.modalOpen || notes !== null && notes.length === 0);
+              const hideForModal = spare && (this.modalOpen || notes !== null && notes.length === 0) || isMobile && (this._coverOpen || this._drawerOpen());
               const pulse = !hideForModal && !!this.look.overlayBlinkSync && !!this.look.blinkingEnabled;
               let radius = this.look.overlayRadius;
               if (pulse) {
@@ -8750,6 +8764,19 @@ var torchMethods = {
       spots.push({ x: st.torchX, y: st.torchY });
     }
     return spots;
+  },
+  // A side pane open over the note: on a phone the drawers, on desktop the
+  // docks (only the phone reads it). The workspace's own flags, not the
+  // DOM: WorkspaceMobileDrawer and WorkspaceSidedock both carry
+  // `collapsed`.
+  _drawerOpen() {
+    try {
+      const ws = this.app.workspace;
+      const l = ws.leftSplit, r = ws.rightSplit;
+      return !!(l && !l.collapsed || r && !r.collapsed);
+    } catch {
+      return false;
+    }
   },
   // Torch-only wake: mouse movement retargets the spotlight but shouldn't
   // spin the cursor canvas up to full rate.
@@ -9442,12 +9469,18 @@ var engineMethods = {
           // Linux/Windows (drag regions compose in DOM order; z-index
           // and pointer-events are irrelevant to them).
           this.getFullViewportRect(this.canvas.ownerDocument);
-          const top = Math.round(r.top);
+          let top = Math.round(r.top);
           const left = Math.round(r.left);
-          this._clipTop = top;
           const width = Math.round(r.width);
           let height = Math.round(r.height);
           const ins = this._chromeInsets(this.canvas.ownerDocument);
+          const coverTop = Math.max(top, Math.ceil(ins.coverTop));
+          const coverBottom = Math.min(top + height, Math.floor(ins.coverBottom));
+          if (coverTop > top || coverBottom < top + height) {
+            top = coverTop;
+            height = Math.max(0, coverBottom - coverTop);
+          }
+          this._clipTop = top;
           let clipPath = "";
           if (ins.bottomInset > 0) {
             const win = this.canvas.ownerDocument.defaultView || window;
@@ -10787,6 +10820,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.overlay = null;
     this.modalObserver = null;
     this.modalOpen = false;
+    this._coverOpen = false;
     this.x = this.tx = window.innerWidth / 2;
     this.y = this.ty = window.innerHeight / 2;
     this.lastCaret = null;

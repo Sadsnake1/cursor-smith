@@ -238,7 +238,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   _decorateRoot(): HTMLElement | null {
     const c = this.containerEl;
     if (!c) return null;
-    const parent = c.parentElement as HTMLElement | null;
+    const parent = c.parentElement;
     if (parent) this._pagesRoot = parent;
     const root = this._pagesRoot;
     return root && root.isConnected !== false ? root : c;

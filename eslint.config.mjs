@@ -18,6 +18,11 @@ export default defineConfig([
     },
     rules: {
       "obsidianmd/ui/sentence-case": ["warn", { ignoreWords: ["Vim", "CUA"] }],
+      // The review flags these and the recommended set here did not
+      // (settings-tab.ts:241 in 1.6.0, an "as HTMLElement | null" on a
+      // parentElement that already had that type): named here so the local
+      // lint says so first.
+      "@typescript-eslint/no-unnecessary-type-assertion": "warn",
     },
   },
   {

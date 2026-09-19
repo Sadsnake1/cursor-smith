@@ -74,7 +74,10 @@ export interface CaretStyleCache extends LineStyle {
 }
 // A secondary's, kept on its bundle (secondaryCaretRecord).
 export interface SecondaryStyleCache extends LineStyle { doc: Text; pos: number; t: number; char: string; charWidth: number }
-export interface ChromeInsets { doc: Document; t: number; top: number; bottomInset: number; statusLeft: number; statusRight: number }
+// coverTop / coverBottom: the client Y past which the cursor canvas may not
+// paint, from the full-width bands and bars fixed over the editor
+// (CARET_COVERS); 0 and Infinity with none.
+export interface ChromeInsets { doc: Document; t: number; top: number; bottomInset: number; statusLeft: number; statusRight: number; coverTop: number; coverBottom: number }
 export interface Box { top: number; bottom: number; left: number; right: number; width: number; height: number }
 export interface PaneRectCache { view: EditorView; gen: number; t: number; rect: Box | null }
 export interface MainRectCache { doc: Document; gen: number; t: number; rect: Box | null; notes: Box[] }

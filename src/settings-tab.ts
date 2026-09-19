@@ -72,6 +72,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // them there.
   _effectsOn: (() => RailEffect[]) | null = null;
   _valueObserver: MutationObserver | null = null;
+  // The element that holds the pages (see _decorateRoot).
+  _pagesRoot: HTMLElement | null = null;
   constructor(app: App, plugin: CursorSmithPlugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -216,8 +218,39 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const win = this.containerEl?.ownerDocument?.defaultView;
     if (!win || typeof win.MutationObserver !== "function") return;
     this._valueObserver = new win.MutationObserver(() => { this.decoratePanel(); });
-    this._valueObserver.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+    this._observe();
     this.decoratePanel();
+  }
+
+  // Where the pass looks and the observer listens: the element that holds
+  // the pages, not the tab's container. Obsidian 1.13 shows a sub-page
+  // (Behavior, Effects and the rest) by DETACHING the tab's container and
+  // rendering the page (div.setting-page) into the same
+  // .vertical-tab-content-container, so a pass over the container decorated
+  // the root list and never a page - the effect headings on the Effects
+  // page kept their icons in the descriptions - and while a page shows the
+  // container has no parent to climb to. So the holder is remembered while
+  // the container is attached (the root list showing) and used while it is
+  // still in the document. The container is the tab's for life; the holder
+  // can be a new element when the settings window is opened again, and the
+  // container itself is watched as well, which is what wakes the pass when
+  // the root list is rendered into it again, so the new holder is taken.
+  _decorateRoot(): HTMLElement | null {
+    const c = this.containerEl;
+    if (!c) return null;
+    const parent = c.parentElement as HTMLElement | null;
+    if (parent) this._pagesRoot = parent;
+    const root = this._pagesRoot;
+    return root && root.isConnected !== false ? root : c;
+  }
+
+  _observe() {
+    const o = this._valueObserver;
+    const root = this._decorateRoot();
+    if (!o || !root) return;
+    const opts = { childList: true, subtree: true, characterData: true };
+    o.observe(root, opts);
+    if (root !== this.containerEl) o.observe(this.containerEl, opts);
   }
 
   // The pass. It writes to the DOM the observer watches, so the observer
@@ -231,7 +264,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       this.decorateIcons();
       this.decorateEffectsValue();
     } finally {
-      if (observer && this.containerEl) observer.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+      this._observe();
     }
   }
 
@@ -239,8 +272,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // the entry's info block, which takes the grid class. Nothing to do
   // once it has moved (its parent is the info block, not a description).
   decorateIcons() {
-    if (!this.containerEl) return;
-    for (const icon of Array.from(this.containerEl.querySelectorAll(".cursor-smith-page-icon"))) {
+    const root = this._decorateRoot();
+    if (!root) return;
+    for (const icon of Array.from(root.querySelectorAll(".cursor-smith-page-icon"))) {
       const desc = icon.parentElement;
       if (!desc || !desc.hasClass("setting-item-description")) continue;
       const info = desc.parentElement;
@@ -252,7 +286,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
 
   decorateEffectsValue() {
     const on = this._effectsOn ? this._effectsOn() : null;
-    if (!on || !this.containerEl) return;
+    // The container, not the pages' holder: the Effects entry is in the
+    // root list, and the holder shows another tab's rows once the user
+    // switches tabs - a row of theirs named "Effects" is not ours to dress.
+    const root = this.containerEl;
+    if (!on || !root) return;
     const sig = on.map((e) => e.key).join(",");
     // A value already in the wanted state is left alone - a write fires the
     // observer, which runs this again (decoratePanel pauses it, but the
@@ -260,7 +298,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // on every call and hung Obsidian in a mutation loop).
     const wanted = (value: Element) => value.getAttribute("data-cs-effects") === sig
       && (on.length ? !!value.querySelector(".cursor-smith-value-icon") : value.getText() === "Off");
-    const rows = Array.from(this.containerEl.querySelectorAll(".setting-item")).filter((row) => {
+    const rows = Array.from(root.querySelectorAll(".setting-item")).filter((row) => {
       const name = row.querySelector(".setting-item-name");
       return !!name && name.getText().trim() === "Effects" && !!row.querySelector(".setting-item-value") && !wanted(row.querySelector(".setting-item-value") as Element);
     });
@@ -523,6 +561,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           b.createSpan({ cls: "cursor-smith-pcard-name", text: label });
           b.addEventListener("click", run);
         };
+        // Save and Import on a line of their own below the presets, however
+        // many there are: a full-width item breaks the wrapping row before
+        // them (styles.css). They used to wrap along with the presets.
+        strip.createDiv({ cls: "cursor-smith-pcard-break" });
         more("save", "Save", () => {
           // A name that is already taken warns once and keeps the prompt;
           // OK again with the same name replaces the preset.

@@ -311,6 +311,9 @@ export const measureMethods = {
         letterSpacing,
         focused: view.hasFocus || (inTable && activeIsEditable),
         pos,
+        // The document length, for resolveHoldChar: with pos, an insertion
+        // at the caret (typing) is told from a click or an arrow.
+        docLen: view.state.doc.length,
         // Needed by updateActivePoint: an assoc flip at a wrap boundary is a
         // real cursor move (row1-end -> row2-start) even though pos is equal,
         // and must NOT be swallowed by the scroll-compensation branch.
@@ -445,6 +448,7 @@ export const measureMethods = {
       fontSize: st.fontSize, fontFamily: st.fontFamily, fontWeight: st.fontWeight, fontStyle: st.fontStyle,
       letterSpacing: st.letterSpacing,
       focused: true, pos, assoc: c.assoc,
+      docLen: view.state.doc.length,
     };
   },
 
@@ -838,21 +842,36 @@ export const measureMethods = {
     return "";
   },
 
+  // The letter the box keeps showing while the caret rests after TYPING:
+  // the character just inserted, which the caret now sits after (with
+  // nothing under it at the end of a line). Only for an insertion at the
+  // caret - the document grew by exactly the distance the caret moved: a
+  // keystroke, a paste - and null for every other move. A click or an
+  // arrow, forward or back, then shows the character under the caret, or
+  // nothing on an empty line.
+  //
+  // It used to hold the character before ANY forward move (a click ahead
+  // held whatever preceded the click, a space at a word's start included,
+  // and popped a letter particle for it) and, for every other move, the
+  // previous position's character - so a click from a word onto an empty
+  // line showed the word's letter in the empty box.
   resolveHoldChar(this: CursorSmithPlugin, newCaret: CaretRecord): string | null {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
+      const last = this.lastActive;
       if (
-        view &&
-        typeof newCaret.pos === "number" &&
-        typeof this.lastActive?.pos === "number" &&
-        newCaret.pos > this.lastActive.pos
+        view && last &&
+        typeof newCaret.pos === "number" && typeof last.pos === "number" &&
+        typeof newCaret.docLen === "number" && typeof last.docLen === "number" &&
+        newCaret.pos > last.pos &&
+        newCaret.docLen - last.docLen === newCaret.pos - last.pos
       ) {
         const justTyped = view.state.doc.sliceString(newCaret.pos - 1, newCaret.pos);
         if (justTyped && justTyped !== "\n") {
           // Both gates, in the same shape Thunderstrike and Fireworks use:
           // the group's master toggle, then the effect's own.
           if (this.look.popEffects && this.look.popLetters) {
-            this.spawnLetterParticle(justTyped, this.lastActive);
+            this.spawnLetterParticle(justTyped, last);
           }
           return justTyped;
         }
@@ -860,7 +879,7 @@ export const measureMethods = {
     } catch {
       /* fall through */
     }
-    return this.lastActive ? this.lastActive.char : "";
+    return null;
   },
 
   // True when `el` is Excalidraw's own text editor.

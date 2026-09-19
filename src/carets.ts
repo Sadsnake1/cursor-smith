@@ -368,6 +368,17 @@ export const caretsMethods = {
     }
   },
 
+  // The letter a keystroke left in the box stays while the caret rests at
+  // that position. A resting caret is measured again on every frame the
+  // loop runs (and it runs hot for half a second after a keystroke), each
+  // time a fresh record with no hold of its own - so without this the
+  // typed letter was gone on the next frame, and a hold only ever lasted
+  // while the loop was parked. A move starts afresh (resolveHoldChar).
+  _carryHold(this: CursorSmithPlugin, caret: CaretRecord) {
+    const last = this.lastActive;
+    if (last && last.holdChar && caret.pos === last.pos && caret.holdChar == null) caret.holdChar = last.holdChar;
+  },
+
   // With no argument this is the primary and measures itself. A secondary
   // hands its own record in, with its state bundle swapped into `this`
   // (see _withCaret), and everything below then runs for that caret.
@@ -388,7 +399,9 @@ export const caretsMethods = {
       Math.abs(this.lastActive.x - caret.x) > 0.5 || Math.abs(this.lastActive.top - caret.top) > 0.5;
 
     if (!moved) {
-      if (!this.pending) this.lastActive = caret;
+      // The held letter rides across the re-measurements of a resting
+      // caret (_carryHold); the fresh record has none of its own.
+      if (!this.pending) { this._carryHold(caret); this.lastActive = caret; }
       return;
     }
 
@@ -401,6 +414,7 @@ export const caretsMethods = {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
       
+      this._carryHold(caret);
       this.lastActive = caret;
       
       // If the coordinate changed but the document position didn't, it was a scroll/layout shift.
@@ -463,7 +477,9 @@ export const caretsMethods = {
 
     const pending = this.pending;
     if (!pending || pending.caret.x !== caret.x || pending.caret.top !== caret.top) {
-      this.pending = { caret, since: performance.now(), holdChar: this.resolveHoldChar(caret) };
+      // While the move is pending the box still sits at the old spot, so
+      // it keeps the old character unless a keystroke gave it a new one.
+      this.pending = { caret, since: performance.now(), holdChar: this.resolveHoldChar(caret) ?? (this.lastActive ? this.lastActive.char : "") };
     } else if (performance.now() - pending.since >= delay) {
       this.commitMove(pending.caret);
     }

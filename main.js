@@ -2187,6 +2187,8 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     // them there.
     this._effectsOn = null;
     this._valueObserver = null;
+    // The element that holds the pages (see _decorateRoot).
+    this._pagesRoot = null;
     this.plugin = plugin;
   }
   // -------------------------------------------------------------------------
@@ -2313,8 +2315,37 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     this._valueObserver = new win.MutationObserver(() => {
       this.decoratePanel();
     });
-    this._valueObserver.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+    this._observe();
     this.decoratePanel();
+  }
+  // Where the pass looks and the observer listens: the element that holds
+  // the pages, not the tab's container. Obsidian 1.13 shows a sub-page
+  // (Behavior, Effects and the rest) by DETACHING the tab's container and
+  // rendering the page (div.setting-page) into the same
+  // .vertical-tab-content-container, so a pass over the container decorated
+  // the root list and never a page - the effect headings on the Effects
+  // page kept their icons in the descriptions - and while a page shows the
+  // container has no parent to climb to. So the holder is remembered while
+  // the container is attached (the root list showing) and used while it is
+  // still in the document. The container is the tab's for life; the holder
+  // can be a new element when the settings window is opened again, and the
+  // container itself is watched as well, which is what wakes the pass when
+  // the root list is rendered into it again, so the new holder is taken.
+  _decorateRoot() {
+    const c = this.containerEl;
+    if (!c) return null;
+    const parent = c.parentElement;
+    if (parent) this._pagesRoot = parent;
+    const root = this._pagesRoot;
+    return root && root.isConnected !== false ? root : c;
+  }
+  _observe() {
+    const o = this._valueObserver;
+    const root = this._decorateRoot();
+    if (!o || !root) return;
+    const opts = { childList: true, subtree: true, characterData: true };
+    o.observe(root, opts);
+    if (root !== this.containerEl) o.observe(this.containerEl, opts);
   }
   // The pass. It writes to the DOM the observer watches, so the observer
   // is paused while it writes, and each job leaves nothing for itself to
@@ -2327,15 +2358,16 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       this.decorateIcons();
       this.decorateEffectsValue();
     } finally {
-      if (observer && this.containerEl) observer.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+      this._observe();
     }
   }
   // A leading icon still inside its description moves to the front of
   // the entry's info block, which takes the grid class. Nothing to do
   // once it has moved (its parent is the info block, not a description).
   decorateIcons() {
-    if (!this.containerEl) return;
-    for (const icon of Array.from(this.containerEl.querySelectorAll(".cursor-smith-page-icon"))) {
+    const root = this._decorateRoot();
+    if (!root) return;
+    for (const icon of Array.from(root.querySelectorAll(".cursor-smith-page-icon"))) {
       const desc = icon.parentElement;
       if (!desc || !desc.hasClass("setting-item-description")) continue;
       const info = desc.parentElement;
@@ -2346,10 +2378,11 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   }
   decorateEffectsValue() {
     const on = this._effectsOn ? this._effectsOn() : null;
-    if (!on || !this.containerEl) return;
+    const root = this.containerEl;
+    if (!on || !root) return;
     const sig = on.map((e) => e.key).join(",");
     const wanted = (value) => value.getAttribute("data-cs-effects") === sig && (on.length ? !!value.querySelector(".cursor-smith-value-icon") : value.getText() === "Off");
-    const rows = Array.from(this.containerEl.querySelectorAll(".setting-item")).filter((row) => {
+    const rows = Array.from(root.querySelectorAll(".setting-item")).filter((row) => {
       const name = row.querySelector(".setting-item-name");
       return !!name && name.getText().trim() === "Effects" && !!row.querySelector(".setting-item-value") && !wanted(row.querySelector(".setting-item-value"));
     });
@@ -2584,6 +2617,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
           b.createSpan({ cls: "cursor-smith-pcard-name", text: label });
           b.addEventListener("click", run);
         };
+        strip.createDiv({ cls: "cursor-smith-pcard-break" });
         more("save", "Save", () => {
           let warned = "";
           new PresetPrompt(this.app, vim ? "Save these five mode cursors as" : "Save this look as", vim ? "Vim preset name" : "Preset name", async (name) => {
@@ -3766,6 +3800,9 @@ var measureMethods = {
         letterSpacing,
         focused: view.hasFocus || inTable && activeIsEditable,
         pos,
+        // The document length, for resolveHoldChar: with pos, an insertion
+        // at the caret (typing) is told from a click or an arrow.
+        docLen: view.state.doc.length,
         // Needed by updateActivePoint: an assoc flip at a wrap boundary is a
         // real cursor move (row1-end -> row2-start) even though pos is equal,
         // and must NOT be swallowed by the scroll-compensation branch.
@@ -3896,7 +3933,8 @@ var measureMethods = {
       letterSpacing: st.letterSpacing,
       focused: true,
       pos,
-      assoc: c.assoc
+      assoc: c.assoc,
+      docLen: view.state.doc.length
     };
   },
   selectionFallbackCoords(view) {
@@ -4159,21 +4197,35 @@ var measureMethods = {
     }
     return "";
   },
+  // The letter the box keeps showing while the caret rests after TYPING:
+  // the character just inserted, which the caret now sits after (with
+  // nothing under it at the end of a line). Only for an insertion at the
+  // caret - the document grew by exactly the distance the caret moved: a
+  // keystroke, a paste - and null for every other move. A click or an
+  // arrow, forward or back, then shows the character under the caret, or
+  // nothing on an empty line.
+  //
+  // It used to hold the character before ANY forward move (a click ahead
+  // held whatever preceded the click, a space at a word's start included,
+  // and popped a letter particle for it) and, for every other move, the
+  // previous position's character - so a click from a word onto an empty
+  // line showed the word's letter in the empty box.
   resolveHoldChar(newCaret) {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
-      if (view && typeof newCaret.pos === "number" && typeof this.lastActive?.pos === "number" && newCaret.pos > this.lastActive.pos) {
+      const last = this.lastActive;
+      if (view && last && typeof newCaret.pos === "number" && typeof last.pos === "number" && typeof newCaret.docLen === "number" && typeof last.docLen === "number" && newCaret.pos > last.pos && newCaret.docLen - last.docLen === newCaret.pos - last.pos) {
         const justTyped = view.state.doc.sliceString(newCaret.pos - 1, newCaret.pos);
         if (justTyped && justTyped !== "\n") {
           if (this.look.popEffects && this.look.popLetters) {
-            this.spawnLetterParticle(justTyped, this.lastActive);
+            this.spawnLetterParticle(justTyped, last);
           }
           return justTyped;
         }
       }
     } catch {
     }
-    return this.lastActive ? this.lastActive.char : "";
+    return null;
   },
   // True when `el` is Excalidraw's own text editor.
   //
@@ -10460,6 +10512,16 @@ var caretsMethods = {
       return null;
     }
   },
+  // The letter a keystroke left in the box stays while the caret rests at
+  // that position. A resting caret is measured again on every frame the
+  // loop runs (and it runs hot for half a second after a keystroke), each
+  // time a fresh record with no hold of its own - so without this the
+  // typed letter was gone on the next frame, and a hold only ever lasted
+  // while the loop was parked. A move starts afresh (resolveHoldChar).
+  _carryHold(caret) {
+    const last = this.lastActive;
+    if (last && last.holdChar && caret.pos === last.pos && caret.holdChar == null) caret.holdChar = last.holdChar;
+  },
   // With no argument this is the primary and measures itself. A secondary
   // hands its own record in, with its state bundle swapped into `this`
   // (see _withCaret), and everything below then runs for that caret.
@@ -10476,12 +10538,16 @@ var caretsMethods = {
     }
     const moved = Math.abs(this.lastActive.x - caret.x) > 0.5 || Math.abs(this.lastActive.top - caret.top) > 0.5;
     if (!moved) {
-      if (!this.pending) this.lastActive = caret;
+      if (!this.pending) {
+        this._carryHold(caret);
+        this.lastActive = caret;
+      }
       return;
     }
     if (caret.pos !== null && caret.pos === this.lastActive.pos && caret.assoc === this.lastActive.assoc) {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
+      this._carryHold(caret);
       this.lastActive = caret;
       if (this.animActive && (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01)) {
         this.animActive.x += dx;
@@ -10530,7 +10596,7 @@ var caretsMethods = {
     }
     const pending = this.pending;
     if (!pending || pending.caret.x !== caret.x || pending.caret.top !== caret.top) {
-      this.pending = { caret, since: performance.now(), holdChar: this.resolveHoldChar(caret) };
+      this.pending = { caret, since: performance.now(), holdChar: this.resolveHoldChar(caret) ?? (this.lastActive ? this.lastActive.char : "") };
     } else if (performance.now() - pending.since >= delay) {
       this.commitMove(pending.caret);
     }

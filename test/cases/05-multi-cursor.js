@@ -542,6 +542,68 @@ section("multi-cursor: full effects on secondary carets");
     ok("...nor from a stale delta next tick", b.hotBurns[0].y === 20);
   }
 
+
+  // The letter held in the box (resolveHoldChar): only after an insertion
+  // at the caret - the document grew by exactly the distance the caret
+  // moved - never for a click or an arrow. It used to hold the character
+  // before ANY forward move and, otherwise, the previous position's, so a
+  // click from a word onto an empty line showed the word's letter in the
+  // empty box, and a click ahead popped a letter particle.
+  {
+    const text = "the table.\n\nHave some";
+    const cmOf = (txt) => ({ workspace: { activeEditor: { editor: { cm: { state: { doc: { sliceString: (a, b) => txt.slice(a, b), length: txt.length } } } } } } });
+    const at = (pos, docLen, char) => rec(pos * 8, 20, pos, { docLen, char });
+    const e = mk({ popEffects: true, popLetters: true });
+    e.app = cmOf(text);
+    const spawned = [];
+    e.spawnLetterParticle = (ch) => spawned.push(ch);
+    e.lastActive = at(4, text.length, "t");
+    ok("a click ahead holds nothing: the character under the caret shows", e.resolveHoldChar(at(9, text.length, ".")) === null);
+    ok("...nor a click onto the empty line", e.resolveHoldChar(at(11, text.length, "")) === null);
+    ok("...nor a click back", e.resolveHoldChar(at(1, text.length, "h")) === null);
+    ok("...and none of those popped a letter", spawned.length === 0, spawned);
+    e.lastActive = at(4, text.length - 1, " ");
+    ok("a keystroke holds the letter just typed", e.resolveHoldChar(at(5, text.length, "a")) === "t");
+    ok("...and pops it", spawned.join("") === "t", spawned);
+    e.lastActive = at(4, text.length - 5, " ");
+    ok("a paste holds its last character", e.resolveHoldChar(at(9, text.length, ".")) === "e");
+    e.lastActive = at(10, text.length - 1, "");
+    ok("Enter holds nothing", e.resolveHoldChar(at(11, text.length, "")) === null);
+    e.lastActive = at(4, text.length - 2, " ");
+    ok("an auto-paired bracket (two inserted, one moved) holds nothing", e.resolveHoldChar(at(5, text.length, "a")) === null);
+    e.lastActive = rec(32, 20, 4);
+    ok("a record with no document length (a plain field) holds nothing", e.resolveHoldChar(rec(40, 20, 5)) === null);
+    // The commit paths. With no move delay the letter rides on the record;
+    // with one, the box waiting at the old spot keeps the old character.
+    const c = mk({ moveDelayMs: 0 });
+    c.pushTrail = () => {}; c.spawnFlamePixels = () => {}; c.app = cmOf(text);
+    c.lastActive = at(4, text.length, "t");
+    c.updateActivePoint(at(11, text.length, ""));
+    ok("a click onto the empty line commits with no held letter", c.lastActive.pos === 11 && !c.lastActive.holdChar, c.lastActive.holdChar);
+    c.lastActive = at(4, text.length - 1, " ");
+    c.updateActivePoint(at(5, text.length, "a"));
+    ok("a keystroke commits with the typed letter held", c.lastActive.pos === 5 && c.lastActive.holdChar === "t", c.lastActive.holdChar);
+    // ...and the hold survives the re-measurements of the resting caret
+    // (the loop runs hot after a keystroke; the fresh record has none) and
+    // a scroll shift of the same position; a move starts afresh.
+    c.updateActivePoint(at(5, text.length, "a"));
+    ok("...the held letter survives a re-measurement at the same spot", c.lastActive.holdChar === "t", c.lastActive.holdChar);
+    c.animActive = Object.assign({}, c.lastActive);
+    c.updateActivePoint(rec(40, 120, 5, { docLen: text.length, char: "a" }));
+    ok("...and a scroll shift", c.lastActive.holdChar === "t" && c.lastActive.top === 120, [c.lastActive.holdChar, c.lastActive.top]);
+    c.updateActivePoint(at(9, text.length, "."));
+    ok("...and drops on the next move", !c.lastActive.holdChar, c.lastActive.holdChar);
+    const d = mk({ moveDelayMs: 200 });
+    d.pushTrail = () => {}; d.spawnFlamePixels = () => {}; d.app = cmOf(text);
+    d.lastActive = at(4, text.length, "t");
+    d.updateActivePoint(at(11, text.length, ""));
+    ok("with a move delay, the box still at the old spot keeps the old character meanwhile", !!d.pending && d.pending.holdChar === "t", d.pending && d.pending.holdChar);
+    d.lastActive = at(4, text.length - 1, " ");
+    d.pending = null;
+    d.updateActivePoint(at(5, text.length, "a"));
+    ok("...and a keystroke's letter while the move waits", !!d.pending && d.pending.holdChar === "t", d.pending && d.pending.holdChar);
+  }
+
   // A jump puts the caret in fire: decided on the committed move (a scroll
   // shift never reaches that path, and with Smooth Movement the drawn caret
   // never travels far in one frame), spawned all around the caret's box.

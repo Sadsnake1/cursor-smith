@@ -691,7 +691,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
 // renders: the Effects rail, the card summaries and resets, the dependency
 // hints (above), the preset cards, the swatch labels, the preview strip.
 {
-  const { renderWholePanel, sectionOf } = require("../panel_harness");
+  const { renderWholePanel, sectionOf, makeEl } = require("../panel_harness");
   const D = T.DEFAULT_SETTINGS;
   const flip = (rows, name) => { const row = rows.find((r) => r.name === name && r.toggles.length); row.toggles[0]._change(!row.toggles[0]._value); };
 
@@ -767,6 +767,31 @@ section("settings panel: the rail, the summaries, the resets, the cards");
       const before = info.children.length;
       rows.tab.decorateIcons();
       ok("...and a second pass has nothing to do", info.children.length === before && info.children[0] === icon);
+      // Obsidian 1.13 renders a sub-page's rows beside the tab's container,
+      // not inside it: the pass covers the container's parent, and the
+      // effect headings on the Effects page get their icons moved too.
+      {
+        const tabEl = rows.tab.containerEl;
+        ok("with no parent yet the pass works from the container", rows.tab._decorateRoot() === tabEl);
+        const parent = makeEl("div");
+        parent.appendChild(tabEl);
+        ok("...and from the parent once the container has one", rows.tab._decorateRoot() === parent);
+        // A page showing: Obsidian detaches the container and renders the
+        // page into the same holder; the remembered holder still serves.
+        parent.children = parent.children.filter((c) => c !== tabEl); tabEl.parent = null;
+        ok("...and still from that holder while the container is detached for a page", rows.tab._decorateRoot() === parent);
+        parent.appendChild(tabEl);
+        const page = parent.createDiv({ cls: "vertical-tab-content" });
+        const row = page.createDiv({ cls: "setting-item" });
+        const pinfo = row.createDiv({ cls: "setting-item-info" });
+        pinfo.createDiv({ cls: "setting-item-name", text: "Pop effects" });
+        const pdesc = pinfo.createDiv({ cls: "setting-item-description" });
+        const picon = pdesc.createSpan({ cls: "cursor-smith-page-icon" }); picon.icon = "party-popper";
+        pdesc.appendText("Letters, lightning and fireworks thrown off as you type.");
+        rows.tab.decorateIcons();
+        ok("an effect heading on a sub-page, rendered beside the tab's container, gets its icon moved too", pinfo.children[0] === picon && pinfo.classes.includes("cursor-smith-iconed") && !pdesc.children.includes(picon), pinfo.children.map((c) => c.classes.join(".")));
+        parent.children = parent.children.filter((c) => c !== tabEl); tabEl.parent = null;
+      }
       // The observer lives for the tab's life: hide() keeps it. Obsidian
       // 1.13 re-renders the kept definitions on reopen without asking for
       // them again, so an observer dropped here was never recreated, and
@@ -825,6 +850,13 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     ok("the Presets row wears the bookmark, as the page entries wear theirs", strip.icon === "bookmark", strip.icon);
     ok("an effect's head row wears the rail's icon; its sub-rows none", rows.find((r) => r.name === "Hot-head").icon === "flame" && rows.find((r) => r.name === "Motion smear").icon === "paintbrush" && rows.find((r) => r.name === "Stiffness").icon === null, [rows.find((r) => r.name === "Hot-head").icon, rows.find((r) => r.name === "Stiffness").icon]);
     ok("Save wears a floppy, Import a download arrow", named_("Save").querySelector(".cursor-smith-pcard-more-icon").icon === "save" && named_("Import").querySelector(".cursor-smith-pcard-more-icon").icon === "download");
+    // ...on a line of their own: a full-width break sits between the last
+    // preset and Save, so they never wrap along with the presets.
+    {
+      const kids = strip.controlEl.querySelector(".cursor-smith-presets").children;
+      const i = kids.findIndex((k) => k.classes.includes("cursor-smith-pcard-break"));
+      ok("a full-width break sits between the presets and Save, Import", i > 0 && kids[i + 1] === named_("Save") && kids[i + 2] === named_("Import") && kids.slice(0, i).every((k) => k.classes.includes("cursor-smith-pcard")), kids.map((k) => k.classes.join(".")));
+    }
     ok("a translucent Box carries no letter copy (the real letter shows through it)", !named_("One").querySelector(".cursor-smith-pcard-caret-text"));
     ok("...with the caret demo over the preset's own name (still here: no requestAnimationFrame in the harness)", named_("One").querySelector(".cursor-smith-pcard-caret-box") && named_("One").querySelector(".cursor-smith-pcard-text").text === "One" && /translateX\(/.test(named_("One").querySelector(".cursor-smith-pcard-caret").style.transform), named_("One").querySelector(".cursor-smith-pcard-caret").style);
     const glide = renderWholePanel({ userPresets: { Glide: { cursorStyle: "Line", smoothEnabled: true, blinkingEnabled: true }, Ghosts: { crtEffect: true, trailLength: 4 } } });
@@ -1132,7 +1164,7 @@ section("settings panel: the whole tree");
 // card carries the plugin's name and version, the notice and the global
 // switches; the mode switch picks which panel follows.
 {
-  const { renderWholePanel, sectionOf } = require("../panel_harness");
+  const { renderWholePanel, sectionOf, makeEl } = require("../panel_harness");
   const build = (settings, opts) => {
     try { return renderWholePanel(settings, opts); } catch (e) { return { threw: e }; }
   };

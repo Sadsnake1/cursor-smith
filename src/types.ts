@@ -279,6 +279,10 @@ export interface CaretRecord {
   visible?: boolean;
   // The glyph the hold animation keeps showing while the caret rests.
   holdChar?: string | null;
+  // The document's length when this was measured (a CodeMirror caret): with
+  // `pos`, what tells an insertion at the caret from a click or an arrow
+  // (resolveHoldChar).
+  docLen?: number;
 }
 // A secondary caret as secondaryCaretCoords measures it: the coordinates
 // and the range's identity, before the full record is built for it (or

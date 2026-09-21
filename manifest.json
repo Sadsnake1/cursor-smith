@@ -1,9 +1,9 @@
 {
-  "id": "cursor-smith",
-  "name": "Cursor-Smith",
-  "version": "1.6.1",
+  "id": "word-smith",
+  "name": "Word-Smith",
+  "version": "1.5.7",
   "minAppVersion": "1.13.7",
-  "description": "Forge your cursor with the most advanced cursor engine there is.",
+  "description": "Distraction-free Writing Suite.",
   "author": "SadSnake1",
   "fundingUrl": "https://buymeacoffee.com/sadsnake1",
   "isDesktopOnly": false

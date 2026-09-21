@@ -1,1614 +1,2116 @@
-import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
-import type { SettingDefinitionControl, SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
-import type CursorSmithPlugin from "./plugin";
-import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
-import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
-import { readableGlyphColor } from "./color";
-import { DemoStrip } from "./demo";
-import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "./types";
+// Word-Smith — settings-tab: the settings, declared.
+//
+// THE PANEL is Obsidian 1.13's declarative one: `getSettingDefinitions()`
+// hands Obsidian a tree, Obsidian draws it, indexes it for search, and
+// re-renders it IN PLACE on `update()` (rows reconciled by name — the
+// scroll and every untouched row survive). No `display()`.
+//
+//   THE HEADER is a heading-less group: Enable plugin, alone. Everything
+//   else is a PAGE — Obsidian's own sub-page, one slide in and one back,
+//   on a phone as on a desktop — with a Lucide icon in front of its name
+//   (iconDesc: written into the description, laid out by the sheet), one
+//   plain line of description, and a `displayValue` saying what the page
+//   is set to. Then a muted FOOTER with the version read off the
+//   manifest. No plugin-name heading, no page called General.
+//
+//   A LONG PAGE has a RAIL of pills at its top (Focus, Prose, Powerline):
+//   one pill per section with its icon, a tick at the left while that
+//   section's switch is on, the picked one filled with the accent; the
+//   picked section's rows under it, one section at a time. The pick is
+//   panel state for the session, never a setting. A row of pills is a
+//   keyboard group (rovingRow): the picked pill is the one Tab stop,
+//   Left/Right/Home/End walk it, `aria-pressed` on each.
+//
+//   A GATE is a `visible` predicate and `refreshDomState()` — never
+//   `update()` for a gate (it re-renders in 60-85 ms and steals focus);
+//   `update()` only when the TREE changes (a flag added, a path added).
+//   This tab's `refreshDomState` also runs what the rows registered
+//   (`onRefresh`): the rail's ticks, the alerts' state.
+//
+//   A RENDER puts what it builds in `controlEl`, which Obsidian empties on
+//   a re-render; anything it must add to `settingEl` outside it (an
+//   alert's icon) removes last time's copy first — Obsidian keeps a row's
+//   element across `update()` and runs the render again.
+//
+//   DELETE IS TWO TAPS, no dialog: the first turns the trash into a red
+//   "Delete?" for three seconds, the second deletes. A card is a `div`
+//   holding one "use" button and its action buttons as siblings — no button
+//   inside a button (invalid HTML; a screen reader skips a button's
+//   children). Icon buttons carry Obsidian's `clickable-icon`.
+//
+//   A WARNING CARD (icon, one line, no button) sits under every switch that
+//   changes the editor's behavior — Hemingway, Typography, Zen, the Vim
+//   motions — so a curious user is never stuck.
+//
+//   EVERY SECTION ENDS WITH ITS RESET: a small link that puts the keys its
+//   rows write (a control's `key`, a render row's declared keys — read off
+//   the definitions, the one writer of "what this section sets") back to
+//   their defaults through `settingsResetKeys`, the door a load and a paste
+//   use.
+//
+//   DESCRIPTIONS are one plain line each, American spelling, no em dashes,
+//   sentence case; the plugin's names are brands (the lint's list).
+//
+//   THE PRESETS are the strip of cards under the Powerline switch —
+//   presetsRow, below.
+import { PluginSettingTab, Setting, TFolder, Notice, Platform, Modal, setIcon } from 'obsidian';
+import type { App, SettingDefinition, SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem } from 'obsidian';
+import {
+	BAR_KEYS_LIVE,
+	BAR_SHARE_VERSION,
+	DEFAULT_SETTINGS,
+	MENU_MAX_COLS,
+	MENU_RULE_STYLES,
+	PL_BG_COUNT,
+	PL_THEME_BGS,
+	WS_FLAG_SHAPES,
+	WS_MASK_MIN_PX,
+	WS_STATE_IDS,
+	WsPathSuggestModal,
+	barMenuFuzzy,
+	barPresetToCode,
+	barPresetWithDefaults,
+	wsCatch,
+	wsFlagSvg,
+	wsSvgInto,
+} from './preamble';
+import type WordSmith from './plugin';
+import type { WordSmithSettings } from './settings';
 
-// The effects, in the order the Effects page lists them: the master key,
-// the name and description of the entry, and its Lucide icon.
-// The icons are Lucide's, by name, drawn by Obsidian's setIcon; the torch's
-// is registered by the plugin at load (CANDLE_ICON in plugin.ts).
-const RAIL_EFFECTS: RailEffect[] = [
-  { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
-  { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
-  { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
-  { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
-  { key: "smear", name: "Motion smear", icon: "paintbrush", desc: "The cursor stretches as it moves and snaps back when it arrives." },
-  { key: "energyEffect", name: "Energy beam", icon: "zap", desc: "A pulse of light along the cursor; an aurora with a gradient." },
-  { key: "crtEffect", name: "CRT effects", icon: "circuit-board", desc: "Phosphor ghosts behind the cursor, neon and glitch options." },
-  { key: "speedDemon", name: "Speed demon", icon: "gauge", desc: "Heats from gray to white-hot as you type, throwing sparks." },
-  { key: "hotHead", name: "Hot-head", icon: "flame", desc: "Sets the text you are working on alight." },
-  { key: "torchEffect", name: "Torch spotlight", icon: "cursor-smith-candle", desc: "Darkens everything except a pool of light around the cursor." },
-];
+type Key = keyof WordSmithSettings;
+type Def = SettingDefinition<Key>;
+type Item = SettingDefinitionItem<Key>;
+type Group = SettingDefinitionGroup<Key>;
+type Page = SettingDefinitionPage<Key>;
+type Row = SettingGroupItem<Key>;
+type Render = SettingDefinitionRender;
+type Pred = () => boolean;
 
-// A small prompt: a title, one text field, OK. What Save and Import on the
-// preset strip open. `submit` answers true to close, false to keep the
-// prompt (nothing to do), or a string to show under the field and keep it.
+// A rail's sections: the pill's key, name and icon, and (for a section
+// with a switch) the predicate that draws the tick.
+interface RailEntry { key: string; name: string; icon: string; on?: Pred; draw?: (el: HTMLElement) => void }
+// what `railed()` hands a section: the class its rail toggles, and its own gate
+interface RailSlot { cls: string; visible?: Pred }
+// a hotkeys card's entry: a command id, or one with the switch it answers to
+type WsKeyEntry = string | { id: string; on: Pred };
+
 // How long a tapped trash stays "Delete?" before it turns back.
 const DELETE_ARM_MS = 3000;
 
-class PresetPrompt extends Modal {
-  constructor(app: App, title: string, placeholder: string, submit: (value: string) => Promise<boolean | string | void> | boolean | string | void) {
-    super(app);
-    this.setTitle(title);
-    const field = this.contentEl.createEl("input", { type: "text", attr: { placeholder, spellcheck: "false" } });
-    field.addClass("cursor-smith-prompt-field");
-    const note = this.contentEl.createDiv({ cls: "cursor-smith-prompt-note" });
-    const go = async () => {
-      const value = field.value.trim();
-      const result = await submit(value);
-      if (result === false) return;
-      if (typeof result === "string") { note.setText(result); field.focus(); return; }
-      this.close();
-    };
-    field.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); void go(); } });
-    const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
-    const ok = buttons.createEl("button", { cls: "mod-cta", text: "OK", attr: { type: "button" } });
-    ok.addEventListener("click", () => { void go(); });
-    const cancel = buttons.createEl("button", { text: "Cancel", attr: { type: "button" } });
-    cancel.addEventListener("click", () => this.close());
-    this.field = field;
-  }
-  field: HTMLInputElement;
-  onOpen() { this.field.focus(); }
+// The keys a render row governs, so a section's reset can name them: a
+// render row has no `control.key`, and `rendered(def, keys)` is the one
+// place it says what it writes.
+const RENDER_KEYS = new WeakMap<object, Key[]>();
+const rendered = (def: Render, keys: Key[]): Render => { RENDER_KEYS.set(def, keys); return def; };
+
+// the settings as a bag, for the rows that address a key by name
+const bag = (s: WordSmithSettings) => s as unknown as Record<string, unknown>;
+const DEFAULTS = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+const str = (v: unknown) => typeof v === 'string' ? v : (typeof v === 'number' || typeof v === 'boolean') ? String(v) : '';
+const between = (lo: number, hi: number) => (v: number) => (isFinite(v) && v >= lo && v <= hi) ? undefined : 'Between ' + lo + ' and ' + hi + '.';
+const all = (...ps: Pred[]): Pred => () => ps.every((p) => p());
+// a class set only when it changes: Chromium queues a mutation record on a
+// `classList.add` of a token already there, and the tab's watch listens for
+// class changes — a paint that rewrote what was there fed the watch forever
+const setClass = (el: Element, cls: string, on: boolean) => { if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on); };
+const setAttr = (el: Element, name: string, value: string) => { if (el.getAttribute(name) !== value) el.setAttribute(name, value); };
+
+// A small prompt: a title, one field, OK. What Save and Import on the
+// preset strip open. `submit` answers true to close, false to keep the
+// prompt (nothing to do), or a line to show under the field and keep it.
+class WsPrompt extends Modal {
+	field: HTMLInputElement;
+	constructor(app: App, title: string, placeholder: string, submit: (value: string) => Promise<boolean | string>) {
+		super(app);
+		this.setTitle(title);
+		this.field = this.contentEl.createEl('input', { type: 'text', cls: 'ws-prompt-field', attr: { placeholder, spellcheck: 'false' } });
+		const note = this.contentEl.createDiv({ cls: 'ws-prompt-note' });
+		const go = async () => {
+			const result = await submit(this.field.value.trim());
+			if (result === false) return;
+			if (typeof result === 'string') { note.setText(result); this.field.focus(); return; }
+			this.close();
+		};
+		this.field.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void go(); } });
+		const buttons = this.contentEl.createDiv({ cls: 'modal-button-container' });
+		buttons.createEl('button', { cls: 'mod-cta', text: 'OK', attr: { type: 'button' } }).addEventListener('click', () => { void go(); });
+		buttons.createEl('button', { text: 'Cancel', attr: { type: 'button' } }).addEventListener('click', () => { this.close(); });
+	}
+	onOpen() { this.field.focus(); }
 }
 
-export class CursorSmithSettingTab extends PluginSettingTab {
-  plugin: CursorSmithPlugin;
-  // What a refresh repaints beyond Obsidian's own `visible` pass: the rail's
-  // chips, the cards' summaries, the rows disabled by a setting elsewhere.
-  // Rows register these while they render; the list is emptied whenever the
-  // tree is built again, because the rows are then rendered again.
-  _refreshers: (() => void)[] = [];
-  // Which effect the Effects page's rail shows, by its master key, or "all";
-  // null until the user picks one (then the first effect that is on). Panel
-  // state for the session, never in the settings.
-  _effectsPick: string | null = null;
-  // The effects that are on in the look the pages show (set with the
-  // pages), for the Effects entry's icons; and the observer that puts
-  // them there.
-  _effectsOn: (() => RailEffect[]) | null = null;
-  _valueObserver: MutationObserver | null = null;
-  // The element that holds the pages (see _decorateRoot).
-  _pagesRoot: HTMLElement | null = null;
-  constructor(app: App, plugin: CursorSmithPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  // -------------------------------------------------------------------------
-  // The panel is declarative, the Obsidian 1.13 way: getSettingDefinitions()
-  // returns the tree of groups and rows, Obsidian renders it, indexes every
-  // row for settings search, and re-renders it IN PLACE - reconciling rows
-  // by name, so the scroll position and every untouched row survive -
-  // whenever update() is called. update() is what display() and the
-  // per-section re-render used to be: every control that adds or removes
-  // rows, and every preset load, calls it.
-  //
-  // Rows are `render` definitions: the name and description live on the
-  // definition (that is what search sees), and the control is built in the
-  // render callback with the same Setting API as before. The six global
-  // toggles are `control` definitions, read and written through
-  // getControlValue / setControlValue below. Nothing is built at definition
-  // time except the tree itself, so this is cheap to call.
-  //
-  // The tree depends on the mode switch, the preset lists and which Vim mode
-  // is being edited, and Obsidian renders the LAST definitions it was given
-  // (it does not ask again on open) - so anything that changes those from
-  // outside the panel goes through plugin.refreshSettingTab(), which calls
-  // update().
-  // -------------------------------------------------------------------------
-  getSettingDefinitions(): SettingDefinitionItem[] {
-    this._refreshers = [];
-    const vim = (this.plugin.settings.uiMode || "cua") === "vim";
-    const items: SettingDefinitionItem[] = [
-      this.headerGroup(),
-      this.page("Behavior", "sliders-horizontal", "Where it draws, power saving, reduced motion.", [this.generalGroup()]),
-    ];
-    if (vim) items.push(...this.vimDefinitions());
-    else items.push(...this.normalDefinitions());
-    items.push(this.footerRow());
-    return items;
-  }
-
-  // The version, a muted line under the pages. Not a heading: Obsidian's
-  // guidelines ask plugins not to head their settings with their own name,
-  // and Community plugins lists the version anyway. Read off the manifest,
-  // so a release is a one-line edit in manifest.json.
-  footerRow(): SettingDefinitionRender {
-    const plugin = this.plugin;
-    return {
-      name: "",
-      desc: `Cursor-Smith ${plugin.manifest?.version ?? ""}`.trim(),
-      searchable: false,
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-footer");
-      },
-    };
-  }
-
-  // -------------------------------------------------------------------------
-  // The categories are Obsidian's own sub-pages: an entry in the list that
-  // slides its page in when clicked, with a back button - the "Ribbon menu
-  // configuration" kind - on desktop and on a phone alike. An entry shows
-  // its icon and one line of description, and `displayValue` says what the
-  // page is set to (Box · translucent; On · 1.2x; 3 on) so the whole
-  // cursor reads at a glance without opening anything. Obsidian evaluates
-  // displayValue when it renders the entry, which it does again when the
-  // page is left.
-  // -------------------------------------------------------------------------
-  page(name: string, icon: string, desc: string, items: SettingDefinitionItem[], displayValue?: () => string, status?: () => "warning" | null): SettingDefinitionPage {
-    return {
-      type: "page",
-      name,
-      desc: this.iconDesc(icon, desc),
-      items,
-      displayValue,
-      status,
-    };
-  }
-
-  // A description with a Lucide icon in front of it, for a page's entry
-  // (and the rows that wear one). Obsidian renders the entry itself - the
-  // name, then the description - and the description is the one slot that
-  // takes markup, so the icon is written here; once the entry is in the
-  // DOM, decorateIcons moves it out of the description to the front of
-  // the entry's info block, which styles.css lays out as a grid with the
-  // icon in the first column (.cursor-smith-iconed). It used to be done
-  // in CSS alone with :has() and display: contents; the plugin review
-  // warns on both, and this is the same picture without them.
-  iconDesc(icon: string, text: string): DocumentFragment {
-    return createFragment((f) => {
-      setIcon(f.createSpan({ cls: "cursor-smith-page-icon" }), icon);
-      f.appendText(text);
-    });
-  }
-
-
-
-
-
-  // Obsidian re-renders the panel on update() and then puts keyboard focus
-  // on the FIRST control of whichever row had it: the CUA half of the mode
-  // switch after a click on Vim, the name box of the preset row after Save.
-  // A focus the user did not put there reads as a stray cursor - this
-  // plugin draws one wherever a text box has focus - so it is dropped, which
-  // is what the old full rebuild did by emptying the panel.
-  update() {
-    super.update();
-    try {
-      const doc = this.containerEl.ownerDocument;
-      const el = doc && doc.activeElement;
-      if (el && el !== doc.body && this.containerEl.contains(el)) (el as HTMLElement).blur();
-    } catch { /* not on screen; nothing has focus in it */ }
-  }
-
-  // Obsidian's refresh re-asks every row's `visible`; ours also repaints
-  // what the rows registered (see _refreshers). A gate's write calls this.
-  refreshDomState() {
-    super.refreshDomState();
-    this.runRefreshers();
-    this.decoratePanel();
-  }
-
-  hide() {
-    super.hide();
-    // The decorate observer stays. Obsidian 1.13 does not ask for the
-    // definitions again when the tab is reopened - it re-renders the ones it
-    // has - so an observer dropped here was never recreated (watchEffectsValue
-    // runs from getSettingDefinitions), and from the second opening on every
-    // leading icon sat in its description and the Effects entry showed its
-    // names. A hidden tab mutates nothing, so a kept observer costs nothing;
-    // the plugin's onunload disconnects it.
-  }
-
-  // Two things Obsidian's own rendering cannot be told to do go in after
-  // it renders: the Effects entry's value becomes the icons of the effects
-  // that are on (displayValue takes a string only), and every leading icon
-  // written into a description moves to the front of its entry. An
-  // observer on the tab's own element - the settings window is its own
-  // document, so not on `document` - runs the pass whenever an entry is
-  // rendered or its text refreshed; refreshDomState runs it too.
-  watchEffectsValue() {
-    if (this._valueObserver) return;
-    const win = this.containerEl?.ownerDocument?.defaultView;
-    if (!win || typeof win.MutationObserver !== "function") return;
-    this._valueObserver = new win.MutationObserver(() => { this.decoratePanel(); });
-    this._observe();
-    this.decoratePanel();
-  }
-
-  // Where the pass looks and the observer listens: the element that holds
-  // the pages, not the tab's container. Obsidian 1.13 shows a sub-page
-  // (Behavior, Effects and the rest) by DETACHING the tab's container and
-  // rendering the page (div.setting-page) into the same
-  // .vertical-tab-content-container, so a pass over the container decorated
-  // the root list and never a page - the effect headings on the Effects
-  // page kept their icons in the descriptions - and while a page shows the
-  // container has no parent to climb to. So the holder is remembered while
-  // the container is attached (the root list showing) and used while it is
-  // still in the document. The container is the tab's for life; the holder
-  // can be a new element when the settings window is opened again, and the
-  // container itself is watched as well, which is what wakes the pass when
-  // the root list is rendered into it again, so the new holder is taken.
-  _decorateRoot(): HTMLElement | null {
-    const c = this.containerEl;
-    if (!c) return null;
-    const parent = c.parentElement;
-    if (parent) this._pagesRoot = parent;
-    const root = this._pagesRoot;
-    return root && root.isConnected !== false ? root : c;
-  }
-
-  _observe() {
-    const o = this._valueObserver;
-    const root = this._decorateRoot();
-    if (!o || !root) return;
-    const opts = { childList: true, subtree: true, characterData: true };
-    o.observe(root, opts);
-    if (root !== this.containerEl) o.observe(this.containerEl, opts);
-  }
-
-  // The pass. It writes to the DOM the observer watches, so the observer
-  // is paused while it writes, and each job leaves nothing for itself to
-  // do on the next call (a rewrite on every call re-fired the observer
-  // forever once, and hung Obsidian).
-  decoratePanel() {
-    const observer = this._valueObserver;
-    if (observer) observer.disconnect();
-    try {
-      this.decorateIcons();
-      this.decorateEffectsValue();
-    } finally {
-      this._observe();
-    }
-  }
-
-  // A leading icon still inside its description moves to the front of
-  // the entry's info block, which takes the grid class. Nothing to do
-  // once it has moved (its parent is the info block, not a description).
-  decorateIcons() {
-    const root = this._decorateRoot();
-    if (!root) return;
-    for (const icon of Array.from(root.querySelectorAll(".cursor-smith-page-icon"))) {
-      const desc = icon.parentElement;
-      if (!desc || !desc.hasClass("setting-item-description")) continue;
-      const info = desc.parentElement;
-      if (!info || !info.hasClass("setting-item-info")) continue;
-      info.addClass("cursor-smith-iconed");
-      info.prepend(icon);
-    }
-  }
-
-  decorateEffectsValue() {
-    const on = this._effectsOn ? this._effectsOn() : null;
-    // The container, not the pages' holder: the Effects entry is in the
-    // root list, and the holder shows another tab's rows once the user
-    // switches tabs - a row of theirs named "Effects" is not ours to dress.
-    const root = this.containerEl;
-    if (!on || !root) return;
-    const sig = on.map((e) => e.key).join(",");
-    // A value already in the wanted state is left alone - a write fires the
-    // observer, which runs this again (decoratePanel pauses it, but the
-    // guard is what makes the pass converge; the first cut re-wrote "Off"
-    // on every call and hung Obsidian in a mutation loop).
-    const wanted = (value: Element) => value.getAttribute("data-cs-effects") === sig
-      && (on.length ? !!value.querySelector(".cursor-smith-value-icon") : value.getText() === "Off");
-    const rows = Array.from(root.querySelectorAll(".setting-item")).filter((row) => {
-      const name = row.querySelector(".setting-item-name");
-      return !!name && name.getText().trim() === "Effects" && !!row.querySelector(".setting-item-value") && !wanted(row.querySelector(".setting-item-value") as Element);
-    });
-    for (const row of rows) {
-      const value = row.querySelector(".setting-item-value") as HTMLElement;
-      value.empty();
-      value.setAttribute("data-cs-effects", sig);
-      if (!on.length) { value.setText("Off"); continue; }
-      value.setAttribute("title", on.map((e) => e.name).join(", "));
-      for (const e of on) setIcon(value.createSpan({ cls: "cursor-smith-value-icon", attr: { "aria-label": e.name } }), e.icon);
-    }
-  }
-
-  onRefresh(f: () => void) {
-    (this._refreshers ||= []).push(f);
-  }
-
-  runRefreshers() {
-    for (const f of this._refreshers || []) {
-      try { f(); } catch (e) { this.plugin._reportOnce("settings panel refresher", e); }
-    }
-  }
-
-  // The `control` rows read and write plugin.settings directly. Enable Plugin
-  // is the one with a side effect: the engine starts or stops with it.
-  getControlValue(key: string): unknown {
-    return this.plugin.settings[key as SettingKey];
-  }
-
-  async setControlValue(key: string, value: unknown) {
-    (this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
-    if (key === "enabled") value ? this.plugin.enable() : this.plugin.disable();
-    await this.plugin.saveSettings();
-  }
-
-  // -------------------------------------------------------------------------
-  // Row and group builders. A group is a card with a heading; a row is one
-  // Setting inside it. `depth` indents a row under the toggle (or the style
-  // dropdown) it belongs to, so conditional sub-options read as a hierarchy
-  // rather than a flat list.
-  // -------------------------------------------------------------------------
-  row(name: string, desc: string | DocumentFragment, build: (setting: Setting) => void, depth = 0): SettingDefinitionRender {
-    return {
-      name,
-      desc,
-      render: (setting) => {
-        this.resetRow(setting);
-        if (depth) setting.settingEl.addClass("cursor-smith-sub", "cursor-smith-sub-" + Math.min(depth, 3));
-        build(setting);
-      },
-    };
-  }
-
-  // Obsidian keeps a row's element across update() when its name matches
-  // and empties its controls - but not its classes, so a row that changed
-  // kind or depth between two renders would keep the old ones (a known
-  // 1.13 issue). Every row builder starts from a clean slate.
-  resetRow(setting: Setting) {
-    setting.settingEl.removeClass(
-      "cursor-smith-sub", "cursor-smith-sub-1", "cursor-smith-sub-2", "cursor-smith-sub-3",
-      "cursor-smith-note-row", "cursor-smith-note-warning", "cursor-smith-subsection-row",
-      "cursor-smith-color-row", "cursor-smith-reduced-notice");
-  }
-
-  // A muted note under a group's rows (no presets yet, what Command mode
-  // covers), or the warning variant (Vim key bindings off).
-  noteRow(text: string, { warning = false, visible }: { warning?: boolean; visible?: () => boolean } = {}): SettingDefinitionRender {
-    const def: SettingDefinitionRender = {
-      name: "",
-      desc: text,
-      searchable: false,
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-note-row");
-        if (warning) setting.settingEl.addClass("cursor-smith-note-warning");
-      },
-    };
-    if (visible) def.visible = visible;
-    return def;
-  }
-
-  // Small all-caps label splitting a run of rows into sub-groups (the torch's
-  // "Spotlight" vs "Environment") without a card of its own.
-  subheadingRow(title: string, depth = 0): SettingDefinitionRender {
-    return {
-      name: title,
-      searchable: false,
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-subsection-row");
-        if (depth) setting.settingEl.addClass("cursor-smith-sub", "cursor-smith-sub-" + Math.min(depth, 3));
-      },
-    };
-  }
-
-  // -------------------------------------------------------------------------
-  // A page's rows, as one of Obsidian's setting groups - a row is a Setting
-  // inside it, indexed for settings search. The group's own heading is not
-  // shown (the page's title is it) and the card's box is opted out of
-  // (styles.css), keeping the flat look.
-  // -------------------------------------------------------------------------
-  section(title: string, items: SettingGroupItem[]): SettingDefinitionGroup {
-    return { type: "group", heading: title, cls: "cursor-smith-section cursor-smith-in-page", items };
-  }
-
-
-
-  // The element that actually scrolls the settings pane. Obsidian's own
-  // containerEl is usually it, but that is an implementation detail of the
-  // settings modal rather than a promise, so walk up until something is
-  // genuinely overflowing rather than assuming.
-  _scrollHost(): HTMLElement {
-    let el: HTMLElement | null = this.containerEl;
-    for (let i = 0; el && i < 6; i++) {
-      if (el.scrollHeight > el.clientHeight + 1) return el;
-      el = el.parentElement;
-    }
-    return this.containerEl;
-  }
-
-  // -------------------------------------------------------------------------
-  // The first card: the plugin's name and version as its heading, the notice
-  // for when the OS is suppressing motion, and the two switches that decide
-  // what the rest of the panel IS - the plugin on or off, and one cursor or
-  // one per Vim mode. Everything else is a page.
-  // -------------------------------------------------------------------------
-  headerGroup(): SettingDefinitionGroup {
-    const plugin = this.plugin;
-    const vim = (plugin.settings.uiMode || "cua") === "vim";
-    // The notice is second, not first: Obsidian drops the separator above
-    // a group's first row only, and with the (usually hidden) notice
-    // first, Enable plugin wore a line across the top of the panel.
-    const items: SettingGroupItem[] = [
-        {
-          name: "Enable plugin",
-          control: { type: "toggle", key: "enabled" },
-        },
-        this.reducedMotionNotice(),
-        {
-          name: "Vim mode",
-          render: (setting) => this.renderVimToggle(setting),
-        },
-    ];
-    // In Vim mode the row of mode tabs sits here, above the pages: every
-    // look page is that mode's, so the choice belongs outside them all.
-    if (vim) items.push(...this.vimAlertRows());
-    // The presets, out of every page: a strip of thin cards, the CUA look's
-    // or the Vim five-mode ones while Vim is on (that is the cursor in use).
-    // In Vim mode they come before the mode tabs: a preset is all five
-    // modes, the tabs pick one to edit.
-    items.push(this.presetStripRow(vim));
-    if (vim) {
-      if (!VIM_MODE_KEYS.includes(plugin._vimEditMode)) plugin._vimEditMode = "normal";
-      items.push(...this.vimModeRows(plugin._vimEditMode));
-    }
-    // No heading: the version is the footer (footerRow).
-    return {
-      type: "group",
-      cls: "cursor-smith-global",
-      items,
-    };
-  }
-
-  // --- The preset strip ------------------------------------------------------------
-  // One thin card per saved preset: a little text with a caret crawling it
-  // in that preset's look (pure CSS - the shape, the colour, the glow, the
-  // blink; it crawls three letters and jumps back, or sits still under
-  // reduced motion), the name, a tick on the one in use, and its buttons
-  // beside it: update it with the current look, copy its share code,
-  // delete it. Tap the card to use it. Two more cards save the current
-  // look under a name and import a share code, each through a small
-  // prompt. The Vim library while Vim is on, with the Normal mode's look
-  // on the card.
-  presetStripRow(vim: boolean): SettingDefinitionRender {
-    const plugin = this.plugin;
-    const library = vim ? plugin.getVimPresets() : plugin.getUserPresets();
-    const names = Object.keys(library);
-    return {
-      name: "Presets",
-      // No description (the user: "presets don't need one"); the cards say
-      // it, and Save and Import are their own words.
-      desc: this.iconDesc("bookmark", ""),
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-presets-row");
-        const strip = setting.controlEl.createDiv({ cls: "cursor-smith-presets" });
-        const active = vim ? plugin.settings.vimActivePreset : this.presetInUse();
-        // Every card's demo on one frame loop (demo.ts); a re-render drops
-        // the old ones as their elements leave the document.
-        const demos = new DemoStrip();
-        const dark = plugin.isDarkTheme();
-        const reduced = plugin.reducedMotion();
-        for (const name of names) {
-          const entry = library[name];
-          const look = presetWithDefaults(vim ? (entry as Record<string, Look>).normal : (entry));
-          const isActive = name === active;
-          // The card is a div, not a button: buttons inside a button are
-          // invalid HTML, and a screen reader skips a button's children.
-          // Instead the demo, the name and the tick are one button that
-          // uses the preset, filling the card's left side, and the actions
-          // are its siblings - every one of them reachable by Tab.
-          const card = strip.createDiv({ cls: "cursor-smith-pcard" + (isActive ? " is-active" : "") });
-          const use = card.createEl("button", { cls: "cursor-smith-pcard-use", attr: { type: "button", "aria-label": `Use preset ${name}`, "aria-pressed": isActive ? "true" : "false" } });
-          if (isActive) setIcon(use.createSpan({ cls: "cursor-smith-tick" }), "check");
-          // Speed demon's ramp: the engine's own warm one, or the preset's
-          // four stops with Custom gradient on (paint.ts, heatColorFor).
-          const ramp = !look.speedDemonGradient ? ["#ff8c28", "#ff461e", "#fff0c8"] : dark
-            ? [look.speedHeatDark1, look.speedHeatDark2, look.speedHeatDark3, look.speedHeatDark4].map((c) => c ?? "")
-            : [look.speedHeatLight1, look.speedHeatLight2, look.speedHeatLight3, look.speedHeatLight4].map((c) => c ?? "");
-          // The gradient's stops for the theme, as many as Number of colors.
-          const count = Math.max(2, Math.min(4, look.gradientCount ?? 2));
-          const gradient = (dark
-            ? [look.gradientDark1, look.gradientDark2, look.gradientDark3, look.gradientDark4]
-            : [look.gradientLight1, look.gradientLight2, look.gradientLight3, look.gradientLight4]).slice(0, count).map((c) => c ?? "");
-          // Only the card in use plays (two passes, then it rests); the
-          // others sit still.
-          demos.add(use, name, look, (dark ? look.colorDark : look.colorLight) ?? "", ramp, gradient, reduced, isActive);
-          use.addEventListener("click", () => {
-            void (vim ? plugin.loadVimPreset(name) : plugin.loadUserPreset(name)).then(() => this.update());
-          });
-          const actions = card.createSpan({ cls: "cursor-smith-pcard-actions" });
-          const action = (icon: string, label: string, run: () => void) => {
-            const b = actions.createEl("button", { cls: "cursor-smith-pcard-action clickable-icon", attr: { type: "button", "aria-label": label, title: label } });
-            setIcon(b, icon);
-            b.addEventListener("click", run);
-            return b;
-          };
-          const copy = action("copy", "Copy its share code", () => {
-            const code = vim ? vimPresetToCode(name, entry as Record<string, Look>) : presetToCode(name, entry);
-            void navigator.clipboard.writeText(code).then(() => {
-              setIcon(copy, "check");
-              window.setTimeout(() => { setIcon(copy, "copy"); }, 1500);
-            });
-          });
-          // Delete is two taps and no dialog: the first turns the trash
-          // into a red "Delete?" for three seconds, the second deletes.
-          // Left alone, it turns back into the trash.
-          let armed = 0;
-          const trash = action("trash", "Delete this preset", () => {
-            if (trash.hasClass("is-armed")) {
-              window.clearTimeout(armed);
-              void (vim ? plugin.deleteVimPreset(name) : plugin.deleteUserPreset(name)).then(() => this.update());
-              return;
-            }
-            trash.addClass("is-armed");
-            trash.setText("Delete?");
-            trash.setAttribute("aria-label", "Tap again to delete");
-            armed = window.setTimeout(() => {
-              trash.removeClass("is-armed");
-              trash.empty();
-              setIcon(trash, "trash");
-              trash.setAttribute("aria-label", "Delete this preset");
-            }, DELETE_ARM_MS);
-          });
-        }
-        // Save the current look, import a code.
-        const more = (icon: string, label: string, run: () => void) => {
-          const b = strip.createEl("button", { cls: "cursor-smith-pcard cursor-smith-pcard-more", attr: { type: "button" } });
-          setIcon(b.createSpan({ cls: "cursor-smith-pcard-more-icon" }), icon);
-          b.createSpan({ cls: "cursor-smith-pcard-name", text: label });
-          b.addEventListener("click", run);
-        };
-        // Save and Import on a line of their own below the presets, however
-        // many there are: a full-width item breaks the wrapping row before
-        // them (styles.css). They used to wrap along with the presets.
-        strip.createDiv({ cls: "cursor-smith-pcard-break" });
-        more("save", "Save", () => {
-          // A name that is already taken warns once and keeps the prompt;
-          // OK again with the same name replaces the preset.
-          let warned = "";
-          new PresetPrompt(this.app, vim ? "Save these five mode cursors as" : "Save this look as", vim ? "Vim preset name" : "Preset name", async (name) => {
-            if (!name) return false;
-            if (name in library && warned !== name) {
-              warned = name;
-              return `A preset named ${name} exists. OK again to replace it.`;
-            }
-            if (vim) await plugin.saveVimPreset(name); else await plugin.saveUserPreset(name);
-            this.update();
-            return true;
-          }).open();
-        });
-        more("download", "Import", () => {
-          new PresetPrompt(this.app, vim ? "Import a Vim share code" : "Import a share code", "Paste the code here", async (code) => {
-            if (!code) return false;
-            const ok = vim ? await plugin.importVimPreset(code) : await plugin.importPreset(code);
-            if (ok) { this.update(); return true; }
-            // The two code kinds are one character apart at a glance, so say
-            // which mistake was made rather than a flat "invalid".
-            const other = vim ? SHARE_VERSION + "|" : SHARE_VERSION_VIM + "|";
-            return code.startsWith(other) ? (vim ? "That's a regular code, not a Vim one" : "That's a Vim code, not a regular one") : "Invalid code";
-          }).open();
-        });
-      },
-    };
-  }
-
-  // Which saved preset the look in use IS: the one whose every look key
-  // equals the settings'. Read off the look rather than off a name
-  // remembered at load time, which is gone after a reload and would stay
-  // after an edit. Empty when the look is nothing that was saved.
-  presetInUse(): string {
-    const plugin = this.plugin;
-    const presets = plugin.getUserPresets();
-    const look = plugin.settings;
-    for (const name of Object.keys(presets)) {
-      const p = presetWithDefaults(presets[name]);
-      if (LOOK_KEYS.every((k) => p[k] === look[k])) return name;
-    }
-    return "";
-  }
-
-
-  // A tiny alert under the Vim mode toggle while it is on, for the new
-  // user who flipped it out of curiosity: what just happened to the
-  // editor, and the way back (the toggle right above it - no button of
-  // its own). Three wordings by state, all predicates so a flip of
-  // "Control Obsidian's Vim key bindings" is a visibility refresh: the
-  // plugin drives Obsidian's bindings and they are on (the editor takes
-  // Vim keys now); it drives them but they look off (transient - reopen
-  // the editor); it does not drive them and they are off (nothing shows
-  // until they are on). A Vim user driving nothing, with them on, sees
-  // none. The one place this is said: the Vim page has no note of its
-  // own.
-  vimAlertRows(): SettingDefinitionRender[] {
-    const plugin = this.plugin;
-    const alert = (text: string, visible: () => boolean): SettingDefinitionRender => ({
-      name: "",
-      desc: text,
-      searchable: false,
-      visible,
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-alert");
-        // Obsidian keeps the row's element across update() and runs this
-        // again: the icon from last time has to go first, or every mode
-        // tab click adds one more (it did - nine in a row).
-        setting.settingEl.querySelectorAll(".cursor-smith-alert-icon").forEach((old) => { old.remove(); });
-        const icon = setting.settingEl.createSpan({ cls: "cursor-smith-alert-icon" });
-        setIcon(icon, "triangle-alert");
-        setting.settingEl.prepend(icon);
-      },
-    });
-    const drives = () => !!plugin.settings.vimControlObsidian;
-    const on = () => plugin.isObsidianVimOn();
-    return [
-      alert("Your editor now uses Vim key bindings. Not a Vim user? Turn Vim mode off.",
-        () => drives() && on()),
-      alert("Vim key bindings look off. Reopen the editor if the mode cursors don't show.",
-        () => drives() && !on()),
-      alert("This needs Vim key bindings on in Settings → Editor. Not a Vim user? Turn Vim mode off.",
-        () => !drives() && !on()),
-    ];
-  }
-
-  // The Behavior page: the five global switches. They are structural rather
-  // than looks - none is in LOOK_KEYS, so none is part of a preset or of a
-  // per-Vim-mode snapshot - they apply to whatever cursor is on screen, in
-  // both modes.
-  generalGroup(): SettingDefinitionGroup {
-    const items: SettingDefinitionControl[] = [
-      {
-        name: "Note editor only",
-        desc: "Notes only; search, settings and dialogs keep Obsidian's caret.",
-        control: { type: "toggle", key: "noteEditorOnly", defaultValue: false },
-      },
-      {
-        name: "Hide real cursor",
-        desc: "Hides Obsidian's own caret so only this one shows.",
-        control: { type: "toggle", key: "hideNativeCaret" },
-      },
-      {
-        name: "Hide cursor when unfocused",
-        desc: "Hides the cursor while Obsidian isn't the active window.",
-        control: { type: "toggle", key: "hideOnWindowBlur", defaultValue: true },
-      },
-      {
-        name: "Low power mode",
-        desc: "Halves every effect's frame rate, for battery or a slow machine.",
-        control: { type: "toggle", key: "lowPowerMode", defaultValue: false },
-      },
-      {
-        name: "Respect reduced motion",
-        desc: "Pauses the moving effects when your system asks for reduced motion.",
-        control: { type: "toggle", key: "respectReducedMotion", defaultValue: true },
-      },
-    ];
-    return this.section("Behavior", items);
-  }
-
-
-
-  // --- "Why is nothing moving?" ------------------------------------------
-  // Reduced motion is deliberately invisible to the rest of the panel: the
-  // suppression runs on the merged copy inside effectiveSettings(), never on
-  // this.settings, so every toggle below keeps showing what the USER chose
-  // (see applyReducedMotion). That is the right call for the data - a saved
-  // preset must not be rewritten by an OS preference - but on its own it
-  // produces the worst possible symptom: Motion smear and Smooth movement read
-  // as ON and do nothing, with nothing anywhere saying why.
-  //
-  // This is the missing half. It says so, in the one place someone goes to
-  // find out, and only while the OS is actually asking - the row is always
-  // built and shown or hidden by its `visible` predicate, which Obsidian
-  // re-evaluates after every control change.
-  //
-  // Windows is where this bites hardest, which is why it arrived as a bug
-  // report from there. Turning off Settings > Accessibility > Visual effects >
-  // Animation effects - or choosing "Adjust for best performance" in the old
-  // Performance Options dialog, which does the same thing - sets
-  // prefers-reduced-motion for every Chromium app on the machine. People do
-  // that for speed, years earlier, with no idea it is an accessibility signal
-  // that anything will later read.
-  //
-  // Deliberately NOT fixed by flipping the respectReducedMotion default: the
-  // preference is real and honouring it by default is correct. The defect was
-  // only ever that it was silent.
-  reducedMotionNotice(): SettingDefinitionRender {
-    return {
-      name: "Motion effects are off",
-      desc: "Your system asks for reduced motion, so Smooth movement, Motion smear and the other moving effects are paused - the toggles below still show your own settings. Turn off \"Respect reduced motion\" to override.",
-      searchable: false,
-      visible: () => this.reducedMotionActive(),
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-reduced-notice");
-        // This row is built on every render (hidden or not), so it is
-        // where the panel's own document gets registered - see
-        // registerPanelDocument.
-        this.registerPanelDocument(setting.settingEl);
-      },
-    };
-  }
-
-  // Fail closed. reducedMotion() already swallows a missing matchMedia, but
-  // it reads this.settings before its own try, and an explanatory banner is
-  // never worth the risk of a broken panel.
-  reducedMotionActive(): boolean {
-    try {
-      return !!this.plugin.reducedMotion();
-    } catch (e) {
-      console.error("[cursor-smith] reduced-motion check failed:", e);
-      return false;
-    }
-  }
-
-  // Since Obsidian 1.13 this panel renders in a window of its own, in a
-  // document the engine has no other way to discover: documents are
-  // otherwise learned from `view.dom.ownerDocument`, and the settings window
-  // hosts no view. Registering it here is what lets _focusedForeignDoc offer
-  // it as a canvas target, so the cursor can follow the caret into the
-  // panel's own text boxes (preset names, share codes) the way it always
-  // could when Settings was a modal in the main document. Set-guarded and a
-  // no-op when the panel is in the main document. Fail closed: a nicety here
-  // must never take the panel down.
-  registerPanelDocument(el: HTMLElement) {
-    try {
-      const panelDoc = el && el.ownerDocument;
-      if (panelDoc && typeof document !== "undefined" && panelDoc !== document) {
-        this.plugin.registerWindowEvents(panelDoc);
-      }
-    } catch (e) {
-      console.error("[cursor-smith] could not register settings window:", e);
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // The Vim mode toggle. On turns Vim-aware cursors on (and, per
-  // vimControlObsidian, flips Obsidian's own Vim key bindings); off turns
-  // them off. This one control is both the panel switch and the feature's
-  // on/off switch. (It was a CUA / Vim segmented switch until the eighth
-  // UI pass; the user: "make Vim a toggle instead, drop the CUA thing".)
-  // -------------------------------------------------------------------------
-  renderVimToggle(setting: Setting) {
-    const plugin = this.plugin;
-    const isVim = () => (plugin.settings.uiMode || "cua") === "vim";
-    setting.addToggle((t) => t.setValue(isVim()).onChange(async (on) => {
-      if (isVim() === on) return;
-      // Deliberately NOT setting uiMode here: setVimModeEnabled writes it
-      // (keeping both flags in one place), and it needs the pre-click state
-      // intact to decide whether the "restore Obsidian's vim" path applies.
-      // Writing uiMode first blinded that check whenever the two flags had
-      // drifted apart, silently skipping the restore.
-      await plugin.setVimModeEnabled(on);
-      this.update();
-    }));
-  }
-
-  // -------------------------------------------------------------------------
-  // The CUA / Normal panel: the preset library, then the look cards for the
-  // global cursor.
-  // -------------------------------------------------------------------------
-  normalDefinitions(): SettingDefinitionItem[] {
-    const plugin = this.plugin;
-    // The settings, seen as the look they contain: TypeScript will not
-    // index a wider object with a narrower key type, but it will alias it.
-    const look: Look = plugin.settings;
-    const set = <K extends keyof Look>(key: K) => async (v: Look[K]) => { look[key] = v; await plugin.saveSettings(); };
-
-    // Everything from "what does the cursor look like" through "what effects
-    // does it use" is identical in shape whether it's this global cursor or
-    // one Vim mode's own snapshot - see lookDefinitions, shared with
-    // modeDefinitions below.
-    const cards = this.lookDefinitions({
-        get: <K extends keyof Look>(key: K) => plugin.settings[key],
-        set,
-        renderCursorStyleSetting: (setting, rerender) => {
-          setting.addDropdown((dropdown) =>
-            dropdown
-              .addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
-              .setValue(plugin.settings.cursorStyle)
-              // Re-render as soon as the value is in memory, not after the
-              // save lands - the rows read memory, and enable() does too.
-              .onChange(async (value) => {
-                plugin.settings.cursorStyle = value;
-                const saved = plugin.saveSettings();
-                plugin.enable();
-                rerender();
-                await saved;
-              })
-          );
-        },
-        // Torch Spotlight owns a whole separate engine (torchEngineActive) that
-        // needs to be started/stopped immediately on toggle, rather than just
-        // having its setting saved - a Vim mode doesn't need this since its
-        // torch state is already picked up by the shared engine's per-frame
-        // torchPossible() scan across all modes.
-        renderTorchToggleSetting: (setting, rerender) => {
-          setting.addToggle((toggle) =>
-            toggle.setValue(plugin.settings.torchEffect).onChange(async (value) => {
-              plugin.settings.torchEffect = value;
-              const saved = plugin.saveSettings();
-              if (plugin.settings.enabled) {
-                value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
-              }
-              rerender();
-              await saved;
-            })
-          );
-        },
-      });
-    return this.lookPages(cards);
-  }
-
-
-  // The four look cards as pages, each entry saying what it is set to.
-  lookPages(cards: LookCards): SettingDefinitionPage[] {
-    const s = cards.summaries || {};
-    this._effectsOn = cards.effectsOn ?? null;
-    this.watchEffectsValue();
-    const meta: [string, string, string][] = [
-      ["Appearance", "palette", "Shape, color, opacity."],
-      ["Blinking", "eye-closed", "If it blinks, how, and how fast."],
-      ["Smooth movement", "spline", "Gliding to the new spot instead of jumping."],
-      ["Effects", "wand", "Trails, sparks, fire, lightning, a torch."],
-    ];
-    return cards.map((group, i) => this.page(meta[i][0], meta[i][1], meta[i][2], [group], s[meta[i][0]]));
-  }
-
-
-
-
-
-  // -------------------------------------------------------------------------
-  // The Vim panel: the two Vim-only switches, the Vim preset library, the
-  // mode tabs, and the look cards for whichever mode is being edited.
-  // -------------------------------------------------------------------------
-  vimDefinitions(): SettingDefinitionItem[] {
-    const plugin = this.plugin;
-
-    if (!VIM_MODE_KEYS.includes(plugin._vimEditMode)) plugin._vimEditMode = "normal";
-    const mode = plugin._vimEditMode;
-    const target = plugin.settings.vimModes[mode];
-
-    const cards = this.modeDefinitions(target, () => {
-      plugin.settings.vimActivePreset = "";
-    });
-    return [
-      this.page("Vim", "terminal", "Obsidian's Vim key bindings, and the mode in the status bar.", [this.vimCursorsGroup()],
-        undefined, () => (plugin.isObsidianVimOn() ? null : "warning")),
-      ...this.lookPages(cards),
-    ];
-  }
-
-  vimCursorsGroup(): SettingDefinitionGroup {
-    const plugin = this.plugin;
-    const items = [];
-
-    items.push(this.row("Control Obsidian's Vim key bindings",
-      "Turns Obsidian's Vim key bindings on and off with the mode above.", (setting) => {
-        setting.addToggle((toggle) =>
-          toggle.setValue(plugin.settings.vimControlObsidian).onChange(async (value) => {
-            plugin.settings.vimControlObsidian = value;
-            // Taking ownership mid-session: immediately enforce the current
-            // mode so the keybindings match what the panel shows.
-            if (value) plugin.setObsidianVim(!!plugin.settings.vimModeEnabled);
-            await plugin.saveSettings();
-            // The warning below picks its wording by this value.
-            this.refreshDomState();
-          }));
-      }));
-
-    items.push(this.row("Show Vim mode in status bar",
-      "Shows the mode in the status bar: -- NORMAL --.", (setting) => {
-        setting.addToggle((toggle) =>
-          toggle.setValue(plugin.settings.vimStatusBar).onChange(async (value) => {
-            plugin.settings.vimStatusBar = value;
-            plugin.syncVimStatusBar();
-            await plugin.saveSettings();
-            this.refreshDomState();
-          }));
-      }));
-
-    const colorRow = this.row("Color status bar text to match the cursor",
-      "Tints the mode name with that mode's cursor color.", (setting) => {
-        setting.addToggle((toggle) =>
-          toggle.setValue(plugin.settings.vimStatusBarColor).onChange(async (value) => {
-            plugin.settings.vimStatusBarColor = value;
-            await plugin.saveSettings();
-          }));
-      }, 1);
-    colorRow.visible = () => !!plugin.settings.vimStatusBar;
-    items.push(colorRow);
-
-    // No warning of its own about Obsidian's Vim key bindings being off:
-    // the header's alert (vimAlertRows) says it, in every state, and this
-    // page's entry carries the warning badge.
-    return this.section("Vim", items);
-  }
-
-
-  // Per-mode editor: pick one mode, then edit its FULL cursor config in the
-  // look cards that follow this one.
-  vimModeRows(mode: string): SettingDefinitionRender[] {
-    const items: SettingDefinitionRender[] = [];
-
-    items.push(this.row("Mode", this.iconDesc("layers", ""),
-      (setting) => this.renderModeTabs(setting.controlEl)));
-
-    if (mode === "command") {
-      items.push(this.noteRow(
-        "Applies whenever the caret leaves the note editor: the built-in Vim command " +
-        "line (the \":\" / \"/\" prompt) and the rest of the Obsidian interface — Command " +
-        "Palette, Quick Switcher, search, rename boxes, Settings fields and plugin modals. " +
-        "Motion effects (smear, smooth movement, CRT trail) are best left off here: these " +
-        "are all single-line fields, so they read as jitter rather than movement."));
-    }
-
-    return items;
-  }
-
-  // Tab row — one tab per Vim mode. Same visual language as the CUA/Vim
-  // segmented switch at the top of the panel. Each inactive tab's label is
-  // tinted with that mode's own cursor color (for the current theme), so the
-  // row doubles as a live color legend; the active tab uses the accent
-  // background instead, where a tint would be unreadable.
-  renderModeTabs(containerEl: HTMLElement) {
-    const plugin = this.plugin;
-    const isDarkTheme = containerEl.ownerDocument?.body?.classList?.contains("theme-dark") ?? true;
-    // Pills, the Effects chips' (.cursor-smith-chip), so the header's
-    // pills all read alike; each in its mode's cursor color - the text of
-    // an idle tab, the fill of the picked one with black or white on it,
-    // whichever reads.
-    const tabWrap = containerEl.createDiv({ cls: "cursor-smith-mode-tabs" });
-    const tabs: HTMLElement[] = [];
-    for (const m of VIM_MODE_KEYS) {
-      const active = plugin._vimEditMode === m;
-      const cfg: Partial<Look> = plugin.settings.vimModes[m] || {};
-      const tint = isDarkTheme ? cfg.colorDark : cfg.colorLight;
-      const btn = tabWrap.createEl("button", {
-        text: VIM_MODE_LABELS[m],
-        cls: "cursor-smith-chip cursor-smith-mode-tab" + (active ? " is-picked" : ""),
-        attr: { type: "button", "aria-pressed": active ? "true" : "false" },
-      });
-      if (tint) btn.setCssStyles(active ? { backgroundColor: tint, borderColor: tint, color: readableGlyphColor(tint, "contrast") } : { color: tint });
-      btn.addEventListener("click", () => {
-        if (plugin._vimEditMode === m) return;
-        plugin._vimEditMode = m;
-        this.update();
-      });
-      tabs.push(btn);
-    }
-    this.rovingRow(tabWrap, tabs).picked(Math.max(0, VIM_MODE_KEYS.indexOf(plugin._vimEditMode)));
-  }
-
-  // The FULL set of cursor look/effect cards bound to an arbitrary
-  // settings-shaped `target` object (here, one Vim mode's snapshot).
-  modeDefinitions(target: Look, onEdit: () => void): LookCards {
-    const plugin = this.plugin;
-    const after = onEdit || (() => {});
-    const set = <K extends keyof Look>(key: K) => async (v: Look[K]) => { target[key] = v; after(); await plugin.saveSettings(); };
-    // Write, then re-render - the same shape lookDefinitions gives its own
-    // gated toggles.
-    const setR = <K extends keyof Look>(key: K, rerender: () => void) => async (v: Look[K]) => { const saved = set(key)(v); rerender(); await saved; };
-
-    return this.lookDefinitions({
-      get: <K extends keyof Look>(key: K) => target[key],
-      set,
-      renderCursorStyleSetting: (setting, rerender) => {
-        setting.addDropdown((d) =>
-          d.addOption("Box", "Box").addOption("Line", "Line").addOption("Underline", "Underline")
-            .setValue(target.cursorStyle).onChange(setR("cursorStyle", rerender)));
-      },
-      renderTorchToggleSetting: (setting, rerender) => {
-        setting.addToggle((t) => t.setValue(target.torchEffect).onChange(setR("torchEffect", rerender)));
-      },
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Shared look/effect cards.
-  //
-  // normalDefinitions (the global cursor) and modeDefinitions (one Vim mode's
-  // own snapshot) build an identical set of cards - Appearance, Blinking,
-  // Smooth movement, Effects. The only real differences between the two are
-  // *where the values live* and *what happens after a save*, so those are
-  // the only things a caller supplies:
-  //
-  //   get(key)                    - read the current value for `key`
-  //   set(key)                    - returns an onChange handler: write the
-  //                                 value where it lives and save. Must put
-  //                                 the value in memory synchronously, before
-  //                                 its first await - the re-render reads it
-  //                                 back straight away.
-  //   renderCursorStyleSetting(setting, rerender)
-  //                               - fills in the "Cursor style" row's
-  //                                 dropdown. Kept as a caller-supplied hook
-  //                                 (rather than a generic set) because the
-  //                                 global panel needs an extra
-  //                                 plugin.enable() call after saving that a
-  //                                 Vim mode does not. Call `rerender()`
-  //                                 after the write.
-  //   renderTorchToggleSetting(setting, rerender)
-  //                               - fills in the "Torch spotlight" row's
-  //                                 toggle. Also a caller-supplied hook: the
-  //                                 global panel must start/stop the torch
-  //                                 engine immediately on toggle, which has no
-  //                                 Vim-mode equivalent (see the comment at
-  //                                 that call site). Same `rerender` rule.
-  //
-  // A toggle that reveals or hides other rows goes through `redraw(key)`,
-  // which writes and then calls update(): Obsidian rebuilds the panel from
-  // the definitions and reconciles the rows in place, so only the rows that
-  // changed are touched and the panel does not move. The rows a gate
-  // controls are simply built or not built, from the value in memory.
-  //
-  // Returns the cards; `lookDefinitions.gates` on the result is the set of
-  // keys whose change rebuilds the panel, for the tests.
-  // -------------------------------------------------------------------------
-  lookDefinitions({ get, set, renderCursorStyleSetting, renderTorchToggleSetting, afterReset }: LookSettingsHooks): LookCards {
-    const gates: Set<keyof Look> = new Set();
-    // Every key each card's rows write, for the card's reset button (and
-    // the tests, which check that no look key is left out).
-    const cardKeys: Record<string, (keyof Look)[]> = { Appearance: [], Blinking: [], "Smooth movement": [], Effects: [] };
-    let card = "Appearance";
-    const owns = (key: keyof Look) => { if (!cardKeys[card].includes(key)) cardKeys[card].push(key); };
-
-    // --- What a write does to the panel ------------------------------------
-    // Every row is built every time; a row that depends on a gate carries a
-    // `visible` predicate, and Obsidian re-evaluates every predicate on
-    // refreshDomState() - a class toggle per row, no re-render - and this
-    // tab's override repaints what the rows registered (the rail's chips,
-    // the card summaries, the rows a setting elsewhere disables). That is
-    // what a gate's write calls. update(), which hands Obsidian a new tree
-    // and has it rebuilt and reconciled, costs 60-80ms for this panel's 70
-    // rows (measured in the 1.13.7 settings window) and is kept for the one
-    // change that alters the tree: the number of colour pickers in a row.
-    //
-    // The write itself runs before the refresh, so the predicates read the
-    // new value; the save's promise is returned so a failure surfaces.
-    const refresh = () => this.refreshDomState();
-    const redraw = <K extends keyof Look>(key: K) => {
-      gates.add(key);
-      return async (v: Look[K]) => {
-        const saved = set(key)(v);
-        refresh();
-        await saved;
-      };
-    };
-    const rebuild = <K extends keyof Look>(key: K) => {
-      gates.add(key);
-      return async (v: Look[K]) => {
-        const saved = set(key)(v);
-        this.update();
-        await saved;
-      };
-    };
-    // For the two caller-built controls: what they call after their own write.
-    const afterWrite = (key: keyof Look) => {
-      gates.add(key);
-      owns(key);
-      return refresh;
-    };
-    // A card's reset: its keys back to their defaults, then a rebuild (every
-    // handle on the card moves) and the caller's own follow-up.
-    const resetCard = (title: string) => () => {
-      const writes = cardKeys[title].map((key) => Promise.resolve(set(key)(DEFAULT_SETTINGS[key])));
-      void Promise.all(writes).then(() => {
-        if (afterReset) afterReset();
-        this.update();
-      });
-    };
-
-    // --- Predicates ------------------------------------------------------------
-    const on = (key: keyof Look) => () => !!get(key);
-    const off = (key: keyof Look) => () => !get(key);
-    const all = (...ps: (() => boolean)[]) => () => ps.every((p) => p());
-    const isStyle = (s: string) => () => get("cursorStyle") === s;
-
-    // --- Row builders ---------------------------------------------------------
-    // `needs` is a dependency on ANOTHER card (Aurora needs Gradient from
-    // Appearance): the row stays visible and is disabled, with the hint in
-    // its description, while that setting is off - hidden, it read as a
-    // missing option and was reported as one. The state is repainted on
-    // every refresh, so a flip of the setting it needs is seen at once.
-    const row = (name: string, desc: string, build: (s: Setting) => void, { depth = 0, when, needs }: SwatchOptions = {}) => {
-      // An effect's head row (its name is the rail's) wears the rail's icon
-      // in front of its name, as a page entry does.
-      const effect = depth === 0 ? RAIL_EFFECTS.find((e) => e.name === name) : undefined;
-      const def = this.row(name, effect ? this.iconDesc(effect.icon, desc) : desc, (s) => {
-        build(s);
-        if (needs) this.needsHint(s, needs);
-      }, depth);
-      if (when) def.visible = when;
-      return def;
-    };
-    const toggle = (name: string, desc: string, key: keyof Look, { depth = 0, gate = false, when, needs }: RowOptions = {}) => {
-      owns(key);
-      return row(name, desc, (s) => { s.addToggle((t) => t.setValue(!!get(key)).onChange(gate ? redraw(key) : set(key))); }, { depth, when, needs });
-    };
-    const dropdown = (name: string, desc: string, key: keyof Look, options: Record<string, string>, { depth = 0, value, onChange, when }: DropdownOptions = {}) => {
-      owns(key);
-      return row(name, desc, (s) => {
-        s.addDropdown((d) => d.addOptions(options)
-          .setValue(value !== undefined ? value : get(key) as string)
-          .onChange(onChange || set(key)));
-      }, { depth, when });
-    };
-
-    // --- Every slider, with "restore default" ------------------------------
-    // A small icon button sitting to the right of a slider, putting that one
-    // dial back to its DEFAULT_SETTINGS value. Every slider in this panel gets
-    // one, from this one helper - so there is no per-row copy of "what is this
-    // slider's default" to drift out of date, and a new slider that forgets
-    // the button is visibly the odd one out.
-    //
-    // The button writes the default and moves the slider's own handle to it
-    // (a handle is DOM state nothing else updates), through the slider's
-    // own onChange path - so a dial that gates other rows (Gravity, say)
-    // refreshes them too.
-    //
-    // The default is read from DEFAULT_SETTINGS rather than from the
-    // `fallback` a row shows: those fallbacks are what a *sparse* Vim-mode
-    // snapshot displays for a key it has never been given, and the two are
-    // not obliged to agree (overlayFlickerAmount's don't). What the button
-    // promises is the default, so it reads the defaults.
-    //
-    // No dynamic tooltip on the slider: since 1.13 it always shows its value.
-    const slider = (name: string, desc: string, key: keyof Look, [min, max, step]: number[], { depth = 0, fallback, gate = false, when, needs }: SliderOptions = {}) => {
-      owns(key);
-      return row(name, desc, (s) => {
-        const write = gate ? redraw(key) : set(key);
-        let handle: SliderComponent | null = null;
-        s.addSlider((sl) => { handle = sl; sl.setLimits(min, max, step).setValue((get(key) ?? fallback) as number).onChange(write); })
-          .addExtraButton((btn) => btn
-            .setIcon("rotate-ccw")
-            .setTooltip(`Restore default (${DEFAULT_SETTINGS[key]})`)
-            .onClick(() => {
-              const v = DEFAULT_SETTINGS[key];
-              if (handle) handle.setValue(v as number);
-              void write(v);
-            }));
-      }, { depth, when, needs });
-    };
-
-    // Several colour pickers on ONE row, so they lay out side by side in that
-    // row's control area (Obsidian's .setting-item-control is already a flex
-    // row; .cursor-smith-color-row only adds the gap between swatches)
-    // instead of each claiming its own full-width labelled row. A label
-    // under each swatch says which is which.
-    const swatchRow = (name: string, keys: (keyof Look)[], labels: string[], desc: string, { depth = 0, when }: SwatchOptions = {}) => {
-      keys.forEach(owns);
-      return row(name, desc, (s) => {
-        s.settingEl.addClass("cursor-smith-color-row");
-        keys.forEach((key, i) => {
-          const cell = s.controlEl.createDiv({ cls: "cursor-smith-swatch-cell" });
-          s.addColorPicker((cp) => cp.setValue((get(key) || DEFAULT_SETTINGS[key]) as string).onChange(set(key)));
-          // The picker's input is the last thing the Setting appended; it
-          // moves into the cell so the label can sit under it.
-          const input = s.controlEl.lastElementChild;
-          if (input && input !== cell) cell.appendChild(input);
-          cell.createSpan({ cls: "cursor-smith-swatch-label", text: labels[i] ?? "" });
-        });
-      }, { depth, when });
-    };
-    const subheading = (title: string, depth: number, when: () => boolean) => {
-      const def = this.subheadingRow(title, depth);
-      def.visible = when;
-      return def;
-    };
-
-    // --- Appearance ----------------------------------------------------------
-    const appearance = [];
-    appearance.push(row("Cursor style", "The shape of the cursor itself.",
-      (s) => renderCursorStyleSetting(s, afterWrite("cursorStyle"))));
-
-    // Everything that applies to exactly one cursor style lives here, in a
-    // sub-group hanging directly off the dropdown that selects it, so the
-    // card reads as "Cursor style, then the options for the style you
-    // picked".
-    const line = isStyle("Line"), underline = isStyle("Underline"), box = isStyle("Box");
-    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [1, 12, 1], { depth: 1, when: line }));
-    appearance.push(toggle("Serifs", "Adds I-beam serifs at the top and bottom of the line.", "lineSerifs", { depth: 1, when: line }));
-    appearance.push(slider("Underline thickness", "Underline thickness in pixels. 0 fits the line height.",
-      "underlineWidthPx", [0, 12, 1], { depth: 1, fallback: 0, when: underline }));
-    appearance.push(toggle("Show letter inside cursor", "Shows the letter inside the block, colors flipped.",
-      "showChar", { depth: 1, gate: true, when: box }));
-    appearance.push(dropdown("Letter color",
-      "Contrast: black or white. Tinted: the flipped color, kept legible. Inverted: a raw flip.",
-      "glyphColorMode", { contrast: "Contrast", tinted: "Tinted", invert: "Inverted" },
-      { depth: 2, value: get("glyphColorMode") || "contrast", when: all(box, on("showChar")) }));
-    appearance.push(toggle("Hollow", "Draws only the outline of the box instead of a filled block.", "boxHollow", { depth: 1, gate: true, when: box }));
-    // Nested one level deeper: Outline width is conditional on Hollow, which
-    // is itself a sub-option of the style.
-    appearance.push(slider("Outline width", "Thickness of the hollow box's outline, in pixels.", "boxHollowWidth", [1, 6, 1],
-      { depth: 2, when: all(box, on("boxHollow")) }));
-
-    appearance.push(toggle("Gradient", "Blends several colors instead of one flat color.", "gradientEnabled", { gate: true }));
-    const gradient = on("gradientEnabled");
-    // Dropdown values are strings; store a number so the engine's clamping
-    // arithmetic doesn't have to care where the value came from. The count
-    // is how many pickers the two rows below carry, so this one rebuilds.
-    const writeCount = rebuild("gradientCount");
-    appearance.push(dropdown("Number of colors", "How many colors the blend runs through, from 2 to 4.",
-      "gradientCount", { 2: "2", 3: "3", 4: "4" }, {
-        depth: 1, when: gradient,
-        value: String(get("gradientCount") ?? 2),
-        onChange: (v) => writeCount(Number(v)),
-      }));
-    const count = Math.max(2, Math.min(4, Number(get("gradientCount")) || 2));
-    const keys = (prefix: string) => Array.from({ length: count }, (_, i) => (prefix + (i + 1)) as keyof Look);
-    // The card owns all four stops of each ramp, shown or not, so a reset
-    // puts the hidden ones back too.
-    for (let i = 1; i <= 4; i++) { owns(("gradientDark" + i) as keyof Look); owns(("gradientLight" + i) as keyof Look); }
-    const stops = Array.from({ length: count }, (_, i) => String(i + 1));
-    appearance.push(swatchRow("Colors (dark theme)", keys("gradientDark"), stops,
-      "From the top of the cursor to the bottom — or left to right for the Underline style.", { depth: 1, when: gradient }));
-    appearance.push(swatchRow("Colors (light theme)", keys("gradientLight"), stops,
-      "The same ramp for light themes, where neon colors tend to wash out.", { depth: 1, when: gradient }));
-    appearance.push(swatchRow("Cursor color", ["colorDark", "colorLight"], ["Dark", "Light"],
-      "One for each theme. Neon colors that look right on a dark background wash out on a white page.", { when: off("gradientEnabled") }));
-
-    appearance.push(slider("Cursor opacity", "How see-through the cursor is.", "cursorOpacity", [0.1, 1, 0.05]));
-    appearance.push(toggle("Translucent", "Blends the cursor into the page instead of painting over it.",
-      "cursorTranslucent"));
-    appearance.push(toggle("Rounded corners", "Softens the corners: rounded bars for Line and Underline, a gentle curve for Box.",
-      "cursorRounded"));
-    // --- Blinking ------------------------------------------------------------
-    card = "Blinking";
-    const blinking = [];
-    blinking.push(toggle("Blinking", "Makes the cursor blink.", "blinkingEnabled", { gate: true }));
-    const blink = on("blinkingEnabled");
-    blinking.push(slider("Blink speed", "How fast the cursor blinks.", "blinkSpeed", [0.1, 3, 0.1], { depth: 1, when: blink }));
-    blinking.push(slider("Blink balance", "How the blink cycle is split between lit and dark.", "blinkOnOffBalance", [0.1, 0.9, 0.05], { depth: 1, when: blink }));
-    blinking.push(slider("Fade smoothness", "How gradually the cursor fades in and out.", "blinkFade", [0.05, 0.5, 0.05], { depth: 1, fallback: 0.15, when: blink }));
-    blinking.push(toggle("Don't blink while typing", "Keeps the cursor fully lit while you type or move it.", "smoothStopBlinking", { depth: 1, when: blink }));
-    blinking.push(slider("Blink delay", "How long the cursor stays lit after a keystroke, in ms.", "blinkDelayMs", [0, 2000, 50], { depth: 1, fallback: 0, when: blink }));
-    blinking.push(slider("Stop after", "Blink this many times after each move, then stay lit. 0 blinks forever.", "blinkStopAfter", [0, 20, 1], { depth: 1, fallback: 0, when: blink }));
-    blinking.push(toggle("Breathing", "The cursor swells and shrinks instead of fading out.", "blinkBreathing", { depth: 1, gate: true, when: blink }));
-    blinking.push(slider("Breath depth", "How far the cursor shrinks at the bottom of the breath.", "blinkBreathDepth", [0.05, 0.5, 0.05],
-      { depth: 2, fallback: 0.2, when: all(blink, on("blinkBreathing")) }));
-    // --- Smooth movement -----------------------------------------------------
-    card = "Smooth movement";
-    const smooth = [];
-    smooth.push(toggle("Smooth movement", "The cursor glides to its new spot instead of jumping.", "smoothEnabled", { gate: true }));
-    const gliding = on("smoothEnabled");
-    smooth.push(slider("Glide amount", "How much the cursor eases as it travels.", "smoothness", [0.05, 0.30, 0.05], { depth: 1, when: gliding }));
-    smooth.push(slider("Catch-up speed", "How quickly the cursor chases the real caret.", "catchUpSpeed", [0.30, 0.80, 0.05], { depth: 1, when: gliding }));
-    // Max catch-up speed is meaningless on its own - it is only ever read
-    // inside the adaptive branch - so it hangs off that toggle rather than
-    // sitting beside it as a live-looking slider that does nothing.
-    smooth.push(toggle("Speed up when typing fast", "Goes past Catch-up speed while you type, so it never falls behind.", "smoothAdaptive", { depth: 1, gate: true, when: gliding }));
-    smooth.push(slider("Max catch-up speed", "The fastest the speed-up is allowed to get.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
-      { depth: 2, when: all(gliding, on("smoothAdaptive")) }));
-    smooth.push(slider("Movement delay", "Delay before the cursor sets off, in ms. 0 follows immediately.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
-    // --- Effects -------------------------------------------------------------
-    // The Effects page: a RAIL of chips at the top, one per effect with its
-    // icon and a dot for "on", and the picked effect's rows under it - one
-    // effect on screen at a time, one back to the list of pages (an effect
-    // per sub-page was one back too many). "All" shows every effect's rows.
-    // The pick is panel state, kept for the session, never in the settings.
-    //
-    // Every effect's rows carry the pick in their predicate, on top of their
-    // own gates. Rows that read gates living in OTHER cards - Gradient
-    // decides whether Pixel trail's Gradient colors, Energy beam's Aurora
-    // and Neon's Gradient trail do anything, Blinking whether the torch's
-    // Sync with blink does - say so with `needs`: shown, disabled, with the
-    // hint, instead of hidden.
-    card = "Effects";
-    const effects: SettingGroupItem[] = [];
-    const pick = (): string => {
-      if (this._effectsPick) return this._effectsPick;
-      const first = RAIL_EFFECTS.find((e) => !!get(e.key));
-      return first ? first.key : RAIL_EFFECTS[0].key;
-    };
-    const shown = (key: keyof Look) => () => { const p = pick(); return p === "all" || p === key; };
-    effects.push(this.railRow(get, pick, (key) => { this._effectsPick = key; refresh(); }));
-    const needsGradient: Needs = { when: gradient, hint: "Needs Gradient, in Appearance." };
-    const needsBlink: Needs = { when: on("blinkingEnabled"), hint: "Needs Blinking." };
-
-    // Pop effects: one group for everything the cursor throws off in
-    // response to a keystroke. Rainbow is a modifier across all four, so it
-    // sits at the BOTTOM of the group rather than nested under any one of
-    // them - and only once at least one of them is actually on, since with
-    // the whole group idle it is a switch that recolours nothing.
-    const showPop = shown("popEffects");
-    effects.push(toggle("Pop effects", "Letters, lightning and fireworks thrown off as you type.", "popEffects", { gate: true, when: showPop }));
-    const pop = all(showPop, on("popEffects"));
-    effects.push(toggle("Popping letters", "Each letter you type springs out of the cursor and tumbles away.", "popLetters", { depth: 1, gate: true, when: pop }));
-    // Sits next to Popping letters on purpose: they're the pair that fires
-    // per character, one for adding and one for removing. The two below
-    // are the bigger, rarer events.
-    effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
-      "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
-    effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
-    effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
-    effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],
-      { depth: 2, fallback: 0.5, when: all(pop, on("thunderstrike")) }));
-    effects.push(toggle("Fireworks", "Space and Enter send shells up from the cursor to burst above it.", "fireworks", { depth: 1, gate: true, when: pop }));
-    // The colour source isn't configurable - it follows Rainbow, then
-    // Gradient, then the cursor colour - so it's described rather than
-    // offered.
-    effects.push(slider("Quantity", "How many shells go up per keypress, and how much each throws.", "fireworksQuantity", [0.2, 3, 0.1], { depth: 2, fallback: 1, when: all(pop, on("fireworks")) }));
-    // Rainbow last, and only when there is something for it to recolour: the
-    // gate is on the four effects, NOT on popEffects. The group can be on
-    // with every effect inside it off, and that is exactly the state where
-    // a Rainbow toggle is a switch that visibly does nothing.
-    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("thunderstrike") || !!get("fireworks"));
-    effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
-
-    const showTrail = shown("flameTrail");
-    effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
-    const trail = all(showTrail, on("flameTrail"));
-    effects.push(slider("Pixel density", "How many pixels the trail sheds. 0 hides them entirely.", "flameTrailDensity", [0, 3, 0.1], { depth: 1, fallback: 1, when: trail }));
-    effects.push(toggle("Trail on jump", "Lays pixels along the whole path of a jump, not just at the start.", "flameTrailOnJump", { depth: 1, when: trail }));
-    effects.push(slider("Pixel lifetime", "How long each pixel lasts before it fades out, in milliseconds.", "flameTrailLifeMs", [100, 2000, 50], { depth: 1, fallback: 400, when: trail }));
-    effects.push(slider("Pixel size", "How big each pixel is.", "flameTrailPixelSize", [1, 12, 0.5], { depth: 1, fallback: 4, when: trail }));
-    effects.push(toggle("Gradient colors", "Colors the pixels from the cursor's gradient.", "flameTrailGradientColors", { depth: 1, when: trail, needs: needsGradient }));
-    effects.push(slider("Gravity", "A steady pull on the pixels. 0 leaves them drifting sideways.", "flameTrailGravity", [0, 1, 0.05], { depth: 1, fallback: 0, gate: true, when: trail }));
-    effects.push(slider("Gravity direction", "Where the pull goes, in degrees: 0 down, 90 right, 180 up, 270 left.", "flameTrailGravityAngle", [0, 359, 5],
-      { depth: 2, fallback: 0, when: () => trail() && (get("flameTrailGravity") ?? 0) > 0 }));
-
-    const showStardust = shown("stardustEnabled");
-    effects.push(toggle("Stardust", "A slow stream of floating pixels that drift up and fade.", "stardustEnabled", { gate: true, when: showStardust }));
-    const stardust = all(showStardust, on("stardustEnabled"));
-    effects.push(toggle("Always on", "Streams continuously instead of waiting for the cursor to settle.", "stardustAlwaysOn", { depth: 1, gate: true, when: stardust }));
-    // The delay is what Always on overrides, so hide it rather than leave a
-    // live-looking slider that no longer does anything.
-    effects.push(slider("Idle delay", "How long the cursor sits still before the stardust starts, in ms.", "stardustDelayMs", [500, 8000, 250],
-      { depth: 1, fallback: 2000, when: all(stardust, off("stardustAlwaysOn")) }));
-    effects.push(slider("Stardust density", "How thickly the stardust streams off the cursor.", "stardustRate", [0.2, 3, 0.1], { depth: 1, fallback: 1, when: stardust }));
-    effects.push(toggle("Orbit", "Motes circle the cursor like fireflies instead of drifting up.", "stardustOrbit", { depth: 1, gate: true, when: stardust }));
-    effects.push(slider("Orbit radius", "How wide the motes circle, in pixels.", "stardustOrbitRadius", [10, 60, 2], { depth: 2, fallback: 22, when: all(stardust, on("stardustOrbit")) }));
-
-    const showTether = shown("bracketTether");
-    effects.push(toggle("Bracket tether", "Underlines the span between matching brackets or quotes.", "bracketTether", { gate: true, when: showTether }));
-    effects.push(slider("Tether strength", "How visible the line is.", "bracketTetherStrength", [0.1, 1, 0.05], { depth: 1, fallback: 0.35, when: all(showTether, on("bracketTether")) }));
-
-    const showSmear = shown("smear");
-    effects.push(toggle("Motion smear", "The cursor stretches as it moves and snaps back when it arrives.", "smear", { gate: true, when: showSmear }));
-    const smear = all(showSmear, on("smear"));
-    effects.push(slider("Stiffness", "How hard the leading edge is pulled toward the new position.", "smearStiffness", [0.1, 1, 0.05], { depth: 1, when: smear }));
-    effects.push(slider("Trailing stiffness", "The same for the edge left behind.", "smearTrailingStiffness", [0.05, 1, 0.05], { depth: 1, when: smear }));
-    effects.push(slider("Damping", "How much the leading edge resists overshooting.", "smearDamping", [0.05, 1, 0.05], { depth: 1, when: smear }));
-    effects.push(toggle("Tapered trail", "Narrows the smear to a point behind the cursor, like a comet tail.", "smearTaper", { depth: 1, gate: true, when: smear }));
-    effects.push(slider("Taper amount", "How sharply the tail closes. At 1 it comes to a full point.", "smearTaperAmount", [0.1, 1, 0.05], { depth: 2, fallback: 0.7, when: all(smear, on("smearTaper")) }));
-    effects.push(slider("Max length", "How far the tail may trail, in pixels. 0 is no limit.", "smearMaxLength", [0, 400, 10], { depth: 1, fallback: 0, when: smear }));
-    effects.push(toggle("Conserve area", "A jump to another line thins as it stretches, keeping its area.", "smearConserveVolume", { depth: 1, gate: true, when: smear }));
-    effects.push(slider("Thinning", "How strongly the area is held. At 1, twice as long is half as wide.", "smearVolumeStrength", [0.1, 1, 0.05], { depth: 2, fallback: 0.3, when: all(smear, on("smearConserveVolume")) }));
-
-    const showEnergy = shown("energyEffect");
-    effects.push(toggle("Energy beam", "A pulse of light along the cursor; with Gradient on, it scrolls your colors.", "energyEffect", { gate: true, when: showEnergy }));
-    const energy = all(showEnergy, on("energyEffect"));
-    effects.push(slider("Beam speed", "How fast the pulse travels along the cursor.", "energySpeed", [0.2, 3, 0.1], { depth: 1, when: energy }));
-    // Aurora has nothing to work with without a ramp - it warps and
-    // cross-mixes gradient colors - so it needs Gradient.
-    effects.push(toggle("Aurora", "Swirls your gradient colors instead of scrolling them past.", "energyAurora", { depth: 1, gate: true, when: energy, needs: needsGradient }));
-    effects.push(slider("Waviness", "How hard the bands bend. 0 keeps them flat.", "energyAuroraWaviness", [0, 2, 0.05], { depth: 2, fallback: 1, when: all(energy, on("energyAurora")), needs: needsGradient }));
-
-    const showCrt = shown("crtEffect");
-    effects.push(toggle("CRT effects", "Old-monitor phosphor look: the cursor leaves fading ghosts behind it.", "crtEffect", { gate: true, when: showCrt }));
-    const crt = all(showCrt, on("crtEffect"));
-    effects.push(slider("Trail length", "How many ghosts are kept behind the cursor. 0 leaves none.", "trailLength", [0, 30, 1], { depth: 1, when: crt }));
-    effects.push(slider("Trail fade time", "How long (in ms) each ghost takes to fade out.", "trailFadeMs", [50, 1500, 25], { depth: 1, when: crt }));
-    effects.push(toggle("Glow", "A soft halo around the cursor in its own color.", "glow", { depth: 1, when: crt }));
-    effects.push(toggle("Neon trail", "Renders the ghosts as a glowing neon tube instead of fading boxes.", "crtNeon", { depth: 1, gate: true, when: crt }));
-    effects.push(toggle("Gradient trail", "Runs the cursor's gradient along the streak, newest ghost to oldest.", "crtNeonGradient", { depth: 2, when: all(crt, on("crtNeon")), needs: needsGradient }));
-    effects.push(toggle("Signal glitch", "Long jumps break up like a mistracked video signal.", "crtGlitch", { depth: 1, gate: true, when: crt }));
-    const glitch = all(crt, on("crtGlitch"));
-    effects.push(slider("Break-up", "How far the slices are thrown and how much the cursor's shape warps.", "crtGlitchStrength", [0.2, 2.5, 0.1], { depth: 2, fallback: 1, when: glitch }));
-    effects.push(slider("Color split", "How far the color channels separate. 0 only tears the shape.", "crtGlitchAberration", [0, 3, 0.1], { depth: 2, fallback: 1, when: glitch }));
-    effects.push(slider("Duration", "How long each burst lasts, in milliseconds.", "crtGlitchMs", [60, 600, 10], { depth: 2, fallback: 220, when: glitch }));
-
-    const showDemon = shown("speedDemon");
-    effects.push(toggle("Speed demon", "Heats from gray to white-hot as you type, cools when you stop.", "speedDemon", { gate: true, when: showDemon }));
-    const demon = all(showDemon, on("speedDemon"));
-    effects.push(toggle("Fire sparks", "Throws embers off the cursor once it is hot enough.", "speedDemonSparks", { depth: 1, gate: true, when: demon }));
-    const sparks = all(demon, on("speedDemonSparks"));
-    effects.push(slider("Spark quantity", "How many embers per burst. 0 stops them.", "speedDemonSparkQuantity", [0, 3, 0.1], { depth: 2, fallback: 1, when: sparks }));
-    effects.push(slider("Spark trail", "Gives each spark a fading comet tail, in pixels. 0 = no trail.", "speedDemonSparkTrail", [0, 30, 1], { depth: 2, fallback: 0, when: sparks }));
-    effects.push(toggle("Keep cursor color", "The cursor keeps your color; only the sparks react to speed.", "speedDemonNoCursorHeat", { depth: 1, gate: true, when: demon }));
-    effects.push(slider("Sensitivity", "How fast typing and caret movement heat the cursor up.", "speedDemonSensitivity", [0.5, 2, 0.1], { depth: 1, when: demon }));
-    // Hidden while Keep cursor color is on: that option says the cursor
-    // shouldn't change colour with speed at all, which makes a custom
-    // colour ramp for exactly that a contradiction rather than a choice.
-    const heatRamp = all(demon, off("speedDemonNoCursorHeat"));
-    effects.push(toggle("Custom gradient", "Replaces the built-in heat curve with four colors of your own.", "speedDemonGradient", { depth: 1, gate: true, when: heatRamp }));
-    const stages = all(heatRamp, on("speedDemonGradient"));
-    const heat = (prefix: string) => [1, 2, 3, 4].map((i) => (prefix + i) as keyof Look);
-    const stageLabels = ["Warm", "Hot", "Hotter", "Flat out"];
-    effects.push(swatchRow("Stages (dark theme)", heat("speedHeatDark"), stageLabels,
-      "Warming to flat out. At rest the cursor keeps its own color.", { depth: 2, when: stages }));
-    effects.push(swatchRow("Stages (light theme)", heat("speedHeatLight"), stageLabels,
-      "The same four stages for light themes, where a white-hot final stage disappears into the page.", { depth: 2, when: stages }));
-
-    const showHot = shown("hotHead");
-    effects.push(toggle("Hot-head", "Sets the text you're working on alight.", "hotHead", { gate: true, when: showHot }));
-    const hot = all(showHot, on("hotHead"));
-    effects.push(slider("Fire quantity", "How much fire. 0 puts it out.", "hotHeadQuantity", [0, 3, 0.1], { depth: 1, fallback: 1, when: hot }));
-    effects.push(slider("Fire spread", "How many characters around the cursor catch. 0 burns only its own column.", "hotHeadSpread", [0, 14, 1], { depth: 1, fallback: 4, when: hot }));
-    effects.push(slider("Trail over text", "Fire left along the path. 0 keeps it where the cursor stops.", "hotHeadTrail", [0, 30, 1], { depth: 1, fallback: 6, when: hot }));
-    effects.push(slider("Flame height", "How high the flames climb before they burn out.", "hotHeadHeight", [0.15, 1.5, 0.05], { depth: 1, fallback: 0.55, when: hot }));
-    effects.push(slider("Fade time", "How long a single fire particle lasts, in milliseconds.", "hotHeadFade", [200, 1600, 20], { depth: 1, fallback: 620, when: hot }));
-    effects.push(slider("Idle timeout", "Idle time before the fire burns out. 0 keeps it burning forever.", "hotHeadIdleMs", [0, 6000, 100], { depth: 1, fallback: 1500, when: hot }));
-    effects.push(slider("Fire opacity", "How solid the fire is, independent of the cursor's own opacity.", "hotHeadOpacity", [0.1, 1, 0.05], { depth: 1, fallback: 1, when: hot }));
-    effects.push(toggle("Use cursor color", "Paints the fire in the cursor's color instead of the heat gradient.", "hotHeadFlat", { depth: 1, gate: true, when: hot }));
-    // Nested under Use cursor color, and hidden without it, because that is
-    // the only mode it can actually do anything in - see hotHeadSpeedHeat's
-    // gate in drawHotHead. It needs Speed demon for the heat to follow.
-    effects.push(toggle("Heat with speed demon", "The fire warms up as you type, following Speed demon's heat.", "hotHeadSpeedHeat",
-      { depth: 2, when: all(hot, on("hotHeadFlat")), needs: { when: on("speedDemon"), hint: "Needs Speed demon." } }));
-
-    const showTorch = shown("torchEffect");
-    effects.push(row("Torch spotlight", "Darkens everything except a pool of light around the cursor.",
-      (s) => renderTorchToggleSetting(s, afterWrite("torchEffect")), { when: showTorch }));
-    const torch = all(showTorch, on("torchEffect"));
-    // The two subheadings are labels within the torch's options, not
-    // siblings of the torch toggle itself.
-    effects.push(subheading("Spotlight", 1, torch));
-    effects.push(dropdown("Follow", "What the light tracks.", "overlayFollowMode",
-      { caret: "Text cursor only", mouse: "Mouse pointer only", auto: "Auto intelligent swap" }, { depth: 1, when: torch }));
-    effects.push(slider("Light size", "How far the lit circle reaches, in pixels.", "overlayRadius", [100, 800, 10], { depth: 1, when: torch }));
-    effects.push(toggle("Sync with blink", "The light closes as the cursor blinks out and opens as it returns.", "overlayBlinkSync", { depth: 1, gate: true, when: torch, needs: needsBlink }));
-    effects.push(slider("Pulse depth", "How far the light closes at its darkest. At 1 it goes out.", "overlayBlinkDepth", [0.05, 1, 0.05],
-      { depth: 2, fallback: 0.25, when: all(torch, on("overlayBlinkSync")), needs: needsBlink }));
-    owns("overlayColor");
-    effects.push(row("Light color", "The color of the light at its center.",
-      (s) => { s.addColorPicker((cp) => cp.setValue(get("overlayColor")).onChange(set("overlayColor"))); }, { depth: 1, when: torch }));
-    effects.push(slider("Follow speed", "How quickly the light catches up when the cursor moves.", "overlaySpeed", [0.05, 1, 0.05], { depth: 1, when: torch }));
-
-    effects.push(subheading("Environment", 1, torch));
-    effects.push(slider("Darkness", "How far everything outside the light is dimmed.", "overlayDarkness", [0.2, 1, 0.01], { depth: 1, when: torch }));
-    effects.push(slider("Glow strength", "Strength of the warm glow. 0 gives a pure spotlight.", "overlayIntensity", [0, 1, 0.05], { depth: 1, when: torch }));
-    // Sits under Glow strength because that is the value it modulates: the
-    // flame swings either side of whatever that slider is set to, so at 0
-    // there is nothing to flicker and this says so rather than appearing to
-    // be broken.
-    effects.push(toggle("Flicker", "The light gutters like a candle.", "overlayFlicker", { depth: 1, gate: true, when: torch }));
-    effects.push(slider("Flicker depth", "How far the flame swings. At 1 it gutters right out.", "overlayFlickerAmount", [0.05, 1, 0.05],
-      { depth: 2, fallback: 0.35, when: all(torch, on("overlayFlicker")) }));
-    effects.push(toggle("Keep sidebars lit", "Darkens every note tab; sidebars, ribbon and other views stay lit. Desktop only.", "overlaySpareSidebars", { depth: 1, when: torch }));
-    // Each tab ends with its reset.
-    appearance.push(this.resetLinkRow("Appearance", resetCard("Appearance")));
-    blinking.push(this.resetLinkRow("Blinking", resetCard("Blinking")));
-    smooth.push(this.resetLinkRow("Smooth movement", resetCard("Smooth movement")));
-    effects.push(this.resetLinkRow("Effects", resetCard("Effects")));
-
-    // What each page's entry says it is set to.
-    const summaries: Record<string, () => string> = {
-      Appearance: () => {
-        const parts = [String(get("cursorStyle") || "Box")];
-        if (get("gradientEnabled")) parts.push("gradient");
-        if (get("cursorTranslucent")) parts.push("translucent");
-        if (get("cursorStyle") === "Box" && get("showChar")) parts.push("letter inside");
-        if (get("cursorRounded")) parts.push("rounded");
-        return parts.join(" · ");
-      },
-      Blinking: () => (get("blinkingEnabled") ? `On · ${Number(get("blinkSpeed") ?? 1).toFixed(1)}×` + (get("blinkBreathing") ? " · breathing" : "") : "Off"),
-      "Smooth movement": () => (get("smoothEnabled") ? "On" : "Off"),
-      // Every effect that is on, by name; Obsidian ellipsizes a long one.
-      Effects: () => {
-        const on = RAIL_EFFECTS.filter((e) => !!get(e.key));
-        return on.length ? on.map((e) => e.name).join(" · ") : "Off";
-      },
-    };
-
-    const cards: LookCards = [
-      this.section("Appearance", appearance),
-      this.section("Blinking", blinking),
-      this.section("Smooth movement", smooth),
-      this.section("Effects", effects),
-    ];
-    cards.gates = gates;
-    cards.cardKeys = cardKeys;
-    cards.summaries = summaries;
-    cards.effectsOn = () => RAIL_EFFECTS.filter((e) => !!get(e.key));
-    return cards;
-  }
-
-
-  // The last row of a look tab: a small link that puts the tab's settings
-  // back to their defaults.
-  resetLinkRow(title: string, reset: () => void): SettingDefinitionRender {
-    return {
-      name: "",
-      searchable: false,
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-reset-row");
-        const btn = setting.controlEl.createEl("button", { cls: "cursor-smith-reset-link", attr: { type: "button" } });
-        setIcon(btn, "rotate-ccw");
-        btn.createSpan({ text: `Reset ${title} to defaults` });
-        btn.addEventListener("click", reset);
-      },
-    };
-  }
-
-
-  // --- The Effects rail ------------------------------------------------------
-  // One row of chips, one per effect plus "All": a tick while the effect
-  // is on, the effect's icon, its name; the picked chip filled with the
-  // accent. Repainted on every
-  // refresh - an effect's toggle row changes its dot - and a click on one
-  // sets the pick and refreshes, which shows its rows and hides the others.
-  // In the control area, which Obsidian empties on a re-render.
-  railRow(get: LookSettingsHooks["get"], pick: () => string, choose: (key: string) => void): SettingDefinitionRender {
-    return {
-      name: "Effects",
-      desc: "Pick an effect. A tick marks the ones that are on.",
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-rail-row");
-        const rail = setting.controlEl.createDiv({ cls: "cursor-smith-rail" });
-        const chips: { key: string; el: HTMLElement }[] = [];
-        // Tick, icon, name: the tick - the preset cards' - shows while the
-        // effect is on (the stylesheet hides it otherwise, so a flip is a
-        // class change and no rebuild). "All" has none.
-        const chip = (key: string, name: string, icon: string | null) => {
-          const el = rail.createEl("button", { cls: "cursor-smith-chip", attr: { type: "button" } });
-          if (icon) setIcon(el.createSpan({ cls: "cursor-smith-tick" }), "check");
-          if (icon) setIcon(el.createSpan({ cls: "cursor-smith-chip-icon" }), icon);
-          el.createSpan({ text: name });
-          el.addEventListener("click", () => choose(key));
-          chips.push({ key, el });
-        };
-        for (const e of RAIL_EFFECTS) chip(e.key, e.name, e.icon);
-        chip("all", "All", null);
-        const roving = this.rovingRow(rail, chips.map((c) => c.el));
-        const paint = () => {
-          const p = pick();
-          for (const c of chips) {
-            c.el.toggleClass("is-picked", c.key === p);
-            c.el.toggleClass("is-on", c.key !== "all" && !!get(c.key as keyof Look));
-            c.el.setAttribute("aria-pressed", c.key === p ? "true" : "false");
-          }
-          roving.picked(Math.max(0, chips.findIndex((c) => c.key === p)));
-        };
-        paint();
-        this.onRefresh(paint);
-      },
-    };
-  }
-
-  // Arrow keys across a row of pills (the Effects rail, the Vim mode tabs).
-  // One pill is in the Tab order - the picked one - and Left/Right/Home/End
-  // move focus (and the Tab stop) along the row, so a keyboard user does
-  // not Tab through ten chips to reach the rows under them. Enter and
-  // Space press the focused pill, as on any button. `picked` re-seats the
-  // Tab stop when the pick changes without a rebuild (the rail's refresh).
-  rovingRow(row: HTMLElement, pills: HTMLElement[]) {
-    const seat = (i: number) => pills.forEach((p, k) => p.setAttribute("tabindex", k === i ? "0" : "-1"));
-    row.addEventListener("keydown", (ev) => {
-      const i = pills.indexOf(ev.target as HTMLElement);
-      if (i < 0) return;
-      let j = -1;
-      if (ev.key === "ArrowRight") j = (i + 1) % pills.length;
-      else if (ev.key === "ArrowLeft") j = (i - 1 + pills.length) % pills.length;
-      else if (ev.key === "Home") j = 0;
-      else if (ev.key === "End") j = pills.length - 1;
-      if (j < 0) return;
-      ev.preventDefault();
-      seat(j);
-      pills[j].focus();
-    });
-    return { picked: seat };
-  }
-
-  // A row that needs a setting from another card: disabled, dimmed, with the
-  // hint in its description, while that setting is off. Repainted on every
-  // refresh (see _refreshers).
-  needsHint(setting: Setting, needs: Needs) {
-    const hint = setting.descEl.createSpan({ cls: "cursor-smith-needs-hint", text: " " + needs.hint });
-    const paint = () => {
-      const ok = needs.when();
-      setting.settingEl.toggleClass("cursor-smith-needs", !ok);
-      hint.toggleClass("is-shown", !ok);
-      for (const c of setting.components) c.setDisabled(!ok);
-    };
-    paint();
-    this.onRefresh(paint);
-  }
+export class WordSmithSettingTab extends PluginSettingTab {
+	plugin: WordSmith;
+	// What a refresh repaints beyond Obsidian's own `visible` pass: the
+	// rails' ticks and picks, the alerts. Rows register these while they
+	// render; the list is emptied whenever the tree is built again.
+	_refreshers: (() => void)[];
+	// Each rail's pick, by page: a section's key, or unset (the first section
+	// whose switch is on). Panel state for the session, never a setting.
+	_picks: Record<string, string | null>;
+	// the letter box's last arrow count, for the way back from "no arrows"
+	_lastArrowCount: number | null;
+	// the watch that moves a page entry's icon in front of its name and
+	// opens a rail's section on a search hit; the document it watches
+	_entryWatch: MutationObserver | null;
+	_entryDoc: Document | null;
+	// the rails' paints, run by the watch when a section is drawn
+	_rails: (() => void)[];
+
+	constructor(app: App, plugin: WordSmith) {
+		super(app, plugin);
+		this.plugin = plugin;
+		this._refreshers = [];
+		this._picks = {};
+		this._lastArrowCount = null;
+		this._entryWatch = null;
+		this._entryDoc = null;
+		this._rails = [];
+		// a dark/light switch refreshes the page (the theme inks read the half the
+		// workspace wears) — through the plugin's one door for app events, which
+		// guards the handler and registers it for unload; a test's workspace may
+		// carry no bus, and the door skips one that does not
+		try {
+			if (this.app.workspace && typeof this.app.workspace.on === 'function') plugin.onAppEvent(this.app.workspace, 'css-change', () => { this.refreshDomState(); });
+		} catch (_) { wsCatch('WordSmithSettingTab: css-change', _); }
+	}
+
+	// ── THE DOORS OBSIDIAN CALLS ────────────────────────────────────────────
+
+	getControlValue(key: string): unknown {
+		return bag(this.plugin.settings)[key];
+	}
+
+	// A control's write: the key, its AFTER effect, the save, then the
+	// predicates — so a switch hides and shows its rows in place.
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		bag(this.plugin.settings)[key] = value;
+		const after = AFTER[key];
+		if (after) await after(this, value);
+		await this.plugin.saveSettings(SAVE_NOW.has(key));
+		this.refreshDomState();
+	}
+
+	// Obsidian's refresh re-asks every row's `visible`; ours also repaints
+	// what the rows registered. A gate's write calls this.
+	refreshDomState() {
+		super.refreshDomState();
+		for (const f of this._refreshers) {
+			try { f(); } catch (_) { wsCatch('settings tab refresher', _); }
+		}
+	}
+
+	onRefresh(f: () => void) { this._refreshers.push(f); }
+
+	// ── THE TREE ────────────────────────────────────────────────────────────
+
+	getSettingDefinitions(): Item[] {
+		this._refreshers = [];
+		this._rails = [];
+		this.watchEntries();
+		const s = this.plugin.settings;
+		// the pages describe surfaces a blocked start did not build
+		const on: Pred = () => !!s.pluginEnabled && !this.plugin._startBlocked;
+		return [
+			this.headerGroup(),
+			this.pagePowermenu(on),
+			this.pagePowerline(on),
+			this.pageFocus(on),
+			this.pageProse(on),
+			this.pageText(on),
+			this.pageManuscript(on),
+			this.pageNavigation(on),
+			// under Navigation
+			this.pageThemes(on),
+			this.pageVault(on),
+			this.footerRow(),
+		];
+	}
+
+	// The header: the switch, and the blocked-start card while a start is
+	// blocked. No heading (the version is the footer).
+	headerGroup(): Group {
+		return {
+			type: 'group',
+			cls: 'ws-set-header',
+			items: [
+				{ name: 'Enable plugin', control: { type: 'toggle', key: 'pluginEnabled' }, visible: () => !this.plugin._startBlocked },
+				this.blockedStartRow(),
+			],
+		};
+	}
+
+	// A BLOCKED START: the reason, and the door where there is one — the
+	// pages describe surfaces that were not built.
+	blockedStartRow(): Render {
+		return {
+			name: '',
+			desc: '',
+			searchable: false,
+			visible: () => !!this.plugin._startBlocked,
+			render: (st) => {
+				const b = this.plugin._startBlocked;
+				this.alertInto(st, 'triangle-alert');
+				st.setDesc(b ? b.text : '');
+				st.settingEl.toggleClass('is-safe', !!b && b.kind === 'safe');
+				if (b && b.kind === 'safe') st.addButton((btn) => btn.setButtonText('Try again').setCta().onClick(() => { void this.plugin.startAgain(); }));
+			},
+		};
+	}
+
+	// THE ENTRIES' ICONS, IN FRONT OF THEIR NAMES. Obsidian draws a page's
+	// entry itself (the name, then the description holding the icon); once
+	// drawn, the icon moves to the front of the info block and the row is
+	// classed, so the sheet can lay the two out as a grid without `:has()`.
+	// The tab's container is observed once, for as long as the tab lives —
+	// Obsidian adopts it into the settings window after the definitions are
+	// asked for, which is why the watch is on the container and not a
+	// document. Runs again on every re-render; a moved icon is left alone.
+	watchEntries() {
+		if (!this.containerEl) return;
+		const doc = this.containerEl.ownerDocument;
+		if (this._entryWatch && this._entryDoc === doc) return;
+		if (this._entryWatch) { try { this._entryWatch.disconnect(); } catch (_) { wsCatch('watchEntries: disconnect', _); } }
+		// a guard on a watch: a throw inside an observer's callback is reported
+		// to the window, which a page of Obsidian's does not want either
+		const own = (r: MutationRecord) => {
+			if (r.type !== 'attributes' || r.target.nodeType !== 1) return false;
+			const cl = (r.target as Element).classList;
+			return cl.contains('ws-pill') || cl.contains('ws-set-section') || cl.contains('ws-set-entry');
+		};
+		const run = (records?: MutationRecord[]) => {
+			try {
+				// the tab's own class writes (the rail's pills, the sections it
+				// hides, the entries it dresses) are not a reason to run again
+				if (records && records.length && records.every(own)) return;
+				this.dressEntries();
+			} catch (_) { wsCatch('watchEntries: dressEntries', _); }
+		};
+		try {
+			// the document's body, not the container: a sub-page renders beside
+			// the tab's container, and the container is adopted into the settings
+			// window after the first definitions are asked for (re-seated then)
+			// the settings window's own MutationObserver: the window can be a
+			// document of its own (Obsidian's "open settings in a new window")
+			const win = doc.defaultView || window;
+			this._entryWatch = new win.MutationObserver((records) => run(records));
+			this._entryWatch.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+			this._entryDoc = doc;
+		} catch (_) { wsCatch('watchEntries: new MutationObserver', _); }
+		run();
+	}
+
+	// THE OBSERVER OUTLIVES hide() AND DIES IN onunload: Obsidian 1.13 does
+	// not ask for the definitions again on reopen, it re-renders the ones it
+	// has — an observer disconnected on hide() would never come back, and the
+	// icons would sit in the descriptions from the second opening on. The
+	// plugin's onunload calls this; nothing else does.
+	teardown() {
+		if (this._entryWatch) { try { this._entryWatch.disconnect(); } catch (_) { wsCatch('teardown: disconnect', _); } }
+		this._entryWatch = null;
+		this._entryDoc = null;
+	}
+
+	dressEntries() {
+		if (!this.containerEl) return;
+		const doc = this.containerEl.ownerDocument;
+		doc.querySelectorAll('.setting-item-description > .ws-page-icon').forEach((icon) => {
+			const info = icon.closest('.setting-item-info');
+			const row = icon.closest('.setting-item');
+			if (!info || !row) return;
+			info.prepend(icon);
+			setClass(row, 'ws-set-entry', true);
+		});
+		// a section drawn after its rail's paint (the same render pass) is
+		// dressed now — FIRST, so a search hit is judged against the rail's
+		// state: Obsidian opens the page and marks the row it found
+		// `is-flashing` in the same breath as the sections are drawn, and a
+		// hit inside a section the rail hides moves the pick to that section
+		this.refreshRails();
+		const hit = doc.querySelector('.setting-item.is-flashing');
+		const offGroup = hit ? hit.closest('.ws-set-section.is-railed-off') : null;
+		if (offGroup) {
+			const m = /\bws-rs-([a-z]+)-([a-z]+)\b/.exec(offGroup.className);
+			if (m) { this._picks[m[1]] = m[2]; this.refreshRails(); }
+			if (hit && typeof hit.scrollIntoView === 'function') hit.scrollIntoView({ block: 'center' });
+		}
+	}
+
+	// the rails' paints only (the class toggles), without Obsidian's pass
+	refreshRails() {
+		for (const f of this._rails) { try { f(); } catch (_) { wsCatch('settings tab rail', _); } }
+	}
+
+	// The version, a muted line under the pages. Not a heading: Obsidian's
+	// guidelines ask plugins not to head their settings with their own name,
+	// and Community plugins lists the version anyway.
+	footerRow(): Render {
+		const version = this.plugin.manifest && this.plugin.manifest.version ? this.plugin.manifest.version : '';
+		return {
+			name: '',
+			desc: ('Word-Smith ' + version).trim(),
+			searchable: false,
+			// the footer renders with the top level, in the settings window's
+			// document: the watch is re-seated there (measured: Obsidian asks for
+			// the definitions once, at load, before the container is adopted)
+			render: (st) => { st.settingEl.addClass('ws-set-footer'); this.watchEntries(); },
+		};
+	}
+
+	// ── THE BUILDERS ────────────────────────────────────────────────────────
+
+	// A page: Obsidian's sub-page entry, with the icon in front of its name
+	// and its value on the entry.
+	page(name: string, icon: string, desc: string, items: Item[], displayValue: () => string, visible: Pred): Page {
+		return { type: 'page', name, desc: this.iconDesc(icon, desc), items, displayValue, visible };
+	}
+
+	// A description with a Lucide icon in front of it. Obsidian renders the
+	// entry — the name, then the description — and the description is the
+	// one slot that takes markup, so the icon is written here and moved in
+	// front of the NAME once the entry is drawn (dressEntries): this sheet
+	// bans `:has()` and `display: contents` (the review's CSS lint), so the
+	// move is DOM, watched by an observer on the tab's own container.
+	iconDesc(icon: string, text: string): DocumentFragment {
+		return createFragment((f) => {
+			setIcon(f.createSpan({ cls: 'ws-page-icon' }), icon);
+			f.appendText(text);
+		});
+	}
+
+	// A section of a page: a group whose heading is not shown (the page's
+	// title, or the rail's pill, is it). Its keys are read off its rows for
+	// the reset link at its end.
+	section(title: string, items: Row[], visible?: Pred | RailSlot, reset = true): Group {
+		const keys = WordSmithSettingTab.keysOf(items);
+		if (reset && keys.length) items.push(this.resetLinkRow(title, keys));
+		const slot = typeof visible === 'object' ? visible : null;
+		const gate = slot ? slot.visible : (typeof visible === 'function' ? visible : undefined);
+		return { type: 'group', heading: title, cls: 'ws-set-section' + (slot ? ' ' + slot.cls : ''), items, visible: gate };
+	}
+
+	// A SECTION UNDER A RAIL is not hidden by `visible`: a row whose section
+	// is invisible when Obsidian builds its index is left out of the settings
+	// search (measured: "No settings found" for a row of a section the rail
+	// had not picked). The section stays visible to Obsidian and wears a
+	// class the rail's refresh toggles `is-railed-off` on (the sheet hides
+	// it); `visible` is kept for a real gate (the Powerline being off).
+	railed(pageKey: string, key: string, visible?: Pred): RailSlot {
+		return { cls: 'ws-rs-' + pageKey + '-' + key, visible };
+	}
+
+	// The keys a section owns, read off its definitions: a control's key, a
+	// render row's declared keys.
+	static keysOf(items: Item[] | undefined): Key[] {
+		const out = new Set<Key>();
+		const walk = (list: Item[] | undefined) => {
+			for (const it of list || []) {
+				if ('control' in it && it.control) out.add(it.control.key);
+				for (const k of RENDER_KEYS.get(it) || []) out.add(k);
+				if ('items' in it) walk(it.items);
+			}
+		};
+		walk(items);
+		return Array.from(out);
+	}
+
+	// The last row of a section: a small link that puts its keys back
+	// through the door a load and a paste use (the repair pass runs; Undo,
+	// under Vault, has the previous settings).
+	resetLinkRow(title: string, keys: Key[]): Render {
+		return {
+			name: '',
+			searchable: false,
+			render: (st) => {
+				st.settingEl.addClass('ws-set-reset-row');
+				const btn = st.controlEl.createEl('button', { cls: 'ws-set-reset-link', attr: { type: 'button' } });
+				setIcon(btn, 'rotate-ccw');
+				btn.createSpan({ text: 'Reset ' + title + ' to defaults' });
+				btn.addEventListener('click', () => { void (async () => {
+					const r = await this.plugin.settingsResetKeys(keys);
+					new Notice('Word-Smith: ' + (r.error || (r.changed + ' of ' + r.keys + ' back to the default' + (r.changed === 1 ? '' : 's') + '. Undo is under Vault.')), 6000);
+					this.update();
+				})(); });
+			},
+		};
+	}
+
+	// A small all-caps label between runs of rows on a page with no rail.
+	subheadRow(title: string): Render {
+		return { name: title, searchable: false, render: (st) => { st.settingEl.addClass('ws-set-subhead'); } };
+	}
+
+	// THE HOTKEYS, WHERE THEY MATTER: a card under a feature that has
+	// commands, each command with the hotkey it has now, read off Obsidian's
+	// hotkey manager (empty when none is set). Set under Settings → Hotkeys;
+	// this card only says. THE KEYS, UNDER WHAT THEY DRIVE AND BEFORE THE
+	// RESET: the card is the last row of its own section, so a pill's section
+	// ends card, then reset link.
+	//
+	// WHAT IS ON, ONLY: an entry may carry the switch its command answers to;
+	// off, its line is not drawn, and the card goes when none is left. The
+	// lines are drawn again when that set changes (a switch flips, the tab
+	// refreshes), the keys re-read on every refresh.
+	hotkeysRow(entries: WsKeyEntry[], visible?: Pred): Render {
+		const norm: { id: string; on: Pred | null }[] = entries.map((e) => typeof e === 'string' ? { id: e, on: null } : { id: e.id, on: e.on });
+		const shown = () => norm.filter((e) => !e.on || e.on()).map((e) => e.id);
+		// no card without a command to name (a blocked start registers none)
+		const any = () => { const cmds: Record<string, unknown> = (this.app.commands && this.app.commands.commands) || {}; return shown().some((id) => !!cmds['word-smith:' + id]); };
+		const def: Render = {
+			name: '',
+			desc: 'Hotkeys',
+			searchable: false,
+			visible: () => any() && (!visible || visible()),
+			render: (st) => {
+				st.settingEl.addClass('ws-set-keys');
+				st.settingEl.querySelectorAll('.ws-set-keys-icon').forEach((old) => { old.remove(); });
+				const icon = st.settingEl.createSpan({ cls: 'ws-set-keys-icon' });
+				setIcon(icon, 'keyboard');
+				st.settingEl.prepend(icon);
+				// private API, both halves: a build without them draws the names alone
+				const cmds: Record<string, { name?: string } | undefined> = (this.app.commands && this.app.commands.commands) || {};
+				const keyOf = (full: string) => { try { return String(this.app.hotkeyManager.printHotkeyForCommand(full) || ''); } catch (_) { wsCatch('hotkeysRow: printHotkeyForCommand', _); return ''; } };
+				let keyEls: [string, HTMLElement][] = [];
+				let drawn = '';
+				const draw = () => {
+					const ids = shown();
+					drawn = ids.join(' ');
+					keyEls = [];
+					st.descEl.empty();
+					for (const id of ids) {
+						const full = 'word-smith:' + id;
+						const cmd = cmds[full];
+						if (!cmd) continue;
+						const line = st.descEl.createDiv({ cls: 'ws-set-keys-line' });
+						line.createSpan({ cls: 'ws-set-keys-name', text: String(cmd.name || id).replace(/^Word-Smith: /, '') });
+						const keys = keyOf(full);
+						// OBSIDIAN'S OWN CHIP AND PLUS: the Hotkeys page's `setting-hotkey` chip,
+						// `mod-empty` and "Blank" with no key, and its `setting-add-hotkey-button`
+						// with the circled plus (as 1.13.7 draws them). The plus opens Settings →
+						// Hotkeys with this command searched, where the key is set. In one control
+						// beside the name, under our own class rather than Obsidian's
+						// setting-command-hotkeys, whose rules sit the chip at the bottom.
+						const ctl = line.createSpan({ cls: 'ws-set-keys-ctl' });
+						keyEls.push([full, ctl.createSpan({ cls: 'setting-hotkey ws-set-keys-key' + (keys ? '' : ' mod-empty is-blank'), text: keys || 'Blank' })]);
+						const name = String(cmd.name || id);
+						const add = ctl.createEl('button', { cls: 'clickable-icon setting-add-hotkey-button ws-set-keys-add', attr: { type: 'button', 'aria-label': 'Set a hotkey for ' + name.replace(/^Word-Smith: /, '') } });
+						setIcon(add, 'plus-circle');
+						add.addEventListener('click', () => { this.openHotkeysFor(name); });
+					}
+					st.descEl.createDiv({ cls: 'ws-set-keys-note', text: 'Or set them under Settings \u2192 Hotkeys.' });
+				};
+				draw();
+				// READ AGAIN, NOT ONCE: a hotkey set under Settings → Hotkeys and a
+				// return to this page reached a card that still said "Blank" (the
+				// definitions are asked once). The keys are re-read on every refresh
+				// and whenever the settings window changes (the watch), and the text
+				// is rewritten only when it differs — the watch must see no idle write.
+				const paint = () => {
+					if (shown().join(' ') !== drawn) { draw(); return; }
+					for (const [full, el] of keyEls) {
+						const keys = keyOf(full);
+						const text = keys || 'Blank';
+						if (el.textContent !== text) el.setText(text);
+						setClass(el, 'is-blank', !keys);
+						setClass(el, 'mod-empty', !keys);
+					}
+				};
+				this.onRefresh(paint);
+				this._rails.push(paint);
+			},
+		};
+		return def;
+	}
+
+	// Settings → Hotkeys with one command searched, through the tab's own
+	// `setQuery` (1.13.7: the box set, focused, the list drawn). A build
+	// without it still lands on the Hotkeys tab.
+	openHotkeysFor(name: string) {
+		try {
+			this.app.setting.open();
+			const tab = this.app.setting.openTabById('hotkeys');
+			if (tab && typeof tab.setQuery === 'function') tab.setQuery(name);
+		} catch (_) { wsCatch('openHotkeysFor', _); }
+	}
+
+	// A note among the rows: a description and nothing else, as an INFO CARD —
+	// the hotkeys card's box with an info glyph in front of the text.
+	noteRow(text: string, visible?: Pred): Render {
+		const def: Render = { name: '', desc: text, searchable: false, render: (st) => { this.infoInto(st); } };
+		if (visible) def.visible = visible;
+		return def;
+	}
+
+	// The info card's dress: the class and the glyph, the glyph on `settingEl`
+	// outside the area Obsidian empties (as the alert's), so last time's goes
+	// first. A ROW WITH A BLOCK OF ITS OWN (the frontmatter help, the format
+	// reference) wears the glyph INLINE before its name and no box: the box
+	// hides the control area, and the block lives there.
+	infoInto(st: Setting, inline = false) {
+		st.settingEl.querySelectorAll('.ws-set-note-icon').forEach((old) => { old.remove(); });
+		const el = st.settingEl.createSpan({ cls: 'ws-set-note-icon' });
+		setIcon(el, 'info');
+		if (inline) { st.nameEl.prepend(el); return; }
+		st.settingEl.addClass('ws-set-note');
+		st.settingEl.prepend(el);
+	}
+
+	// A warning card under a switch that changes the editor's behavior: an
+	// icon, one line, no button (the switch above it is the way back).
+	alertRow(text: string, visible: Pred): Render {
+		return { name: '', desc: text, searchable: false, visible, render: (st) => { this.alertInto(st, 'triangle-alert'); } };
+	}
+
+	// The alert's dress. The icon goes on `settingEl`, outside the control
+	// area Obsidian empties — so last time's goes first.
+	alertInto(st: Setting, icon: string) {
+		st.settingEl.addClass('ws-set-alert');
+		st.settingEl.querySelectorAll('.ws-set-alert-icon').forEach((old) => { old.remove(); });
+		const el = st.settingEl.createSpan({ cls: 'ws-set-alert-icon' });
+		setIcon(el, icon);
+		st.settingEl.prepend(el);
+	}
+
+	// A row with Obsidian's own button at the right — not an `action` row
+	// (the whole row clickable, its name in the accent), which reads as a
+	// link.
+	buttonRow(name: string, desc: string, text: string, run: () => void, visible?: Pred): Render {
+		const def: Render = { name, desc, render: (st) => { st.addButton((b) => b.setButtonText(text).onClick(run)); } };
+		if (visible) def.visible = visible;
+		return def;
+	}
+
+	// A destructive button that is two taps: the first turns it red and asks
+	// ("Delete?") for three seconds, the second runs `del`. Left alone, it
+	// turns back. The row's size of button, not a card's icon.
+	twoTapButton(st: Setting, text: string, del: () => void) {
+		st.addButton((b) => {
+			b.setButtonText(text);
+			let armed = 0;
+			b.onClick(() => {
+				if (b.buttonEl.hasClass('mod-destructive')) { window.clearTimeout(armed); del(); return; }
+				b.setDestructive().setButtonText(text + '?');
+				armed = window.setTimeout(() => { b.buttonEl.removeClass('mod-destructive'); b.setButtonText(text); }, DELETE_ARM_MS);
+			});
+		});
+	}
+
+	// A row whose control area is a block of its own under the name (the
+	// shelf, the status rows, the cards). Built in `controlEl`, which
+	// Obsidian empties on a re-render.
+	block(st: Setting, cls: string) {
+		st.settingEl.addClass('ws-set-block');
+		return st.controlEl.createDiv({ cls });
+	}
+
+	// A pill: a tick (drawn only while `on`), an icon, the name. One shape
+	// everywhere — the rails, the theme shelf, the scope switch.
+	pill(parent: HTMLElement, name: string, icon: string | null, opts: { cls?: string; tick?: boolean; label?: string; draw?: (el: HTMLElement) => void } = {}) {
+		const el = parent.createEl('button', { cls: 'ws-pill' + (opts.cls ? ' ' + opts.cls : ''), attr: { type: 'button' } });
+		if (opts.label) el.setAttribute('aria-label', opts.label);
+		if (opts.tick) setIcon(el.createSpan({ cls: 'ws-tick' }), 'check');
+		// the plugin's own glyph where it has one, a Lucide name otherwise
+		if (opts.draw) opts.draw(el.createSpan({ cls: 'ws-pill-icon' }));
+		else if (icon) setIcon(el.createSpan({ cls: 'ws-pill-icon' }), icon);
+		el.createSpan({ cls: 'ws-pill-name', text: name });
+		return el;
+	}
+
+	// Arrow keys across a row of pills: one pill is in the Tab order — the
+	// picked one — and Left/Right/Home/End move focus and the Tab stop along
+	// the row. `picked` re-seats the stop when the pick changes.
+	rovingRow(row: HTMLElement, pills: HTMLElement[]) {
+		const seat = (i: number) => pills.forEach((p, k) => setAttr(p, 'tabindex', k === i ? '0' : '-1'));
+		row.addEventListener('keydown', (ev) => {
+			const i = pills.indexOf(ev.target as HTMLElement);
+			if (i < 0) return;
+			let j = -1;
+			if (ev.key === 'ArrowRight') j = (i + 1) % pills.length;
+			else if (ev.key === 'ArrowLeft') j = (i - 1 + pills.length) % pills.length;
+			else if (ev.key === 'Home') j = 0;
+			else if (ev.key === 'End') j = pills.length - 1;
+			if (j < 0) return;
+			ev.preventDefault();
+			seat(j);
+			pills[j].focus();
+		});
+		return { picked: seat };
+	}
+
+	// A rail: one pill per section of a page, the picked one filled,
+	// a tick on a section whose switch is on. A click sets the pick and
+	// refreshes — the picked section's rows show, the others hide.
+	railRow(pageKey: string, entries: RailEntry[]): Render {
+		const pick = () => this.pickOf(pageKey, entries);
+		return {
+			name: 'Sections',
+			desc: '',
+			searchable: false,
+			render: (st) => {
+				this.watchEntries();   // a page renders in the settings window's document
+				st.settingEl.addClass('ws-set-rail-row');
+				const rail = st.controlEl.createDiv({ cls: 'ws-rail' });
+				const pills: { key: string; el: HTMLElement }[] = [];
+				for (const e of entries) {
+					const el = this.pill(rail, e.name, e.icon, { tick: !!e.on, draw: e.draw });
+					el.addEventListener('click', () => { this._picks[pageKey] = e.key; this.refreshDomState(); });
+					pills.push({ key: e.key, el });
+				}
+				const roving = this.rovingRow(rail, pills.map((p) => p.el));
+				const paint = () => {
+					const p = pick();
+					for (const c of pills) {
+						const e = entries.find((x) => x.key === c.key);
+						setClass(c.el, 'is-picked', c.key === p);
+						setClass(c.el, 'is-on', !!(e && e.on && e.on()));
+						setAttr(c.el, 'aria-pressed', c.key === p ? 'true' : 'false');
+					}
+					roving.picked(Math.max(0, pills.findIndex((c) => c.key === p)));
+					this.paintRail(pageKey, entries, st.settingEl.ownerDocument);
+				};
+				paint();
+				this.onRefresh(paint);
+				this._rails.push(paint);
+			},
+		};
+	}
+
+	// The sections a rail governs, shown or hidden by class — only when the
+	// class would change, so the watch below sees no idle mutation.
+	paintRail(pageKey: string, entries: RailEntry[], doc: Document) {
+		const p = this.pickOf(pageKey, entries);
+		for (const e of entries) {
+			const off = p !== e.key;
+			doc.querySelectorAll('.ws-rs-' + pageKey + '-' + e.key).forEach((g) => { setClass(g, 'is-railed-off', off); });
+		}
+	}
+
+	pickOf(pageKey: string, entries: RailEntry[]): string {
+		const p = this._picks[pageKey];
+		if (p) return p;
+		const first = entries.find((e) => e.on && e.on());
+		return first ? first.key : entries[0].key;
+	}
+
+	// A trash that is two taps: the first turns it into a red "Delete?" for
+	// three seconds, the second runs `del`. Left alone, it turns back.
+	twoTapDelete(parent: HTMLElement, label: string, del: () => void) {
+		const b = parent.createEl('button', { cls: 'ws-card-action clickable-icon', attr: { type: 'button', 'aria-label': label, title: label } });
+		setIcon(b, 'trash');
+		let armed = 0;
+		b.addEventListener('click', () => {
+			if (b.hasClass('is-armed')) { window.clearTimeout(armed); del(); return; }
+			b.addClass('is-armed');
+			b.setText('Delete?');
+			b.setAttribute('aria-label', 'Tap again to delete');
+			armed = window.setTimeout(() => {
+				b.removeClass('is-armed');
+				b.empty();
+				setIcon(b, 'trash');
+				b.setAttribute('aria-label', label);
+			}, DELETE_ARM_MS);
+		});
+		return b;
+	}
+
+	// An icon button beside a card.
+	action(parent: HTMLElement, icon: string, label: string, run: (e: MouseEvent) => void) {
+		const b = parent.createEl('button', { cls: 'ws-card-action clickable-icon', attr: { type: 'button', 'aria-label': label, title: label } });
+		setIcon(b, icon);
+		b.addEventListener('click', run);
+		return b;
+	}
+
+	// A ROW THAT HOLDS SWATCHES: Obsidian's phone rule widens every input in a
+	// control area to 100%, a colour input included, so a swatch grows to
+	// whatever room its row has. The class lets the sheet hold the swatch
+	// width there; every colour picker of ours is added through this.
+	swatchRow(st: Setting) {
+		try { st.settingEl.addClass('ws-set-swatches'); } catch (_) { wsCatch('swatchRow: st.settingEl.addClass(ws-set-swatches)', _); }
+	}
+
+	// A colour swatch bound to one key, saved now (the bar repaints on save).
+	swatch(st: Setting, key: Key) {
+		const s = bag(this.plugin.settings);
+		this.swatchRow(st);
+		st.addColorPicker((cp) => cp.setValue(str(s[key] || DEFAULTS[key]))
+			.onChange((v) => { void (async () => { s[key] = v; await this.plugin.saveSettings(true); })(); }));
+	}
+
+	// ── WHERE IT APPLIES ────────────────────────────────────────────────────
+
+	// The scope's two rows open the Vault page.
+	scopeSection(): Group {
+		const s = this.plugin.settings;
+		const count = () => Array.isArray(s.scopePaths) ? s.scopePaths.length : 0;
+		return this.section('Where it applies', [
+				this.subheadRow('Where it applies'),
+				rendered({ name: 'Rule', desc: 'Only the listed paths, or everywhere except them.', render: (st) => this.renderScopeMode(st), visible: () => count() > 0 }, ['scopeMode']),
+				rendered({ name: 'Paths', desc: 'Folders and notes. With none listed, Word-Smith applies to every note.', render: (st) => this.renderPaths(st, 'scopePaths', 'Add a folder or note', 'Apply to…', true) }, ['scopePaths']),
+		]);
+	}
+
+	// Two pills: only these, or everywhere except.
+	renderScopeMode(st: Setting) {
+		const s = this.plugin.settings;
+		const wrap = st.controlEl.createDiv({ cls: 'ws-pills' });
+		const modes: [string, string, string][] = [['include', 'Only these', 'list-check'], ['exclude', 'Everywhere except', 'list-x']];
+		const pills = modes.map(([id, name, icon]) => {
+			const el = this.pill(wrap, name, icon);
+			el.addEventListener('click', () => { void (async () => {
+				if (s.scopeMode === id) return;
+				s.scopeMode = id;
+				await this.plugin.saveSettings(true);
+				paint();
+				this.update();   // the entry's value changes
+			})(); });
+			return el;
+		});
+		const roving = this.rovingRow(wrap, pills);
+		const paint = () => {
+			const cur = s.scopeMode === 'exclude' ? 1 : 0;
+			pills.forEach((p, i) => { setClass(p, 'is-picked', i === cur); setAttr(p, 'aria-pressed', i === cur ? 'true' : 'false'); });
+			roving.picked(cur);
+		};
+		paint();
+	}
+
+	// The paths as cards: the path, its kind, a two-tap trash; then a dashed
+	// pill that opens the picker.
+	renderPaths(st: Setting, key: 'scopePaths' | 'countExclude', addLabel: string, placeholder: string, withRoot: boolean) {
+		const s = this.plugin.settings;
+		const paths = () => Array.isArray(s[key]) ? s[key] : (s[key] = []);
+		const box = this.block(st, 'ws-cards');
+		paths().forEach((path, i) => {
+			const card = box.createDiv({ cls: 'ws-card' });
+			const text = card.createSpan({ cls: 'ws-card-text' });
+			text.createSpan({ cls: 'ws-card-name', text: path === '/' ? 'Entire vault' : path });
+			text.createSpan({ cls: 'ws-card-kind', text: /\.md$/i.test(path) ? 'note' : 'folder' });
+			this.twoTapDelete(card, 'Remove ' + path, () => { void (async () => {
+				paths().splice(i, 1);
+				await this.plugin.saveSettings(true);
+				this.update();
+			})(); });
+		});
+		const add = this.pill(box, addLabel, 'plus', { cls: 'ws-pill-more' });
+		add.addEventListener('click', () => this.pickPath(key, placeholder, withRoot));
+	}
+
+	// The one picker for both lists: folders first (the vault itself where a
+	// list takes it), then notes; what the list already holds is left out.
+	pickPath(key: 'scopePaths' | 'countExclude', placeholder: string, withRoot: boolean) {
+		if (!WsPathSuggestModal) return;
+		const s = this.plugin.settings;
+		const have = new Set<string>(Array.isArray(s[key]) ? s[key] : []);
+		const folders = this.app.vault.getAllLoadedFiles()
+			.filter((f) => f instanceof TFolder).map((f) => f.path)
+			.filter((path) => path && path !== '/' && !have.has(path));
+		const notes = this.app.vault.getMarkdownFiles().map((f) => f.path).filter((path) => !have.has(path));
+		const items = (withRoot && !have.has('/') ? ['/'] : []).concat(folders, notes);
+		if (!items.length) return;
+		new WsPathSuggestModal(this.app, items, placeholder, (picked: string) => { void (async () => {
+			const list = Array.isArray(s[key]) ? s[key] : (s[key] = []);
+			if (!list.includes(picked)) list.push(picked);
+			await this.plugin.saveSettings(true);
+			this.update();
+		})(); }).open();
+	}
+
+	// ── POWERMENU ───────────────────────────────────────────────────────────
+
+	pagePowermenu(on: Pred): Page {
+		const s = this.plugin.settings;
+		return this.page('Powermenu', 'layout-grid', 'The menu of everything, floating or docked.', [
+			this.section('Powermenu', [
+				{ name: 'Dock it as a panel', desc: 'In a sidebar instead of a floating panel.', control: { type: 'toggle', key: 'menuDock' } },
+				rendered({ name: 'What the menu holds', desc: 'Drag to reorder, drop a card on another to share a row, pin any command.', render: (st) => this.renderMenuShelf(st) },
+					['menuOrder', 'menuHidden', 'menuAliases', 'menuJoined', 'menuRuleStyles']),
+				this.hotkeysRow(['open-menu', 'open-menu-panel']),
+			]),
+		], () => s.menuDock ? 'Docked' : 'Floating', on);
+	}
+
+	renderMenuShelf(st: Setting) {
+		const plugin = this.plugin;
+		const box = this.block(st, 'ws-menu-shelf');
+		const redisplay = () => { this.update(); plugin.rebuildMenuPanels(); };
+
+		const defs = plugin.menuFeatureDefs();
+		const nameOf = (id: string) => {
+			if (/^rule-\d+$/.test(id)) return 'Separator';
+			if (plugin.menuIsCommand(id)) return plugin.menuAliasOf(id);
+			const d = defs.find((f) => f.id === id);
+			return d ? d.name : id;   // an unknown id is shown as itself: reachable beats pretty
+		};
+
+		const grid = box.createDiv({ cls: 'ws-menu-bands' });
+		const fullOrder = plugin.menuLayout();
+		const dropGap = (toIdx: number) => {
+			const gap = grid.createDiv({ cls: 'ws-menu-gap' });
+			gap.addEventListener('dragover', (e) => { e.preventDefault(); gap.addClass('is-dropzone'); });
+			gap.addEventListener('dragleave', () => gap.removeClass('is-dropzone'));
+			gap.addEventListener('drop', (e) => { void (async () => {
+				e.preventDefault();
+				const dragged = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
+				if (!dragged) return;
+				plugin.menuBreakAt(dragged, toIdx);
+				await plugin.saveSettings();
+				redisplay();
+			})(); });
+			return gap;
+		};
+
+		plugin.menuBands().forEach((band) => {
+			dropGap(fullOrder.indexOf(band[0]));
+			const bandEl = grid.createDiv({ cls: 'ws-menu-bandrow' });
+			if (band.length >= MENU_MAX_COLS) bandEl.addClass('is-full');
+			band.forEach((id: string) => {
+				const isRule = /^rule-\d+$/.test(id);
+				const isCmd = plugin.menuIsCommand(id);
+				const isDead = isCmd && !plugin.menuCommandFor(id);
+				// the card is a div: the handle (glyph and name) and the action
+				// buttons are siblings in it
+				const card = bandEl.createDiv({ cls: 'ws-card ws-menu-card' + (isRule ? ' is-rule' : '') + (isCmd ? ' is-cmd' : '') + (isDead ? ' is-dead' : '') });
+				card.setAttribute('title', isRule ? 'Separator' : isCmd ? plugin.menuCommandName(id) : nameOf(id));
+				card.setAttribute('draggable', 'true');
+				card.addEventListener('dragstart', (e) => { if (e.dataTransfer) e.dataTransfer.setData('text/plain', id); card.addClass('is-dragging'); });
+				card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+				card.addEventListener('dragover', (e) => { e.preventDefault(); card.addClass('is-dropzone'); });
+				card.addEventListener('dragleave', () => card.removeClass('is-dropzone'));
+				card.addEventListener('drop', (e) => { void (async () => {
+					e.preventDefault();
+					const dragged = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
+					if (!dragged || dragged === id) return;
+					plugin.menuJoinAfter(dragged, id);
+					await plugin.saveSettings();
+					redisplay();
+				})(); });
+				card.setAttribute('data-menucard', id);
+				plugin.touchDrag(card, id, {
+					rows: () => Array.from(box.querySelectorAll('.ws-menu-card')),
+					idOf: (cardEl: HTMLElement) => cardEl.getAttribute('data-menucard'),
+					drop: (from: string, to: string) => {
+						if (!from || from === to) return;
+						plugin.menuJoinAfter(from, to);
+						void plugin.saveSettings().then(() => redisplay());
+					},
+				});
+
+				const handle = card.createSpan({ cls: 'ws-card-text' });
+				// the card wears the glyph the menu wears, through the drawer the
+				// menu uses, so the card and the row cannot come to disagree
+				if (!isRule) { try { plugin.menuDrawIcon(handle, id); } catch (_) { wsCatch('renderMenuShelf: the card’s glyph', _); } }
+				const nameEl = handle.createSpan({ cls: 'ws-card-name' + (isRule ? ' is-rule-' + plugin.menuRuleStyle(id) : ''), text: isRule ? '' : nameOf(id) });
+				if (isRule) {
+					// Obsidian's own `dropdown`, as every other select on the tab; the sheet
+					// only keeps it from taking the card's width
+					const sel = card.createEl('select', { cls: 'dropdown ws-rule-style' });
+					sel.setAttribute('aria-label', 'How this separator draws');
+					for (const style of MENU_RULE_STYLES) { const o = sel.createEl('option', { text: style.charAt(0).toUpperCase() + style.slice(1) }); o.value = style; }
+					sel.value = plugin.menuRuleStyle(id);
+					sel.addEventListener('click', (e) => e.stopPropagation());
+					sel.addEventListener('change', () => { void (async () => {
+						plugin.menuSetRuleStyle(id, sel.value);
+						await plugin.saveSettings();
+						redisplay();
+					})(); });
+				}
+				if (isCmd) {
+					this.action(card, 'pencil', 'Rename ' + nameOf(id), (e) => {
+						e.stopPropagation();
+						nameEl.empty();
+						card.setAttribute('draggable', 'false');
+						const inp = nameEl.createEl('input', { cls: 'ws-card-nameinput' });
+						inp.type = 'text';
+						inp.value = nameOf(id);
+						let done = false;
+						const finish = async (save: boolean) => {
+							if (done) return;
+							done = true;
+							if (save) { plugin.menuSetAlias(id, inp.value); await plugin.saveSettings(); }
+							redisplay();
+						};
+						inp.addEventListener('click', (ev) => ev.stopPropagation());
+						inp.addEventListener('keydown', (ev) => {
+							if (ev.key === 'Enter') { ev.preventDefault(); void finish(true); }
+							if (ev.key === 'Escape') { ev.preventDefault(); void finish(false); }
+						});
+						inp.addEventListener('blur', () => { void finish(true); });
+						try { inp.focus(); inp.select(); } catch (_) { wsCatch('renderMenuShelf: inp.focus();', _); }
+					});
+				}
+				this.action(card, 'x', isRule ? 'Delete this separator' : 'Set ' + nameOf(id) + ' aside', (e) => { void (async () => {
+					e.stopPropagation();
+					if (isRule) plugin.menuDeleteRule(id); else plugin.menuHide(id);
+					await plugin.saveSettings();
+					redisplay();
+				})(); });
+			});
+		});
+		dropGap(fullOrder.length);
+
+		// under the bands: add a separator, pin a command, and what was set aside
+		const tools = box.createDiv({ cls: 'ws-pills ws-menu-tools' });
+		const addRule = this.pill(tools, 'Add a separator', 'minus', { cls: 'ws-pill-more' });
+		addRule.addEventListener('click', () => { void (async () => {
+			plugin.menuAddRule();
+			await plugin.saveSettings();
+			redisplay();
+		})(); });
+
+		const finder = box.createDiv({ cls: 'ws-cmd-finder' });
+		// OBSIDIAN'S OWN SEARCH BOX: the container draws the magnifier and the
+		// clear button, as "Search settings..." above it does, and the placeholder
+		// ends as that one does.
+		const cmdSearch = finder.createDiv({ cls: 'search-input-container' }).createEl('input', { cls: 'ws-cmd-search' });
+		cmdSearch.type = 'search';
+		cmdSearch.placeholder = 'Search any command to pin…';
+		cmdSearch.setAttribute('aria-label', 'Search any command to pin');
+		const cmdHits = finder.createDiv({ cls: 'ws-cmd-hits' });
+		const pinnedNow = new Set(plugin.menuLayout());
+		const drawHits = () => {
+			cmdHits.empty();
+			const q = (cmdSearch.value || '').trim();
+			if (!q) return;
+			let cmds: { id: string; name: string }[] = [];
+			try { cmds = plugin.app.commands.listCommands() || []; } catch (_) { wsCatch('renderMenuShelf / drawHits: cmds = plugin.app.commands.listCommands();', _); }
+			const hits: { sc: number; c: { id: string; name: string } }[] = [];
+			for (const c of cmds) {
+				if (!c || !c.id || pinnedNow.has('cmd:' + c.id)) continue;
+				const sc = Math.max(barMenuFuzzy(q, c.name || ''), barMenuFuzzy(q, c.id) - 1);
+				if (sc >= 0) hits.push({ sc, c });
+			}
+			hits.sort((a, b) => b.sc - a.sc);
+			if (!hits.length) { cmdHits.createDiv({ cls: 'ws-cmd-empty', text: 'Nothing matches' }); return; }
+			for (const h of hits.slice(0, 8)) {
+				const hit = cmdHits.createEl('button', { cls: 'ws-cmd-hit', text: h.c.name || h.c.id, attr: { type: 'button' } });
+				hit.addEventListener('click', () => { void (async () => {
+					plugin.menuPinCommand(h.c.id);
+					await plugin.saveSettings();
+					redisplay();
+				})(); });
+			}
+		};
+		cmdSearch.addEventListener('input', drawHits);
+
+		const hiddenIds = plugin.settings.menuHidden || [];
+		if (hiddenIds.length) {
+			box.createDiv({ cls: 'ws-set-label', text: 'Set aside' });
+			const row = box.createDiv({ cls: 'ws-pills' });
+			for (const id of hiddenIds) {
+				const restore = () => { void (async () => { plugin.menuRestore(id); await plugin.saveSettings(); redisplay(); })(); };
+				if (plugin.menuIsCommand(id)) {
+					const card = row.createDiv({ cls: 'ws-card' });
+					card.setAttribute('title', plugin.menuCommandName(id));
+					const back = card.createEl('button', { cls: 'ws-card-use', attr: { type: 'button', 'aria-label': 'Put ' + nameOf(id) + ' back in the menu' } });
+					setIcon(back.createSpan({ cls: 'ws-pill-icon' }), 'undo-2');
+					back.createSpan({ cls: 'ws-card-name', text: nameOf(id) });
+					back.addEventListener('click', restore);
+					this.action(card, 'x', 'Unpin ' + nameOf(id), (e) => { void (async () => { e.stopPropagation(); plugin.menuUnpin(id); await plugin.saveSettings(); redisplay(); })(); });
+					continue;
+				}
+				const chip = this.pill(row, nameOf(id), 'undo-2', { label: 'Put ' + nameOf(id) + ' back in the menu' });
+				chip.addEventListener('click', restore);
+			}
+		}
+	}
+
+	// ── POWERLINE ───────────────────────────────────────────────────────────
+
+	pagePowerline(on: Pred): Page {
+		const s = this.plugin.settings;
+		const bar: Pred = () => !!s.enableRetroStatus;
+		const rules: Pred = () => (s.statusBarBorderStyle || 'solid') !== 'none';
+		// weight 0 is the hairline; as `barRuleIsHair` reads it
+		const hair: Pred = () => rules() && s.statusBarBorderWidth != null && Number(s.statusBarBorderWidth) === 0;
+		const RAIL: RailEntry[] = [
+			{ key: 'rows', name: 'Rows', icon: 'rows-3' },
+			{ key: 'look', name: 'Look', icon: 'ruler' },
+			// Tokens before Colors, Vim last
+			{ key: 'tokens', name: 'Tokens', icon: 'braces' },
+			{ key: 'colors', name: 'Colors', icon: 'palette' },
+			{ key: 'vim', name: 'Vim', icon: 'terminal' },
+		];
+		const tokenFormat = (token: string, id: string, word: string, desc: string): Def => rendered({
+			name: token, desc, render: (st) => this.renderTokenIconFormat(st, id, word),
+		}, ['barTokenIcons']);
+		const palette = (prefix: 'powerlineColor' | 'powerlineColorLight') => {
+			const keys: Key[] = [];
+			for (let n = 1; n <= PL_BG_COUNT; n++) keys.push((prefix + n) as Key);
+			return keys;
+		};
+		const value = () => {
+			if (!s.enableRetroStatus) return 'Off';
+			const n = this.plugin.getStatusRows().length;
+			const preset = this.presetInUse();
+			return 'On · ' + (preset ? preset + ' · ' : '') + n + (n === 1 ? ' row' : ' rows');
+		};
+		return this.page('Powerline', 'panel-bottom', 'Rows, colors, borders, tokens.', [
+			this.section('Powerline', [
+				{ name: 'Powerline status bar', desc: 'Replaces the status bar with rows of readings and buttons.', control: { type: 'toggle', key: 'enableRetroStatus' } },
+				this.presetsRow(bar),
+			], undefined, false),
+			this.section('Sections', [this.railRow('powerline', RAIL)], bar),
+			this.section('Rows', [
+				rendered({ name: 'What each row says', desc: 'Left, center and right of every row, written in tokens.', render: (st) => this.renderStatusRows(st) }, ['statusRows']),
+				{ name: 'How to write a row', desc: 'Every token, and how to color a segment.', render: (st) => this.renderFormatReference(st), searchable: false },
+			], this.railed('powerline', 'rows', bar)),
+			this.section('Look', [
+				{ name: 'Match the note’s text size', desc: 'The bar follows the editor’s font size.', control: { type: 'toggle', key: 'statusBarFontFollowNote' } },
+				{ name: 'Font size', desc: 'In pixels.', control: { type: 'slider', key: 'statusBarFontSize', min: 8, max: 24, step: 1 }, visible: () => !s.statusBarFontFollowNote },
+				{ name: 'Interface font', desc: 'Obsidian’s own face for the bar, whatever font the note is in.', control: { type: 'toggle', key: 'statusBarUiFont' } },
+				{ name: 'Row height', desc: 'In pixels.', control: { type: 'slider', key: 'statusBarHeight', min: 12, max: 30, step: 1 } },
+				{ name: 'Space above', desc: 'In pixels.', control: { type: 'slider', key: 'statusBarPadTop', min: 0, max: 24, step: 1 } },
+				{ name: 'Space below', desc: 'In pixels.', control: { type: 'slider', key: 'statusBarPadBottom', min: 0, max: 24, step: 1 } },
+				{ name: 'Gap under the bar', desc: 'Pixels between the bar and the window’s edge.', control: { type: 'slider', key: 'barBottomGap', min: 0, max: 30, step: 1 } },
+				{ name: 'Top rule', desc: 'A line above the bar.', control: { type: 'toggle', key: 'statusBarBorderTop' } },
+				// hidden for a hairline bar on the window's edge: the frame's own
+				// hairline is its bottom rule, and one drawn under it moves the tokens
+				// up a pixel; lifted off the edge (a gap), the bar gets its own again
+				{ name: 'Bottom rule', desc: 'A line under the bar.', control: { type: 'toggle', key: 'statusBarBorderBottom' }, visible: () => !hair() || this.plugin.barBottomGapPx() > 0 },
+				{ name: 'Rule style', desc: 'None hides both rules.', control: { type: 'dropdown', key: 'statusBarBorderStyle',
+					options: { none: 'None', solid: 'Solid', dashed: 'Dashed', dotted: 'Dotted', double: 'Double' } } },
+				// 0 is the hairline, so the edges and the colours still apply to it
+				{ name: 'Rule weight', desc: 'In pixels; 0 is a hairline, the thinnest line the screen can draw.', control: { type: 'slider', key: 'statusBarBorderWidth', min: 0, max: 8, step: 1 }, visible: rules },
+				rendered({ name: 'Rule colors, dark theme', desc: 'Top, then bottom.', render: (st) => this.renderColorPair(st, 'barRuleDarkTopColor', 'barRuleDarkBottomColor'), visible: rules }, ['barRuleDarkTopColor', 'barRuleDarkBottomColor']),
+				rendered({ name: 'Rule colors, light theme', desc: 'Top, then bottom.', render: (st) => this.renderColorPair(st, 'barRuleLightTopColor', 'barRuleLightBottomColor'), visible: rules }, ['barRuleLightTopColor', 'barRuleLightBottomColor']),
+				{ name: 'Show the bar on phones', desc: 'Off by default: a phone screen is small for a status line.', control: { type: 'toggle', key: 'retroBarOnPhone' }, visible: () => !!Platform.isPhone },
+			], this.railed('powerline', 'look', bar)),
+			this.section('Colors', [
+				rendered({ name: 'Palette, dark theme', desc: 'The seven segment colors a row can name, :1 to :7.', render: (st) => this.renderPalette(st, palette('powerlineColor')) }, palette('powerlineColor')),
+				rendered({ name: 'Palette, light theme', desc: 'The same seven for light themes.', render: (st) => this.renderPalette(st, palette('powerlineColorLight')) }, palette('powerlineColorLight')),
+			], this.railed('powerline', 'colors', bar)),
+			this.section('Vim', [
+				{ name: 'Follow the Vim mode', desc: 'Recolors the {vim} segment as the mode changes.', control: { type: 'toggle', key: 'powerlineModeColors' } },
+				{ name: 'Follow Cursor-Smith', desc: 'Borrows its caret colors instead of the five below.', control: { type: 'toggle', key: 'vimFollowCursorSmith' } },
+				...this.vimModeRows(),
+			], this.railed('powerline', 'vim', bar)),
+			this.section('Tokens', [
+				{ name: '{file}', desc: 'The note’s name, with or without its folders.', control: { type: 'dropdown', key: 'fileTokenFormat', options: { path: 'Full path', name: 'File name only' } } },
+				{ name: '{flag}', desc: 'The flag’s icon, its name, or both.', control: { type: 'dropdown', key: 'flagTokenFormat', options: { icon: 'Icon', name: 'Name', both: 'Icon and name' } } },
+				{ name: '{font}', desc: 'The menu’s icon, the word, or both.', control: { type: 'dropdown', key: 'fontTokenFormat', options: { glyph: 'Icon', word: 'Name', both: 'Icon and name' } } },
+				{ name: '{markers}', desc: 'The menu’s icon, the word, or both.', control: { type: 'dropdown', key: 'markersTokenFormat', options: { glyph: 'Icon', word: 'Name', both: 'Icon and name' } } },
+				tokenFormat('{mode}', 'modes', 'Modes', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{syntax}', 'syntax', 'Syntax', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{prose}', 'prose', 'Prose', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{theme}', 'theme', 'Theme', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{report}', 'report', 'Report', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{history}', 'history', 'History', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{export}', 'export', 'Export', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{organizer}', 'organizer', 'Organizer', 'The menu’s icon, the word, or both.'),
+				tokenFormat('{powermenu}', 'powermenu', 'Menu', 'The Powermenu’s icon, the word, or both.'),
+				tokenFormat('{properties}', 'properties', '6 properties', 'The number, then the pane’s icon, the word, or both.'),
+				tokenFormat('{backlinks}', 'backlinks', '3 backlinks', 'The number, then the pane’s icon, the word, or both.'),
+				this.noteRow('Dates are written a piece at a time, like {dd}.{mm}.{yy}.'),
+			], this.railed('powerline', 'tokens', bar)),
+			// the bar's own key at the page's foot: it is no pill's, and the top
+			// section has no reset to be last
+			this.section('Hotkeys', [this.hotkeysRow(['toggle-retro-bar'])], undefined, false),
+		], value, on);
+	}
+
+	// the three slots of every row, as text: the rows are a list under one
+	// key, which no control can address, so they are drawn by hand
+	renderStatusRows(st: Setting) {
+		const rows = this.plugin.getStatusRows();
+		const box = this.block(st, 'ws-status-rows');
+		const SLOTS: ['left' | 'center' | 'right', string][] = [['left', 'Left'], ['center', 'Center'], ['right', 'Right']];
+		rows.forEach((row, i) => {
+			if (rows.length > 1) box.createDiv({ cls: 'ws-set-label', text: 'Row ' + (i + 1) });
+			for (const [slot, label] of SLOTS) {
+				const r = new Setting(box).setName(label)
+					.addText((t) => t.setPlaceholder('e.g. {file}').setValue(row[slot])
+						.onChange((v) => { void (async () => {
+							this.plugin.settings.statusRows[i][slot] = v;
+							await this.plugin.saveSettings();
+						})(); }));
+				r.settingEl.addClass('ws-row-fmt');
+			}
+		});
+	}
+
+	renderPalette(st: Setting, keys: Key[]) {
+		st.settingEl.addClass('ws-color-row');
+		for (const key of keys) this.swatch(st, key);
+	}
+
+	// two colors on one row (the section's reset link puts them back)
+	renderColorPair(st: Setting, bgKey: Key, textKey: Key) {
+		st.settingEl.addClass('ws-color-row', 'ws-color-pair');
+		this.swatch(st, bgKey);
+		this.swatch(st, textKey);
+	}
+
+	// How {vim} writes each mode and what colors it wears: two swatches
+	// (dark theme, then light) and the label.
+	vimModeRows(): Def[] {
+		const s = bag(this.plugin.settings);
+		const MODES: [Key, string, string, Key][] = [
+			['vimLabelNormal', 'Normal', '-- NORMAL --', 'vimColorNormal'],
+			['vimLabelInsert', 'Insert', '-- INSERT --', 'vimColorInsert'],
+			['vimLabelVisual', 'Visual', '-- VISUAL --', 'vimColorVisual'],
+			['vimLabelReplace', 'Replace', '-- REPLACE --', 'vimColorReplace'],
+			['vimLabelCommand', 'Command', '-- COMMAND --', 'vimColorCommand'],
+		];
+		const cs = this.plugin.cursorSmithSettings();
+		const borrowed = !!(cs && cs.vimModeEnabled && this.plugin.settings.vimFollowCursorSmith !== false);
+		return MODES.map(([key, name, dflt, colorKey]): Def => rendered({
+			name,
+			desc: borrowed ? 'Cursor-Smith picks these while Follow Cursor-Smith is on.' : 'Dark theme, light theme, and the label.',
+			render: (st) => {
+				st.settingEl.addClass('ws-color-row', 'ws-vim-row');
+				this.swatch(st, colorKey);
+				this.swatch(st, (colorKey + 'Light') as Key);
+				st.addText((t) => t.setPlaceholder(dflt).setValue(s[key] != null ? str(s[key]) : dflt)
+					.onChange((v) => { void (async () => { s[key] = v; await this.plugin.saveSettings(true); })(); }));
+			},
+		}, [key, colorKey, (colorKey + 'Light') as Key]));
+	}
+
+	// a button token's format is a map keyed by the token's id, absent meaning the word
+	renderTokenIconFormat(st: Setting, id: string, word: string) {
+		st.addDropdown((dd) => dd.addOption('icon', 'Icon').addOption('word', 'Name (' + word + ')').addOption('both', 'Icon and name')
+			.setValue(this.plugin.barTokenFormat(id))
+			.onChange((v) => { void (async () => {
+				const m = Object.assign({}, this.plugin.settings.barTokenIcons || {});
+				if (v === 'icon' || v === 'both') m[id] = v; else delete m[id];
+				this.plugin.settings.barTokenIcons = m;
+				await this.plugin.saveSettings();
+				this.plugin.updateRetroStatusBar();
+			})(); }));
+	}
+
+	// the reference is a page of material, closed by default so it does not
+	// bury the fields it documents
+	renderFormatReference(st: Setting) {
+		// AN INFO GLYPH ON THE ROW, inline before its name: the row keeps its
+		// block
+		this.infoInto(st, true);
+		const box = this.block(st, 'ws-token-help-box').createDiv({ cls: 'ws-token-help' });
+		// A TABLE UNDER A RAIL: pills, one group shown; a group is a rounded
+		// table, its sub-headings rows of their own, each line its tokens as
+		// chips and one gloss in the words docs/powerline.md uses. No
+		// disclosure: the pills are the way in.
+		const rail = box.createDiv({ cls: 'ws-rail ws-help-rail' });
+		const groups: { el: HTMLElement; pill: HTMLElement }[] = [];
+		let table: HTMLElement | null = null, body: HTMLElement | null = null;
+		const pick = (i: number) => {
+			groups.forEach((g, k) => {
+				setClass(g.el, 'is-picked', k === i);
+				setClass(g.pill, 'is-picked', k === i);
+				setAttr(g.pill, 'aria-pressed', k === i ? 'true' : 'false');
+			});
+			roving.picked(i);
+		};
+		const G = (name: string, icon: string) => {
+			const el = box.createDiv({ cls: 'ws-help-sect' });
+			table = el.createEl('table', { cls: 'ws-help-table' });
+			body = null;
+			const pill = this.pill(rail, name, icon);
+			const i = groups.length;
+			pill.addEventListener('click', () => pick(i));
+			groups.push({ el, pill });
+			return el;
+		};
+		const SUB = (title: string) => {
+			if (!table) return;
+			body = table.createEl('tbody');
+			body.createEl('tr', { cls: 'ws-help-sub' }).createEl('th', { text: title, attr: { colspan: '2' } });
+		};
+		const L = (tokens: string[], gloss: string) => {
+			if (!table) return;
+			if (!body) body = table.createEl('tbody');
+			const tr = body.createEl('tr', { cls: 'ws-help-line' });
+			const toks = tr.createEl('td', { cls: 'ws-help-toks' });
+			for (const t of tokens) toks.createSpan({ cls: 'ws-help-tok', text: t });
+			tr.createEl('td', { cls: 'ws-help-gloss', text: gloss });
+		};
+		const N = (el: HTMLElement, text: string) => { el.createDiv({ cls: 'ws-help-note', text }); };
+		// FIVE PILLS: Readouts, Buttons, Dividers (the fades under them), Colors
+		// (a colon paints the background, a semicolon the text), Misc last.
+		let g = G('Readouts', 'book-open');
+		SUB('The note');
+		L(['{file}'], 'The note\u2019s name. Click it to reveal the note in the explorer.');
+		L(['{words}', '{chars}'], 'The note, or your selection.');
+		L(['{readtime}'], 'How long the note takes to read.');
+		L(['{#>}'], 'The heading path: Chapter 3 \u203a The Ferry \u203a Beat 2.');
+		L(['{flag}'], 'The flag of the note you\u2019re in. Click to change it.');
+		SUB('Where you are');
+		L(['{ln:col}'], 'The line and column the cursor is on.');
+		L(['{paragraph}'], 'The paragraph the cursor is in.');
+		SUB('Counts');
+		L(['{tasks}'], 'Tasks ticked over tasks in the note, [3/7], as the Organizer shows them. Nothing when there are none.');
+		L(['{properties}'], 'How many properties the note has. Click to open the Properties pane.');
+		L(['{backlinks}'], 'How many notes link here. Click to open the backlinks pane.');
+		g = G('Buttons', 'mouse-pointer-click');
+		SUB('Pickers');
+		L(['{syntax}', '{prose}', '{markers}', '{font}', '{theme}'], 'Each opens its picker, right on the bar.');
+		SUB('Panes and the menu');
+		L(['{report}', '{history}', '{export}', '{organizer}'], 'Each opens that pane; the Organizer on the tab you arrange it in.');
+		L(['{powermenu}'], 'Opens the Powermenu, the menu of everything.');
+		SUB('Modes');
+		L(['{mode}'], 'A Modes button: letter box, typewriter, Hemingway, right on the bar.');
+		N(g, 'Buttons are never dropped, however narrow the window gets. Under Token formats, each can be the icon, the word, or both.');
+		g = G('Dividers', 'separator-vertical');
+		SUB('Hard dividers: the cut between two segments');
+		L(['>', '<'], 'Arrows.');
+		L(['|'], 'Straight. Type \\| for a real bar in your text.');
+		L([')', '('], 'Curves.');
+		L(['~'], 'A wave.');
+		L(['/', '\\'], 'Slanted cuts.');
+		SUB('Soft dividers: marks inside a segment');
+		L(['::'], 'A short thin line.');
+		L(['>>', '<<'], 'Chevrons: the same line bent to a point.');
+		L(['{s}'], 'A quarter-space.');
+		SUB('Fades: one color stepping into the next');
+		L(['{g}'], 'One narrow step.');
+		L(['{g}{g}{g}'], 'Three narrow steps.');
+		L(['{ggg}'], 'One wide step.');
+		N(g, 'The character you type is the shape you get; dividers are drawn, so no patched font is needed. Fades are the first thing dropped when the window gets narrow.');
+		g = G('Colors', 'palette');
+		SUB('A colon paints the background');
+		L(['{words}:3'], 'Palette color nr. 3 behind the segment; the text picks itself, light or dark.');
+		L(['{file}:b1', ':b2', ':b3', ':b4'], 'Your theme\u2019s own surfaces.');
+		L(['{file}:bs'], 'The status line\u2019s own color.');
+		L(['{file}:bc'], 'The caret\u2019s color, live.');
+		L(['{file}:f'], 'The color of this note\u2019s flag.');
+		SUB('A semicolon paints the text');
+		L(['{words};1'], 'Palette color nr. 1 for the words.');
+		L(['{file};t1', ';t2', ';t3'], 'Your theme\u2019s normal, muted and faint text.');
+		L(['{words};vim'], 'Text that follows your Vim mode.');
+		SUB('Both at once');
+		L(['{words}:3;1'], 'Background nr. 3, text nr. 1.');
+		SUB('The whole bar');
+		L([':3 {file} \u2026'], 'A colon before the first token of row 1 paints the whole bar\u2019s background: palette color nr. 3 here, or :b1, :vim, :f.');
+		L([';2 {file} \u2026'], 'A semicolon there paints all of its text: palette color nr. 2 here, or ;t1, ;vim, ;f.');
+		L([':3;2 {file} \u2026'], 'Both at once. A token with a color of its own keeps it.');
+		N(g, 'Seven palette colors, a dark set and a light set, under Colors. A token with no color lies flush with the bar.');
+		g = G('Misc', 'more-horizontal');
+		SUB('Time and date');
+		L(['{time}'], 'The time, written.');
+		L(['{clock}'], 'The time, drawn as a dial.');
+		L(['{dd}', '{mm}', '{yyyy}', '{yy}'], 'Date parts, joined however you like: {dd}/{mm}/{yy}.');
+		SUB('The machine');
+		L(['{battery}'], 'The battery.');
+		L(['{caps}', '{num}'], 'Caps lock and num lock, only when on.');
+		L(['{vim}'], 'Which Vim mode you\u2019re in.');
+		SUB('And');
+		L(['{obsidian}'], 'A small Obsidian crystal.');
+		const roving = this.rovingRow(rail, groups.map((x) => x.pill));
+		pick(0);
+	}
+
+	// ── The presets ─────────────────────────────────────────────────────────
+	// One thin card per saved bar, the way Cursor-Smith's strip is: a "use"
+	// button holding a tick while that bar is the one in use, a small demo of
+	// its look and its name; beside it Copy its share code and a two-tap
+	// Delete. Then Save and Import, two more cards, each through a prompt:
+	// Save under a taken name warns once and replaces on the second OK; a
+	// code that is not one of ours says so under the field. The card is a div
+	// — one button inside another is invalid HTML — and the use buttons are
+	// one keyboard group.
+	presetsRow(visible: Pred): Render {
+		return rendered({
+			name: 'Presets',
+			desc: 'Tap a bar to use it. Save keeps the bar as it is; Import takes a code someone sent you.',
+			visible,
+			render: (st) => this.renderPresetStrip(st),
+		}, ['barPresets']);
+	}
+
+	renderPresetStrip(st: Setting) {
+		const plugin = this.plugin;
+		const box = this.block(st, 'ws-preset-strip');
+		const strip = box.createDiv({ cls: 'ws-cards' });
+		const library = plugin.getBarPresets();
+		const names = Object.keys(library);
+		const active = this.presetInUse();
+		const redisplay = () => this.update();
+		const uses: HTMLElement[] = [];
+		for (const name of names) {
+			const snap = library[name];
+			const isActive = name === active;
+			const card = strip.createDiv({ cls: 'ws-card ws-preset-card' + (isActive ? ' is-active' : '') });
+			const use = card.createEl('button', { cls: 'ws-card-use', attr: { type: 'button', 'aria-label': 'Use the ' + name + ' bar', 'aria-pressed': isActive ? 'true' : 'false' } });
+			if (isActive) setIcon(use.createSpan({ cls: 'ws-tick' }), 'check');
+			this.presetDemo(use, snap);
+			use.createSpan({ cls: 'ws-card-name', text: name });
+			use.addEventListener('click', () => { void (async () => { await plugin.loadBarPreset(name); redisplay(); })(); });
+			uses.push(use);
+			// the code goes to the clipboard, and the icon says so for a moment;
+			// where the clipboard is out of reach (some Electron/Wayland setups,
+			// silently) a notice says that instead of a check over nothing
+			const copy = this.action(card, 'copy', 'Copy its share code', () => { void (async () => {
+				try { await navigator.clipboard.writeText(barPresetToCode(name, snap)); }
+				catch (_) { wsCatch('presets: the clipboard', _); new Notice('The clipboard is out of reach here.'); return; }
+				setIcon(copy, 'check');
+				window.setTimeout(() => { setIcon(copy, 'copy'); }, 1500);
+			})(); });
+			this.twoTapDelete(card, 'Delete the ' + name + ' bar', () => { void (async () => { await plugin.deleteBarPreset(name); redisplay(); })(); });
+		}
+		this.rovingRow(strip, uses).picked(Math.max(0, names.indexOf(active)));
+		// Save the bar as it is, import a code: a card that is one plain button,
+		// on a line of their own under the bars
+		const acts = box.createDiv({ cls: 'ws-cards ws-preset-acts' });
+		const more = (icon: string, label: string, run: () => void) => {
+			const b = acts.createEl('button', { cls: 'ws-card ws-card-more', attr: { type: 'button' } });
+			setIcon(b.createSpan({ cls: 'ws-card-more-icon' }), icon);
+			b.createSpan({ cls: 'ws-card-name', text: label });
+			b.addEventListener('click', run);
+			return b;
+		};
+		more('save', 'Save', () => {
+			// a taken name warns once and keeps the prompt; OK again with the
+			// same name replaces the bar
+			let warned = '';
+			new WsPrompt(this.app, 'Save this bar as', 'Preset name', async (name) => {
+				if (!name) return false;
+				if (name in library && warned !== name) { warned = name; return 'A preset named ' + name + ' exists. OK again to replace it.'; }
+				await plugin.saveBarPreset(name);
+				redisplay();
+				return true;
+			}).open();
+		});
+		more('download', 'Import', () => {
+			new WsPrompt(this.app, 'Import a share code', 'Paste the code here', async (code) => {
+				if (!code) return false;
+				const added = await plugin.importBarPreset(code);
+				if (added) { redisplay(); return true; }
+				return code.startsWith(BAR_SHARE_VERSION + '|') ? 'The code is cut short.' : 'That is not a Word-Smith bar code.';
+			}).open();
+		});
+	}
+
+	// The demo: up to three small segments in the colors the bar's rows
+	// name, in order — a palette number in the bar's own palette (dark or
+	// light, as the window is), a theme surface as the theme paints it, the
+	// Vim slot in its Normal color. A bar that names no color shows one plain
+	// segment. Colors ride a custom property; the shape is the sheet's.
+	presetDemo(parent: HTMLElement, snap: Record<string, unknown>) {
+		const full = barPresetWithDefaults(snap);
+		const dark = document.body.classList.contains('theme-dark');
+		const rows = Array.isArray(full.statusRows) ? full.statusRows as { left?: string; center?: string; right?: string }[] : [];
+		const text = rows.map((r) => [r.left, r.center, r.right].join(' ')).join(' ');
+		const colors: string[] = [];
+		const re = /:(bs|b\d|vim|\d)\b/gi;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(text)) && colors.length < 3) {
+			const k = m[1].toLowerCase();
+			let c = '';
+			if (/^\d$/.test(k)) c = str(full[(dark ? 'powerlineColor' : 'powerlineColorLight') + k]);
+			else if (k === 'vim') c = str(full[dark ? 'vimColorNormal' : 'vimColorNormalLight']);
+			else {
+				const chain = PL_THEME_BGS[k];
+				if (chain) c = chain.reduceRight((acc, v) => 'var(' + v + (acc ? ', ' + acc : '') + ')', '');
+			}
+			if (c && colors.indexOf(c) === -1) colors.push(c);
+		}
+		if (!colors.length) colors.push('var(--background-modifier-border)');
+		const demo = parent.createSpan({ cls: 'ws-preset-demo', attr: { 'aria-hidden': 'true' } });
+		for (const c of colors) demo.createSpan({ cls: 'ws-preset-seg' }).setCssProps({ '--ws-seg': c });
+	}
+
+	// Which saved bar the settings ARE: the one whose every live key equals
+	// them — read off the settings, as Cursor-Smith reads it, not off a name
+	// remembered at load, which is gone after a reload and would stay after
+	// an edit. Empty when the bar is nothing that was saved.
+	presetInUse(): string {
+		const s = bag(this.plugin.settings);
+		const library = this.plugin.getBarPresets();
+		for (const name of Object.keys(library)) {
+			const p = barPresetWithDefaults(library[name]);
+			if (BAR_KEYS_LIVE.every((k) => JSON.stringify(p[k]) === JSON.stringify(s[k]))) return name;
+		}
+		return '';
+	}
+
+	// ── THEMES ──────────────────────────────────────────────────────────────
+
+	pageThemes(on: Pred): Page {
+		const plugin = this.plugin;
+		const s = plugin.settings;
+		const themed: Pred = () => s.barThemeEnabled !== false;
+		const schemeOn: Pred = () => themed() && !!s.barTheme && s.barTheme !== 'custom';
+		const NEEDS_SCHEME = 'Needs a scheme; under Default there are no inks to derive from.';
+		const csThere = () => { try { return !!(plugin.app.plugins && plugin.app.plugins.plugins && plugin.app.plugins.plugins['cursor-smith']); } catch { return false; } };
+		// an option that needs a scheme is disabled, and says so, under Default
+		const opt = (name: string, desc: string, key: Key, needsScheme: boolean): Def => ({
+			name, desc: needsScheme && !schemeOn() ? NEEDS_SCHEME : desc,
+			control: { type: 'toggle', key, disabled: needsScheme ? () => !schemeOn() : false },
+			visible: themed,
+		});
+		const value = () => {
+			if (!themed()) return 'Off';
+			const t = s.barTheme && s.barTheme !== 'custom' ? plugin.barThemeById(s.barTheme) : null;
+			const parts = [t ? t.name : 'Default'];
+			if (schemeOn() && s.barThemeHeadings) parts.push('headings');
+			if (schemeOn() && s.barThemeCode) parts.push('code');
+			if (schemeOn() && s.barThemeMarkdown) parts.push('markdown');
+			if (s.barThemeBorderless) parts.push('borderless');
+			return parts.join(' · ');
+		};
+		// ONE SHELF, ONE RESET: the scheme worn in both modes, the set-aside
+		// pills under it, the options.
+		return this.page('Themes', 'palette', 'A workspace color scheme, dark and light.', [
+			this.section('Themes', [
+				{ name: 'Themes', desc: 'A color scheme for the whole workspace, dark and light.', control: { type: 'toggle', key: 'barThemeEnabled', defaultValue: true } },
+				rendered({ name: 'Scheme', desc: 'Tap one to wear it. Drag to reorder; the x sets one aside.', render: (st) => this.renderThemeShelf(st), searchable: false, visible: themed }, ['barTheme', 'barThemeOrder', 'barThemeHidden']),
+				this.subheadRow('Options'),
+				opt('Colored headings', 'H1 to H6 take inks derived from the scheme’s accents.', 'barThemeHeadings', true),
+				opt('Colored code', 'Code blocks sit on the scheme’s panel surface, with its inks.', 'barThemeCode', true),
+				opt('Simplified theme', 'One wash for sidebars, header and title bar, dividers painted out.', 'barThemeSimplified', true),
+				{ name: 'Checkbox shape', desc: 'Circle, square, retro or markdown; or your theme’s own.', control: { type: 'dropdown', key: 'barThemeCheckbox',
+					options: { '': 'Theme’s own', circle: 'Circle', square: 'Square', retro: 'Retro', markdown: 'Markdown' } }, visible: themed },
+				opt('Hide workspace borders', 'Empties the dividers between panes and the tab outlines. Works under Default too.', 'barThemeBorderless', false),
+				opt('Colored markdown', 'Bold, italics, links and tags take the scheme’s inks.', 'barThemeMarkdown', true),
+				{ name: 'Color the cursor',
+					desc: csThere() ? 'Hands the scheme’s loudest ink to Cursor-Smith; its shape and effects stay yours.' : 'Needs the Cursor-Smith plugin, which isn’t installed.',
+					control: { type: 'toggle', key: 'barThemeCursor' }, visible: themed },
+				{ name: 'Color Vim modes',
+					desc: csThere() ? 'Each Vim mode wears its own color: Insert green, Visual purple, Replace red.' : 'Needs the Cursor-Smith plugin, which isn’t installed.',
+					control: { type: 'toggle', key: 'barThemeVim' }, visible: () => themed() && !!s.barThemeCursor },
+			]),
+		], value, on);
+	}
+
+	// The shelf: a card per scheme (Default first, always, and it neither
+	// drags nor goes aside), the one in use ticked; the x sets one aside;
+	// set-aside schemes come back from the pills under. The name alone: the
+	// writer cut the swatches ("without those colored balls").
+	renderThemeShelf(st: Setting) {
+		const plugin = this.plugin;
+		const box = this.block(st, 'ws-theme-shelf');
+		const redisplay = () => this.update();
+		const grid = box.createDiv({ cls: 'ws-cards' });
+		const items = plugin.themesPickerItems();
+		const uses: HTMLElement[] = [];
+		items.forEach((item, sIdx: number) => {
+			const isDefault = item.id === 'custom';
+			const idx = sIdx - 1;
+			const card = grid.createDiv({ cls: 'ws-card ws-theme-card' + (item.on ? ' is-active' : '') + (isDefault ? ' is-custom is-alone' : '') });
+			if (!isDefault) card.setAttribute('draggable', 'true');
+			card.addEventListener('dragstart', (e) => { if (e.dataTransfer) e.dataTransfer.setData('text/plain', item.id); card.addClass('is-dragging'); });
+			card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+			card.addEventListener('dragover', (e) => { e.preventDefault(); card.addClass('is-dropzone'); });
+			card.addEventListener('dragleave', () => card.removeClass('is-dropzone'));
+			card.addEventListener('drop', (e) => { void (async () => {
+				e.preventDefault();
+				if (isDefault) return;
+				const dragged = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
+				if (!dragged || dragged === item.id || dragged === 'custom') return;
+				plugin.barThemeMove(dragged, idx);
+				await plugin.saveSettings();
+				redisplay();
+			})(); });
+			const use = card.createEl('button', { cls: 'ws-card-use', attr: { type: 'button', 'aria-label': 'Use ' + item.label, 'aria-pressed': item.on ? 'true' : 'false', title: item.note } });
+			if (item.on) setIcon(use.createSpan({ cls: 'ws-tick' }), 'check');
+			use.createSpan({ cls: 'ws-card-name', text: item.label });
+			if (!isDefault) this.themeInks(use, item.id);
+			use.addEventListener('click', () => { void (async () => { await item.onClick(); redisplay(); })(); });
+			uses.push(use);
+			if (!isDefault) {
+				this.action(card, 'x', 'Set ' + item.label + ' aside', (e) => { void (async () => { e.stopPropagation(); plugin.barThemeHide(item.id); await plugin.saveSettings(); redisplay(); })(); });
+			}
+		});
+		this.rovingRow(grid, uses).picked(Math.max(0, items.findIndex((i) => i.on)));
+		const hiddenIds = plugin.settings.barThemeHidden || [];
+		if (hiddenIds.length) {
+			box.createDiv({ cls: 'ws-set-label', text: 'Set aside' });
+			const row = box.createDiv({ cls: 'ws-pills' });
+			for (const id of hiddenIds) {
+				const t = plugin.barThemeById(id);
+				const chip = this.pill(row, t ? t.name : id, 'undo-2', { label: 'Put ' + (t ? t.name : id) + ' back on the shelf' });
+				this.themeInks(chip, id);
+				chip.addEventListener('click', () => { void (async () => { plugin.barThemeShow(id); await plugin.saveSettings(); redisplay(); })(); });
+			}
+		}
+	}
+
+	// THREE INKS AFTER A SCHEME'S NAME: the page, the side panels and the
+	// accent of the half the workspace wears now, read off the same half
+	// `barThemeVars` paints from. Colors go in as a custom property (the
+	// sheet draws the square), never as a static style.
+	themeInks(into: HTMLElement, id: string) {
+		const t = this.plugin.barThemeById(id);
+		if (!t || !this.plugin.barThemeHalf(t)) return;
+		const inks = into.createSpan({ cls: 'ws-theme-inks', attr: { 'aria-hidden': 'true' } });
+		const sq = [0, 1, 2].map(() => inks.createSpan({ cls: 'ws-theme-ink' }));
+		// THE HALF THE WORKSPACE WEARS NOW, on every refresh: a dark/light
+		// switch with the page open reaches the squares through `css-change`
+		const paint = () => {
+			const h = this.plugin.barThemeHalf(t);
+			if (!h) return;
+			[h.b1, h.b2, h.t4].forEach((c, i) => { if (sq[i].style.getPropertyValue('--ws-ink') !== c) sq[i].setCssProps({ '--ws-ink': c }); });
+		};
+		paint();
+		this.onRefresh(paint);
+	}
+
+	// ── FOCUS ───────────────────────────────────────────────────────────────
+
+	pageFocus(on: Pred): Page {
+		const s = this.plugin.settings;
+		const zen: Pred = () => !!s.zenEnabled;
+		const box: Pred = () => !!s.enableLetterbox;
+		const arrows: Pred = () => s.arrowCount > 0;
+		const custom: Pred = () => !!s.letterboxCustomColors;
+		const tw: Pred = () => !!s.enableTypewriter;
+		const hem: Pred = () => !!s.hemingwayEnabled;
+		// the pills wear the mode glyphs the menu and the bar wear (buildModeGlyph)
+		const glyph = (kind: string) => (el: HTMLElement) => { el.appendChild(this.plugin.buildModeGlyph(kind)); };
+		const RAIL: RailEntry[] = [
+			{ key: 'zen', name: 'Zen', icon: 'eye-off', on: zen, draw: glyph('zen') },
+			{ key: 'letterbox', name: 'Letter box', icon: 'rectangle-horizontal', on: box, draw: glyph('lb') },
+			{ key: 'typewriter', name: 'Typewriter', icon: 'type', on: tw, draw: glyph('tw') },
+			{ key: 'hemingway', name: 'Hemingway', icon: 'feather', on: hem, draw: glyph('hem') },
+		];
+		const value = () => { const names = RAIL.filter((e) => e.on && e.on()).map((e) => e.name); return names.length ? names.join(' · ') : 'Off'; };
+		return this.page('Focus', 'eye', 'Zen, letter box, typewriter, Hemingway.', [
+			this.section('Sections', [this.railRow('focus', RAIL)]),
+			this.section('Zen', [
+				{ name: 'Zen', desc: 'Clears the workspace down to the words until you leave.', control: { type: 'toggle', key: 'zenEnabled' } },
+				this.alertRow('Panes, ribbon and title are hidden while Zen is on. Escape or the Powermenu brings them back.', zen),
+				{ name: 'Full screen', desc: 'The window goes full screen with Zen.', control: { type: 'toggle', key: 'fullscreen' }, visible: zen },
+				{ name: 'Match the title bar', desc: 'The title bar takes the page’s color.', control: { type: 'toggle', key: 'zenTitlebarMatch' }, visible: zen },
+				{ name: 'Focused file mode', desc: 'Only the note you are in stays open.', control: { type: 'toggle', key: 'focusedFileMode' }, visible: zen },
+				{ name: 'Hide properties', desc: 'Properties and frontmatter, in Zen.', control: { type: 'toggle', key: 'hideProperties' }, visible: zen },
+				{ name: 'Hide the inline title', desc: 'The note’s title above the text.', control: { type: 'toggle', key: 'hideInlineTitle' }, visible: zen },
+				{ name: 'Hide the native status bar', desc: 'Obsidian’s own status bar.', control: { type: 'toggle', key: 'hideStatusBar' }, visible: zen },
+				{ name: 'Hide linked mentions', desc: 'The backlinks under the note.', control: { type: 'toggle', key: 'hideLinkedMentions' }, visible: zen },
+				{ name: 'Hide the scroll bar', desc: 'The editor’s scroll bar.', control: { type: 'toggle', key: 'hideScrollBar' }, visible: zen },
+				{ name: 'Hide the ribbon', desc: 'The column of icons at the left.', control: { type: 'toggle', key: 'hideRibbon' }, visible: zen },
+				{ name: 'Hide the Powerline bar', desc: 'The bar too, in Zen.', control: { type: 'toggle', key: 'zenHideBar' }, visible: zen },
+				{ name: 'Bring it back on hover', desc: 'Milliseconds it stays after the pointer leaves; 0 never brings it back.',
+					control: { type: 'slider', key: 'barPeekMs', min: 0, max: 6000, step: 250 }, visible: all(zen, () => !!s.zenHideBar) },
+				{ name: 'Breathing room', desc: 'Pixels the caret keeps clear of the bar and the letter box, in and out of Zen.',
+					control: { type: 'slider', key: 'caretMarginPx', min: 0, max: 120, step: 2 }, visible: zen },
+				{ name: 'Escape exits Zen', desc: 'One key out.', control: { type: 'toggle', key: 'zenEscExits' }, visible: zen },
+				this.hotkeysRow(['toggle-zen']),
+			], this.railed('focus', 'zen')),
+			this.section('Letter box', [
+				{ name: 'Letter box', desc: 'Dims the top and bottom of the screen so only your band stays lit.', control: { type: 'toggle', key: 'enableLetterbox' } },
+				rendered({ name: 'Mask height', desc: 'In pixels; drag either edge on the page to set it too.', render: (st) => this.renderMaskHeight(st), visible: box }, ['letterboxPx']),
+				{ name: 'Match the text width', desc: 'The band is as wide as the text.', control: { type: 'toggle', key: 'maskMatchText' }, visible: box },
+				{ name: 'Include the editor’s padding', desc: 'Off hugs the words; on takes the page.', control: { type: 'toggle', key: 'maskMatchTextPadded' }, visible: all(box, () => !!s.maskMatchText) },
+				{ name: 'Horizontal inset', desc: 'In pixels.', control: { type: 'slider', key: 'maskPaddingH', min: 0, max: 400, step: 10 }, visible: all(box, () => !s.maskMatchText) },
+				rendered({ name: 'Arrows', desc: 'Arrows along the band’s edges, and how many.', render: (st) => this.renderArrows(st), visible: box }, ['arrowCount']),
+				{ name: 'Arrow style', desc: 'The shape of the arrows.', control: { type: 'dropdown', key: 'arrowStyle', options: {
+					'solid-triangle': 'Solid triangles', 'outline-triangle': 'Outline triangles', 'standard-arrow': 'Standard arrows',
+					chevron: 'Chevrons', 'double-chevron': 'Double chevrons', custom: 'Custom characters' } }, visible: all(box, arrows) },
+				{ name: 'Top character', desc: 'One or two characters.', control: { type: 'text', key: 'customArrowTop' }, visible: all(box, arrows, () => s.arrowStyle === 'custom') },
+				{ name: 'Bottom character', desc: 'One or two characters.', control: { type: 'text', key: 'customArrowBottom' }, visible: all(box, arrows, () => s.arrowStyle === 'custom') },
+				{ name: 'Arrow scale', desc: 'How big the arrows are.', control: { type: 'slider', key: 'arrowScale', min: 0.5, max: 3, step: 0.1 }, visible: all(box, arrows) },
+				{ name: 'Cap the line ends', desc: 'An arrow at each end of the line.', control: { type: 'toggle', key: 'arrowLineEnds' }, visible: all(box, arrows) },
+				{ name: 'Line style', desc: 'The line along each edge of the band.', control: { type: 'dropdown', key: 'separatorStyle', options: { none: 'None', solid: 'Solid', dashed: 'Dashed', dotted: 'Dotted', double: 'Double' } }, visible: box },
+				{ name: 'Line weight', desc: 'In pixels.', control: { type: 'slider', key: 'separatorWeight', min: 1, max: 8, step: 1 }, visible: box },
+				{ name: 'Custom colors', desc: 'Off, the arrows and lines borrow your theme’s text color.', control: { type: 'toggle', key: 'letterboxCustomColors' }, visible: box },
+				{ name: 'Arrows, dark theme', desc: 'The arrows’ color under a dark theme.', control: { type: 'color', key: 'arrowDarkColor' }, visible: all(box, custom) },
+				{ name: 'Arrows, light theme', desc: 'And under a light one.', control: { type: 'color', key: 'arrowLightColor' }, visible: all(box, custom) },
+				{ name: 'Lines, dark theme', desc: 'The lines’ color under a dark theme.', control: { type: 'color', key: 'lineDarkColor' }, visible: all(box, custom) },
+				{ name: 'Lines, light theme', desc: 'And under a light one.', control: { type: 'color', key: 'lineLightColor' }, visible: all(box, custom) },
+				this.hotkeysRow(['toggle-letterbox']),
+			], this.railed('focus', 'letterbox')),
+			this.section('Typewriter', [
+				{ name: 'Typewriter mode', desc: 'Keeps the line you are writing at one height; the page moves under the cursor.', control: { type: 'toggle', key: 'enableTypewriter' } },
+				{ name: 'Rests at', desc: 'Percent of the editor’s height: 0 the top, 50 the middle, 100 the bottom.', control: { type: 'slider', key: 'typewriterAnchor', min: 0, max: 100, step: 5 }, visible: tw },
+				{ name: 'Highlight current line', desc: 'A tint behind the line you are on.', control: { type: 'toggle', key: 'highlightCurrentLine' }, visible: tw },
+				{ name: 'Highlight, dark theme', desc: 'The tint under a dark theme.', control: { type: 'color', key: 'lineHighlightDarkColor' }, visible: all(tw, () => !!s.highlightCurrentLine) },
+				{ name: 'Highlight, light theme', desc: 'And under a light one.', control: { type: 'color', key: 'lineHighlightLightColor' }, visible: all(tw, () => !!s.highlightCurrentLine) },
+				{ name: 'Highlight opacity', desc: 'How strong the tint is.', control: { type: 'slider', key: 'lineHighlightOpacity', min: 0.05, max: 1, step: 0.05 }, visible: all(tw, () => !!s.highlightCurrentLine) },
+				{ name: 'Dim unfocused text', desc: 'Everything but the paragraph or sentence you are in fades.', control: { type: 'toggle', key: 'dimUnfocusedEnabled' }, visible: tw },
+				{ name: 'Focus area', desc: 'What stays lit.', control: { type: 'dropdown', key: 'dimFocusMode', options: { paragraph: 'Paragraph', sentence: 'Sentence' } }, visible: all(tw, () => !!s.dimUnfocusedEnabled) },
+				{ name: 'Dim opacity', desc: 'How far the rest fades.', control: { type: 'slider', key: 'dimOpacity', min: 0.05, max: 1, step: 0.05 }, visible: all(tw, () => !!s.dimUnfocusedEnabled) },
+				this.hotkeysRow(['toggle-typewriter']),
+			], this.railed('focus', 'typewriter')),
+			this.section('Hemingway', [
+				{ name: 'Hemingway mode', desc: 'Blocks the keys you would use to go back, so a draft can only move forward.', control: { type: 'toggle', key: 'hemingwayEnabled' } },
+				this.alertRow('Backspace, undo and the arrow keys are blocked while you write. Not for you? Turn Hemingway mode off.', hem),
+				{ name: 'Block backspace', desc: 'No deleting backwards.', control: { type: 'toggle', key: 'hemBlockBackspace' }, visible: hem },
+				{ name: 'Block delete', desc: 'No deleting forwards.', control: { type: 'toggle', key: 'hemBlockDelete' }, visible: hem },
+				{ name: 'Block undo and redo', desc: 'What is written stays written.', control: { type: 'toggle', key: 'hemBlockUndo' }, visible: hem },
+				{ name: 'Block cut', desc: 'No cutting text out.', control: { type: 'toggle', key: 'hemBlockCut' }, visible: hem },
+				{ name: 'Block paste', desc: 'No pasting text in.', control: { type: 'toggle', key: 'hemBlockPaste' }, visible: hem },
+				{ name: 'Block arrow keys', desc: 'The caret stays where the writing is.', control: { type: 'toggle', key: 'hemBlockArrows' }, visible: hem },
+				{ name: 'Block jump keys', desc: 'Home, End, Page Up and Page Down.', control: { type: 'toggle', key: 'hemBlockJumpKeys' }, visible: hem },
+				{ name: 'Block select all', desc: 'No selecting everything.', control: { type: 'toggle', key: 'hemBlockSelectAll' }, visible: hem },
+				{ name: 'Block mouse', desc: 'Clicking, right-clicking and dragging in the note.', control: { type: 'toggle', key: 'hemBlockMouse' }, visible: hem },
+				{ name: 'Flash when blocked', desc: 'Where the flash shows when a key is refused.', control: { type: 'dropdown', key: 'hemFlashTarget',
+					options: { none: 'Nowhere', icon: 'The modes button', retrobar: 'The Powerline bar', screen: 'The screen', both: 'Screen and bar' } }, visible: hem },
+				this.hotkeysRow(['toggle-hemingway']),
+			], this.railed('focus', 'hemingway')),
+		], value, on);
+	}
+
+	// the mask's height is a number in px, or, from before it was, a count of
+	// lines, which the slider shows converted until the writer moves it
+	renderMaskHeight(st: Setting) {
+		const s = this.plugin.settings;
+		st.addSlider((sl) => sl.setLimits(WS_MASK_MIN_PX, 400, 2)
+			.setValue(s.letterboxPx != null ? Math.round(s.letterboxPx) : (s.letterboxLines || 8) * 26)
+			.onChange((v) => { void (async () => { s.letterboxPx = v; await this.plugin.saveSettings(); })(); }));
+	}
+
+	// "arrows" is the count being more than none: a switch and the count on
+	// one row, the count remembered on the tab for the way back
+	renderArrows(st: Setting) {
+		const s = this.plugin.settings;
+		let countInput: HTMLInputElement | null = null;
+		st.addToggle((t) => t.setValue(s.arrowCount > 0).onChange((v) => { void (async () => {
+			if (!v) this._lastArrowCount = s.arrowCount || 5;
+			s.arrowCount = v ? (this._lastArrowCount || 5) : 0;
+			if (countInput) countInput.value = String(s.arrowCount);
+			await this.plugin.saveSettings();
+			this.refreshDomState();
+		})(); }));
+		st.addText((t) => {
+			countInput = t.inputEl;
+			t.inputEl.type = 'number';
+			t.inputEl.min = '0';
+			t.inputEl.max = '10';
+			t.inputEl.addClass('ws-set-num');
+			t.inputEl.setAttribute('aria-label', 'How many arrows');
+			t.setValue(String(s.arrowCount));
+			t.onChange((v) => { void (async () => {
+				const n = parseInt(v, 10);
+				if (!isFinite(n) || n < 0 || n > 10) return;
+				s.arrowCount = n;
+				await this.plugin.saveSettings();
+				this.refreshDomState();
+			})(); });
+		});
+	}
+
+	// ── PROSE ───────────────────────────────────────────────────────────────
+
+	pageProse(on: Pred): Page {
+		const s = this.plugin.settings;
+		const pos: Pred = () => !!s.posEnabled;
+		const ck: Pred = () => !!s.checksEnabled;
+		// the pills wear the menu's own icons where the menu has the row
+		const menuIcon = (id: string) => (el: HTMLElement) => { this.plugin.menuDrawIcon(el, id); };
+		const RAIL: RailEntry[] = [
+			{ key: 'syntax', name: 'Syntax', icon: 'code', on: pos, draw: menuIcon('syntax') },
+			{ key: 'checks', name: 'Checks', icon: 'pen-tool', on: ck, draw: menuIcon('prose') },
+		];
+		const value = () => { const names = RAIL.filter((e) => e.on && e.on()).map((e) => e.name); return names.length ? names.join(' · ') : 'Off'; };
+		// a category is a color and a switch on one row
+		const cat = (name: string, desc: string, onKey: Key, colorKey: Key, visible: Pred): Def => rendered({
+			name, desc, visible, render: (st) => this.renderCategory(st, onKey, colorKey),
+		}, [onKey, colorKey]);
+		return this.page('Prose', 'pen-tool', 'Parts of speech, and the checks.', [
+			// ABOVE THE TABS: the one switch both sections obey sits over the rail,
+			// not inside Syntax; no reset link for a lone switch
+			this.section('Sections', [
+				// one card, first, for both sections
+				this.noteRow('No AI, no API, nothing leaves your vault: word lists and regex rules. A mark is a nudge, not a verdict.'),
+				{ name: 'Skip code and math', desc: 'Leaves code, frontmatter and math alone, for the syntax and the checks.', control: { type: 'toggle', key: 'syntaxSkipCode' } },
+				this.railRow('prose', RAIL),
+			], undefined, false),
+			this.section('Syntax', [
+				{ name: 'Syntax highlight', desc: 'Colors parts of speech as you write. Fully local.', control: { type: 'toggle', key: 'posEnabled' } },
+				{ name: 'Display style', desc: 'How a part of speech is marked.', control: { type: 'dropdown', key: 'syntaxStyle', options: { text: 'Colored text', highlight: 'Highlight', line: 'Underline' } }, visible: pos },
+				cat('Nouns', 'Nouns and pronouns.', 'posNoun', 'posNounColor', pos),
+				cat('Verbs', 'Verbs, auxiliaries and modals.', 'posVerb', 'posVerbColor', pos),
+				cat('Adverbs', 'All adverbs, including not and very.', 'posAdverb', 'posAdverbColor', pos),
+				cat('Adjectives', 'Adjectives; articles are left out.', 'posAdjective', 'posAdjectiveColor', pos),
+				cat('Conjunctions', 'Conjunctions and prepositions.', 'posConjunction', 'posConjunctionColor', pos),
+				{ name: 'Mute everything else', desc: 'Fades what you didn’t tick.', control: { type: 'toggle', key: 'posDimOthers' }, visible: pos },
+				this.hotkeysRow(['toggle-syntax']),
+			], this.railed('prose', 'syntax')),
+			this.section('Checks', [
+				{ name: 'Prose checks', desc: 'Things worth a second look, not mistakes. Fully local.', control: { type: 'toggle', key: 'checksEnabled' } },
+				{ name: 'Display style', desc: 'How a finding is marked.', control: { type: 'dropdown', key: 'checkStyle', options: { line: 'Underline', highlight: 'Highlight', text: 'Colored text' } }, visible: ck },
+				cat('Filler words', 'Words like very, really, basically, kind of.', 'checkFiller', 'checkFillerColor', ck),
+				{ name: 'Also flag vague quantifiers', desc: 'Many, most, some, often. Stricter, and it flags more.', control: { type: 'toggle', key: 'checkFillerSoft' }, visible: all(ck, () => !!s.checkFiller) },
+				cat('Passive voice', 'Was written, is being considered.', 'checkPassive', 'checkPassiveColor', ck),
+				cat('Loose pronouns', 'A sentence opening with an unclear it or this.', 'checkPronoun', 'checkPronounColor', ck),
+				cat('Repetition radar', 'The same uncommon word twice, close together.', 'checkRepetition', 'checkRepetitionColor', ck),
+				{ name: 'Window', desc: 'How far apart two words can be and still count as a repeat.', control: { type: 'slider', key: 'repetitionWindow', min: 15, max: 150, step: 5 }, visible: all(ck, () => !!s.checkRepetition) },
+				{ name: 'Minimum length', desc: 'Skips words shorter than this.', control: { type: 'slider', key: 'repetitionMinLength', min: 3, max: 10, step: 1 }, visible: all(ck, () => !!s.checkRepetition) },
+				cat('Commonly misused', 'Affect and effect, its and it’s, fewer and less.', 'checkMisused', 'checkMisusedColor', ck),
+				cat('Lexical illusions', 'The same word twice in a row.', 'checkIllusion', 'checkIllusionColor', ck),
+				cat('Dialogue focus', 'Everything inside quotes.', 'checkDialogue', 'checkDialogueColor', ck),
+				rendered({ name: 'Sentence rhythm', desc: 'Shades each sentence by how hard it reads: two tints, and the switch.', render: (st) => this.renderRhythm(st), visible: ck }, ['checkRhythm', 'checkRhythmHardColor', 'checkRhythmVeryHardColor']),
+				{ name: 'Hard above grade', desc: 'Flesch-Kincaid grade for the first tint.', control: { type: 'slider', key: 'checkRhythmHardGrade', min: 6, max: 16, step: 1 }, visible: all(ck, () => !!s.checkRhythm) },
+				{ name: 'Very hard above', desc: 'And for the second.', control: { type: 'slider', key: 'checkRhythmVeryHardGrade', min: 8, max: 22, step: 1 }, visible: all(ck, () => !!s.checkRhythm) },
+				{ name: 'Mute everything else', desc: 'Fades what you didn’t tick, so the marks stand out.', control: { type: 'toggle', key: 'checkDimOthers' }, visible: ck },
+				this.hotkeysRow(['toggle-prose-checks']),
+			], this.railed('prose', 'checks')),
+		], value, on);
+	}
+
+	// ── TEXT ────────────────────────────────────────────────────────────────
+	// Markers, Typography and Layout.
+	pageText(on: Pred): Page {
+		const s = this.plugin.settings;
+		const marks: Pred = () => !!s.markersEnabled;
+		const ty: Pred = () => !!s.typographyEnabled;
+		const quotes: Pred = all(ty, () => !!s.typoSmartQuotes, () => !!s.typoCustomQuotes);
+		const text: Pred = () => !!s.miscEnabled;
+		const menuIcon = (id: string) => (el: HTMLElement) => { this.plugin.menuDrawIcon(el, id); };
+		const RAIL: RailEntry[] = [
+			{ key: 'markers', name: 'Markers', icon: 'pilcrow', on: marks, draw: menuIcon('markers') },
+			{ key: 'typography', name: 'Typography', icon: 'quote', on: ty },
+			{ key: 'layout', name: 'Layout', icon: 'align-left', on: text },
+		];
+		const value = () => { const names = RAIL.filter((e) => e.on && e.on()).map((e) => e.name); return names.length ? names.join(' · ') : 'Off'; };
+		return this.page('Text', 'type', 'Hidden markers, typography, layout.', [
+			this.section('Sections', [this.railRow('text', RAIL)]),
+			this.section('Markers', [
+				{ name: 'Show hidden markers', desc: 'Draws the characters you cannot normally see. Your text is untouched.', control: { type: 'toggle', key: 'markersEnabled' } },
+				{ name: 'Tabs', desc: 'Shown as →', control: { type: 'toggle', key: 'markTabs' }, visible: marks },
+				{ name: 'Spaces', desc: 'Shown as ·', control: { type: 'toggle', key: 'markSpaces' }, visible: marks },
+				{ name: 'End of lines', desc: 'Shown as ↵', control: { type: 'toggle', key: 'markEndOfLines' }, visible: marks },
+				{ name: 'Paragraphs', desc: 'Shown as ¶', control: { type: 'toggle', key: 'markParagraphs' }, visible: marks },
+				{ name: 'End of buffer', desc: 'Tildes down the empty space after your last line.', control: { type: 'toggle', key: 'markBlankLines' }, visible: marks },
+			], this.railed('text', 'markers')),
+			this.section('Typography', [
+				{ name: 'Typography', desc: 'Turns what you type into the proper characters as you go.', control: { type: 'toggle', key: 'typographyEnabled' } },
+				this.alertRow('Quotes, dashes and arrows change as you type. Not for you? Turn Typography off.', ty),
+				{ name: 'Curly quotes', desc: 'Straight quotes turn curly as you type.', control: { type: 'toggle', key: 'typoSmartQuotes' }, visible: ty },
+				{ name: 'Choose the characters', desc: 'Your own quote marks instead of the usual ones.', control: { type: 'toggle', key: 'typoCustomQuotes' }, visible: all(ty, () => !!s.typoSmartQuotes) },
+				{ name: 'Open double', desc: 'Replaces " at the start of a quotation.', control: { type: 'text', key: 'typoOpenDouble' }, visible: quotes },
+				{ name: 'Close double', desc: 'Replaces " at the end.', control: { type: 'text', key: 'typoCloseDouble' }, visible: quotes },
+				{ name: 'Open single', desc: 'Replaces the straight single quote at the start.', control: { type: 'text', key: 'typoOpenSingle' }, visible: quotes },
+				{ name: 'Close single', desc: 'And at the end.', control: { type: 'text', key: 'typoCloseSingle' }, visible: quotes },
+				{ name: 'Apostrophe', desc: 'Used mid-word, where it is not a quote at all.', control: { type: 'text', key: 'typoApostrophe' }, visible: quotes },
+				{ name: 'Ellipsis', desc: '... becomes …', control: { type: 'toggle', key: 'typoEllipsis' }, visible: ty },
+				{ name: 'Dashes', desc: '-- becomes –, --- becomes —', control: { type: 'toggle', key: 'typoDashes' }, visible: ty },
+				{ name: 'Arrows', desc: '-> →, <- ←, => ⇒', control: { type: 'toggle', key: 'typoArrows' }, visible: ty },
+				{ name: 'Comparisons', desc: '<= ≤, >= ≥, /= ≠', control: { type: 'toggle', key: 'typoComparisons' }, visible: ty },
+				{ name: 'Guillemets', desc: '<< « and >> »', control: { type: 'toggle', key: 'typoGuillemets' }, visible: ty },
+				{ name: 'Fractions', desc: '1/2 ½, 3/4 ¾, and the rest.', control: { type: 'toggle', key: 'typoFractions' }, visible: ty },
+			], this.railed('text', 'typography')),
+			this.section('Layout', [
+				{ name: 'Text options', desc: 'Margins, indents, line length and spacing, justification.', control: { type: 'toggle', key: 'miscEnabled' } },
+				{ name: 'Horizontal padding', desc: 'Pixels between the text and the pane’s edges, in and out of Zen.', control: { type: 'slider', key: 'editorPaddingH', min: 0, max: 400, step: 10 }, visible: text },
+				{ name: 'Paragraph indent', desc: 'The first line of each paragraph set in, as a book does. Reading view only.', control: { type: 'toggle', key: 'enableParagraphIndent' }, visible: text },
+				{ name: 'Indent trigger', desc: 'What starts a paragraph in your writing: a blank line, or every new line.',
+					control: { type: 'dropdown', key: 'paragraphIndentMode', options: { double: 'A blank line (double Enter)', single: 'Every line (single Enter)' } }, visible: all(text, () => !!s.enableParagraphIndent) },
+				{ name: 'Indent size', desc: 'In em.', control: { type: 'slider', key: 'paragraphIndentEm', min: 0.5, max: 8, step: 0.5 }, visible: all(text, () => !!s.enableParagraphIndent) },
+				{ name: 'Limit line length', desc: 'Wraps the text at a number of characters.', control: { type: 'toggle', key: 'limitLineLength' }, visible: text },
+				{ name: 'Characters per line', desc: '20 to 200; 64 suits prose.', control: { type: 'number', key: 'maxLineChars', min: 20, max: 200, step: 1, validate: between(20, 200) }, visible: all(text, () => !!s.limitLineLength) },
+				{ name: 'Line spacing', desc: '0.8 to 4.', control: { type: 'number', key: 'lineSpacing', min: 0.8, max: 4, step: 0.1, validate: between(0.8, 4) }, visible: text },
+				{ name: 'Justify text', desc: 'Straight edges on both sides.', control: { type: 'toggle', key: 'justifyText' }, visible: text },
+				{ name: 'Paragraph numbers', desc: 'Numbers in the left margin, on prose paragraphs only; in reading view too.', control: { type: 'toggle', key: 'paragraphNumbers' }, visible: text },
+			], this.railed('text', 'layout')),
+		], value, on);
+	}
+
+	renderCategory(st: Setting, onKey: Key, colorKey: Key) {
+		const s = bag(this.plugin.settings);
+		this.swatchRow(st);
+		st.addColorPicker((cp) => cp.setValue(str(s[colorKey]))
+			.onChange((v) => { void (async () => { s[colorKey] = v; await this.plugin.saveSettings(); })(); }));
+		st.addToggle((t) => t.setValue(!!s[onKey])
+			.onChange((v) => { void (async () => { s[onKey] = v; await this.plugin.saveSettings(); this.refreshDomState(); })(); }));
+	}
+
+	renderRhythm(st: Setting) {
+		const s = this.plugin.settings;
+		this.swatchRow(st);
+		st.addColorPicker((cp) => cp.setValue(s.checkRhythmHardColor).onChange((v) => { void (async () => { s.checkRhythmHardColor = v; await this.plugin.saveSettings(); })(); }));
+		st.addColorPicker((cp) => cp.setValue(s.checkRhythmVeryHardColor).onChange((v) => { void (async () => { s.checkRhythmVeryHardColor = v; await this.plugin.saveSettings(); })(); }));
+		st.addToggle((t) => t.setValue(!!s.checkRhythm).onChange((v) => { void (async () => { s.checkRhythm = v; await this.plugin.saveSettings(); this.refreshDomState(); })(); }));
+	}
+
+	// ── MANUSCRIPT ──────────────────────────────────────────────────────────
+
+	pageManuscript(on: Pred): Page {
+		const plugin = this.plugin;
+		const s = plugin.settings;
+		const org: Pred = () => s.organizerOn !== false;
+		const flags: Pred = () => org() && plugin.flagCount() > 0;
+		const hist: Pred = () => !!s.historyTracking;
+		const dateOptions = () => {
+			const out: Record<string, string> = {};
+			for (const id of ['human', 'iso', 'dmy', 'mdy']) out[id] = plugin.dateText(1999, 0, 22, null, null, id);
+			return out;
+		};
+		const RAIL: RailEntry[] = [
+			{ key: 'organizer', name: 'Organizer', icon: 'list-tree', on: org, draw: (el) => { plugin.menuDrawIcon(el, 'organizer'); } },
+			{ key: 'tree', name: 'File tree', icon: 'folder-tree', on: () => !!(s.enableFileTreeCounts || s.fileTreeFlags || s.fileTreeTasks || s.fileTreeFolderIcons || s.treeOrder || s.enableOutlineCounts) },
+			{ key: 'history', name: 'History', icon: 'history', on: hist, draw: (el) => { plugin.menuDrawIcon(el, 'history'); } },
+		];
+		const value = () => {
+			const parts: string[] = [];
+			if (org()) parts.push('Organizer');
+			const n = plugin.flagCount();
+			if (org() && n) parts.push(n + (n === 1 ? ' flag' : ' flags'));
+			if (hist()) parts.push('History');
+			return parts.length ? parts.join(' · ') : 'Off';
+		};
+		return this.page('Manuscript', 'book-open', 'The Organizer, the file tree, the history.', [
+			this.section('Sections', [this.railRow('manuscript', RAIL)]),
+			this.section('Organizer', [
+				{ name: 'Organizer', desc: 'Off, the window is hidden and its file is never written.', control: { type: 'toggle', key: 'organizerOn', defaultValue: true } },
+				{ name: 'Target column shows', desc: 'Words and target, or a percentage.', control: { type: 'dropdown', key: 'orgTargetShow', options: { ratio: 'Words and target (2,145/5,000)', percent: 'Percentage (43%)' } }, visible: org },
+				{ name: 'Folder icons', desc: 'A glyph beside each folder name in the window.', control: { type: 'toggle', key: 'orgFolderIcons' }, visible: org },
+				// the sample is a real render, not a hand-typed example: a second
+				// writer of the format would drift from `dateText` and lie quietly
+				{ name: 'Date format', desc: 'For every date the Organizer shows. A file time reads: ' + plugin.orgStamp(Date.UTC(1999, 0, 22, 9, 30)),
+					control: { type: 'dropdown', key: 'organizerDateFormat', defaultValue: 'human', options: dateOptions() }, visible: org },
+				rendered({ name: 'Number of flags', desc: '',
+					render: (st) => this.renderFlagCount(st), visible: org }, ['flagCount']),
+				...this.flagRows(flags),
+				// two cards at the foot: what the window can do that no control on this
+				// page says — the bulk edit (desktop only) and the zoom (Ctrl and the
+				// wheel; two fingers on a phone)
+				this.noteRow('Ctrl-click or Shift-click picks several notes; a flag, target or property set on one lands on all (desktop).', org),
+				this.noteRow('Ctrl + scroll zooms the window (Cmd on a Mac); on a phone, pinch with two fingers.', org),
+			], this.railed('manuscript', 'organizer')),
+			this.section('File tree', [
+				{ name: 'Word counts', desc: 'Next to each note, added up for folders.', control: { type: 'toggle', key: 'enableFileTreeCounts' } },
+				{ name: 'Flags', desc: 'A tiny flag on anything flagged in the Organizer.', control: { type: 'toggle', key: 'fileTreeFlags' } },
+				{ name: 'Tasks left', desc: 'Unticked boxes beside the count; folders sum their children.', control: { type: 'toggle', key: 'fileTreeTasks' } },
+				{ name: 'Folder icons', desc: 'A glyph beside each folder name.', control: { type: 'toggle', key: 'fileTreeFolderIcons' } },
+				this.noteRow('Right-click a folder in the file tree to give it a color.', () => !!s.fileTreeFolderIcons),
+				{ name: 'Custom order', desc: 'The Organizer’s order in the file tree; off, Obsidian’s sort.', control: { type: 'toggle', key: 'treeOrder' } },
+				{ name: 'Outline counts', desc: 'Next to each heading in the outline.', control: { type: 'toggle', key: 'enableOutlineCounts' } },
+			], this.railed('manuscript', 'tree')),
+			this.section('History', [
+				this.buttonRow('Writing history', 'Day by day, month by month, or year by year.', 'Open', () => { void this.plugin.openHistoryModal(); }),
+				{ name: 'Track writing history', desc: 'Counts only, never your words; wherever Word-Smith applies.', control: { type: 'toggle', key: 'historyTracking' } },
+				{ name: 'Remember which notes', desc: 'A rename or a move takes its history along.', control: { type: 'toggle', key: 'historyPerFile' }, visible: hist },
+				rendered({ name: 'Never counted', desc: 'Folders and notes left out of the history and every folder total.', render: (st) => this.renderPaths(st, 'countExclude', 'Add a folder or note', 'Never count…', false), visible: hist }, ['countExclude']),
+				{ name: 'Delete all history', desc: 'Every day on record. No second copy, no undo.', render: (st) => this.renderHistoryDelete(st), visible: hist },
+				this.hotkeysRow(['open-history']),
+			], this.railed('manuscript', 'history')),
+		], value, on);
+	}
+
+	// the count is a number in the settings; a dropdown's value is a string,
+	// so the row is drawn by hand and converts
+	renderFlagCount(st: Setting) {
+		st.addDropdown((d) => {
+			d.addOption('0', 'None');
+			for (let i = 1; i <= WS_STATE_IDS.length; i++) d.addOption(String(i), i === 1 ? '1 flag' : i + ' flags');
+			d.setValue(String(this.plugin.flagCount()));
+			d.onChange((v) => { void (async () => {
+				this.plugin.settings.flagCount = Number(v);
+				await this.plugin.saveSettings();
+				this.update();   // the flag rows come and go with the count
+			})(); });
+		});
+	}
+
+	flagRows(visible: Pred): Def[] {
+		const plugin = this.plugin;
+		const count = plugin.flagCount();
+		const defs = plugin.flagDefs();
+		const rows: Def[] = [];
+		for (let i = 0; i < count; i++) {
+			const f = defs[i];
+			rows.push(rendered({
+				name: 'Flag ' + (i + 1), desc: '', visible, searchable: false,
+				// an ordinary row: the name and its line at the left, the controls at
+				// the right like every other row's; the glyph leads the controls as
+				// their preview
+				render: (st) => {
+					st.settingEl.addClass('ws-flagrow');
+					const icon = st.controlEl.createSpan({ cls: 'ws-flagrow-icon' });
+					wsSvgInto(icon, wsFlagSvg(f.id, 13));
+					const write = async (patch: Record<string, string>) => {
+						const all = plugin.flagDefs().map((x) => Object.assign({}, x));
+						Object.assign(all.filter((x) => x.id === f.id)[0], patch);
+						plugin.settings.flags = all;
+						await plugin.saveSettings();
+					};
+					st.addText((t) => t.setPlaceholder(f.id).setValue(f.label).onChange((v) => { void write({ label: String(v || '').trim() || f.id }); }));
+					st.addDropdown((d) => {
+						for (const sh of WS_FLAG_SHAPES) d.addOption(sh.id, sh.label);
+						d.setValue(f.shape);
+						d.onChange((v) => { void (async () => { await write({ shape: v }); this.update(); })(); });
+					});
+					this.swatchRow(st);
+					st.addColorPicker((cp) => cp.setValue(f.light).onChange((v) => { void write({ light: v }); }));
+					st.addColorPicker((cp) => cp.setValue(f.dark).onChange((v) => { void write({ dark: v }); }));
+				},
+			}, ['flags']));
+		}
+		return rows;
+	}
+
+	// the delete is two taps, like every delete here
+	renderHistoryDelete(st: Setting) {
+		this.twoTapButton(st, 'Delete', () => { void (async () => {
+			await this.plugin.historyClear();
+			new Notice('Word-Smith: writing history deleted.');
+			this.update();
+		})(); });
+	}
+
+	// ── NAVIGATION ──────────────────────────────────────────────────────────
+
+	pageNavigation(on: Pred): Page {
+		const plugin = this.plugin;
+		const s = plugin.settings;
+		const value = () => {
+			const parts: string[] = [];
+			if (s.quickExplorer || s.quickOutline || s.quickCycle) parts.push('Quick panels');
+			if (s.vimSoftWrapMotion) parts.push('Vim motions');
+			return parts.length ? parts.join(' · ') : 'Off';
+		};
+		return this.page('Navigation', 'compass', 'Quick panels and Vim motions.', [
+			this.section('Quick panels', [
+				this.subheadRow('Quick panels'),
+				{ name: 'Quick file explorer', desc: 'A command that opens the file explorer and focuses it.', control: { type: 'toggle', key: 'quickExplorer' } },
+				{ name: 'Quick outline', desc: 'And one for the outline.', control: { type: 'toggle', key: 'quickOutline' } },
+				{ name: 'Quick cycle', desc: 'Four commands for directional jumps; bind them to Alt and the arrows.', control: { type: 'toggle', key: 'quickCycle' } },
+				{ name: 'Close a sidebar when you leave it', desc: 'Only when you move out with a direction key, never when you pick something.', control: { type: 'toggle', key: 'quickCycleCloseOnLeave' }, visible: () => !!s.quickCycle },
+				// under Quick panels, not under Vim, and only what is ticked: each line
+				// behind its switch
+				this.hotkeysRow([
+					{ id: 'quick-file-explorer', on: () => !!s.quickExplorer },
+					{ id: 'quick-outline', on: () => !!s.quickOutline },
+					{ id: 'quick-cycle-left', on: () => !!s.quickCycle },
+					{ id: 'quick-cycle-right', on: () => !!s.quickCycle },
+					{ id: 'quick-cycle-up', on: () => !!s.quickCycle },
+					{ id: 'quick-cycle-down', on: () => !!s.quickCycle },
+				]),
+			]),
+			this.section('Vim', [
+				this.subheadRow('Vim'),
+				{ name: 'Motions follow wrapped lines', desc: 'Maps j, k, 0 and $ to their g forms. Needs Obsidian’s Vim key bindings on.', control: { type: 'toggle', key: 'vimSoftWrapMotion' } },
+				this.alertRow(plugin.vimApi() ? 'j and k now move by screen line, not by paragraph.' : 'This needs Vim key bindings on in Settings → Editor. Reopen this page after.', () => !!s.vimSoftWrapMotion),
+			]),
+		], value, on);
+	}
+
+	// ── VAULT ───────────────────────────────────────────────────────────────
+
+	pageVault(on: Pred): Page {
+		const plugin = this.plugin;
+		const s = plugin.settings;
+		// READ WHEN DRAWN, AND AGAIN ON EVERY REFRESH: the definitions are asked
+		// before the vault has listed its files and before the history has
+		// located its store, and a path decided then is wrong for the session.
+		const fileRow = (name: string, at: () => string | null, note: string): Render => ({
+			name, desc: note,
+			render: (st) => {
+				const paint = () => {
+					const p = at();
+					const exists = !!(p && plugin.app.vault.getAbstractFileByPath(p));
+					const text = (exists ? 'At ' + p + '. ' : 'Not made yet. ') + note;
+					if (st.descEl.textContent !== text) st.setDesc(text);
+				};
+				paint();
+				this.onRefresh(paint);
+			},
+		});
+		return this.page('Vault', 'vault', 'Where it applies, settings as text, a repair, the files kept.', [
+			this.scopeSection(),
+			this.section('Your settings', [
+				this.subheadRow('Your settings'),
+				{ name: 'As text', desc: 'Copy every setting as JSON, paste a copy back, or undo the last paste or reset.', render: (st) => this.renderSettingsText(st) },
+				this.buttonRow('Repair the display', 'Draws every surface again from the settings as they are.', 'Repair', () => { plugin.repairDisplay(); new Notice('Word-Smith: repaired.', 4000); }),
+				{ name: 'Keep a copy of my settings in the vault', desc: 'A readable copy, read back only after a reinstall. Editing it changes nothing.',
+					control: { type: 'toggle', key: 'settingsMirror', defaultValue: true } },
+				// no hotkeys card here: the four commands stay under Settings → Hotkeys
+			], undefined, false),
+			this.section('Files', [
+				this.subheadRow('The files Word-Smith keeps'),
+				fileRow('Custom order file', () => plugin.structurePathNow(), 'Custom order, flags, targets, ticks, colors, columns, and the details of files that are not notes.'),
+				fileRow('Settings copy file', () => s.settingsMirror !== false ? plugin.settingsMirrorPathFor() : null, 'Machine settings and other vaults’ paths are skipped on restore.'),
+				fileRow('History file', () => plugin.historyStorePath(), 'Every day you have written; the only copy.'),
+			]),
+			this.section('Notes', [
+				this.subheadRow('Good to know'),
+				{ name: 'Read your book back', desc: 'In the Export pane, press Expand and click a paragraph: its note opens beside the reader, caret on it.', render: (st) => this.infoInto(st) },
+				{ name: 'More fonts', desc: 'Obsidian’s own font list; add one under Settings → Appearance → Text font.', render: (st) => this.infoInto(st) },
+				{ name: 'Frontmatter overrides', desc: 'A note’s frontmatter overrides these settings, just for that note.', render: (st) => { this.infoInto(st); this.renderFrontmatterHelp(st); } },
+			]),
+		], () => {
+			// the scope first, since it is the page's first section
+			const n = Array.isArray(s.scopePaths) ? s.scopePaths.length : 0;
+			const scope = !n ? 'Everywhere' : (s.scopeMode === 'exclude' ? 'Everywhere except ' : 'Only ') + n + (n === 1 ? ' path' : ' paths');
+			return scope + ' · ' + (s.settingsMirror !== false ? 'copy in vault' : 'no copy in vault');
+		}, on);
+	}
+
+	renderSettingsText(st: Setting) {
+		const plugin = this.plugin;
+		st.addButton((b) => b.setButtonText('Copy').onClick(() => { void (async () => {
+			try { await navigator.clipboard.writeText(plugin.settingsCopyText()); new Notice('Word-Smith: settings copied.', 4000); }
+			catch { new Notice('Word-Smith: could not reach the clipboard.', 6000); }
+		})(); }));
+		st.addButton((b) => b.setButtonText('Paste').onClick(() => { void (async () => {
+			let text = '';
+			try { text = await navigator.clipboard.readText(); }
+			catch { new Notice('Word-Smith: could not read the clipboard.', 6000); return; }
+			const r = await plugin.settingsPasteText(text);
+			if (r.error !== undefined) { new Notice('Word-Smith: ' + r.error, 8000); return; }
+			new Notice('Word-Smith: ' + r.applied + ' setting' + (r.applied === 1 ? '' : 's') + ' pasted'
+				+ (r.repaired.length ? ', ' + r.repaired.length + ' reset to the default (' + r.repaired.join(', ') + ')' : '')
+				+ '. Undo is beside this button.', 8000);
+			this.update();
+		})(); }));
+		st.addButton((b) => b.setButtonText('Undo').setDisabled(!plugin._settingsUndo).onClick(() => { void (async () => {
+			const r = await plugin.settingsUndoPaste();
+			new Notice('Word-Smith: ' + (r.error || 'the previous settings are back.'), 6000);
+			this.update();
+		})(); }));
+	}
+
+	// IN THE CARD'S OWN COLUMN, under the description: the row is the info
+	// card the two above it are (the glyph at the left, the words beside it),
+	// and the block sits with the words rather than in the control area the
+	// card hides.
+	renderFrontmatterHelp(st: Setting) {
+		st.infoEl.createEl('pre', {
+			cls: 'ws-fm-block',
+			text: 'wordsmith: off       the plugin does nothing in this note\n'
+				+ 'ws-zen: true         override a mode for this note only\n'
+				+ 'ws-typewriter: false\n'
+				+ 'ws-hemingway: true\n'
+				+ 'ws-syntax: true      the word classes, the prose checks\n'
+				+ 'ws-checks: false\n'
+				+ 'ws-typography: false',
+		});
+	}
 }
-/* nosourcemap */
-/* nosourcemap */
+
+// WHAT A KEY'S CHANGE DOES BESIDES SAVING: the rows' old callbacks, by key.
+// Run before the save; `saveSettings` refreshes every surface after it, so a
+// key with no entry here needs none.
+const AFTER: Record<string, (tab: WordSmithSettingTab, value: unknown) => void | Promise<void>> = {
+	pluginEnabled: (tab) => { tab.update(); },   // the tree: every page comes or goes
+	zenEnabled: (tab, v) => { tab.plugin.settings.zenMode = !!v; },
+	enableRetroStatus: (tab) => { tab.plugin.updateStatusBar(); tab.plugin.updateRetroStatusBar(); },
+	retroBarOnPhone: (tab) => { tab.plugin.updateStatusBar(); tab.plugin.updateRetroStatusBar(); },
+	// both application sites restamped now: the var reference and the inline size the fit pass pins
+	statusBarFontFollowNote: (tab) => { tab.plugin.applyCssVariables(); tab.plugin.fitStatusBarText(); },
+	statusBarUiFont: (tab) => { tab.plugin.applyBodyClasses(); tab.plugin.fitStatusBarText(); },   // the class, then the fit at the new face's widths
+	fileTokenFormat: (tab) => { tab.plugin.updateRetroStatusBar(); },
+	flagTokenFormat: (tab) => { tab.plugin.updateRetroStatusBar(); },
+	fontTokenFormat: (tab) => { tab.plugin.updateRetroStatusBar(); },
+	markersTokenFormat: (tab) => { tab.plugin.updateRetroStatusBar(); },
+	barThemeEnabled: (tab) => { tab.plugin.applyThemeClass(); tab.plugin.applyThemeVars(); void tab.plugin.barThemeCursorSync(); },
+	barThemeHeadings: (tab) => { tab.plugin.applyThemeVars(); },
+	barThemeCode: (tab) => { tab.plugin.applyThemeVars(); },
+	barThemeSimplified: (tab) => { tab.plugin.applyThemeVars(); },
+	barThemeMarkdown: (tab) => { tab.plugin.applyThemeVars(); },
+	barThemeBorderless: (tab) => { tab.plugin.applyThemeVars(); tab.plugin.applyThemeClass(); },
+	barThemeCheckbox: (tab) => { tab.plugin.applyThemeClass(); },
+	barThemeCursor: (tab) => { tab.plugin.applyThemeVars(); void tab.plugin.barThemeCursorSync(); },
+	barThemeVim: (tab) => { tab.plugin.applyThemeVars(); void tab.plugin.barThemeCursorSync(); },
+	menuDock: async (tab, v) => {
+		if (v) { tab.plugin.registerMenuPanel(); await tab.plugin.openMenuPanel(true); }
+		else tab.plugin.closeMenuPanel();
+	},
+	hemingwayEnabled: (tab) => { tab.plugin._hemSaid = false; },   // a lock should land now, not in 120 ms
+	paragraphNumbers: (tab) => { tab.plugin.reconfigureEditors(); },
+	organizerOn: (tab) => { try { tab.plugin.refreshMenuPanelsNow(); } catch (_) { wsCatch('AFTER organizerOn: refreshMenuPanelsNow();', _); } },
+	// THROUGH THE ONE WRITER: the three steps that turning it on means —
+	// flag, find or make the file, write it once — live in `historyTrackingOn`
+	historyTracking: async (tab, v) => { if (v) await tab.plugin.historyTrackingOn(); },
+	organizerDateFormat: (tab) => { tab.update(); },   // the sample time in the description follows
+	settingsMirror: (tab) => { tab.update(); },   // the file row's text follows
+};
+
+// the keys whose row saved with `saveSettings(true)`: landed now, not debounced
+const SAVE_NOW = new Set<string>([
+	'pluginEnabled', 'scopeMode', 'zenEnabled', 'zenHideBar', 'enableLetterbox', 'enableRetroStatus', 'retroBarOnPhone',
+	'statusBarBorderTop', 'statusBarBorderBottom', 'powerlineModeColors', 'vimFollowCursorSmith', 'posEnabled', 'checksEnabled',
+	'checkFillerSoft', 'hemingwayEnabled', 'typographyEnabled', 'orgTargetShow', 'orgFolderIcons',
+]);

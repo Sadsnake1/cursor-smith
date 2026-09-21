@@ -5,22 +5,16 @@
     "moduleResolution": "bundler",
     "lib": [
       "es2021",
-      "dom",
-      "dom.iterable"
+      "dom"
     ],
-    "strict": false,
-    "noImplicitAny": true,
-    "useUnknownInCatchVariables": true,
-    "strictBindCallApply": true,
-    "strictNullChecks": true,
+    "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
-    "esModuleInterop": true,
-    "types": [],
-    "useDefineForClassFields": false
+    "esModuleInterop": true
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "test/**/*.ts"
   ]
 }

@@ -1,5 +1,3 @@
-// Word-Smith — main.
+import CursorSmithPlugin from "./plugin";
 
-// What Obsidian loads: the plugin class, default-exported. The settings tab
-// is imported for its side of the seam (the class registers it).
-export { default } from './plugin';
+export default CursorSmithPlugin;

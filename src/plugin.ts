@@ -250,6 +250,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare updateVimStatusBar: VimMethods["updateVimStatusBar"];
   // --- engine.ts
   declare ensureCanvasForView: EngineMethods["ensureCanvasForView"];
+  declare _wrapperHome: EngineMethods["_wrapperHome"];
   declare disableCanvasEngine: EngineMethods["disableCanvasEngine"];
   declare enableCanvasEngine: EngineMethods["enableCanvasEngine"];
   declare resizeCanvas: EngineMethods["resizeCanvas"];
@@ -365,6 +366,9 @@ export default class CursorSmithPlugin extends Plugin {
   _lastActivityKind!: string;
   // When the frame loop last ran, for the watchdog.
   _lastTickT!: number;
+  // When the note's scroller last scrolled (a scroll or wheel event that
+  // moves the caret); the frame cap is lifted this close to it.
+  _lastScrollT!: number;
   declare _lastFireworkT: number;
   _lastGlowAlpha!: string;
   _lastGlowRect!: string;
@@ -652,6 +656,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.mouseX = this.x;
     this.mouseY = this.y;
     this.lastMouseMove = 0;
+    this._lastScrollT = 0;
     this._mouseDoc = null;
     
     this.canvasEngineActive = false;
@@ -1049,7 +1054,10 @@ export default class CursorSmithPlugin extends Plugin {
     // preview, another plugin's panel - none of those move the caret, and
     // each used to buy 1.2s of the hot gear. A plugin that scrolls something
     // continuously used to pin it forever.
-    const onScrollLike = (e: Event) => { if (this._scrollMovesCaret(e.target, doc)) this._markActivity(e.type); };
+    // The scroll's own stamp, for the frame cap (SCROLL_LOCK_MS): the
+    // activity kind is overwritten by every touch or pointer move between
+    // two scroll events, so it cannot say "scrolling" at every frame.
+    const onScrollLike = (e: Event) => { if (this._scrollMovesCaret(e.target, doc)) { this._lastScrollT = performance.now(); this._markActivity(e.type); } };
     // selectionchange only when the selection went somewhere (_selectionMoved):
     // Android's WebView and CodeMirror re-syncing its own selection fire it
     // with the caret exactly where it was, and each used to buy INPUT_HOT_MS

@@ -228,6 +228,15 @@ export const GEOMETRY_TTL_MS = 400;
 // full rate, and once the springs have settled those frames measure a caret
 // that has not moved and draw nothing (the static-frame test).
 export const INPUT_HOT_MS = 500;
+// While the note scrolls - a scroll or wheel activity this recent - the hot
+// gear runs on every animation frame, cap or no cap, low power or not. The
+// text moves every frame; a caret placed every other frame (the 14 ms cap
+// on a 120 Hz screen) or every third (30 ms in low power, a phone) trails
+// it by a scroll step that differs from frame to frame, which reads as a
+// wobble. 120 ms covers the gap between the scroll events of a slow drag
+// and lets go promptly after the last one; measured on a touch drag, the
+// drawn caret went from a full step behind to a part of one.
+export const SCROLL_LOCK_MS = 120;
 
 // How long the caret's computed style (font, colour, line height, the glyph
 // width, the row's extent) is trusted, in ms. The cache is keyed on a style

@@ -279,6 +279,43 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("...one inside it does, and so does a wheel over it", woke === 2, woke);
   }
 
+  // --- the wrapper's home on a phone ---------------------------------------------
+  // Inside the focused editor's scroller (a layer of the scrolled content,
+  // carried by the compositor between ticks); the app container everywhere
+  // else, and on a phone too while focus is elsewhere or the scroller is
+  // another document's.
+  {
+    const e = mk();
+    const docOf = (mobile, app) => ({ body: { classList: { contains: (c) => c === "is-mobile" && mobile } }, querySelector: (sel) => (sel === ".app-container" ? app : null) });
+    const app = { name: "app" };
+    const deskDoc = docOf(false, app), phoneDoc = docOf(true, app);
+    const sc = { isConnected: true, ownerDocument: phoneDoc };
+    const view = { hasFocus: true, scrollDOM: sc };
+    ok("desktop: the app container, editor focused or not", e._wrapperHome(deskDoc, view) === app && e._wrapperHome(deskDoc, null) === app);
+    ok("a phone with the editor focused: its scroller", e._wrapperHome(phoneDoc, view) === sc);
+    ok("...focus elsewhere: the app container", e._wrapperHome(phoneDoc, { hasFocus: false, scrollDOM: sc }) === app && e._wrapperHome(phoneDoc, null) === app);
+    ok("...a scroller of another document, or a detached one: the app container", e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: { isConnected: true, ownerDocument: deskDoc } }) === app && e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: { isConnected: false, ownerDocument: phoneDoc } }) === app);
+    ok("...and no app container: the body", e._wrapperHome({ body: { classList: { contains: () => false } }, querySelector: () => null }, null).classList !== undefined);
+    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    ok("the tick re-places the canvas on every tick the scrolled wrapper's client position moved", /if \(!this\._wrapperPos \|\| this\._wrapperPos\.left !== left \|\| this\._wrapperPos\.top !== top\) \{\s*this\._wrapperPos = \{ left, top \};\s*this\._canvasPlaced = false;/.test(src));
+    ok("...sized to the content at its origin, the fixed mode's inline top, left and clip taken off", /removeProperty\("top"\);\s*this\.canvasWrapper\.style\.removeProperty\("left"\);\s*this\.canvasWrapper\.style\.removeProperty\("clip-path"\);\s*this\.canvasWrapper\.style\.width = width \+ "px";\s*this\.canvasWrapper\.style\.height = height \+ "px";/.test(src));
+    const css = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "styles.css"), "utf8");
+    ok("the scrolled wrapper is an absolute layer above CodeMirror's cursor layer (150)", /\.cursor-smith-wrapper\.cursor-smith-wrapper-scrolled \{\s*position: absolute;\s*z-index: 151;\s*\}/.test(css));
+  }
+
+  // --- the scroll lock ------------------------------------------------------------
+  // While the note scrolls the hot gear's frame cap is lifted: the text moves
+  // every frame, and a caret placed every other frame (14 ms on 120 Hz) or
+  // every third (30 ms in low power) trails it by a scroll step - the wobble
+  // the user saw, worse on a phone. Short, so the cap is back right after.
+  {
+    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    ok("the scroll lock is short: past the gap between a slow drag's scroll events, well under the input window", T.SCROLL_LOCK_MS >= 60 && T.SCROLL_LOCK_MS <= 200 && T.SCROLL_LOCK_MS < T.INPUT_HOT_MS, T.SCROLL_LOCK_MS);
+    ok("a scroll this recent lifts the hot gear's cap, on the scroll's own stamp (the activity kind is overwritten by touch and pointer moves between two scroll events)", /const scrolling = n - \(this\._lastScrollT \|\| 0\) < SCROLL_LOCK_MS;/.test(src) && /if \(!scrolling && n - \(this\._lastHotFrameT \|\| 0\) < this\._frameCaps\(\)\.hotMinMs\)/.test(src));
+    const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
+    ok("...stamped where the scroller's scroll and wheel events are read", /this\._lastScrollT = performance\.now\(\); this\._markActivity\(e\.type\);/.test(plug));
+  }
+
   // --- the covers: bands and bars fixed over the editor ----------------------------
   // Word-Smith's letterbox masks and its status bar (CARET_COVERS) hide the
   // editor's caret; since the layers moved above them (§1.22) they are below

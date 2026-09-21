@@ -45,6 +45,7 @@ function keystrokeHeatWeight(kind, repeat) {
 var CARET_COVERS = ".ws-mask, .ws-status-bar";
 var GEOMETRY_TTL_MS = 400;
 var INPUT_HOT_MS = 500;
+var SCROLL_LOCK_MS = 120;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
 var WATCHDOG_INTERVAL_MS = 2e3;
@@ -9315,6 +9316,19 @@ function wrapperClipForStatusBar(wrapper, bar) {
 
 // src/engine.ts
 var engineMethods = {
+  // The element the canvas wrapper hangs from: the focused editor's
+  // scroller on a phone (is-mobile on the body), where the wrapper rides
+  // with the scrolled content; the app container, fixed, everywhere else -
+  // and on a phone too while focus is not in the editor (a search field, a
+  // prompt: those carets are clipped to their own boxes by the fixed
+  // wrapper) or the scroller belongs to another document.
+  _wrapperHome(doc, view) {
+    const app = doc.querySelector(".app-container") || doc.body;
+    if (!doc.body.classList.contains("is-mobile")) return app;
+    if (!view || !view.hasFocus) return app;
+    const sc = view.scrollDOM;
+    return sc && sc.isConnected && sc.ownerDocument === doc ? sc : app;
+  },
   ensureCanvasForView(view) {
     const targetDoc = this._focusedForeignDoc(view) || view && view.dom.ownerDocument || this.canvasWrapper && this.canvasWrapper.ownerDocument || typeof activeDocument !== "undefined" && activeDocument || document;
     if (this.canvasWrapper && this.canvasWrapper.ownerDocument !== targetDoc) {
@@ -9336,6 +9350,15 @@ var engineMethods = {
       this._canvasDpr = 0;
       this._wrapperPos = null;
       this._dirtyRaw = null;
+    }
+    const home = this._wrapperHome(targetDoc, view);
+    if (this.canvasWrapper.parentElement !== home) {
+      home.appendChild(this.canvasWrapper);
+      this.canvasWrapper.classList.toggle("cursor-smith-wrapper-scrolled", home.classList.contains("cm-scroller"));
+      this._lastWrapperRect = "";
+      this._wrapperPos = null;
+      this._canvasPlaced = false;
+      this._dirtyFull = true;
     }
     if (!targetDoc.body.classList.contains("cursor-smith-active")) {
       targetDoc.body.classList.add("cursor-smith-active");
@@ -9433,7 +9456,8 @@ var engineMethods = {
           }
           perf.rafPrev = n;
         }
-        if (n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
+        const scrolling = n - (this._lastScrollT || 0) < SCROLL_LOCK_MS;
+        if (!scrolling && n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
           this.canvasRaf = window.requestAnimationFrame(tick);
           return;
         }
@@ -9463,7 +9487,31 @@ var engineMethods = {
         if (this.canvasWrapper) {
           this.registerWindowEvents(this.canvasWrapper.ownerDocument);
         }
-        if (this.canvasWrapper && this.canvas) {
+        const scrolledWrapper = !!this.canvasWrapper && !!view && this.canvasWrapper.classList.contains("cursor-smith-wrapper-scrolled") && this.canvasWrapper.parentElement === view.scrollDOM;
+        if (this.canvasWrapper && this.canvas && scrolledWrapper && view) {
+          const sc = view.scrollDOM;
+          const sr = sc.getBoundingClientRect();
+          const top = Math.round(sr.top - sc.scrollTop);
+          const left = Math.round(sr.left - sc.scrollLeft);
+          const width = Math.max(1, sc.scrollWidth);
+          const height = Math.max(1, sc.scrollHeight);
+          this._clipTop = Math.round(sr.top);
+          const key = "scrolled|" + width + "," + height;
+          if (key !== this._lastWrapperRect) {
+            this._lastWrapperRect = key;
+            this._dirtyFull = true;
+            this.canvasWrapper.style.removeProperty("top");
+            this.canvasWrapper.style.removeProperty("left");
+            this.canvasWrapper.style.removeProperty("clip-path");
+            this.canvasWrapper.style.width = width + "px";
+            this.canvasWrapper.style.height = height + "px";
+          }
+          if (!this._wrapperPos || this._wrapperPos.left !== left || this._wrapperPos.top !== top) {
+            this._wrapperPos = { left, top };
+            this._canvasPlaced = false;
+          }
+          this._clipRect = { x: left, y: top, w: width, h: height };
+        } else if (this.canvasWrapper && this.canvas) {
           const r = (view && view.hasFocus ? this.getPaneRect(view) : this.getCaretClipRect(this.canvas.ownerDocument)) || // Never 100vw/100vh here: a full-viewport layer over the
           // titlebar kills Electron's window-drag hit-testing on
           // Linux/Windows (drag regions compose in DOM order; z-index
@@ -10828,6 +10876,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.mouseX = this.x;
     this.mouseY = this.y;
     this.lastMouseMove = 0;
+    this._lastScrollT = 0;
     this._mouseDoc = null;
     this.canvasEngineActive = false;
     this.torchEngineActive = false;
@@ -11026,7 +11075,10 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     doc.addEventListener("keydown", onKeyDown, true);
     doc.addEventListener("beforeinput", onBeforeInput, true);
     const onScrollLike = (e) => {
-      if (this._scrollMovesCaret(e.target, doc)) this._markActivity(e.type);
+      if (this._scrollMovesCaret(e.target, doc)) {
+        this._lastScrollT = performance.now();
+        this._markActivity(e.type);
+      }
     };
     const onSelectionChange = () => {
       if (this._selectionMoved(doc)) this._markActivity("selectionchange");

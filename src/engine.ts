@@ -20,6 +20,7 @@ import {
   INPUT_HOT_MS,
   WATCHDOG_INTERVAL_MS,
   WATCHDOG_STALE_MS,
+  SCROLL_LOCK_MS,
 } from "./constants";
 import { fitCanvasRegion, wrapperClipForStatusBar } from "./geometry";
 import { presetToCode } from "./share";
@@ -40,6 +41,20 @@ import type {
 import type CursorSmithPlugin from "./plugin";
 
 export const engineMethods = {
+  // The element the canvas wrapper hangs from: the focused editor's
+  // scroller on a phone (is-mobile on the body), where the wrapper rides
+  // with the scrolled content; the app container, fixed, everywhere else -
+  // and on a phone too while focus is not in the editor (a search field, a
+  // prompt: those carets are clipped to their own boxes by the fixed
+  // wrapper) or the scroller belongs to another document.
+  _wrapperHome(this: CursorSmithPlugin, doc: Document, view: EditorView | null | undefined): HTMLElement {
+    const app = doc.querySelector<HTMLElement>(".app-container") || doc.body;
+    if (!doc.body.classList.contains("is-mobile")) return app;
+    if (!view || !view.hasFocus) return app;
+    const sc = view.scrollDOM;
+    return sc && sc.isConnected && sc.ownerDocument === doc ? sc : app;
+  },
+
   ensureCanvasForView(this: CursorSmithPlugin, view: EditorView | null | undefined) {
     // CRASH FIX: this used to read `this.overlay.ownerDocument` when there
     // was no view - but this.overlay belongs to the torch engine and is
@@ -105,6 +120,26 @@ export const engineMethods = {
       this._canvasDpr = 0;
       this._wrapperPos = null;
       this._dirtyRaw = null;
+    }
+    // Where the wrapper lives. On a phone, inside the focused editor's
+    // scroller as a layer of the scrolled content (_wrapperHome): the
+    // compositor scrolls the note a frame or more ahead of the page there,
+    // and a fixed overlay placed by the page trails every fling by that
+    // much - "it still floats up and down on the phone" after the scroll
+    // lock (§1.26). Inside the scroller the canvas is carried with the
+    // text between ticks, like CodeMirror's own cursor layer beside it; a
+    // tick only re-places the element (the tick's scrolled branch).
+    // Elsewhere, and on desktop, the fixed wrapper in .app-container as
+    // always: the torch's layers and Word-Smith's covers are built around
+    // it, and a fixed caret over a wheel scroll trails by a frame at most.
+    const home = this._wrapperHome(targetDoc, view);
+    if (this.canvasWrapper.parentElement !== home) {
+      home.appendChild(this.canvasWrapper);
+      this.canvasWrapper.classList.toggle("cursor-smith-wrapper-scrolled", home.classList.contains("cm-scroller"));
+      this._lastWrapperRect = "";
+      this._wrapperPos = null;
+      this._canvasPlaced = false;
+      this._dirtyFull = true;
     }
     if (!targetDoc.body.classList.contains("cursor-smith-active")) {
       targetDoc.body.classList.add("cursor-smith-active");
@@ -239,7 +274,11 @@ export const engineMethods = {
           }
           perf.rafPrev = n;
         }
-        if (n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
+        // Not while the note scrolls: then every frame, whatever the cap
+        // (SCROLL_LOCK_MS) - the caret has to move with the text on each
+        // frame the text moves, or it wobbles.
+        const scrolling = n - (this._lastScrollT || 0) < SCROLL_LOCK_MS;
+        if (!scrolling && n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
           this.canvasRaf = window.requestAnimationFrame(tick);
           return;
         }
@@ -297,7 +336,44 @@ export const engineMethods = {
           this.registerWindowEvents(this.canvasWrapper.ownerDocument);
         }
 
-        if (this.canvasWrapper && this.canvas) {
+        const scrolledWrapper = !!this.canvasWrapper && !!view &&
+          this.canvasWrapper.classList.contains("cursor-smith-wrapper-scrolled") &&
+          this.canvasWrapper.parentElement === view.scrollDOM;
+        if (this.canvasWrapper && this.canvas && scrolledWrapper && view) {
+          // Inside the scroller (a phone; _wrapperHome): the wrapper is the
+          // content box at the content's origin, so its client position -
+          // _wrapperPos, what the canvas is placed against - moves with every
+          // scroll, and the canvas is re-placed on every tick that saw it
+          // move; between ticks the compositor carries both with the text,
+          // which is the whole point. Sized to the content, so the scroller's
+          // own overflow clips it. The chrome insets, the status-bar cut and
+          // the covers are the fixed wrapper's business: the bars sit above
+          // the scroller's stacking context regardless.
+          const sc = view.scrollDOM;
+          const sr = sc.getBoundingClientRect();
+          const top = Math.round(sr.top - sc.scrollTop);
+          const left = Math.round(sr.left - sc.scrollLeft);
+          const width = Math.max(1, sc.scrollWidth);
+          const height = Math.max(1, sc.scrollHeight);
+          this._clipTop = Math.round(sr.top);
+          const key = "scrolled|" + width + "," + height;
+          if (key !== this._lastWrapperRect) {
+            this._lastWrapperRect = key;
+            this._dirtyFull = true;
+            // At the content origin and unclipped: the stylesheet rule says
+            // top: 0; left: 0, so the fixed mode's inline values come off.
+            this.canvasWrapper.style.removeProperty("top");
+            this.canvasWrapper.style.removeProperty("left");
+            this.canvasWrapper.style.removeProperty("clip-path");
+            this.canvasWrapper.style.width = width + "px";
+            this.canvasWrapper.style.height = height + "px";
+          }
+          if (!this._wrapperPos || this._wrapperPos.left !== left || this._wrapperPos.top !== top) {
+            this._wrapperPos = { left, top };
+            this._canvasPlaced = false;
+          }
+          this._clipRect = { x: left, y: top, w: width, h: height };
+        } else if (this.canvasWrapper && this.canvas) {
           // Only clip to the editor pane while the note editor is the thing
           // actually focused. The moment focus moves anywhere else - file
           // tree rename box, Command Palette, Settings, other modals - clip

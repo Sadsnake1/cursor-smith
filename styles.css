@@ -670,6 +670,17 @@ button.cursor-smith-pcard-use:hover {
   width: 0;
   height: 0;
 }
+/* On a phone the wrapper is a layer of the scrolled content, inside the
+   editor's scroller beside CodeMirror's own cursor layer (an absolute child
+   at 150), so the compositor carries the caret with the text between
+   frames; a fixed overlay trails a fling by a frame or more there. The
+   scroller is a stacking context, so this z-index is local to it: the
+   torch's darkness (outside, 10010) covers the caret on a phone, and the
+   light it follows is what shows it. */
+.cursor-smith-wrapper.cursor-smith-wrapper-scrolled {
+  position: absolute;
+  z-index: 151;
+}
 .cursor-smith-canvas {
   position: absolute;
   top: 0;

@@ -44,6 +44,7 @@ function keystrokeHeatWeight(kind, repeat) {
 }
 var CARET_COVERS = ".ws-mask, .ws-status-bar";
 var GEOMETRY_TTL_MS = 400;
+var DEVICE_ENABLED_KEY = "cursor-smith-enabled-on-this-device";
 var INPUT_HOT_MS = 500;
 var SCROLL_LOCK_MS = 120;
 var CARET_STYLE_TTL_MS = 1e3;
@@ -2715,6 +2716,13 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   // both modes.
   generalGroup() {
     const items = [
+      // Per device, not a settings key: Obsidian's local storage, which does
+      // not sync (issue #31, "disable the extension on a specific device").
+      this.row("On this device", "Off keeps Obsidian's own cursor on this device only. Not synced: the other devices keep their own choice.", (s) => {
+        s.addToggle((tg) => tg.setValue(this.plugin._deviceEnabled !== false).onChange((v) => {
+          this.plugin.setDeviceEnabled(v);
+        }));
+      }),
       {
         name: "Note editor only",
         desc: "Notes only; search, settings and dialogs keep Obsidian's caret.",
@@ -10811,6 +10819,7 @@ var CANDLE_ICON = `<g transform="scale(4.1667)" fill="none" stroke="currentColor
 var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   async onload() {
     (0, import_obsidian6.addIcon)("cursor-smith-candle", CANDLE_ICON);
+    this._deviceEnabled = this.app.loadLocalStorage(DEVICE_ENABLED_KEY) !== "off";
     const rawSaved = await this.loadData();
     const saved = migrateLegacyKeys(rawSaved);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
@@ -10940,7 +10949,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
       if (this.settings.vimModeEnabled && this.settings.vimControlObsidian) {
         this.setObsidianVim(true);
       }
-      if (this.settings.enabled) this.enable();
+      if (this.settings.enabled && this._deviceEnabled) this.enable();
       this.syncVimStatusBar();
     });
   }
@@ -11162,10 +11171,21 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     }
   }
   toggle() {
-    const wasActive = !!(this.canvasEngineActive || this.torchEngineActive);
-    wasActive ? this.disable() : this.enable();
-    this.settings.enabled = !!(this.canvasEngineActive || this.torchEngineActive);
+    this.settings.enabled = !this.settings.enabled;
+    if (this.settings.enabled) this.enable();
+    else this.disable();
     void this.saveSettings();
+  }
+  // "On this device" (issue #31): saved to this device's local storage, off
+  // as the string "off" - Obsidian's saveLocalStorage drops a falsy value,
+  // so `false` read back as nothing - and on as nothing (so a new device
+  // starts on); the engines follow at once. The synced "Enable plugin" is
+  // untouched.
+  setDeviceEnabled(on) {
+    this._deviceEnabled = on;
+    this.app.saveLocalStorage(DEVICE_ENABLED_KEY, on ? null : "off");
+    if (on && this.settings.enabled) this.enable();
+    else this.disable();
   }
   // A defensive catch that stays silent turns a bug into a cursor that is
   // quietly wrong. Every catch in this class is one of two things: an EXPECTED
@@ -11477,6 +11497,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   }
   enable() {
     this.disable();
+    if (this._deviceEnabled === false) return;
     this._watchdogGaveUp = false;
     this.enableCanvasEngine();
     if (this.torchPossible()) this.enableTorchOverlay();

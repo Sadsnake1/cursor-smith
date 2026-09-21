@@ -95,6 +95,8 @@ Four, all in the Command Palette, all take a hotkey.
 
 **Mobile.** Works on phones and tablets. The settings are built for a thumb.
 
+**One device only.** *Behavior → On this device* switches the cursor off on the device you're holding and nowhere else; it isn't synced. Keep Obsidian's own cursor on the phone while the desktop keeps this one.
+
 ## Building from source
 
 A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (1,400 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.

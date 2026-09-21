@@ -747,6 +747,25 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
     ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
     ok("the five other switches are on the General page", ["Note editor only", "Hide real cursor", "Hide cursor when unfocused", "Low power mode", "Respect reduced motion"].every((n) => rows.find((r) => r.name === n).page === "Behavior"));
+    // Issue #31: "On this device" heads the Behavior page - a rendered row
+    // over Obsidian's per-device local storage, not a settings key, so the
+    // synced settings never carry it.
+    {
+      const here = rows.find((r) => r.name === "On this device");
+      const behavior = rows.filter((r) => r.page === "Behavior").map((r) => r.name);
+      ok("On this device heads the Behavior page, before Note editor only", !!here && here.page === "Behavior" && behavior[0] === "On this device" && behavior[1] === "Note editor only", behavior.slice(0, 3));
+      ok("...as a rendered row, not a settings key", !!here && typeof here.def.render === "function" && !here.def.control);
+      const calls = [];
+      rows.plugin._deviceEnabled = false;
+      rows.plugin.setDeviceEnabled = (v) => calls.push(v);
+      let toggle = null;
+      const setting = { addToggle: (cb) => { toggle = { value: null, setValue(v) { this.value = v; return this; }, onChange(fn) { this.fn = fn; return this; } }; cb(toggle); return setting; }, settingEl: rows.tab.containerEl.createDiv(), controlEl: rows.tab.containerEl.createDiv(), setClass() { return setting; }, setName() { return setting; }, setDesc() { return setting; } };
+      here.def.render(setting);
+      ok("...its toggle shows the device's own switch (off here)", !!toggle && toggle.value === false, toggle && toggle.value);
+      toggle.fn(true);
+      ok("...and flipping it calls setDeviceEnabled", calls.length === 1 && calls[0] === true, calls);
+      rows.plugin._deviceEnabled = true;
+    }
     ok("the look rows are on their pages", rows.find((r) => r.name === "Cursor style").page === "Appearance" && rows.find((r) => r.name === "Blink speed").page === "Blinking" && rows.find((r) => r.name === "Glide amount").page === "Smooth movement" && rows.find((r) => r.name === "Stiffness").page === "Effects");
     const value = (name) => rows.pages.find((p) => p.name === name).displayValue;
     ok("Appearance's entry says the style and the extras", value("Appearance") === "Box · translucent · letter inside", value("Appearance"));

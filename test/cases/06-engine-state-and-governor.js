@@ -279,6 +279,36 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("...one inside it does, and so does a wheel over it", woke === 2, woke);
   }
 
+  // --- on this device -------------------------------------------------------------
+  // Issue #31. The synced "Enable plugin" is every device's; "On this
+  // device" is Obsidian's local storage, never synced, and gates the engines.
+  {
+    const e = mk();
+    const saved = []; let started = 0, stopped = 0;
+    e.app = { loadLocalStorage: () => null, saveLocalStorage: (k, v) => saved.push([k, v]) };
+    e.settings.enabled = true;
+    e.enableCanvasEngine = () => { started++; }; e.disableCanvasEngine = () => { stopped++; }; e.disableTorchOverlay = () => {}; e.torchPossible = () => false;
+    e.saveSettings = async () => {}; // toggle() saves; the bare object has no vault
+    e._deviceEnabled = true;
+    e.enable();
+    ok("on this device: enable() starts the engine", started === 1);
+    e.setDeviceEnabled(false);
+    ok("switched off here: saved as the string off under its key (a falsy value would be dropped), the engine stopped", e._deviceEnabled === false && saved.length === 1 && saved[0][0] === T.DEVICE_ENABLED_KEY && saved[0][1] === "off" && stopped >= 1, saved);
+    started = 0;
+    e.enable();
+    ok("...and enable() starts nothing while it is off, whatever the synced settings say", started === 0);
+    e.toggle();
+    ok("...the synced wish still flips off and on without reading the engines", e.settings.enabled === false && (e.toggle(), e.settings.enabled === true) && started === 0);
+    e.setDeviceEnabled(true);
+    ok("switched back on: the key removed (a new device starts on) and the engine started", e._deviceEnabled === true && saved[saved.length - 1][1] === null && started === 1, saved);
+    e.settings.enabled = false; started = 0;
+    e.setDeviceEnabled(true);
+    ok("...unless the synced switch is off", started === 0);
+    const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
+    ok("read from local storage before anything starts, absent meaning on", /this\._deviceEnabled = this\.app\.loadLocalStorage\(DEVICE_ENABLED_KEY\) !== "off";/.test(plug) && /if \(this\.settings\.enabled && this\._deviceEnabled\) this\.enable\(\);/.test(plug));
+    ok("the key names the plugin", T.DEVICE_ENABLED_KEY === "cursor-smith-enabled-on-this-device");
+  }
+
   // --- the wrapper's home on a phone ---------------------------------------------
   // Inside the focused editor's scroller (a layer of the scrolled content,
   // carried by the compositor between ticks); the app container everywhere

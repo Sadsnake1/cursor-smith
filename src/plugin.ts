@@ -1,5 +1,5 @@
 import { Plugin, View, addIcon } from "obsidian";
-import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight } from "./constants";
+import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
 import { applyReducedMotion } from "./motion";
 import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset } from "./presets";
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings";
@@ -366,6 +366,9 @@ export default class CursorSmithPlugin extends Plugin {
   _lastActivityKind!: string;
   // When the frame loop last ran, for the watchdog.
   _lastTickT!: number;
+  // The per-device switch (DEVICE_ENABLED_KEY): false only on a device the
+  // user switched off; the engines never start while it is false.
+  _deviceEnabled!: boolean;
   // When the note's scroller last scrolled (a scroll or wheel event that
   // moves the caret); the frame cap is lifted this close to it.
   _lastScrollT!: number;
@@ -516,6 +519,10 @@ export default class CursorSmithPlugin extends Plugin {
     // the SVG's content in a 100x100 box; the paths are Lucide's 24x24,
     // scaled.
     addIcon("cursor-smith-candle", CANDLE_ICON);
+    // This device's own switch, read before anything can start (issue
+    // #31). Local storage is per device and never synced: a phone switched
+    // off stays off while the desktop keeps the plugin.
+    this._deviceEnabled = this.app.loadLocalStorage(DEVICE_ENABLED_KEY) !== "off";
     const rawSaved = (await this.loadData()) as LegacySettings | null;
     const saved = migrateLegacyKeys(rawSaved);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
@@ -803,7 +810,7 @@ export default class CursorSmithPlugin extends Plugin {
       if (this.settings.vimModeEnabled && this.settings.vimControlObsidian) {
         this.setObsidianVim(true);
       }
-      if (this.settings.enabled) this.enable();
+      if (this.settings.enabled && this._deviceEnabled) this.enable();
       this.syncVimStatusBar();
     });
   }
@@ -1178,10 +1185,23 @@ export default class CursorSmithPlugin extends Plugin {
   }
 
   toggle() {
-    const wasActive = !!(this.canvasEngineActive || this.torchEngineActive);
-    wasActive ? this.disable() : this.enable();
-    this.settings.enabled = !!(this.canvasEngineActive || this.torchEngineActive);
+    // The synced wish flips; the engines follow it and this device's own
+    // switch. It used to read the wish back off the engines, which with the
+    // device off would have turned "Enable plugin" straight off again.
+    this.settings.enabled = !this.settings.enabled;
+    if (this.settings.enabled) this.enable(); else this.disable();
     void this.saveSettings();
+  }
+
+  // "On this device" (issue #31): saved to this device's local storage, off
+  // as the string "off" - Obsidian's saveLocalStorage drops a falsy value,
+  // so `false` read back as nothing - and on as nothing (so a new device
+  // starts on); the engines follow at once. The synced "Enable plugin" is
+  // untouched.
+  setDeviceEnabled(on: boolean) {
+    this._deviceEnabled = on;
+    this.app.saveLocalStorage(DEVICE_ENABLED_KEY, on ? null : "off");
+    if (on && this.settings.enabled) this.enable(); else this.disable();
   }
 
   // A defensive catch that stays silent turns a bug into a cursor that is
@@ -1619,6 +1639,9 @@ export default class CursorSmithPlugin extends Plugin {
 
   enable() {
     this.disable();
+    // Off on this device: nothing starts, whatever the synced settings say
+    // (the settings toggle, a preset load and the command all come here).
+    if (this._deviceEnabled === false) return;
     this._watchdogGaveUp = false;
     this.enableCanvasEngine();
     // torchPossible() covers both the global torch and any per-mode torch, so

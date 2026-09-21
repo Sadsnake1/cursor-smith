@@ -1,5 +1,5 @@
 import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
-import type { SettingDefinitionControl, SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
+import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "./plugin";
 import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
@@ -658,7 +658,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // per-Vim-mode snapshot - they apply to whatever cursor is on screen, in
   // both modes.
   generalGroup(): SettingDefinitionGroup {
-    const items: SettingDefinitionControl[] = [
+    const items: SettingGroupItem[] = [
+      // Per device, not a settings key: Obsidian's local storage, which does
+      // not sync (issue #31, "disable the extension on a specific device").
+      this.row("On this device", "Off keeps Obsidian's own cursor on this device only. Not synced: the other devices keep their own choice.", (s) => {
+        s.addToggle((tg) => tg.setValue(this.plugin._deviceEnabled !== false).onChange((v) => { this.plugin.setDeviceEnabled(v); }));
+      }),
       {
         name: "Note editor only",
         desc: "Notes only; search, settings and dialogs keep Obsidian's caret.",

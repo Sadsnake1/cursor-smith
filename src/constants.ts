@@ -227,6 +227,13 @@ export const GEOMETRY_TTL_MS = 400;
 // until 1.5.8: every stray selectionchange or resize bought over a second of
 // full rate, and once the springs have settled those frames measure a caret
 // that has not moved and draw nothing (the static-frame test).
+// The per-device switch (issue #31: "disable the extension on a specific
+// device"). The settings sync across devices through data.json, so "Enable
+// plugin" is every device's; this key lives in Obsidian's local storage,
+// which never syncs. Absent: on; the string "off": off on this device only
+// (a falsy value is dropped by saveLocalStorage, so not `false`).
+export const DEVICE_ENABLED_KEY = "cursor-smith-enabled-on-this-device";
+
 export const INPUT_HOT_MS = 500;
 // While the note scrolls - a scroll or wheel activity this recent - the hot
 // gear runs on every animation frame, cap or no cap, low power or not. The

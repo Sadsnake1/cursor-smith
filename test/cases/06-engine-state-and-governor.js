@@ -279,6 +279,32 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("...one inside it does, and so does a wheel over it", woke === 2, woke);
   }
 
+  // --- the content watched for changes ---------------------------------------------
+  // A heading's markup revealed a beat after a click (Live Preview) moves
+  // the text under the caret with no event: the content's MutationObserver
+  // bumps the layout generation and wakes a frame, so the next measurement
+  // reads the revealed line instead of the cache.
+  {
+    const e = mk();
+    const observed = []; let disconnected = 0; let cb = null;
+    const MO = function (fn) { cb = fn; this.observe = (el, opts) => observed.push({ el, opts }); this.disconnect = () => { disconnected++; }; };
+    const hadMO = "MutationObserver" in globalThis; const prevMO = globalThis.MutationObserver;
+    globalThis.MutationObserver = MO;
+    try {
+      const content = { tag: "cm-content" }; const view = { contentDOM: content, scrollDOM: { tag: "cm-scroller" } };
+      let woke = 0; e._wakeLoop = () => { woke++; };
+      e._observeEditorLayout(view);
+      ok("the content is watched for child, subtree and text changes", observed.length === 1 && observed[0].el === content && observed[0].opts.childList === true && observed[0].opts.subtree === true && observed[0].opts.characterData === true, observed);
+      const gen = e._layoutGen | 0; woke = 0;
+      cb([{ type: "childList" }]);
+      ok("...and a change bumps the layout generation and wakes a frame", (e._layoutGen | 0) === gen + 1 && woke === 1, [e._layoutGen, gen, woke]);
+      e._observeEditorLayout(view);
+      ok("...the same view again observes nothing new", observed.length === 1);
+      e._observeEditorLayout(null);
+      ok("...and no view disconnects it", disconnected === 1 && e._mo === null);
+    } finally { if (hadMO) globalThis.MutationObserver = prevMO; else delete globalThis.MutationObserver; }
+  }
+
   // --- on this device -------------------------------------------------------------
   // Issue #31. The synced "Enable plugin" is every device's; "On this
   // device" is Obsidian's local storage, never synced, and gates the engines.

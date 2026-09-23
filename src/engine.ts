@@ -1118,18 +1118,39 @@ export const engineMethods = {
   // loads - anything that changes the content's size moves the caret without
   // an input event, and bumps the layout generation here. Re-pointed when
   // the active editor changes; disconnected on unload.
+  //
+  // And a MutationObserver on the content, for what changes the line under
+  // the caret without changing its size: Live Preview reveals a heading's
+  // "# " a beat after a click lands in it (a second transaction on mouseup,
+  // some 60 ms later - an arrow key reveals it in the same frame) and the
+  // text shifts right by the markup's width. Same document, same selection,
+  // so no event the plugin listens to fires, and the geometry cache in
+  // cmCaretCoords kept the pre-reveal spot for its whole TTL: the caret
+  // landed short of the end and hopped 400 ms later. A change in the
+  // content DOM bumps the layout generation and wakes a frame, and the
+  // next measurement reads the revealed line. The callback writes nothing
+  // it watches (the canvas is never inside the content).
   _observeEditorLayout(this: CursorSmithPlugin, view: EditorView | null | undefined) {
     if (this._roView === view) return;
-    if (this._ro) { try { this._ro.disconnect(); } catch { /* gone */ } this._ro = null; }
+    try { this._ro?.disconnect(); this._mo?.disconnect(); } catch { /* gone */ }
+    this._ro = null; this._mo = null;
     this._roView = view || null;
-    if (!view || typeof ResizeObserver === "undefined") return;
-    try {
-      this._ro = new ResizeObserver(() => this._invalidateLayout());
-      // border-box: a padding change on the content moves every line too,
-      // and the default content-box would not report it.
-      if (view.contentDOM) this._ro.observe(view.contentDOM, { box: "border-box" });
-      if (view.scrollDOM) this._ro.observe(view.scrollDOM, { box: "border-box" });
-    } catch { this._ro = null; /* no ResizeObserver, or a view mid-teardown: fall back to the events */ }
+    if (!view) return;
+    if (typeof ResizeObserver !== "undefined") {
+      try {
+        this._ro = new ResizeObserver(() => this._invalidateLayout());
+        // border-box: a padding change on the content moves every line too,
+        // and the default content-box would not report it.
+        if (view.contentDOM) this._ro.observe(view.contentDOM, { box: "border-box" });
+        if (view.scrollDOM) this._ro.observe(view.scrollDOM, { box: "border-box" });
+      } catch { this._ro = null; /* no ResizeObserver, or a view mid-teardown: fall back to the events */ }
+    }
+    if (typeof MutationObserver !== "undefined" && view.contentDOM) {
+      try {
+        this._mo = new MutationObserver(() => this._invalidateLayout());
+        this._mo.observe(view.contentDOM, { childList: true, subtree: true, characterData: true });
+      } catch (e) { this._mo = null; this._reportOnce("content observer", e); }
+    }
     this._invalidateLayout();
   },
 

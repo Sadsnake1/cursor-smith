@@ -409,6 +409,8 @@ export default class CursorSmithPlugin extends Plugin {
   _reduceMQHandler!: ((e: MediaQueryListEvent) => void) | null;
   _regionOversizedT!: number;
   _ro!: ResizeObserver | null;
+  // The content's mutation observer, re-pointed with _ro (_observeEditorLayout).
+  _mo!: MutationObserver | null;
   _roView!: EditorView | null;
   _secondaries!: CaretState[];
   _selShape!: { count: number; mainIndex: number } | null;

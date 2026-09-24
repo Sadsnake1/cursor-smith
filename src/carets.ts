@@ -368,17 +368,6 @@ export const caretsMethods = {
     }
   },
 
-  // The letter a keystroke left in the box stays while the caret rests at
-  // that position. A resting caret is measured again on every frame the
-  // loop runs (and it runs hot for half a second after a keystroke), each
-  // time a fresh record with no hold of its own - so without this the
-  // typed letter was gone on the next frame, and a hold only ever lasted
-  // while the loop was parked. A move starts afresh (resolveHoldChar).
-  _carryHold(this: CursorSmithPlugin, caret: CaretRecord) {
-    const last = this.lastActive;
-    if (last && last.holdChar && caret.pos === last.pos && caret.holdChar == null) caret.holdChar = last.holdChar;
-  },
-
   // With no argument this is the primary and measures itself. A secondary
   // hands its own record in, with its state bundle swapped into `this`
   // (see _withCaret), and everything below then runs for that caret.
@@ -399,9 +388,7 @@ export const caretsMethods = {
       Math.abs(this.lastActive.x - caret.x) > 0.5 || Math.abs(this.lastActive.top - caret.top) > 0.5;
 
     if (!moved) {
-      // The held letter rides across the re-measurements of a resting
-      // caret (_carryHold); the fresh record has none of its own.
-      if (!this.pending) { this._carryHold(caret); this.lastActive = caret; }
+      if (!this.pending) this.lastActive = caret;
       return;
     }
 
@@ -414,7 +401,6 @@ export const caretsMethods = {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
       
-      this._carryHold(caret);
       this.lastActive = caret;
       
       // If the coordinate changed but the document position didn't, it was a scroll/layout shift.
@@ -469,9 +455,13 @@ export const caretsMethods = {
 
     const delay = Math.max(0, Math.round(this.look.moveDelayMs));
     if (delay <= 0) {
-      const holdChar = this.resolveHoldChar(caret);
+      // For the letter pop only. The box moves at once, so it already sits
+      // past the letter just typed and shows the character under it -
+      // nothing at the end of a line. 1.6.0 to 1.6.3 kept the typed letter
+      // in the box while the caret rested, which doubled it (and mid-word
+      // covered the next letter with it).
+      this.resolveHoldChar(caret);
       this.commitMove(caret);
-      if (holdChar && this.lastActive) this.lastActive.holdChar = holdChar;
       return;
     }
 
@@ -634,7 +624,6 @@ export const caretsMethods = {
     
     this.animActive.textColor = this.lastActive.textColor;
     this.animActive.char = this.lastActive.char;
-    this.animActive.holdChar = this.lastActive.holdChar;
     this.animActive.actualCharWidth = this.lastActive.actualCharWidth;
     this.animActive.fontFamily = this.lastActive.fontFamily;
     this.animActive.fontSize = this.lastActive.fontSize;

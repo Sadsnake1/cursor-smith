@@ -543,7 +543,7 @@ export const paintShapeMethods = {
       // multiply/screen the inverted glyph is exactly the wrong polarity for
       // the blend (a dark glyph screened over a dark theme, a light one
       // multiplied over a light theme), so it would mostly disappear anyway.
-      const displayChar = this.pending ? this.pending.holdChar : (active.holdChar || active.char);
+      const displayChar = this.pending ? this.pending.holdChar : active.char;
 
       // The glyph fades WITH the box, at the same rate.
       //

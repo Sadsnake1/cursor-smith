@@ -4207,13 +4207,14 @@ var measureMethods = {
     }
     return "";
   },
-  // The letter the box keeps showing while the caret rests after TYPING:
-  // the character just inserted, which the caret now sits after (with
-  // nothing under it at the end of a line). Only for an insertion at the
-  // caret - the document grew by exactly the distance the caret moved: a
-  // keystroke, a paste - and null for every other move. A click or an
-  // arrow, forward or back, then shows the character under the caret, or
-  // nothing on an empty line.
+  // The letter just typed, for the letter pop and for the box that WAITS at
+  // the old spot through a Move delay - the spot the letter now occupies.
+  // Once the box moves it sits past the letter and shows the character
+  // under the caret (nothing at the end of a line), so nothing holds it
+  // there. Only for an insertion at the caret - the document grew by
+  // exactly the distance the caret moved: a keystroke, a paste - and null
+  // for every other move. A click or an arrow, forward or back, shows the
+  // character under the caret, or nothing on an empty line.
   //
   // It used to hold the character before ANY forward move (a click ahead
   // held whatever preceded the click, a space at a word's start included,
@@ -7048,7 +7049,7 @@ var paintShapeMethods = {
         }
       }
       ctx.restore();
-      const displayChar = this.pending ? this.pending.holdChar : active.holdChar || active.char;
+      const displayChar = this.pending ? this.pending.holdChar : active.char;
       const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha2);
       if (!hollow && !translucent && !gsBox && settings.showChar && displayChar && glyphAlpha >= 0.01) {
         ctx.save();
@@ -10624,16 +10625,6 @@ var caretsMethods = {
       return null;
     }
   },
-  // The letter a keystroke left in the box stays while the caret rests at
-  // that position. A resting caret is measured again on every frame the
-  // loop runs (and it runs hot for half a second after a keystroke), each
-  // time a fresh record with no hold of its own - so without this the
-  // typed letter was gone on the next frame, and a hold only ever lasted
-  // while the loop was parked. A move starts afresh (resolveHoldChar).
-  _carryHold(caret) {
-    const last = this.lastActive;
-    if (last && last.holdChar && caret.pos === last.pos && caret.holdChar == null) caret.holdChar = last.holdChar;
-  },
   // With no argument this is the primary and measures itself. A secondary
   // hands its own record in, with its state bundle swapped into `this`
   // (see _withCaret), and everything below then runs for that caret.
@@ -10650,16 +10641,12 @@ var caretsMethods = {
     }
     const moved = Math.abs(this.lastActive.x - caret.x) > 0.5 || Math.abs(this.lastActive.top - caret.top) > 0.5;
     if (!moved) {
-      if (!this.pending) {
-        this._carryHold(caret);
-        this.lastActive = caret;
-      }
+      if (!this.pending) this.lastActive = caret;
       return;
     }
     if (caret.pos !== null && caret.pos === this.lastActive.pos && caret.assoc === this.lastActive.assoc) {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
-      this._carryHold(caret);
       this.lastActive = caret;
       if (this.animActive && (Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01)) {
         this.animActive.x += dx;
@@ -10701,9 +10688,8 @@ var caretsMethods = {
     }
     const delay = Math.max(0, Math.round(this.look.moveDelayMs));
     if (delay <= 0) {
-      const holdChar = this.resolveHoldChar(caret);
+      this.resolveHoldChar(caret);
       this.commitMove(caret);
-      if (holdChar && this.lastActive) this.lastActive.holdChar = holdChar;
       return;
     }
     const pending = this.pending;
@@ -10779,7 +10765,6 @@ var caretsMethods = {
     this._smoothMoving = !arrived;
     this.animActive.textColor = this.lastActive.textColor;
     this.animActive.char = this.lastActive.char;
-    this.animActive.holdChar = this.lastActive.holdChar;
     this.animActive.actualCharWidth = this.lastActive.actualCharWidth;
     this.animActive.fontFamily = this.lastActive.fontFamily;
     this.animActive.fontSize = this.lastActive.fontSize;

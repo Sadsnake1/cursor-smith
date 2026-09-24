@@ -283,7 +283,6 @@ export default class CursorSmithPlugin extends Plugin {
   declare _secondariesSig: CaretsMethods["_secondariesSig"];
   declare formFieldCaretCoords: CaretsMethods["formFieldCaretCoords"];
   declare updateActivePoint: CaretsMethods["updateActivePoint"];
-  declare _carryHold: CaretsMethods["_carryHold"];
   declare updateSmoothCursor: CaretsMethods["updateSmoothCursor"];
   declare commitMove: CaretsMethods["commitMove"];
 

@@ -573,26 +573,27 @@ section("multi-cursor: full effects on secondary carets");
     ok("an auto-paired bracket (two inserted, one moved) holds nothing", e.resolveHoldChar(at(5, text.length, "a")) === null);
     e.lastActive = rec(32, 20, 4);
     ok("a record with no document length (a plain field) holds nothing", e.resolveHoldChar(rec(40, 20, 5)) === null);
-    // The commit paths. With no move delay the letter rides on the record;
-    // with one, the box waiting at the old spot keeps the old character.
-    const c = mk({ moveDelayMs: 0 });
+    // The commit paths. With no move delay the box moves at once and shows
+    // the character under it - past the letter just typed, so never that
+    // letter (1.6.0 to 1.6.3 kept it in the box while the caret rested: the
+    // letter doubled, and mid-word it covered the next one). With a delay,
+    // the box waiting at the old spot sits on the typed letter and shows it.
+    const c = mk({ moveDelayMs: 0, popEffects: true, popLetters: true });
     c.pushTrail = () => {}; c.spawnFlamePixels = () => {}; c.app = cmOf(text);
+    const popped = [];
+    c.spawnLetterParticle = (ch) => popped.push(ch);
     c.lastActive = at(4, text.length, "t");
     c.updateActivePoint(at(11, text.length, ""));
-    ok("a click onto the empty line commits with no held letter", c.lastActive.pos === 11 && !c.lastActive.holdChar, c.lastActive.holdChar);
+    ok("a click onto the empty line commits showing nothing", c.lastActive.pos === 11 && c.lastActive.char === "" && !("holdChar" in c.lastActive), c.lastActive);
     c.lastActive = at(4, text.length - 1, " ");
     c.updateActivePoint(at(5, text.length, "a"));
-    ok("a keystroke commits with the typed letter held", c.lastActive.pos === 5 && c.lastActive.holdChar === "t", c.lastActive.holdChar);
-    // ...and the hold survives the re-measurements of the resting caret
-    // (the loop runs hot after a keystroke; the fresh record has none) and
-    // a scroll shift of the same position; a move starts afresh.
+    ok("a keystroke commits showing the character under the caret, not the letter typed", c.lastActive.pos === 5 && c.lastActive.char === "a" && !("holdChar" in c.lastActive), c.lastActive);
+    ok("...and still pops the letter typed", popped.join("") === "t", popped);
     c.updateActivePoint(at(5, text.length, "a"));
-    ok("...the held letter survives a re-measurement at the same spot", c.lastActive.holdChar === "t", c.lastActive.holdChar);
+    ok("...the same after a re-measurement at the same spot", c.lastActive.char === "a" && !("holdChar" in c.lastActive), c.lastActive);
     c.animActive = Object.assign({}, c.lastActive);
     c.updateActivePoint(rec(40, 120, 5, { docLen: text.length, char: "a" }));
-    ok("...and a scroll shift", c.lastActive.holdChar === "t" && c.lastActive.top === 120, [c.lastActive.holdChar, c.lastActive.top]);
-    c.updateActivePoint(at(9, text.length, "."));
-    ok("...and drops on the next move", !c.lastActive.holdChar, c.lastActive.holdChar);
+    ok("...and after a scroll shift", c.lastActive.char === "a" && c.lastActive.top === 120 && !("holdChar" in c.lastActive), c.lastActive);
     const d = mk({ moveDelayMs: 200 });
     d.pushTrail = () => {}; d.spawnFlamePixels = () => {}; d.app = cmOf(text);
     d.lastActive = at(4, text.length, "t");

@@ -842,13 +842,14 @@ export const measureMethods = {
     return "";
   },
 
-  // The letter the box keeps showing while the caret rests after TYPING:
-  // the character just inserted, which the caret now sits after (with
-  // nothing under it at the end of a line). Only for an insertion at the
-  // caret - the document grew by exactly the distance the caret moved: a
-  // keystroke, a paste - and null for every other move. A click or an
-  // arrow, forward or back, then shows the character under the caret, or
-  // nothing on an empty line.
+  // The letter just typed, for the letter pop and for the box that WAITS at
+  // the old spot through a Move delay - the spot the letter now occupies.
+  // Once the box moves it sits past the letter and shows the character
+  // under the caret (nothing at the end of a line), so nothing holds it
+  // there. Only for an insertion at the caret - the document grew by
+  // exactly the distance the caret moved: a keystroke, a paste - and null
+  // for every other move. A click or an arrow, forward or back, shows the
+  // character under the caret, or nothing on an empty line.
   //
   // It used to hold the character before ANY forward move (a click ahead
   // held whatever preceded the click, a space at a word's start included,

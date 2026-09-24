@@ -265,6 +265,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _invalidateLayout: EngineMethods["_invalidateLayout"];
   declare _invalidateStyle: EngineMethods["_invalidateStyle"];
   declare _markActivity: EngineMethods["_markActivity"];
+  declare _hotCapLifted: EngineMethods["_hotCapLifted"];
   declare _observeEditorLayout: EngineMethods["_observeEditorLayout"];
   declare _scrollMovesCaret: EngineMethods["_scrollMovesCaret"];
   declare _selectionMoved: EngineMethods["_selectionMoved"];

@@ -9479,8 +9479,7 @@ var engineMethods = {
           }
           perf.rafPrev = n;
         }
-        const scrolling = n - (this._lastScrollT || 0) < SCROLL_LOCK_MS;
-        if (!scrolling && n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
+        if (!this._hotCapLifted(n) && n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
           this.canvasRaf = window.requestAnimationFrame(tick);
           return;
         }
@@ -9854,6 +9853,25 @@ var engineMethods = {
   // The render loops' frame intervals for the current Low Power setting.
   // Global, not a look: read off this.settings directly, which a per-Vim-mode
   // swap leaves untouched because no mode snapshot carries the key.
+  // Whether the hot gear's frame cap is off for the frame at `n`. The cap
+  // skips every other frame on a 120 Hz screen (every second or third in
+  // Low Power) while the text moves on every one, so a caret that moves
+  // with the text trails it on half the frames:
+  //
+  //   - a scroll (SCROLL_LOCK_MS after the scroller's own scroll or wheel
+  //     event, on its own stamp - the activity kind is overwritten by every
+  //     touch or pointer move between two scroll events): the wobble;
+  //   - typing (1.6.4), outside Low Power: while the drawn caret glides or
+  //     its smear moves, and SCROLL_LOCK_MS after a key, so the frame that
+  //     shows the new text shows the caret beside it. "The whole cursor is
+  //     laggy when typing fast" on a 120 Hz laptop: the plugin ran 60 ticks
+  //     a second while the screen ran 120 (measured, 2026-09-24). Low Power
+  //     keeps its cap there - it is the switch for trading this away.
+  _hotCapLifted(n) {
+    if (n - (this._lastScrollT || 0) < SCROLL_LOCK_MS) return true;
+    if (this.settings && this.settings.lowPowerMode) return false;
+    return !!(this._smoothMoving || this._smearMoving) || n - (this._realKeyT || 0) < SCROLL_LOCK_MS;
+  },
   _frameCaps() {
     return this.settings && this.settings.lowPowerMode ? FRAME_CAPS.lowPower : FRAME_CAPS.normal;
   },

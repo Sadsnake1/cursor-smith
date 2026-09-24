@@ -367,7 +367,18 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
   {
     const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
     ok("the scroll lock is short: past the gap between a slow drag's scroll events, well under the input window", T.SCROLL_LOCK_MS >= 60 && T.SCROLL_LOCK_MS <= 200 && T.SCROLL_LOCK_MS < T.INPUT_HOT_MS, T.SCROLL_LOCK_MS);
-    ok("a scroll this recent lifts the hot gear's cap, on the scroll's own stamp (the activity kind is overwritten by touch and pointer moves between two scroll events)", /const scrolling = n - \(this\._lastScrollT \|\| 0\) < SCROLL_LOCK_MS;/.test(src) && /if \(!scrolling && n - \(this\._lastHotFrameT \|\| 0\) < this\._frameCaps\(\)\.hotMinMs\)/.test(src));
+    ok("the tick skips a capped frame only when the cap is not lifted", /if \(!this\._hotCapLifted\(n\) && n - \(this\._lastHotFrameT \|\| 0\) < this\._frameCaps\(\)\.hotMinMs\)/.test(src));
+    const cap = (over, set = {}) => { const g = Object.create(Plugin.prototype); g.settings = Object.assign({}, T.DEFAULT_SETTINGS, set); Object.assign(g, { _lastScrollT: 0, _realKeyT: 0, _smoothMoving: false, _smearMoving: false }, over); return g._hotCapLifted(10000); };
+    ok("a scroll this recent lifts the hot gear's cap, on the scroll's own stamp (the activity kind is overwritten by touch and pointer moves between two scroll events)", cap({ _lastScrollT: 10000 - T.SCROLL_LOCK_MS + 5 }) && !cap({ _lastScrollT: 10000 - T.SCROLL_LOCK_MS - 5 }));
+    ok("...in Low Power too", cap({ _lastScrollT: 9990 }, { lowPowerMode: true }));
+    // Typing (1.6.4): the caret moves with the text while it glides, its
+    // smear moves, or a key was just pressed - "the whole cursor is laggy
+    // when typing fast" was 60 ticks a second on a 120 Hz screen.
+    ok("a gliding caret lifts the cap", cap({ _smoothMoving: true }));
+    ok("...a moving smear too", cap({ _smearMoving: true }));
+    ok("...and a key this recent", cap({ _realKeyT: 10000 - T.SCROLL_LOCK_MS + 5 }) && !cap({ _realKeyT: 10000 - T.SCROLL_LOCK_MS - 5 }));
+    ok("...but not in Low Power, which keeps its cap while typing", !cap({ _smoothMoving: true, _smearMoving: true, _realKeyT: 9990 }, { lowPowerMode: true }));
+    ok("a caret at rest keeps the cap", !cap({}));
     const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
     ok("...stamped where the scroller's scroll and wheel events are read", /this\._lastScrollT = performance\.now\(\); this\._markActivity\(e\.type\);/.test(plug));
   }

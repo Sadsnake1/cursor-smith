@@ -349,13 +349,13 @@ export default class CursorSmithPlugin extends Plugin {
   _hotFill!: Map<number, string> | null;
   _hotPalette!: number[][] | null;
   _hotPaletteKey!: string | null;
-  declare _hotPrev: (Pt & { t: number }) | null;
+  // The drawn caret's centre last frame, and the row its mark went on.
+  declare _hotPrev: (Pt & { t: number; row?: number }) | null;
   _hotScroll!: HotScroll | null;
   _hotShift!: HotShift | null;
   declare _hotShiftTick: number;
   _hotSparkCap!: number;
   _hotSparks!: number;
-  declare _hotVel: Pt;
   // How long the idle gear may sleep before the blink next moves (schedule
   // reads it; the tick sets it from blinkWindow). 0 or Infinity: the heartbeat.
   _idleWakeMs!: number;
@@ -1525,10 +1525,8 @@ export default class CursorSmithPlugin extends Plugin {
     // Patches of text currently alight, each decaying from the moment the caret
     // leaves it - this is what keeps text burning after the caret has moved on.
     this.hotBurns = [];
-    // Last caret sample and smoothed velocity, so particles can inherit caret
-    // motion as drag. See updateHotHeadInertia.
+    // Last caret sample. See updateHotHeadInertia.
     this._hotPrev = null;
-    this._hotVel = { x: 0, y: 0 };
     this.thunderbolts = [];
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then

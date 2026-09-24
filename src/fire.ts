@@ -142,18 +142,18 @@ export const HOT_SPECK_SCALE = 0.85;
 export const HOT_FINE_SCALE = 0.5;
 export const HOT_FINE_CHANCE = 0.4;
 // A jump - a committed caret move of JUMP_TRAIL_MIN_DIST or more, the same
-// test the jump trail and the glitch use - puts the caret in fire for
-// HOT_ENGULF_MS: while it lands and settles, chunks and sparks spawn all
-// around its box, below and beside it as well as above, the way the steady
-// fire already does at the edge of a line. A first cut threw a burst outward
-// from a ring around the drawn caret instead; it never showed, because with
-// Smooth Movement the drawn caret eases across a jump and never travels far
-// in one frame.
+// test the jump trail and the glitch use - flares the fire for
+// HOT_ENGULF_MS where the caret lands: extra chunks and sparks on the same
+// line as the rest of the fire, the tops of the glyphs, across the caret's
+// cell and HOT_ENGULF_PAD_X characters either side. Until 1.6.4 the flare
+// filled a box around the caret, below and beside it as well as above -
+// fire on the caret and over the letters, "all over the place" (2026-09-24).
+// A first cut threw a burst outward from a ring around the drawn caret; it
+// never showed, because with Smooth Movement the drawn caret eases across a
+// jump and never travels far in one frame.
 export const HOT_ENGULF_MS = 260;
-export const HOT_ENGULF_RATE = 320;           // particles per second around the caret, at Quantity 1
+export const HOT_ENGULF_RATE = 200;           // particles per second at the landing, at Quantity 1
 export const HOT_ENGULF_PAD_X = 1.1;          // how far beside the caret, in character widths
-export const HOT_ENGULF_ABOVE = 0.35;         // above the caret's top, in line heights
-export const HOT_ENGULF_BELOW = 0.25;         // below its bottom
 export const HOT_SPARK_LIFT = 1.9;     // times the chunk's buoyancy
 export const HOT_SPARK_RISE = 5;       // cw/s of extra upward start
 // Discrete shade steps (upstream color_levels). Quantising keeps edges crunchy.
@@ -170,8 +170,16 @@ export const FLAME_MAX_LIFETIME = 620;         // ms, default fade time
 // Upstream particle_lifetime_distribution_exponent. lifetime = max * rand^n
 // skews toward zero, so most particles are short-lived specks and a minority
 // are long-lived blocks. That ratio is what gives the fire a few solid chunks
-// in a haze of sparks.
-export const FLAME_LIFETIME_EXP = 3.4;
+// in a haze of sparks. It was 3.4 over a floor of a tenth: half the chunks
+// lived under 110 ms and stepped through every shape in that time - "too
+// fast to discombobulate" (2026-09-24). 2.2 over a quarter holds a chunk
+// about half again as long; the emission came down to match (below).
+export const FLAME_LIFETIME_EXP = 2.2;
+export const HOT_LIFE_FLOOR = 0.25;            // share of the fade time every chunk gets
+// How a chunk steps down HOT_BLOCK_SHAPES with its age: gone^this, so it
+// keeps its shape for the first part of its life and breaks up after, not
+// one step per few frames from birth.
+export const HOT_SHAPE_EASE = 1.6;
 // A quarter of what the original emitted (1350, 1.4, capped at 260 alive).
 // With every particle a different shape the mass has to break into chunks
 // to show them, and the original filled its cap and packed 180 particles
@@ -179,18 +187,38 @@ export const FLAME_LIFETIME_EXP = 3.4;
 // rate a few dozen are alive: distinct chunks, a column above the caret,
 // specks at the top. Quantity scales it back up for anyone who wants the
 // wall.
-export const FLAME_PER_SECOND = 190;           // steady emission while burning
+// 190 until 1.6.4; 125 with the longer lives (FLAME_LIFETIME_EXP) keeps about
+// as many alive as before.
+export const FLAME_PER_SECOND = 125;           // steady emission while burning
 export const FLAME_PER_LENGTH = 0.8;           // extra particles per cw of caret travel
 export const FLAME_SPREAD = 0.5;               // cw, lateral scatter at the emit point
+// The start is a kick UP, within HOT_START_CONE either side of straight up.
+// It used to be a full disc plus a fifth of the caret's own velocity, so fire
+// was thrown sideways and dragged along a move instead of rising where it
+// was lit - "not in a straight line" (2026-09-24).
 export const FLAME_INITIAL_VELOCITY = 6;       // cw/s, upstream particle_max_initial_velocity
-export const FLAME_VELOCITY_FROM_CURSOR = 0.2; // share of caret velocity inherited
+export const HOT_START_CONE = 0.45;            // radians either side of straight up
 export const FLAME_RANDOM_VELOCITY = 62;       // cw/s, per-frame turbulence
+// The turbulence per axis. Across it was the full amount, a random walk that
+// read as the fire wandering off; up and down it was the full amount too, a
+// flutter. Both are small now, and the side-to-side is a sway instead
+// (HOT_SWAY_*): a slow wave, not noise.
+export const HOT_TURB_X = 0.15;
+export const HOT_TURB_Y = 0.5;
+// The sway: each particle drifts side to side on a sine of HOT_SWAY_HZ
+// (give or take a quarter) with its own phase, its reach growing from none
+// at birth to HOT_SWAY_CW characters over HOT_SWAY_GROW_MS, so the fire
+// leaves its line straight and waves a little as it climbs.
+export const HOT_SWAY_CW = 0.3;
+export const HOT_SWAY_HZ = 1.3;
+export const HOT_SWAY_GROW_MS = 260;
 export const FLAME_DAMPING = 0.2;              // per 17ms, upstream particle_damping
 // Upstream's particle_gravity is +20 (downward: it's a smear, debris falls).
 // Negated here, because this is fire. Damping is strong, so what matters is the
 // terminal velocity it implies - roughly accel * 0.085 - and the Flame Height
-// setting scales this directly.
-export const FLAME_BUOYANCY = -120;            // cw/s^2
+// setting scales this directly. -120 until 1.6.4; slower with the longer
+// lives, so a flame climbs about as high as it did, at a calmer pace.
+export const FLAME_BUOYANCY = -85;             // cw/s^2
 
 // How long a patch of text keeps burning after the caret has moved off it, at
 // Fire Spread = 1. Scaled by the setting. This is what makes the fire linger
@@ -217,23 +245,28 @@ export const HOT_HEAD_LIFT = -0.06;
 // Vertical jitter around that base, as a fraction of the line height.
 // Asymmetric on purpose: mostly upward, since flames rise, but with a little
 // downward room so some particles sit right on the letters rather than every
-// one of them starting above.
-export const HOT_HEAD_JITTER_UP = 0.16;
-export const HOT_HEAD_JITTER_DOWN = 0.05;
+// one of them starting above. Thin since 1.6.4 (0.16 and 0.05 before): the
+// fire starts on ONE line, the tops of the glyphs, and rises from there.
+export const HOT_HEAD_JITTER_UP = 0.07;
+export const HOT_HEAD_JITTER_DOWN = 0.02;
 
 export const HOT_BURN_LINGER_MS = 240;
 export const HOT_BURN_MAX = 64;                // most burn marks kept alive at once (path marks included)
 // The trail. In the recording the cursor's PATH burns: fire is left on the
-// text it passed over and goes on burning there for a moment, fading. Three
-// things make that here. The marks behind the caret share the emission by
-// their remaining strength to the power HOT_TRAIL_FADE_POW - 1 is linear,
-// the 2 it used to be starved a mark of fire as soon as it was a little old
-// and the trail was gone before it read as one. The total emission scales
-// with how much is alight up to HOT_TRAIL_EMIT_MAX times the single-mark
-// rate (was 1.6), so a trail does not just thin the head out. And fire off
-// a mark behind the caret is jittered DOWN over the glyphs by up to
-// HOT_TRAIL_DOWN of the line height - on the text, where the recording has
-// it - while the head itself stays licking up off the letters.
+// text it passed over and goes on burning there for a moment, fading. The
+// marks behind the caret share the emission by their remaining strength to
+// the power HOT_TRAIL_FADE_POW - 1 is linear, the 2 it used to be starved a
+// mark of fire as soon as it was a little old and the trail was gone before
+// it read as one. The total emission scales with how much is alight up to
+// HOT_TRAIL_EMIT_MAX times the single-mark rate (1.6, then 3.6 until 1.6.4:
+// "too much trail"), so a trail does not just thin the head out.
+//
+// The trail burns off the tops of the glyphs like the head. Until 1.6.4 its
+// fire was jittered DOWN over the letters by up to half a line (read off the
+// recording as fire on the text; upstream in fact never draws a particle
+// over text or on the cursor's own cell), and at a row's first or last
+// character a share of it licked down over the row below: the trail came
+// "from the middle of the cursor, not a headtop trail" (2026-09-24).
 export const HOT_TRAIL_FADE_POW = 1;
 // The path marks (see updateHotHeadInertia): one every this many characters
 // along the way the caret came, at most this many per frame, the far end
@@ -241,5 +274,4 @@ export const HOT_TRAIL_FADE_POW = 1;
 export const HOT_TRAIL_STEP_CW = 1.0;
 export const HOT_TRAIL_PATH_MAX = 24;
 export const HOT_TRAIL_PATH_AGE = 0.35;
-export const HOT_TRAIL_EMIT_MAX = 3.6;
-export const HOT_TRAIL_DOWN = 0.55;
+export const HOT_TRAIL_EMIT_MAX = 2.4;

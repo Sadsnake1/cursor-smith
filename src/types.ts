@@ -320,6 +320,9 @@ export interface FlamePixel {
 export interface Ember {
   x: number; y: number; vx: number; vy: number; life: number; life0?: number; maxLife: number;
   temp: number; cw: number; lift: number; shape0?: number; flip?: boolean; spark?: boolean; fine?: boolean;
+  // Hot-head's sway (drawHotHead): age in ms, reach in character widths,
+  // frequency in Hz, phase, and the offset last applied.
+  age?: number; sw?: number; sf?: number; sp?: number; so?: number;
 }
 export interface BurnMark { x: number; y: number; t: number; rowLeft: number | null; rowRight: number | null; lh: number; fs: number }
 export interface ThunderCell { x: number; y: number; t: number }

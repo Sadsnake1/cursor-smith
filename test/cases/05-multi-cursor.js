@@ -176,7 +176,7 @@ section("multi-cursor: full effects on secondary carets");
   // the bundle fails with its name: a field left out would be shared between
   // carets, which is the "N carets, one spring" bug in its quietest form.
   for (const k of ["lastActive", "animActive", "smearQuad", "trail", "glitch", "_smoothMoving", "_smearMoving",
-                   "_hotPrev", "_hotEmitFrom", "_hotVel", "_hotActiveT", "hotBurns",
+                   "_hotPrev", "_hotEmitFrom", "_hotActiveT", "hotBurns",
                    "_lastStardustT", "_lastSparkT", "_lastFireworkT",
                    "_tetherKey", "_tetherSegs", "_tetherAnchorA"]) {
     ok(`${k} is per caret`, FIELDS.includes(k));
@@ -605,9 +605,11 @@ section("multi-cursor: full effects on secondary carets");
     ok("...and a keystroke's letter while the move waits", !!d.pending && d.pending.holdChar === "t", d.pending && d.pending.holdChar);
   }
 
-  // A jump puts the caret in fire: decided on the committed move (a scroll
-  // shift never reaches that path, and with Smooth Movement the drawn caret
-  // never travels far in one frame), spawned all around the caret's box.
+  // A jump flares the fire where the caret lands: decided on the committed
+  // move (a scroll shift never reaches that path, and with Smooth Movement
+  // the drawn caret never travels far in one frame), spawned on the tops of
+  // the glyphs across the landing - it filled a box around the caret until
+  // 1.6.4, below and beside it too.
   {
     const e = mk({ hotHead: true, hotHeadQuantity: 1 });
     e.pushTrail = () => {}; e.spawnFlamePixels = () => {};
@@ -623,10 +625,12 @@ section("multi-cursor: full effects on secondary carets");
     s.lastActive = rec(100, 20, 10); s.animActive = Object.assign({}, s.lastActive);
     s.updateActivePoint(rec(100, 220, 10));
     ok("a scroll shift of the same position is not a jump", !s._hotEngulfUntil);
-    // And the engulf itself: while the window holds, fire lands beside and
-    // below the caret's box, not only above it.
-    const a = rec(300, 100, 40);
+    // And the flare itself: while the window holds, fire lands across the
+    // landing and either side of it, on the line the rest of the fire
+    // starts from, and rises.
+    const a = rec(300, 100, 40, { fontSize: 16 });
     e.animActive = Object.assign({}, a);
+    e.lastActive = Object.assign({}, a);
     e._hotEmitFrom = { x: 304, y: 112 };
     e._hotVel = { x: 0, y: 0 };
     e._lastHotT = performance.now() - 16;
@@ -638,7 +642,9 @@ section("multi-cursor: full effects on secondary carets");
     const ps = e.flameEmbers;
     ok("the engulf spawns fire", ps.length > 0, ps.length);
     ok("...beside the caret", ps.some((p) => p.x < a.x) && ps.some((p) => p.x > a.x + a.w));
-    ok("...and below it, not only above", ps.some((p) => p.y > a.top + a.h) && ps.some((p) => p.y < a.top));
+    const glyphTop = a.top + (a.h - 16) / 2;
+    ok("...on the tops of the glyphs, never down the caret or below it", ps.every((p) => p.y <= glyphTop + 16 * 0.06 + a.h * T.HOT_HEAD_JITTER_DOWN + 1e-9 && p.y >= glyphTop - a.h * (T.HOT_HEAD_JITTER_UP + 0.01)), ps.map((p) => +(p.y - glyphTop).toFixed(1)));
+    ok("...every one rising", ps.every((p) => p.vy < 0), ps.map((p) => +p.vy.toFixed(1)));
     ok("...chunks and sparks both", ps.some((p) => p.spark) && ps.some((p) => !p.spark));
     e.flameEmbers = [];
     e._hotEngulfUntil = performance.now() - 1;
@@ -688,11 +694,66 @@ section("multi-cursor: full effects on secondary carets");
     e.hotBurns = []; e._hotPrev = { x: 104, y: 112, t: now - 16 };
     e.animActive = rec(400, 300, 40, { rowLeft: 0, rowRight: 900 });
     e.updateHotHeadInertia();
-    ok("across lines the way between carries no row", e.hotBurns[0].rowLeft === null && e.hotBurns[e.hotBurns.length - 1].rowLeft === 0);
+    ok("across lines nothing is laid between them: the landing's mark alone", e.hotBurns.length === 1 && e.hotBurns[0].y === 300 && e.hotBurns[0].rowLeft === 0, e.hotBurns);
+    // Mid-glide (Smooth Movement) the drawn caret is between two rows; the
+    // mark goes on the committed caret's row, not across the middle of a line.
+    e.hotBurns = []; e._hotPrev = { x: 404, y: 112, t: now - 16, row: 100 };
+    e.lastActive = rec(400, 124, 41, { rowLeft: 0, rowRight: 900 });
+    e.animActive = rec(400, 110, 41, { rowLeft: 0, rowRight: 900 });
+    e.updateHotHeadInertia();
+    ok("a mark laid mid-glide goes on the committed caret's row", e.hotBurns.length === 1 && e.hotBurns[0].y === 124, e.hotBurns.map((b) => b.y));
+    e.lastActive = null;
     e.hotBurns = [{ x: 408, y: 100, t: now }]; e._hotPrev = { x: 408, y: 112, t: now - 16 };
     e.animActive = rec(406, 100, 41, { rowLeft: 0, rowRight: 900 });
     e.updateHotHeadInertia();
     ok("a nudge within half a character refreshes the mark instead", e.hotBurns.length === 1 && e.hotBurns[0].t >= now);
+  }
+
+  // Where the fire starts, and how it moves (1.6.4: "the fire is all over
+  // the place", "trails from the middle of the cursor, not a headtop
+  // trail", "the fire does not work when I backspace").
+  {
+    const e = mk({ hotHead: true, hotHeadQuantity: 3, hotHeadSpread: 4, hotHeadIdleMs: 0, hotHeadHeight: 0.55 });
+    const a = rec(400, 100, 40, { fontSize: 16, rowLeft: 0, rowRight: 900 });
+    const now = performance.now();
+    const arm = (burns) => {
+      e.animActive = Object.assign({}, a); e.lastActive = Object.assign({}, a);
+      e._hotEmitFrom = { x: 404, y: 112 }; e._hotPrev = { x: 404, y: 112, t: now, row: 100 };
+      e._hotActiveT = now; e.hotBurns = burns; e.flameEmbers = [];
+    };
+    const glyphTop = 100 + (24 - 16) / 2;
+    const lo = glyphTop - 24 * (T.HOT_HEAD_JITTER_UP + 0.01), hi = glyphTop + 16 * 0.06 + 24 * T.HOT_HEAD_JITTER_DOWN + 1e-9;
+    // A head and a trail behind it on the same row.
+    const mark = (x, age) => ({ x, y: 100, t: now - age, rowLeft: 0, rowRight: 900, lh: 24, fs: 16 });
+    arm([mark(340, 400), mark(360, 300), mark(380, 150), mark(404, 0)]);
+    for (let i = 0; i < 10; i++) { e._lastHotT = performance.now() - 16; e.maybeSpawnHotHead(); }
+    const chunks = e.flameEmbers.filter((p) => !p.spark);
+    ok("the head and the trail both start on the tops of the glyphs, none down over the letters", chunks.length > 20 && chunks.every((p) => p.y >= lo && p.y <= hi), [chunks.length, Math.min(...chunks.map((p) => p.y - glyphTop)), Math.max(...chunks.map((p) => p.y - glyphTop))]);
+    ok("...from the trail's marks too, not only the caret's", chunks.some((p) => p.x < 370));
+    const cone = Math.sin(T.HOT_START_CONE) * T.FLAME_INITIAL_VELOCITY * 8 * 0.55 + 1e-9;
+    ok("every particle starts rising, none thrown sideways or along the caret's move", e.flameEmbers.every((p) => p.vy < 0 && Math.abs(p.vx) <= cone), e.flameEmbers.map((p) => [+p.vx.toFixed(1), +p.vy.toFixed(1)]).slice(0, 6));
+    ok("...each with a sway of its own", chunks.every((p) => p.sw > 0 && p.sw <= T.HOT_SWAY_CW && p.sf > 0));
+    // Backspace at a line's end: the row has already shrunk past the mark
+    // the caret left (rowRight 300, the mark at 404) - its own cell burns.
+    arm([{ x: 404, y: 100, t: now, rowLeft: 0, rowRight: 300, lh: 24, fs: 16 }]);
+    for (let i = 0; i < 10; i++) { e._lastHotT = performance.now() - 16; e.maybeSpawnHotHead(); }
+    ok("a mark past the row's end (text just deleted) still burns its own cell", e.flameEmbers.length > 10 && e.flameEmbers.every((p) => p.x <= 404 + 4 + 8 * 0.3 + 1e-9), e.flameEmbers.length);
+    // The rise: many frames of the painter, the chunks go up and barely
+    // across - the sway is a wave, not a wander.
+    arm([mark(404, 0)]);
+    for (let i = 0; i < 6; i++) { e._lastHotT = performance.now() - 16; e.maybeSpawnHotHead(); }
+    const born = e.flameEmbers.filter((p) => !p.spark).map((p) => ({ p, x: p.x, y: p.y }));
+    e.ctx = makePathCtx(); e.animActive = null;
+    for (let i = 0; i < 12; i++) { e._hotDrawT = performance.now() - 17; e.drawHotHead(); }
+    const moved = born.filter((b) => e.flameEmbers.includes(b.p));
+    ok("a chunk rises straight, a little sway at most", moved.length > 5 && moved.every((b) => b.y - b.p.y > 0 && Math.abs(b.p.x - b.x) < Math.max(3, (b.y - b.p.y) * 0.5)), moved.map((b) => [+(b.p.x - b.x).toFixed(1), +(b.y - b.p.y).toFixed(1)]).slice(0, 6));
+    // Never on the caret: its box is clipped out of the fire.
+    const clips = [];
+    const cctx = Object.assign(makePathCtx(), { clip(rule) { clips.push(rule); } });
+    e.ctx = cctx; e.animActive = Object.assign({}, a);
+    e.drawHotHead();
+    const rects = cctx.ops.filter((o) => o.op === "rect");
+    ok("the caret's own box is clipped out of the fire", clips[0] === "evenodd" && rects.some((r) => r.x === 400 && r.y === 100 && r.w === 8 && r.h === 24), clips);
   }
 
   // The torch: a spotlight per caret.

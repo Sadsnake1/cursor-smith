@@ -20,15 +20,12 @@ import {
   FLAME_PER_SECOND,
   FLAME_RANDOM_VELOCITY,
   FLAME_SPREAD,
-  FLAME_VELOCITY_FROM_CURSOR,
   HOT_ALPHA_LEVELS,
   HOT_BLOCK_SHAPES,
   HOT_BUDGET_CARETS,
   HOT_BURN_LINGER_MS,
   HOT_BURN_MAX,
   HOT_COLOR_LEVELS,
-  HOT_ENGULF_ABOVE,
-  HOT_ENGULF_BELOW,
   HOT_ENGULF_PAD_X,
   HOT_ENGULF_RATE,
   HOT_FINE_CHANCE,
@@ -38,6 +35,8 @@ import {
   HOT_HEAD_JITTER_DOWN,
   HOT_HEAD_JITTER_UP,
   HOT_HEAD_LIFT,
+  HOT_LIFE_FLOOR,
+  HOT_SHAPE_EASE,
   HOT_HSV,
   HOT_PX_DIVISOR,
   HOT_PX_MAX,
@@ -48,20 +47,38 @@ import {
   HOT_SPARK_RISE,
   HOT_SPECK_SCALE,
   HOT_STAGE_PIXEL,
+  HOT_START_CONE,
   HOT_STOP_POS,
+  HOT_SWAY_CW,
+  HOT_SWAY_GROW_MS,
+  HOT_SWAY_HZ,
   HOT_TEMP_GAMMA,
   HOT_TEMP_MAX,
-  HOT_TRAIL_DOWN,
   HOT_TRAIL_EMIT_MAX,
   HOT_TRAIL_FADE_POW,
   HOT_TRAIL_PATH_AGE,
   HOT_TRAIL_PATH_MAX,
   HOT_TRAIL_STEP_CW,
+  HOT_TURB_X,
+  HOT_TURB_Y,
   hotQuant,
   hotShapeStage,
 } from "./fire";
 import { easeInOutSine } from "./motion";
 import type CursorSmithPlugin from "./plugin";
+import type { Ember } from "./types";
+
+// A start kick of `mag`, up within HOT_START_CONE of straight up, and a sway
+// of its own (see drawHotHead). Nothing of the caret's velocity: fire rises
+// where it was lit instead of being thrown along a move.
+function hotKick(mag: number): Pick<Ember, "vx" | "vy" | "age" | "sw" | "sf" | "sp" | "so"> {
+  const ang = -Math.PI / 2 + (Math.random() * 2 - 1) * HOT_START_CONE;
+  return {
+    vx: mag * Math.cos(ang), vy: mag * Math.sin(ang),
+    age: 0, sw: HOT_SWAY_CW * (0.6 + 0.4 * Math.random()), sf: HOT_SWAY_HZ * (0.75 + 0.5 * Math.random()),
+    sp: Math.random() * Math.PI * 2, so: 0,
+  };
+}
 
 export const effectsFireMethods = {
   // Everything Hot-head holds - live particles, burn marks, the caret samples
@@ -169,9 +186,10 @@ export const effectsFireMethods = {
 
   // Hot-head: track the caret between frames, and remember where it has been.
   //
-  // Velocity feeds the share of caret motion new particles inherit. The burn
-  // marks are the other half: each is a patch of text the caret has occupied,
-  // with an intensity that decays over time. Fire is emitted from ALL live
+  // The burn marks: each is a patch of text the caret has occupied, with an
+  // intensity that decays over time. (The caret's smoothed velocity was
+  // tracked here too, for the share of it new particles inherited; nothing
+  // inherits it since 1.6.4 - the fire rises where it was lit.) Fire is emitted from ALL live
   // marks, not just the caret, so text the caret has moved off keeps burning
   // for a moment afterwards - the point being that the text was set alight,
   // rather than that a flame is following the cursor around.
@@ -182,7 +200,6 @@ export const effectsFireMethods = {
     if (!active) {
       this._hotPrev = null;
       this._hotEmitFrom = null;
-      this._hotVel = { x: 0, y: 0 };
       this.hotBurns = [];
       return;
     }
@@ -192,12 +209,10 @@ export const effectsFireMethods = {
     if (!this._hotPrev) {
       this._hotPrev = { x: cx, y: cy, t: now };
       this._hotEmitFrom = { x: cx, y: cy };
-      this._hotVel = { x: 0, y: 0 };
       this.hotBurns = [];
       return;
     }
 
-    const dt = Math.max(0.001, Math.min(0.1, (now - this._hotPrev.t) / 1000));
     // Genuine caret movement, which is what the idle timer runs on. Measured
     // here rather than from the plugin's global activity timestamp because that
     // one is also poked by scrolling and focus changes, and neither of those
@@ -206,8 +221,6 @@ export const effectsFireMethods = {
     if (Math.abs(cx - this._hotPrev.x) > 0.5 || Math.abs(cy - this._hotPrev.y) > 0.5) {
       this._hotActiveT = now;
     }
-    this._hotVel.x += ((cx - this._hotPrev.x) / dt - this._hotVel.x) * 0.25;
-    this._hotVel.y += ((cy - this._hotPrev.y) / dt - this._hotVel.y) * 0.25;
     const prevX = this._hotPrev.x, prevY = this._hotPrev.y;
     this._hotPrev.x = cx;
     this._hotPrev.y = cy;
@@ -225,7 +238,14 @@ export const effectsFireMethods = {
     // caret's centre instead means the test is off by half a line height and
     // can never match.
     const cwHere = Math.max(4, active.actualCharWidth || active.w || 8);
-    const markY = active.top;
+    // The row the mark goes on: the committed caret's. With Smooth Movement
+    // the drawn caret glides between two rows through every height between
+    // them, and a mark laid there burned across the middle of a line - the
+    // trail "from the middle of the cursor".
+    const la = this.lastActive;
+    const markY = la && Math.abs(la.top - active.top) > 0.5 ? la.top : active.top;
+    const prevRow = this._hotPrev.row ?? (prevY - (active.h || 0) / 2);
+    this._hotPrev.row = markY;
     const last = this.hotBurns[this.hotBurns.length - 1];
     if (last && Math.abs(last.x - cx) < cwHere * 0.5 && Math.abs(last.y - markY) < 2) {
       last.t = now;
@@ -238,29 +258,27 @@ export const effectsFireMethods = {
       // The PATH burns. Marks used to be laid only where the caret IS each
       // frame, so a jump - or a fast glide - lit its two ends and left the
       // way between them dark; the recording's trail is the way itself on
-      // fire, fading from the far end. So the segment from where the caret
-      // was last frame to where it is now gets a mark every
+      // fire, fading from the far end. So the stretch of the row from where
+      // the caret was last frame to where it is now gets a mark every
       // HOT_TRAIL_STEP_CW characters, the nearest HOT_TRAIL_PATH_MAX of them
       // when it is longer than that, laid far end first and already a little
       // aged (HOT_TRAIL_PATH_AGE of the linger, more the farther back) so the
-      // tail goes out before the head. A mark on the way between two lines
-      // carries no row extents: there is no row to clamp it to.
+      // tail goes out before the head. Along a row only: a move to another
+      // row lays its mark there and nothing between - the fire stays on the
+      // tops of the text, never across the lines between (it did until 1.6.4).
       const dxp = cx - prevX;
-      const prevTop = prevY - (active.h || 0) / 2;
-      const dyp = markY - prevTop;
-      const dist = Math.hypot(dxp, dyp);
+      const dist = Math.abs(dxp);
       const step = cwHere * HOT_TRAIL_STEP_CW;
-      const n = Math.min(HOT_TRAIL_PATH_MAX, Math.floor(dist / step));
+      const n = Math.abs(markY - prevRow) < 2 ? Math.min(HOT_TRAIL_PATH_MAX, Math.floor(dist / step)) : 0;
       if (n >= 1) {
         const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 4);
         const linger = HOT_BURN_LINGER_MS * (1 + spreadCw);
-        const sameRow = Math.abs(dyp) < 2;
         for (let i = n; i >= 1; i--) {
           const s = (i * step) / dist;
           this.hotBurns.push({
-            x: cx - dxp * s, y: markY - dyp * s,
+            x: cx - dxp * s, y: markY,
             t: now - s * HOT_TRAIL_PATH_AGE * linger,
-            rowLeft: sameRow ? active.rowLeft : null, rowRight: sameRow ? active.rowRight : null,
+            rowLeft: active.rowLeft, rowRight: active.rowRight,
             lh: active.h || 16, fs: active.fontSize || 0,
           });
         }
@@ -339,27 +357,30 @@ export const effectsFireMethods = {
     const perLength = FLAME_PER_LENGTH * ((this.styleFor("hotHeadTrail") ?? 0) / 10);
     const qtyEarly = Math.max(0, this.styleFor("hotHeadQuantity") ?? 1);
 
-    // Engulfed: the caret jumped (set on the committed move, see the commit
-    // path in updateActivePoint), so for HOT_ENGULF_MS the fire spawns all
-    // around the drawn caret's box while it lands and settles.
+    // A jump (set on the committed move, see the commit path in
+    // updateActivePoint) flares the fire for HOT_ENGULF_MS where the caret
+    // lands: on the tops of the glyphs like the rest, across its cell and a
+    // little either side, rising.
     if (qtyEarly > 0 && this._hotEngulfUntil && now < this._hotEngulfUntil) {
-      const vel = this._hotVel || { x: 0, y: 0 };
+      const land = this.lastActive || active;
       const shapeN = HOT_BLOCK_SHAPES.length;
       const n = HOT_ENGULF_RATE * dt * qtyEarly;
       const count = Math.floor(n) + (Math.random() < (n % 1) ? 1 : 0);
-      const w = Math.max(cw, active.w || 0);
-      const x0 = active.x - cw * HOT_ENGULF_PAD_X, x1 = active.x + w + cw * HOT_ENGULF_PAD_X;
-      const y0 = active.top - lh * HOT_ENGULF_ABOVE, y1 = active.top + lh * (1 + HOT_ENGULF_BELOW);
+      const w = Math.max(cw, land.w || 0);
+      const x0 = land.x - cw * HOT_ENGULF_PAD_X, x1 = land.x + w + cw * HOT_ENGULF_PAD_X;
+      const lfs = land.fontSize || lh * 0.62;
+      const baseY = land.top + Math.max(0, (land.h || lh) - lfs) / 2 - lfs * HOT_HEAD_LIFT;
       for (let i = 0; i < count; i++) {
         const spark = Math.random() < 0.5;
-        const ang = Math.random() * Math.PI * 2;
         const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul * 0.8;
-        const life0 = fadeMs * (spark ? 0.15 + 0.45 * Math.random() : 0.2 + 0.5 * Math.pow(Math.random(), 2));
+        const life0 = fadeMs * (spark ? 0.15 + 0.45 * Math.random() : 0.3 + 0.5 * Math.pow(Math.random(), 2));
+        const kick = hotKick(mag);
         this.flameEmbers.push({
           spark, fine: spark && Math.random() < HOT_FINE_CHANCE,
-          x: x0 + Math.random() * (x1 - x0), y: y0 + Math.random() * (y1 - y0),
-          vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
-          vy: mag * Math.sin(ang) - (spark ? HOT_SPARK_RISE * 0.6 : 1) * cw * heightMul + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+          x: x0 + Math.random() * (x1 - x0),
+          y: baseY + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh,
+          ...kick,
+          vy: kick.vy - (spark ? HOT_SPARK_RISE * 0.6 : 1) * cw * heightMul,
           shape0: Math.min(shapeN - 1, 5 + Math.floor(Math.random() * (shapeN - 6))),
           flip: Math.random() < 0.5,
           life: life0, life0,
@@ -424,8 +445,6 @@ export const effectsFireMethods = {
     count = Math.max(0, Math.min(count, chunkCap - live));
     if (count <= 0) return;
 
-    const vel = this._hotVel || { x: 0, y: 0 };
-
     for (let i = 0; i < count; i++) {
       // Pick which alight patch this particle comes off, weighted by how
       // strongly that patch is still burning.
@@ -451,23 +470,19 @@ export const effectsFireMethods = {
       const halfLeading = Math.max(0, (burn.lh || lh) - fs) / 2;
       const topY = burn.y + halfLeading - fs * HOT_HEAD_LIFT;
 
-      // Across the patch, biased toward its centre, plus the segment the caret
-      // just travelled for the freshest mark.
-      const across = (Math.random() + Math.random() - 1) * halfSpan;
+      // Evenly across the patch (it was biased toward the centre, which
+      // piled the fire over the caret's own column), plus the stretch of the
+      // row the caret just travelled for the freshest mark.
+      const across = (Math.random() * 2 - 1) * halfSpan;
       const s = Math.random();
       const alongX = (bi === burns.length - 1) ? -dx * (1 - s) : 0;
-      const alongY = (bi === burns.length - 1) ? -dy * (1 - s) : 0;
 
       let px = burn.x + alongX + across + (Math.random() - 0.5) * FLAME_SPREAD * cw;
-      // Mostly up, a little down. Fully symmetric jitter put half of every
-      // batch well below the anchor and over the letters; upward-only left
-      // the whole flame floating clear of them. Weighted the way a flame
-      // actually behaves - rising, but rooted in what it is burning.
-      let py = topY + alongY
+      // On one line, the tops of the glyphs: a thin band, mostly up, a hair
+      // down so the flame bites into what it burns. Every mark alike - the
+      // trail too, which until 1.6.4 was jittered down over the letters.
+      const py = topY
         + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh;
-      // Off a mark the caret has left behind: down over the glyphs, the trail
-      // burning ON the text it passed (HOT_TRAIL_DOWN).
-      if (bi < burns.length - 1) py += Math.random() * HOT_TRAIL_DOWN * (burn.lh || lh);
 
       // Keep the fire on the text. Without this the spread band burns happily
       // out into the empty margin past the end of a line, which looks like the
@@ -475,14 +490,19 @@ export const effectsFireMethods = {
       // VISUAL row, so on a wrapped line the fire stops at the wrap, not at the
       // far end of the logical line. Half a character of overhang is allowed so
       // the first and last glyphs aren't sliced down the middle.
+      //
+      // And the mark's own cell always burns: it is where the caret was, so
+      // it is text or text just deleted. Without it Backspace and
+      // Ctrl+Backspace had next to no fire - the row had already shrunk past
+      // the marks they laid, and everything off them was dropped (1.6.4).
+      // Nor does the fire lick down over the row below at a row's first or
+      // last character any more; it rises from the one line like the rest.
       const rl = burn.rowLeft, rr = burn.rowRight;
-      const haveRow = rl != null && rr != null;
-      let atEdge = false;
-      if (haveRow) {
+      if (rl != null && rr != null) {
         const pad = cw * 0.5;
-        const lo = rl - pad;
-        const hi = rr + pad;
-        if (hi - lo < cw) {
+        const lo = Math.min(rl - pad, burn.x - cw * 0.5);
+        const hi = Math.max(rr + pad, burn.x + cw * 0.5);
+        if (hi - lo < cw * 2) {
           // Blank row: nothing to burn but the caret's own cell.
           px = Math.min(Math.max(px, burn.x - cw * 0.5), burn.x + cw * 0.5);
         } else if (px < lo || px > hi) {
@@ -492,38 +512,24 @@ export const effectsFireMethods = {
           // out of fuel should look like.
           continue;
         }
-        // Is the caret itself sitting at the very start or end of the row?
-        atEdge = (burn.x <= rl + cw) || (burn.x >= rr - cw);
       }
 
-      // At a row's first or last character there's no text to the side to carry
-      // the fire, so instead of stopping dead it licks DOWN over the row below -
-      // the way a flame at the edge of a burning sheet curls around it. Only a
-      // minority of particles do this, and only ones already near the edge, so
-      // it reads as a lick rather than as the next line also being alight.
-      if (atEdge && Math.random() < 0.28 && Math.abs(px - burn.x) < cw * 1.5) {
-        py += (burn.lh || lh) * (0.55 + Math.random() * 0.5);
-      }
-
-      // Uniform disc: sqrt(random) for magnitude, free angle. Plus a share of
-      // the caret's own velocity, so fire is dragged along a fast move.
+      // A kick up, sqrt(random) for its size (hotKick).
       const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul;
-      const ang = Math.random() * Math.PI * 2;
 
       // The shape: how far down HOT_BLOCK_SHAPES this particle starts, from
       // how long it will live (life0 over the maximum), with a little jitter
       // so equally long-lived neighbours are not identical. Mirrored at random.
       // Older marks (the trail behind the caret) still get a decent floor on
       // life, so the trail keeps some proper chunks rather than only specks.
-      const life0 = fadeMs * (0.1 + 0.9 * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.7 + 0.3 * strength);
+      const life0 = fadeMs * (HOT_LIFE_FLOOR + (1 - HOT_LIFE_FLOOR) * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.7 + 0.3 * strength);
       const lifeShare = Math.max(0, Math.min(1, life0 / fadeMs));
       const shapeN = HOT_BLOCK_SHAPES.length;
       const shape0 = Math.max(0, Math.min(shapeN - 1,
         Math.round((1 - lifeShare) * (shapeN - 1) + (Math.random() - 0.5) * 3)));
       this.flameEmbers.push({
         x: px, y: py,
-        vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
-        vy: mag * Math.sin(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+        ...hotKick(mag),
         shape0, flip: Math.random() < 0.5,
         // Upstream is a bare max*rand^n. The floor is ours: with no floor a
         // large share of particles are born with a percent or two of max life
@@ -546,13 +552,12 @@ export const effectsFireMethods = {
         const nSp = HOT_SPARKS_PER_CHUNK + (Math.random() < HOT_FINE_CHANCE ? 1 : 0);
         for (let k = 0; k < nSp; k++) {
           const fine = k >= HOT_SPARKS_PER_CHUNK;
-          const sang = Math.random() * Math.PI * 2;
-          const smag = FLAME_INITIAL_VELOCITY * Math.random() * cw * heightMul;
+          const kick = hotKick(FLAME_INITIAL_VELOCITY * Math.random() * cw * heightMul);
           this.flameEmbers.push({
             spark: true, fine,
             x: px + (Math.random() - 0.5) * cw * 0.6, y: py - Math.random() * lh * 0.15,
-            vx: smag * Math.cos(sang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
-            vy: smag * Math.sin(sang) - HOT_SPARK_RISE * cw * heightMul + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+            ...kick,
+            vy: kick.vy - HOT_SPARK_RISE * cw * heightMul,
             life: fadeMs * (0.15 + 0.65 * Math.random()) * (0.5 + 0.5 * strength),
             maxLife: fadeMs,
             temp: 0.5 + Math.random() * 0.5,
@@ -719,18 +724,38 @@ export const effectsFireMethods = {
     };
     const shapeN = HOT_BLOCK_SHAPES.length;
     ctx.save();
+    // Never on the caret itself: its box is clipped out, the way upstream
+    // never draws a particle on the cursor's own cell. The fire lit at the
+    // caret shows once it has risen clear of it.
+    if (active && ctx.clip) {
+      ctx.beginPath();
+      ctx.rect(-1e5, -1e5, 2e5, 2e5);
+      ctx.rect(active.x, active.top, Math.max(active.w || 0, active.actualCharWidth || 0), active.h || 0);
+      ctx.clip("evenodd");
+    }
     this.flameEmbers = this.flameEmbers.filter((p) => {
       p.life -= dtMs;
       if (p.life <= 0) return false;
 
       const pcw = p.cw || 8;
       const lift = p.lift || 1;
-      // Buoyancy scaled by Flame Height, plus per-frame turbulence. Damping
-      // is strong, so what matters is the terminal velocity this implies.
-      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5)) * pcw * dt) * damp;
-      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5) * pcw * dt;
+      // Buoyancy scaled by Flame Height, plus a little per-frame turbulence.
+      // Damping is strong, so what matters is the terminal velocity this
+      // implies.
+      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * HOT_TURB_Y * (Math.random() - 0.5)) * pcw * dt) * damp;
+      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * HOT_TURB_X * (Math.random() - 0.5) * pcw * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
+      // The sway: a slow sine, its reach growing from nothing at birth, so a
+      // flame leaves its line straight and waves a little as it climbs.
+      if (p.sw) {
+        const age = (p.age || 0) + dtMs;
+        p.age = age;
+        const reach = p.sw * pcw * Math.min(1, age / HOT_SWAY_GROW_MS);
+        const so = reach * Math.sin((2 * Math.PI * (p.sf || HOT_SWAY_HZ) * age) / 1000 + (p.sp || 0));
+        p.x += so - (p.so || 0);
+        p.so = so;
+      }
 
       const frac = Math.max(0, Math.min(1, p.life / (p.maxLife || maxLife)));
       const temp = hotQuant((p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA), HOT_COLOR_LEVELS) * HOT_TEMP_MAX;
@@ -765,7 +790,7 @@ export const effectsFireMethods = {
       // The chunk: its shape, stepped down the table by how much of its own
       // life is gone, anchored at the particle's lattice square, growing up
       // and right, mirrored if `flip`. One path, one fill.
-      const gone = 1 - Math.max(0, Math.min(1, p.life / (p.life0 || p.maxLife || maxLife)));
+      const gone = Math.pow(1 - Math.max(0, Math.min(1, p.life / (p.life0 || p.maxLife || maxLife))), HOT_SHAPE_EASE);
       const shape0 = p.shape0 ?? 0;
       const idx = Math.min(shapeN - 1, shape0 + Math.floor(gone * (shapeN - shape0)));
       const rows = HOT_BLOCK_SHAPES[idx];
@@ -803,6 +828,7 @@ export const effectsFireMethods = {
       ctx.fill();
       return true;
     });
+
     ctx.restore();
 
     if (minX <= maxX) {

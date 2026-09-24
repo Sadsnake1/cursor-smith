@@ -140,7 +140,6 @@ var CARET_STATE_FIELDS = [
   "typingSpeedMod",
   "_hotPrev",
   "_hotEmitFrom",
-  "_hotVel",
   "_hotActiveT",
   "_lastHotT",
   "hotBurns",
@@ -4634,39 +4633,55 @@ var HOT_SPECK_SCALE = 0.85;
 var HOT_FINE_SCALE = 0.5;
 var HOT_FINE_CHANCE = 0.4;
 var HOT_ENGULF_MS = 260;
-var HOT_ENGULF_RATE = 320;
+var HOT_ENGULF_RATE = 200;
 var HOT_ENGULF_PAD_X = 1.1;
-var HOT_ENGULF_ABOVE = 0.35;
-var HOT_ENGULF_BELOW = 0.25;
 var HOT_SPARK_LIFT = 1.9;
 var HOT_SPARK_RISE = 5;
 var FLAME_LEVELS = 16;
 var FLAME_MAX_NUM = 110;
 var FLAME_MAX_LIFETIME = 620;
-var FLAME_LIFETIME_EXP = 3.4;
-var FLAME_PER_SECOND = 190;
+var FLAME_LIFETIME_EXP = 2.2;
+var HOT_LIFE_FLOOR = 0.25;
+var HOT_SHAPE_EASE = 1.6;
+var FLAME_PER_SECOND = 125;
 var FLAME_PER_LENGTH = 0.8;
 var FLAME_SPREAD = 0.5;
 var FLAME_INITIAL_VELOCITY = 6;
-var FLAME_VELOCITY_FROM_CURSOR = 0.2;
+var HOT_START_CONE = 0.45;
 var FLAME_RANDOM_VELOCITY = 62;
+var HOT_TURB_X = 0.15;
+var HOT_TURB_Y = 0.5;
+var HOT_SWAY_CW = 0.3;
+var HOT_SWAY_HZ = 1.3;
+var HOT_SWAY_GROW_MS = 260;
 var FLAME_DAMPING = 0.2;
-var FLAME_BUOYANCY = -120;
+var FLAME_BUOYANCY = -85;
 var HOT_FLAT_HUE_SPAN = 26;
 var HOT_FLAT_LIGHTEN = 0.55;
 var HOT_HEAD_LIFT = -0.06;
-var HOT_HEAD_JITTER_UP = 0.16;
-var HOT_HEAD_JITTER_DOWN = 0.05;
+var HOT_HEAD_JITTER_UP = 0.07;
+var HOT_HEAD_JITTER_DOWN = 0.02;
 var HOT_BURN_LINGER_MS = 240;
 var HOT_BURN_MAX = 64;
 var HOT_TRAIL_FADE_POW = 1;
 var HOT_TRAIL_STEP_CW = 1;
 var HOT_TRAIL_PATH_MAX = 24;
 var HOT_TRAIL_PATH_AGE = 0.35;
-var HOT_TRAIL_EMIT_MAX = 3.6;
-var HOT_TRAIL_DOWN = 0.55;
+var HOT_TRAIL_EMIT_MAX = 2.4;
 
 // src/effects-fire.ts
+function hotKick(mag) {
+  const ang = -Math.PI / 2 + (Math.random() * 2 - 1) * HOT_START_CONE;
+  return {
+    vx: mag * Math.cos(ang),
+    vy: mag * Math.sin(ang),
+    age: 0,
+    sw: HOT_SWAY_CW * (0.6 + 0.4 * Math.random()),
+    sf: HOT_SWAY_HZ * (0.75 + 0.5 * Math.random()),
+    sp: Math.random() * Math.PI * 2,
+    so: 0
+  };
+}
 var effectsFireMethods = {
   // Everything Hot-head holds - live particles, burn marks, the caret samples
   // it measures travel against - is stored in viewport coordinates, because
@@ -4755,9 +4770,10 @@ var effectsFireMethods = {
   },
   // Hot-head: track the caret between frames, and remember where it has been.
   //
-  // Velocity feeds the share of caret motion new particles inherit. The burn
-  // marks are the other half: each is a patch of text the caret has occupied,
-  // with an intensity that decays over time. Fire is emitted from ALL live
+  // The burn marks: each is a patch of text the caret has occupied, with an
+  // intensity that decays over time. (The caret's smoothed velocity was
+  // tracked here too, for the share of it new particles inherited; nothing
+  // inherits it since 1.6.4 - the fire rises where it was lit.) Fire is emitted from ALL live
   // marks, not just the caret, so text the caret has moved off keeps burning
   // for a moment afterwards - the point being that the text was set alight,
   // rather than that a flame is following the cursor around.
@@ -4768,7 +4784,6 @@ var effectsFireMethods = {
     if (!active) {
       this._hotPrev = null;
       this._hotEmitFrom = null;
-      this._hotVel = { x: 0, y: 0 };
       this.hotBurns = [];
       return;
     }
@@ -4777,16 +4792,12 @@ var effectsFireMethods = {
     if (!this._hotPrev) {
       this._hotPrev = { x: cx, y: cy, t: now };
       this._hotEmitFrom = { x: cx, y: cy };
-      this._hotVel = { x: 0, y: 0 };
       this.hotBurns = [];
       return;
     }
-    const dt = Math.max(1e-3, Math.min(0.1, (now - this._hotPrev.t) / 1e3));
     if (Math.abs(cx - this._hotPrev.x) > 0.5 || Math.abs(cy - this._hotPrev.y) > 0.5) {
       this._hotActiveT = now;
     }
-    this._hotVel.x += ((cx - this._hotPrev.x) / dt - this._hotVel.x) * 0.25;
-    this._hotVel.y += ((cy - this._hotPrev.y) / dt - this._hotVel.y) * 0.25;
     const prevX = this._hotPrev.x, prevY = this._hotPrev.y;
     this._hotPrev.x = cx;
     this._hotPrev.y = cy;
@@ -4794,7 +4805,10 @@ var effectsFireMethods = {
     if (!this._hotEmitFrom) this._hotEmitFrom = { x: cx, y: cy };
     if (!this.hotBurns) this.hotBurns = [];
     const cwHere = Math.max(4, active.actualCharWidth || active.w || 8);
-    const markY = active.top;
+    const la = this.lastActive;
+    const markY = la && Math.abs(la.top - active.top) > 0.5 ? la.top : active.top;
+    const prevRow = this._hotPrev.row ?? prevY - (active.h || 0) / 2;
+    this._hotPrev.row = markY;
     const last = this.hotBurns[this.hotBurns.length - 1];
     if (last && Math.abs(last.x - cx) < cwHere * 0.5 && Math.abs(last.y - markY) < 2) {
       last.t = now;
@@ -4802,23 +4816,20 @@ var effectsFireMethods = {
       last.rowRight = active.rowRight;
     } else {
       const dxp = cx - prevX;
-      const prevTop = prevY - (active.h || 0) / 2;
-      const dyp = markY - prevTop;
-      const dist = Math.hypot(dxp, dyp);
+      const dist = Math.abs(dxp);
       const step2 = cwHere * HOT_TRAIL_STEP_CW;
-      const n = Math.min(HOT_TRAIL_PATH_MAX, Math.floor(dist / step2));
+      const n = Math.abs(markY - prevRow) < 2 ? Math.min(HOT_TRAIL_PATH_MAX, Math.floor(dist / step2)) : 0;
       if (n >= 1) {
         const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 4);
         const linger = HOT_BURN_LINGER_MS * (1 + spreadCw);
-        const sameRow = Math.abs(dyp) < 2;
         for (let i = n; i >= 1; i--) {
           const s = i * step2 / dist;
           this.hotBurns.push({
             x: cx - dxp * s,
-            y: markY - dyp * s,
+            y: markY,
             t: now - s * HOT_TRAIL_PATH_AGE * linger,
-            rowLeft: sameRow ? active.rowLeft : null,
-            rowRight: sameRow ? active.rowRight : null,
+            rowLeft: active.rowLeft,
+            rowRight: active.rowRight,
             lh: active.h || 16,
             fs: active.fontSize || 0
           });
@@ -4886,25 +4897,26 @@ var effectsFireMethods = {
     const perLength = FLAME_PER_LENGTH * ((this.styleFor("hotHeadTrail") ?? 0) / 10);
     const qtyEarly = Math.max(0, this.styleFor("hotHeadQuantity") ?? 1);
     if (qtyEarly > 0 && this._hotEngulfUntil && now < this._hotEngulfUntil) {
-      const vel2 = this._hotVel || { x: 0, y: 0 };
+      const land = this.lastActive || active;
       const shapeN = HOT_BLOCK_SHAPES.length;
       const n2 = HOT_ENGULF_RATE * dt * qtyEarly;
       const count2 = Math.floor(n2) + (Math.random() < n2 % 1 ? 1 : 0);
-      const w = Math.max(cw, active.w || 0);
-      const x0 = active.x - cw * HOT_ENGULF_PAD_X, x1 = active.x + w + cw * HOT_ENGULF_PAD_X;
-      const y0 = active.top - lh * HOT_ENGULF_ABOVE, y1 = active.top + lh * (1 + HOT_ENGULF_BELOW);
+      const w = Math.max(cw, land.w || 0);
+      const x0 = land.x - cw * HOT_ENGULF_PAD_X, x1 = land.x + w + cw * HOT_ENGULF_PAD_X;
+      const lfs = land.fontSize || lh * 0.62;
+      const baseY = land.top + Math.max(0, (land.h || lh) - lfs) / 2 - lfs * HOT_HEAD_LIFT;
       for (let i = 0; i < count2; i++) {
         const spark = Math.random() < 0.5;
-        const ang = Math.random() * Math.PI * 2;
         const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul * 0.8;
-        const life0 = fadeMs * (spark ? 0.15 + 0.45 * Math.random() : 0.2 + 0.5 * Math.pow(Math.random(), 2));
+        const life0 = fadeMs * (spark ? 0.15 + 0.45 * Math.random() : 0.3 + 0.5 * Math.pow(Math.random(), 2));
+        const kick = hotKick(mag);
         this.flameEmbers.push({
           spark,
           fine: spark && Math.random() < HOT_FINE_CHANCE,
           x: x0 + Math.random() * (x1 - x0),
-          y: y0 + Math.random() * (y1 - y0),
-          vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel2.x,
-          vy: mag * Math.sin(ang) - (spark ? HOT_SPARK_RISE * 0.6 : 1) * cw * heightMul + FLAME_VELOCITY_FROM_CURSOR * vel2.y,
+          y: baseY + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh,
+          ...kick,
+          vy: kick.vy - (spark ? HOT_SPARK_RISE * 0.6 : 1) * cw * heightMul,
           shape0: Math.min(shapeN - 1, 5 + Math.floor(Math.random() * (shapeN - 6))),
           flip: Math.random() < 0.5,
           life: life0,
@@ -4948,7 +4960,6 @@ var effectsFireMethods = {
     let count = Math.floor(n) + (Math.random() < n % 1 ? 1 : 0);
     count = Math.max(0, Math.min(count, chunkCap - live));
     if (count <= 0) return;
-    const vel = this._hotVel || { x: 0, y: 0 };
     for (let i = 0; i < count; i++) {
       let r = Math.random() * weightSum;
       let bi = 0;
@@ -4958,33 +4969,24 @@ var effectsFireMethods = {
       const fs = burn.fs || lh * 0.62;
       const halfLeading = Math.max(0, (burn.lh || lh) - fs) / 2;
       const topY = burn.y + halfLeading - fs * HOT_HEAD_LIFT;
-      const across = (Math.random() + Math.random() - 1) * halfSpan;
+      const across = (Math.random() * 2 - 1) * halfSpan;
       const s = Math.random();
       const alongX = bi === burns.length - 1 ? -dx * (1 - s) : 0;
-      const alongY = bi === burns.length - 1 ? -dy * (1 - s) : 0;
       let px = burn.x + alongX + across + (Math.random() - 0.5) * FLAME_SPREAD * cw;
-      let py = topY + alongY + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh;
-      if (bi < burns.length - 1) py += Math.random() * HOT_TRAIL_DOWN * (burn.lh || lh);
+      const py = topY + (HOT_HEAD_JITTER_DOWN - Math.random() * (HOT_HEAD_JITTER_UP + HOT_HEAD_JITTER_DOWN)) * lh;
       const rl = burn.rowLeft, rr = burn.rowRight;
-      const haveRow = rl != null && rr != null;
-      let atEdge = false;
-      if (haveRow) {
+      if (rl != null && rr != null) {
         const pad = cw * 0.5;
-        const lo = rl - pad;
-        const hi = rr + pad;
-        if (hi - lo < cw) {
+        const lo = Math.min(rl - pad, burn.x - cw * 0.5);
+        const hi = Math.max(rr + pad, burn.x + cw * 0.5);
+        if (hi - lo < cw * 2) {
           px = Math.min(Math.max(px, burn.x - cw * 0.5), burn.x + cw * 0.5);
         } else if (px < lo || px > hi) {
           continue;
         }
-        atEdge = burn.x <= rl + cw || burn.x >= rr - cw;
-      }
-      if (atEdge && Math.random() < 0.28 && Math.abs(px - burn.x) < cw * 1.5) {
-        py += (burn.lh || lh) * (0.55 + Math.random() * 0.5);
       }
       const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul;
-      const ang = Math.random() * Math.PI * 2;
-      const life0 = fadeMs * (0.1 + 0.9 * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.7 + 0.3 * strength);
+      const life0 = fadeMs * (HOT_LIFE_FLOOR + (1 - HOT_LIFE_FLOOR) * Math.pow(Math.random(), FLAME_LIFETIME_EXP)) * (0.7 + 0.3 * strength);
       const lifeShare = Math.max(0, Math.min(1, life0 / fadeMs));
       const shapeN = HOT_BLOCK_SHAPES.length;
       const shape0 = Math.max(0, Math.min(
@@ -4994,8 +4996,7 @@ var effectsFireMethods = {
       this.flameEmbers.push({
         x: px,
         y: py,
-        vx: mag * Math.cos(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
-        vy: mag * Math.sin(ang) + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+        ...hotKick(mag),
         shape0,
         flip: Math.random() < 0.5,
         // Upstream is a bare max*rand^n. The floor is ours: with no floor a
@@ -5018,15 +5019,14 @@ var effectsFireMethods = {
         const nSp = HOT_SPARKS_PER_CHUNK + (Math.random() < HOT_FINE_CHANCE ? 1 : 0);
         for (let k = 0; k < nSp; k++) {
           const fine = k >= HOT_SPARKS_PER_CHUNK;
-          const sang = Math.random() * Math.PI * 2;
-          const smag = FLAME_INITIAL_VELOCITY * Math.random() * cw * heightMul;
+          const kick = hotKick(FLAME_INITIAL_VELOCITY * Math.random() * cw * heightMul);
           this.flameEmbers.push({
             spark: true,
             fine,
             x: px + (Math.random() - 0.5) * cw * 0.6,
             y: py - Math.random() * lh * 0.15,
-            vx: smag * Math.cos(sang) + FLAME_VELOCITY_FROM_CURSOR * vel.x,
-            vy: smag * Math.sin(sang) - HOT_SPARK_RISE * cw * heightMul + FLAME_VELOCITY_FROM_CURSOR * vel.y,
+            ...kick,
+            vy: kick.vy - HOT_SPARK_RISE * cw * heightMul,
             life: fadeMs * (0.15 + 0.65 * Math.random()) * (0.5 + 0.5 * strength),
             maxLife: fadeMs,
             temp: 0.5 + Math.random() * 0.5,
@@ -5153,15 +5153,29 @@ var effectsFireMethods = {
     };
     const shapeN = HOT_BLOCK_SHAPES.length;
     ctx.save();
+    if (active && ctx.clip) {
+      ctx.beginPath();
+      ctx.rect(-1e5, -1e5, 2e5, 2e5);
+      ctx.rect(active.x, active.top, Math.max(active.w || 0, active.actualCharWidth || 0), active.h || 0);
+      ctx.clip("evenodd");
+    }
     this.flameEmbers = this.flameEmbers.filter((p) => {
       p.life -= dtMs;
       if (p.life <= 0) return false;
       const pcw = p.cw || 8;
       const lift = p.lift || 1;
-      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5)) * pcw * dt) * damp;
-      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * (Math.random() - 0.5) * pcw * dt;
+      p.vy = (p.vy + (FLAME_BUOYANCY * lift + FLAME_RANDOM_VELOCITY * HOT_TURB_Y * (Math.random() - 0.5)) * pcw * dt) * damp;
+      p.vx = p.vx * damp + FLAME_RANDOM_VELOCITY * HOT_TURB_X * (Math.random() - 0.5) * pcw * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
+      if (p.sw) {
+        const age = (p.age || 0) + dtMs;
+        p.age = age;
+        const reach = p.sw * pcw * Math.min(1, age / HOT_SWAY_GROW_MS);
+        const so = reach * Math.sin(2 * Math.PI * (p.sf || HOT_SWAY_HZ) * age / 1e3 + (p.sp || 0));
+        p.x += so - (p.so || 0);
+        p.so = so;
+      }
       const frac = Math.max(0, Math.min(1, p.life / (p.maxLife || maxLife)));
       const temp = hotQuant((p.temp || 1) * Math.pow(frac, HOT_TEMP_GAMMA), HOT_COLOR_LEVELS) * HOT_TEMP_MAX;
       const pi = Math.round(temp * FLAME_LEVELS);
@@ -5186,7 +5200,7 @@ var effectsFireMethods = {
         grow(dx0, dy0, speck, speck);
         return true;
       }
-      const gone = 1 - Math.max(0, Math.min(1, p.life / (p.life0 || p.maxLife || maxLife)));
+      const gone = Math.pow(1 - Math.max(0, Math.min(1, p.life / (p.life0 || p.maxLife || maxLife))), HOT_SHAPE_EASE);
       const shape0 = p.shape0 ?? 0;
       const idx = Math.min(shapeN - 1, shape0 + Math.floor(gone * (shapeN - shape0)));
       const rows = HOT_BLOCK_SHAPES[idx];
@@ -11450,7 +11464,6 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.flameEmbers = [];
     this.hotBurns = [];
     this._hotPrev = null;
-    this._hotVel = { x: 0, y: 0 };
     this.thunderbolts = [];
     this.fireworks = [];
     this._lastFireworkT = 0;

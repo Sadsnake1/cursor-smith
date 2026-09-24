@@ -523,7 +523,7 @@ export const CARET_STATE_FIELDS = [
   "_smearMoving", "_smearDtT", "smearQuadLastMoveT",
   "trail", "glitch",
   "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod",
-  "_hotPrev", "_hotEmitFrom", "_hotVel", "_hotActiveT", "_lastHotT", "hotBurns", "_hotShiftTick",
+  "_hotPrev", "_hotEmitFrom", "_hotActiveT", "_lastHotT", "hotBurns", "_hotShiftTick",
   "_hotEngulfUntil",
   "_lastStardustT", "_lastSparkT", "_lastFireworkT",
   "_tetherKey", "_tetherFrom", "_tetherTo", "_tetherSegs", "_tetherSegKey",

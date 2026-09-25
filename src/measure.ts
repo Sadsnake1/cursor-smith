@@ -1380,6 +1380,20 @@ export const measureMethods = {
   // the bottom and stretched a little on the rebound (Depth, Bounce, Squash,
   // Duration); Carriage advance carries it forward past its new spot and
   // back (Distance, Duration). At rest: 0, 0, 1.
+  // Whether a Typewriter stroke is still moving the caret at `now`: the
+  // frame governor has to know, or a stroke with nothing else animating is
+  // skipped as a static frame and the caret is left hanging at the bottom
+  // of the dip until something else wakes the loop - "when I press Space the
+  // cursor remains at the bottom for too long" (a letter had an ink stamp
+  // or a glide keeping the frames coming; a space often had neither).
+  typewriterMoving(this: CursorSmithPlugin, now: number): boolean {
+    if (!this.look.typewriter || !this._typewriterT) return false;
+    const dt = now - this._typewriterT;
+    if (dt < 0) return false;
+    return (!!this.look.typewriterSpring && dt < this.twOpt("typewriterStrikeMs", 80, 1000))
+      || (!!this.look.typewriterAdvance && dt < this.twOpt("typewriterAdvanceMs", 40, 1000));
+  },
+
   typewriterPose(this: CursorSmithPlugin, now: number): TypewriterPose {
     const rest = { dx: 0, dy: 0, sy: 1 };
     if (!this.look.typewriter) return rest;

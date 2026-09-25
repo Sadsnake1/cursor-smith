@@ -4708,6 +4708,18 @@ var measureMethods = {
   // the bottom and stretched a little on the rebound (Depth, Bounce, Squash,
   // Duration); Carriage advance carries it forward past its new spot and
   // back (Distance, Duration). At rest: 0, 0, 1.
+  // Whether a Typewriter stroke is still moving the caret at `now`: the
+  // frame governor has to know, or a stroke with nothing else animating is
+  // skipped as a static frame and the caret is left hanging at the bottom
+  // of the dip until something else wakes the loop - "when I press Space the
+  // cursor remains at the bottom for too long" (a letter had an ink stamp
+  // or a glide keeping the frames coming; a space often had neither).
+  typewriterMoving(now) {
+    if (!this.look.typewriter || !this._typewriterT) return false;
+    const dt = now - this._typewriterT;
+    if (dt < 0) return false;
+    return !!this.look.typewriterSpring && dt < this.twOpt("typewriterStrikeMs", 80, 1e3) || !!this.look.typewriterAdvance && dt < this.twOpt("typewriterAdvanceMs", 40, 1e3);
+  },
   typewriterPose(now) {
     const rest = { dx: 0, dy: 0, sy: 1 };
     if (!this.look.typewriter) return rest;
@@ -10295,7 +10307,8 @@ var engineMethods = {
     !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) || // Same reasoning: a bolt is aged and expired inside its draw call,
     // so a skipped frame would leave one frozen on screen.
     this.thunderbolts && this.thunderbolts.length > 0 || // A carriage return is aged inside its draw call too.
-    this.typeReturns && this.typeReturns.length > 0 || // And again for a firework. Note this covers a shell still sitting
+    this.typeReturns && this.typeReturns.length > 0 || // A Typewriter stroke is a wall-clock animation of the caret itself.
+    this.typewriterMoving(nowT) || // And again for a firework. Note this covers a shell still sitting
     // out its stagger delay, which paints nothing yet but must not be
     // allowed to drop the loop into the idle heartbeat - the volley
     // would land in lumps a tenth of a second apart.

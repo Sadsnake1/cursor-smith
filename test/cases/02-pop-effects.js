@@ -689,5 +689,20 @@ section("Typewriter's sliders (1.6.7)");
   };
   ok("Carriage return Thickness sets the streak's width", retDraw({}, 50).w === 1.5 && retDraw({ typewriterReturnWidth: 3 }, 50).w === 3);
   ok("...Duration: gone at 350 ms by default, still sweeping when it takes 800", retDraw({}, 350).alive === 0 && retDraw({ typewriterReturnMs: 800 }, 350).alive === 1);
+  // The frame governor sees a stroke as motion, so a Space (no ink stamp,
+  // no particle) is drawn all the way back up, not left at the bottom.
+  {
+    const g = mk({ typewriterSpring: true });
+    g._typewriterT = 10000;
+    ok("a springy stroke is motion for the frame governor while it lasts", g.typewriterMoving(10100) && !g.typewriterMoving(10240) && !g.typewriterMoving(9999));
+    const adv = mk({ typewriterAdvance: true, typewriterAdvanceMs: 300 });
+    adv._typewriterT = 10000;
+    ok("...an overshoot too, for its own duration", adv.typewriterMoving(10250) && !adv.typewriterMoving(10300));
+    const none = mk({});
+    none._typewriterT = 10000;
+    ok("...and Typewriter with no moving part is not", !none.typewriterMoving(10050));
+    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    ok("_isAnimating asks it", src.includes("this.typewriterMoving(nowT) ||"));
+  }
   ok("a value outside a slider's range is held in it", mk({ typewriterDepth: 999 }).twOpt("typewriterDepth", 0, 60) === 60 && mk({ typewriterDepth: "x" }).twOpt("typewriterDepth", 0, 60) === 18);
 }

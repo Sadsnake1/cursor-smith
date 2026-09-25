@@ -903,6 +903,8 @@ export const engineMethods = {
       (this.thunderbolts && this.thunderbolts.length > 0) ||
       // A carriage return is aged inside its draw call too.
       (this.typeReturns && this.typeReturns.length > 0) ||
+      // A Typewriter stroke is a wall-clock animation of the caret itself.
+      this.typewriterMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting
       // out its stagger delay, which paints nothing yet but must not be
       // allowed to drop the loop into the idle heartbeat - the volley

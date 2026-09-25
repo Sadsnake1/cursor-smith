@@ -200,6 +200,8 @@ var REDUCED_MOTION_OFF_KEYS = [
   // ambient drift
   "hotHead",
   // continuous fire
+  "typewriter",
+  // the caret dipping, the carriage's streak
   "speedDemonSparks",
   // emission; the heat colour itself is not motion
   "crtGlitch",
@@ -384,8 +386,8 @@ var DEFAULT_SETTINGS = {
   popLetters: true,
   popLettersRise: false,
   // the letter floats straight up from the cursor's top and fades
-  popTypewriter: false,
-  // the caret dips a little with each character and springs back
+  typewriter: false,
+  // an effect of its own: the caret dips with each character and springs back
   typewriterSpring: false,
   // a deeper, springy strike that bounces past rest, squashed at the bottom
   typewriterInk: false,
@@ -864,9 +866,9 @@ var LOOK_KEYS = [
   "caretHeightPct",
   // Popping letters rising straight up (1.6.7). Appended, off by default.
   "popLettersRise",
-  // Typewriter, a pop effect (1.6.7), and its four sub-options. Appended,
+  // Typewriter (1.6.7), an effect of its own with four sub-options. Appended,
   // all off by default.
-  "popTypewriter",
+  "typewriter",
   "typewriterSpring",
   "typewriterInk",
   "typewriterReturn",
@@ -2179,6 +2181,7 @@ var DemoStrip = class {
 // src/settings-tab.ts
 var RAIL_EFFECTS = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
+  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key as you type." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -3392,12 +3395,6 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       "backspaceDisintegrate",
       { depth: 1, gate: true, when: pop }
     ));
-    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, gate: true, when: pop }));
-    const tw = all(pop, on("popTypewriter"));
-    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 2, when: tw }));
-    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 2, when: tw }));
-    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 2, when: tw }));
-    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 2, when: tw }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider(
@@ -3411,6 +3408,13 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     effects.push(slider("Quantity", "How many shells go up per keypress, and how much each throws.", "fireworksQuantity", [0.2, 3, 0.1], { depth: 2, fallback: 1, when: all(pop, on("fireworks")) }));
     const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("thunderstrike") || !!get("fireworks"));
     effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
+    const showTw = shown("typewriter");
+    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "typewriter", { gate: true, when: showTw }));
+    const tw = all(showTw, on("typewriter"));
+    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 1, when: tw }));
+    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, when: tw }));
+    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, when: tw }));
+    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 1, when: tw }));
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
     const trail = all(showTrail, on("flameTrail"));
@@ -4312,7 +4316,7 @@ var measureMethods = {
           if (this.look.popEffects && this.look.popLetters) {
             this.spawnLetterParticle(justTyped, last);
           }
-          if (this.look.popEffects && this.look.popTypewriter) {
+          if (this.look.typewriter) {
             this._typewriterT = performance.now();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
           }
@@ -4668,7 +4672,7 @@ var measureMethods = {
   // advance carries it forward past its spot and back. At rest: 0, 0, 1.
   typewriterPose(now) {
     const rest = { dx: 0, dy: 0, sy: 1 };
-    if (!(this.look.popEffects && this.look.popTypewriter)) return rest;
+    if (!this.look.typewriter) return rest;
     const a = this.animActive;
     const dt = now - (this._typewriterT || 0);
     if (!a || !this._typewriterT || dt < 0) return rest;
@@ -10666,6 +10670,7 @@ var engineMethods = {
       "energyEffect",
       "popEffects",
       "popLetters",
+      "typewriter",
       "flameTrail",
       "fireworks",
       "thunderstrike",
@@ -11167,7 +11172,7 @@ var caretsMethods = {
       }
       if (this._enterPending && now - this._enterPending < 250) {
         this.spawnThunderbolt(caret);
-        if (this.look.popEffects && this.look.popTypewriter && this.look.typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);
+        if (this.look.typewriter && this.look.typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);
       }
       if (this._popKeyPending && now - this._popKeyPending < 250) {
         this.spawnFireworks(caret);

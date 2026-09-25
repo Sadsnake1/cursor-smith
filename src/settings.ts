@@ -112,7 +112,7 @@ export const DEFAULT_SETTINGS = {
   popEffects: true,
   popLetters: true,        
   popLettersRise: false,  // the letter floats straight up from the cursor's top and fades
-  popTypewriter: false,    // the caret dips a little with each character and springs back
+  typewriter: false,       // an effect of its own: the caret dips with each character and springs back
   typewriterSpring: false, // a deeper, springy strike that bounces past rest, squashed at the bottom
   typewriterInk: false,    // the letter typed is overprinted bigger and bolder, then settles
   typewriterReturn: false, // Enter sweeps a streak back along the line, with a spark at its end
@@ -480,9 +480,9 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "caretHeightPct",
   // Popping letters rising straight up (1.6.7). Appended, off by default.
   "popLettersRise",
-  // Typewriter, a pop effect (1.6.7), and its four sub-options. Appended,
+  // Typewriter (1.6.7), an effect of its own with four sub-options. Appended,
   // all off by default.
-  "popTypewriter", "typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance",
+  "typewriter", "typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance",
 ];
 
 // ---------------------------------------------------------------------------

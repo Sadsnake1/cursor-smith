@@ -532,7 +532,7 @@ section("Typewriter (1.6.7)");
 // Each character typed dips the caret a little and springs it back up.
 {
   const mk = (over) => {
-    const e = makeEngine(Object.assign({ popEffects: true, popTypewriter: true }, over));
+    const e = makeEngine(Object.assign({ typewriter: true }, over));
     e.styleFor = (k) => e.settings[k];
     e.look = e.settings;
     e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
@@ -546,8 +546,8 @@ section("Typewriter (1.6.7)");
   ok("it starts at rest, dips, and is back by the end of the stroke", d(0) === 0 && d(40) > d(10) && d(169) < 0.5 && d(170) === 0 && d(400) === 0, [d(0), d(10), d(40), d(100), d(169), d(170)].map((v) => +v.toFixed(2)));
   ok("...down fast, back slower: deepest in the first quarter", d(42) >= peak - 0.2 && d(20) > d(120), [d(20), d(42), d(120)].map((v) => +v.toFixed(2)));
   ok("...a little: at most an eighth of the line (3 px on a 24 px line)", peak > 2 && peak <= 24 * 0.12 + 1e-9, +peak.toFixed(2));
-  ok("off, no dip at all", (() => { const o = mk({ popTypewriter: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy === 0; })());
-  ok("...and none with the group off", (() => { const o = mk({ popEffects: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy === 0; })());
+  ok("off, no dip at all", (() => { const o = mk({ typewriter: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy === 0; })());
+  ok("...its own effect: Pop effects off does not stop it", (() => { const o = mk({ popEffects: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy > 0; })());
   ok("the plain stroke neither squashes nor moves sideways", e.typewriterPose(t0 + 40).sy === 1 && e.typewriterPose(t0 + 40).dx === 0);
   // The stroke starts on a character typed, not on a click or an arrow.
   const text = "the table.";
@@ -565,7 +565,8 @@ section("Typewriter (1.6.7)");
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "paint-frame.ts"), "utf8");
   ok("the whole caret is drawn in its pose, and the damage rect follows it", /ctx\.translate\(pose\.dx, pose\.dy\);/.test(src) && /cb\.y1 \+= Math\.max\(0, pose\.dy\);/.test(src));
   const tab = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
-  ok("the switch sits in Pop effects, opening its own sub-options", /toggle\("Typewriter", [^;]*"popTypewriter", \{ depth: 1, gate: true, when: pop \}\)/.test(tab));
+  ok("an effect of its own: a top-level switch, opening its own sub-options", tab.includes(`"typewriter", { gate: true, when: showTw }`));
+  ok("...on the rail with its own icon", tab.includes(`{ key: "typewriter", name: "Typewriter", icon: "keyboard",`));
 }
 
 // ---------------------------------------------------------------------------
@@ -573,7 +574,7 @@ section("Typewriter's sub-options (1.6.7)");
 
 {
   const mk = (over) => {
-    const e = makeEngine(Object.assign({ popEffects: true, popTypewriter: true }, over));
+    const e = makeEngine(Object.assign({ typewriter: true }, over));
     e.styleFor = (k) => e.settings[k];
     e.look = e.settings;
     e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
@@ -625,7 +626,7 @@ section("Typewriter's sub-options (1.6.7)");
   ok("...and gone after it", cr.typeReturns.length === 0);
   ok("a return on a line with nothing to sweep is not spawned", (() => { const q = mk({ typewriterReturn: true }); q.spawnCarriageReturn({ x: 41, top: 0, h: 24, rowLeft: 40 }, { x: 40, top: 24, h: 24 }); return q.typeReturns.length === 0; })());
   const tab2 = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
-  ok("the four switches sit under Typewriter", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 2, when: tw }`)));
+  ok("the four switches sit under Typewriter", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 1, when: tw }`)));
   const carets = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "carets.ts"), "utf8");
   ok("Enter fires the carriage return from where the old line ended", carets.includes("typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);"));
 }

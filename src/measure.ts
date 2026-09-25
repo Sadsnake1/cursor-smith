@@ -879,7 +879,7 @@ export const measureMethods = {
           }
           // Typewriter: the stroke starts now (typewriterPose), and the ink
           // stamp on the letter just typed, in its own cell.
-          if (this.look.popEffects && this.look.popTypewriter) {
+          if (this.look.typewriter) {
             this._typewriterT = performance.now();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
           }
@@ -1373,7 +1373,7 @@ export const measureMethods = {
   // advance carries it forward past its spot and back. At rest: 0, 0, 1.
   typewriterPose(this: CursorSmithPlugin, now: number): TypewriterPose {
     const rest = { dx: 0, dy: 0, sy: 1 };
-    if (!(this.look.popEffects && this.look.popTypewriter)) return rest;
+    if (!this.look.typewriter) return rest;
     const a = this.animActive;
     const dt = now - (this._typewriterT || 0);
     if (!a || !this._typewriterT || dt < 0) return rest;

@@ -117,7 +117,7 @@ export interface Look {
   caretWidthPx: number;
   caretHeightPct: number;
   popLettersRise: boolean;
-  popTypewriter: boolean;
+  typewriter: boolean;
   typewriterSpring: boolean;
   typewriterInk: boolean;
   typewriterReturn: boolean;

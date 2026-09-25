@@ -51,6 +51,7 @@ export const REDUCED_MOTION_OFF_KEYS = [
   "flameTrail",          // pixel trail, including the jump streak
   "stardustEnabled",     // ambient drift
   "hotHead",             // continuous fire
+  "typewriter",          // the caret dipping, the carriage's streak
   "speedDemonSparks",    // emission; the heat colour itself is not motion
   "crtGlitch",           // whole-cursor displacement bursts
   "energyEffect",        // wall-clock shimmer inside the cursor body

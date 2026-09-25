@@ -13,6 +13,7 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 // is registered by the plugin at load (CANDLE_ICON in plugin.ts).
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
+  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key as you type." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -1345,12 +1346,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // are the bigger, rarer events.
     effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
-    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, gate: true, when: pop }));
-    const tw = all(pop, on("popTypewriter"));
-    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 2, when: tw }));
-    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 2, when: tw }));
-    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 2, when: tw }));
-    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 2, when: tw }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],
@@ -1366,6 +1361,16 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // a Rainbow toggle is a switch that visibly does nothing.
     const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("thunderstrike") || !!get("fireworks"));
     effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
+
+    // Typewriter: an effect of its own since the day it was made (1.6.7) -
+    // the caret strikes like a key, with four ways to make more of it.
+    const showTw = shown("typewriter");
+    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "typewriter", { gate: true, when: showTw }));
+    const tw = all(showTw, on("typewriter"));
+    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 1, when: tw }));
+    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, when: tw }));
+    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, when: tw }));
+    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 1, when: tw }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));

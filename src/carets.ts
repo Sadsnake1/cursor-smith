@@ -721,7 +721,7 @@ export const caretsMethods = {
       if (this._enterPending && now - this._enterPending < 250) {
         this.spawnThunderbolt(caret);
         // Typewriter's carriage return: from where the old line ended.
-        if (this.look.popEffects && this.look.popTypewriter && this.look.typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);
+        if (this.look.typewriter && this.look.typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);
       }
       // Same 250ms window and the same choice of anchor: the shells climb out
       // of the caret you can see, which after a Space or an Enter is the

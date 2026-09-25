@@ -116,6 +116,7 @@ export interface Look {
   overlayBlinkDepth: number;
   caretWidthPx: number;
   caretHeightPct: number;
+  popLettersRise: boolean;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;
@@ -310,6 +311,8 @@ export interface TrailPoint { x: number; y: number; w: number; h: number; t: num
 export interface LetterParticle {
   char: string; x: number; y: number; vx: number; vy: number; rotation: number; alpha: number;
   fontSize: number; fontFamily: string; color: string; start: number;
+  // "Rise straight up": floats from the cursor's top, a line height (lh) up.
+  rise?: boolean; lh?: number;
 }
 // One pool for three effects - Pixel Trail puffs (`trail`), Speed Demon
 // sparks (`spark`, with their colour channels cached) and Thunderstrike

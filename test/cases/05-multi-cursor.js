@@ -573,6 +573,22 @@ section("multi-cursor: full effects on secondary carets");
     ok("an auto-paired bracket (two inserted, one moved) holds nothing", e.resolveHoldChar(at(5, text.length, "a")) === null);
     e.lastActive = rec(32, 20, 4);
     ok("a record with no document length (a plain field) holds nothing", e.resolveHoldChar(rec(40, 20, 5)) === null);
+    // An emoji is one character of two UTF-16 units or more; the unit
+    // before the caret was half of one and popped as a broken glyph (1.6.7).
+    {
+      const wave = "\u{1F44B}\u{1F3FD}", family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+      const etext = "hi " + wave + " and " + family + " ok";
+      const em = mk({ popEffects: true, popLetters: true });
+      em.app = cmOf(etext);
+      const got = [];
+      em.spawnLetterParticle = (ch) => got.push(ch);
+      const w0 = 3, w1 = w0 + wave.length;
+      em.lastActive = at(w0, etext.length - wave.length, " ");
+      ok("an emoji with a skin tone typed is held and popped whole", em.resolveHoldChar(at(w1, etext.length, " ")) === wave && got[0] === wave, got);
+      const f0 = etext.indexOf(family), f1 = f0 + family.length;
+      em.lastActive = at(f0, etext.length - family.length, " ");
+      ok("...a family sequence (joined by ZWJ) too", em.resolveHoldChar(at(f1, etext.length, " ")) === family && got[1] === family, got);
+    }
     // The commit paths. With no move delay the box moves at once and shows
     // the character under it - past the letter just typed, so never that
     // letter (1.6.0 to 1.6.3 kept it in the box while the caret rested: the

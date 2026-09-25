@@ -29,6 +29,9 @@ import {
   FIREWORK_TRAIL_LEN,
   FIREWORK_TWINKLE_AT,
   JUMP_TRAIL_MIN_DIST,
+  POP_RISE_ALPHA,
+  POP_RISE_LINES,
+  POP_RISE_MS,
   THUNDER_BANDS,
   THUNDER_LIFE_MS,
   THUNDER_MAX_ANGLE,
@@ -54,6 +57,23 @@ export const effectsPopsMethods = {
       color = hslToRgbString(this.nextRainbowHue(), 0.85, 0.6);
     }
 
+    // "Rise straight up": from the top of the cursor, where the letter was
+    // typed, straight up and fading - no throw, no spin, no fall.
+    if (this.styleFor("popLettersRise")) {
+      this.particles.push({
+        char, rise: true,
+        x: anchor.x + (anchor.actualCharWidth || anchor.w || 8) / 2,
+        y: anchor.top,
+        vx: 0, vy: 0, rotation: 0, alpha: POP_RISE_ALPHA,
+        lh: anchor.h || 20,
+        fontSize: anchor.fontSize,
+        fontFamily: anchor.fontFamily,
+        color,
+        start: performance.now(),
+      });
+      return;
+    }
+
     this.particles.push({
       char: char,
       x: anchor.x + (anchor.w || anchor.actualCharWidth) / 2,
@@ -75,6 +95,25 @@ export const effectsPopsMethods = {
     const now = performance.now();
     
     this.particles = this.particles.filter(p => {
+      if (p.rise) {
+        // Straight up from the cursor's top, easing out, fading as it goes.
+        const t = (now - p.start) / POP_RISE_MS;
+        if (t >= 1) return false;
+        const lh = p.lh || p.fontSize * 1.4;
+        const y = p.y - lh * POP_RISE_LINES * (1 - Math.pow(1 - t, 3));
+        const size = p.fontSize || 16;
+        p.alpha = POP_RISE_ALPHA * Math.pow(1 - t, 1.4);
+        this._markDirty(p.x - size * 1.2, y - size * 1.4, size * 2.4, size * 1.6);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.font = `${size * 0.95}px ${p.fontFamily}`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(p.char, p.x, y);
+        ctx.restore();
+        return true;
+      }
       const elapsed = (now - p.start) / 1000; 
       if (elapsed > 0.45) return false;       
       

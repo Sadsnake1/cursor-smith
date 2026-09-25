@@ -47,6 +47,9 @@ var GEOMETRY_TTL_MS = 400;
 var DEVICE_ENABLED_KEY = "cursor-smith-enabled-on-this-device";
 var INPUT_HOT_MS = 500;
 var SCROLL_LOCK_MS = 120;
+var POP_RISE_MS = 650;
+var POP_RISE_LINES = 0.9;
+var POP_RISE_ALPHA = 0.7;
 var CARET_THICKNESS_MAX = 7;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
@@ -209,6 +212,18 @@ function glitchNoise(a, b, c) {
   n = Math.imul(n ^ n >>> 13, 1274126177) >>> 0;
   return ((n ^ n >>> 16) >>> 0) / 4294967296;
 }
+function lastGrapheme(s) {
+  if (!s) return "";
+  const tail = s.slice(-32);
+  const Seg = Intl.Segmenter;
+  if (Seg) {
+    let lastSeg = "";
+    for (const part of new Seg(void 0, { granularity: "grapheme" }).segment(tail)) lastSeg = part.segment;
+    return lastSeg;
+  }
+  const cps = Array.from(tail);
+  return cps.length ? cps[cps.length - 1] : "";
+}
 function isTextCaretHost(el) {
   if (!el) return false;
   if (el.isContentEditable) return true;
@@ -354,6 +369,8 @@ var DEFAULT_SETTINGS = {
   // synthesised from the old shape.
   popEffects: true,
   popLetters: true,
+  popLettersRise: false,
+  // the letter floats straight up from the cursor's top and fades
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -821,7 +838,9 @@ var LOOK_KEYS = [
   "smearVolumeStrength",
   // The Line cursor's height (1.6.6, issue #33). Appended; the default is the
   // full line, so an older code imports as the caret it described.
-  "caretHeightPct"
+  "caretHeightPct",
+  // Popping letters rising straight up (1.6.7). Appended, off by default.
+  "popLettersRise"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -3332,6 +3351,12 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     const pop = all(showPop, on("popEffects"));
     effects.push(toggle("Popping letters", "Each letter you type springs out of the cursor and tumbles away.", "popLetters", { depth: 1, gate: true, when: pop }));
     effects.push(toggle(
+      "Rise straight up",
+      "The letter floats up from the top of the cursor and fades, like a phone keyboard.",
+      "popLettersRise",
+      { depth: 2, when: all(pop, on("popLetters")) }
+    ));
+    effects.push(toggle(
       "Backspace disintegration",
       "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate",
@@ -4246,7 +4271,7 @@ var measureMethods = {
       const view = this.app.workspace.activeEditor?.editor?.cm;
       const last = this.lastActive;
       if (view && last && typeof newCaret.pos === "number" && typeof last.pos === "number" && typeof newCaret.docLen === "number" && typeof last.docLen === "number" && newCaret.pos > last.pos && newCaret.docLen - last.docLen === newCaret.pos - last.pos) {
-        const justTyped = view.state.doc.sliceString(newCaret.pos - 1, newCaret.pos);
+        const justTyped = lastGrapheme(view.state.doc.sliceString(last.pos, newCaret.pos));
         if (justTyped && justTyped !== "\n") {
           if (this.look.popEffects && this.look.popLetters) {
             this.spawnLetterParticle(justTyped, last);
@@ -5299,6 +5324,24 @@ var effectsPopsMethods = {
     if (this.styleFor("popRainbow")) {
       color = hslToRgbString(this.nextRainbowHue(), 0.85, 0.6);
     }
+    if (this.styleFor("popLettersRise")) {
+      this.particles.push({
+        char,
+        rise: true,
+        x: anchor.x + (anchor.actualCharWidth || anchor.w || 8) / 2,
+        y: anchor.top,
+        vx: 0,
+        vy: 0,
+        rotation: 0,
+        alpha: POP_RISE_ALPHA,
+        lh: anchor.h || 20,
+        fontSize: anchor.fontSize,
+        fontFamily: anchor.fontFamily,
+        color,
+        start: performance.now()
+      });
+      return;
+    }
     this.particles.push({
       char,
       x: anchor.x + (anchor.w || anchor.actualCharWidth) / 2,
@@ -5318,6 +5361,24 @@ var effectsPopsMethods = {
     if (!ctx) return;
     const now = performance.now();
     this.particles = this.particles.filter((p) => {
+      if (p.rise) {
+        const t2 = (now - p.start) / POP_RISE_MS;
+        if (t2 >= 1) return false;
+        const lh = p.lh || p.fontSize * 1.4;
+        const y = p.y - lh * POP_RISE_LINES * (1 - Math.pow(1 - t2, 3));
+        const size = p.fontSize || 16;
+        p.alpha = POP_RISE_ALPHA * Math.pow(1 - t2, 1.4);
+        this._markDirty(p.x - size * 1.2, y - size * 1.4, size * 2.4, size * 1.6);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.font = `${size * 0.95}px ${p.fontFamily}`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(p.char, p.x, y);
+        ctx.restore();
+        return true;
+      }
       const elapsed = (now - p.start) / 1e3;
       if (elapsed > 0.45) return false;
       const t = elapsed / 0.45;

@@ -488,3 +488,40 @@ section("fireworks: holding Space degrades instead of dying");
        e.fireworks.length >= n && live(e) <= T.FIREWORK_SPARK_BUDGET);
   }
 }
+
+// ---------------------------------------------------------------------------
+section("Popping letters: rise straight up (1.6.7)");
+
+// The letter just typed floats up from the top of the cursor and fades, like
+// a phone keyboard's key preview: no throw, no spin, no fall.
+{
+  const e = makeEngine({ popEffects: true, popLetters: true, popLettersRise: true });
+  e.styleFor = (k) => e.settings[k];
+  e.look = e.settings;
+  e.particles = [];
+  const draws = [];
+  e.ctx = { save() {}, restore() {}, translate() { draws.push({ moved: true }); }, rotate() {}, globalAlpha: 1, fillStyle: "", font: "", textAlign: "", textBaseline: "",
+    fillText(ch, x, y) { draws.push({ ch, x, y, a: this.globalAlpha, font: this.font }); } };
+  const anchor = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8, fontSize: 16, fontFamily: "serif", textColor: "#fff" };
+  e.spawnLetterParticle("\u{1F44B}", anchor);
+  const p = e.particles[0];
+  ok("spawned on the cursor's top edge, over the letter's cell, with no throw or spin", p && p.rise && p.x === 104 && p.y === 200 && p.vx === 0 && p.vy === 0 && p.rotation === 0, p);
+  const t0 = p.start;
+  const at = (ms) => { p.start = performance.now() - ms; draws.length = 0; e.drawLettersParticles(); return draws.find((d) => d.ch) || null; };
+  const a = at(0), b = at(200), c = at(500);
+  ok("it rises straight up: the same x, a smaller y each time", a && b && c && a.x === 104 && b.x === 104 && c.x === 104 && a.y > b.y && b.y > c.y, [a, b, c].map((d) => d && [d.x, +d.y.toFixed(1)]));
+  ok("...no more than a line height up", c.y >= 200 - 24 - 1e-9, c.y);
+  ok("...fading from a subtle start to nothing", a.a <= 0.7 + 1e-9 && b.a < a.a && c.a < b.a && c.a < 0.1, [a.a, b.a, c.a].map((v) => +v.toFixed(2)));
+  ok("...not bold, and never turned (no translate or rotate)", !/bold/.test(a.font) && !draws.some((d) => d.moved), a.font);
+  p.start = t0 - 5000;
+  e.drawLettersParticles();
+  ok("...and gone once it has faded", e.particles.length === 0);
+  // Off: the old tumble, unchanged.
+  const t = makeEngine({ popEffects: true, popLetters: true, popLettersRise: false });
+  t.styleFor = (k) => t.settings[k];
+  t.particles = [];
+  t.spawnLetterParticle("a", anchor);
+  ok("with it off the letter still tumbles (a throw and a spin)", t.particles[0] && !t.particles[0].rise && t.particles[0].vy < 0 && t.particles[0].rotation !== undefined);
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  ok("the switch sits under Popping letters", /toggle\("Rise straight up", [^;]*"popLettersRise", \{ depth: 2, when: all\(pop, on\("popLetters"\)\) \}\)/.test(src));
+}

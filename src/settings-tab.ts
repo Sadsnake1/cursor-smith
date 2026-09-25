@@ -1338,6 +1338,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Pop effects", "Letters, lightning and fireworks thrown off as you type.", "popEffects", { gate: true, when: showPop }));
     const pop = all(showPop, on("popEffects"));
     effects.push(toggle("Popping letters", "Each letter you type springs out of the cursor and tumbles away.", "popLetters", { depth: 1, gate: true, when: pop }));
+    effects.push(toggle("Rise straight up", "The letter floats up from the top of the cursor and fades, like a phone keyboard.",
+      "popLettersRise", { depth: 2, when: all(pop, on("popLetters")) }));
     // Sits next to Popping letters on purpose: they're the pair that fires
     // per character, one for adding and one for removing. The two below
     // are the bigger, rarer events.

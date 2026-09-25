@@ -111,6 +111,7 @@ export const DEFAULT_SETTINGS = {
   // synthesised from the old shape.
   popEffects: true,
   popLetters: true,        
+  popLettersRise: false,  // the letter floats straight up from the cursor's top and fades
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -472,6 +473,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   // The Line cursor's height (1.6.6, issue #33). Appended; the default is the
   // full line, so an older code imports as the caret it described.
   "caretHeightPct",
+  // Popping letters rising straight up (1.6.7). Appended, off by default.
+  "popLettersRise",
 ];
 
 // ---------------------------------------------------------------------------

@@ -146,8 +146,12 @@ section("motion smear: max length and conserved volume (after smear-cursor.nvim)
   }
 
   // --- Share codes: appended, so nothing else moved ----------------------
-  ok("the three smear keys were appended, and only the Line cursor's height (1.6.6) came after them",
-     T.LOOK_KEYS.slice(-4).join() === "smearMaxLength,smearConserveVolume,smearVolumeStrength,caretHeightPct", T.LOOK_KEYS.slice(-4));
+  // Pinned by position, not as the tail: later keys append after them.
+  {
+    const i = T.LOOK_KEYS.indexOf("smearMaxLength");
+    ok("the three smear keys were appended together, and what came later follows them (the Line cursor's height first)",
+       T.LOOK_KEYS.slice(i, i + 4).join() === "smearMaxLength,smearConserveVolume,smearVolumeStrength,caretHeightPct", T.LOOK_KEYS.slice(i, i + 4));
+  }
   {
     const code = T.presetToCode("Capped", { smearMaxLength: 240, smearConserveVolume: true, smearVolumeStrength: 0.5 });
     const back = T.codeToPreset(code);

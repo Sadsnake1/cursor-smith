@@ -87,6 +87,23 @@ export function glitchNoise(a: number, b: number, c: number): number {
 // radio, range, color, button, etc. don't have a caret and must be excluded
 // so clicking an Obsidian settings toggle (which is <input type="checkbox">)
 // doesn't cause the plugin to draw a cursor on top of it.
+// The last character of `s` as a reader sees it - a grapheme cluster, so an
+// emoji (two UTF-16 units, or a whole ZWJ sequence, a flag, a skin tone) is
+// one character and not half of one. Only the tail is segmented, so a long
+// paste costs nothing; no cluster runs anywhere near 32 units.
+export function lastGrapheme(s: string): string {
+  if (!s) return "";
+  const tail = s.slice(-32);
+  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: string }) => { segment(t: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (Seg) {
+    let lastSeg = "";
+    for (const part of new Seg(undefined, { granularity: "grapheme" }).segment(tail)) lastSeg = part.segment;
+    return lastSeg;
+  }
+  const cps = Array.from(tail);
+  return cps.length ? cps[cps.length - 1] : "";
+}
+
 export function isTextCaretHost(el: Element | null): el is HTMLElement {
   if (!el) return false;
   if ((el as HTMLElement).isContentEditable) return true;

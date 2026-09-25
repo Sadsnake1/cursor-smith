@@ -10,7 +10,7 @@
 
 import { View } from "obsidian";
 import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX } from "./constants";
-import { isTextCaretHost } from "./motion";
+import { isTextCaretHost, lastGrapheme } from "./motion";
 import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache } from "./types";
 import type CursorSmithPlugin from "./plugin";
@@ -867,7 +867,10 @@ export const measureMethods = {
         newCaret.pos > last.pos &&
         newCaret.docLen - last.docLen === newCaret.pos - last.pos
       ) {
-        const justTyped = view.state.doc.sliceString(newCaret.pos - 1, newCaret.pos);
+        // The last CHARACTER inserted, not the last code unit: an emoji is
+        // two units or more, and the single unit before the caret was half
+        // of one - it popped as a broken glyph (1.6.7).
+        const justTyped = lastGrapheme(view.state.doc.sliceString(last.pos, newCaret.pos));
         if (justTyped && justTyped !== "\n") {
           // Both gates, in the same shape Thunderstrike and Fireworks use:
           // the group's master toggle, then the effect's own.

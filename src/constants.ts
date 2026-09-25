@@ -244,6 +244,12 @@ export const INPUT_HOT_MS = 500;
 // and lets go promptly after the last one; measured on a touch drag, the
 // drawn caret went from a full step behind to a part of one.
 export const SCROLL_LOCK_MS = 120;
+// Popping letters, "Rise straight up": the letter just typed floats up from
+// the top of the cursor and fades, like a phone keyboard's key preview -
+// subtle: this long, this many line heights up, from this opacity down.
+export const POP_RISE_MS = 650;
+export const POP_RISE_LINES = 0.9;
+export const POP_RISE_ALPHA = 0.7;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.

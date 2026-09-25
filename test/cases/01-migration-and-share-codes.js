@@ -504,3 +504,17 @@ section("the Line cursor: height and fine thickness (issues #32, #33)");
   ok("an Underline at 1.75 px is 1.75 (it was rounded to whole pixels), at 12 it is 7, at 0 automatic", mk({ cursorStyle: "Underline", underlineWidthPx: 1.75 }).underlineThickness(24) === 1.75 && mk({ cursorStyle: "Underline", underlineWidthPx: 12 }).underlineThickness(24) === 7 && mk({ cursorStyle: "Underline", underlineWidthPx: 0 }).underlineThickness(24) === 4);
   ok("...and the height slider sits under it, for the Line style", /slider\("Cursor height", [^;]*"caretHeightPct", \[20, 100, 5\], \{ depth: 1, fallback: 100, when: line \}\)/.test(src));
 }
+
+// ---------------------------------------------------------------------------
+section("the Typer preset (1.6.7)");
+
+// Shipped from the user's own share code, and it has to stay that look:
+// filled out with the defaults, it encodes back to exactly the code.
+{
+  const code = "1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~127b1~128b1~129b1";
+  const typer = T.DEFAULT_PRESETS.Typer;
+  ok("Typer ships with the built-in presets, last", !!typer && Object.keys(T.DEFAULT_PRESETS).pop() === "Typer", Object.keys(T.DEFAULT_PRESETS));
+  const full = Object.assign({}, T.pickLook(T.DEFAULT_SETTINGS), typer);
+  ok("...and encodes back to exactly the user's share code", T.presetToCode("Typer", full) === code, T.presetToCode("Typer", full));
+  ok("...a Line with Typewriter and all four of its parts on", typer.cursorStyle === "Line" && typer.typewriter && typer.typewriterSpring && typer.typewriterInk && typer.typewriterReturn && typer.typewriterAdvance);
+}

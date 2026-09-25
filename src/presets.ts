@@ -257,6 +257,27 @@ export const DEFAULT_PRESETS = {
     "smearTrailingStiffness": 0.15, "smearDamping": 0.4,
     "smoothEnabled": false, "smoothStopBlinking": true, "smoothness": 0.15,
     "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
+  },
+  // Typer (1.6.7): the user's own look, from their share code - a Line in
+  // a gray gradient with Typewriter and all four of its parts on (its
+  // sliders at their defaults). Encodes back to exactly that code; a test
+  // holds it:
+  // 1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~127b1~128b1~129b1
+  "Typer": {
+    "cursorStyle": "Line", "colorDark": "#31edae", "colorLight": "#147133",
+    "gradientEnabled": true, "gradientDark1": "#ededed",
+    "gradientDark2": "#c2c2c2", "gradientLight1": "#949494",
+    "gradientLight2": "#000000", "overlayDarkness": 0.7,
+    "overlayIntensity": 0.1, "overlayFlicker": false, "caretWidthPx": 2.7,
+    "popLetters": false, "flameTrail": false, "thunderstrikeSize": 4,
+    "energySpeed": 1.4, "blinkSpeed": 0.8, "blinkOnOffBalance": 0.55,
+    "blinkDelayMs": 550, "blinkFade": 0.35, "smear": false,
+    "smearStiffness": 0.65, "smearTrailingStiffness": 0.15,
+    "smearDamping": 0.4, "smoothEnabled": true, "catchUpSpeed": 0.6,
+    "maxCatchUpSpeed": 0.9, "popEffects": false, "blinkStopAfter": 3,
+    "popLettersRise": true, "typewriter": true, "typewriterSpring": true,
+    "typewriterInk": true, "typewriterReturn": true,
+    "typewriterAdvance": true
   }
 };
 

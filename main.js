@@ -9354,17 +9354,29 @@ function wrapperClipForStatusBar(wrapper, bar) {
 // src/engine.ts
 var engineMethods = {
   // The element the canvas wrapper hangs from: the focused editor's
-  // scroller on a phone (is-mobile on the body), where the wrapper rides
-  // with the scrolled content; the app container, fixed, everywhere else -
-  // and on a phone too while focus is not in the editor (a search field, a
-  // prompt: those carets are clipped to their own boxes by the fixed
-  // wrapper) or the scroller belongs to another document.
+  // scroller, where the wrapper rides with the scrolled content - the
+  // compositor carries it with the text between ticks; the app container,
+  // fixed, while focus is not in the editor (a search field, a prompt: those
+  // carets are clipped to their own boxes by the fixed wrapper), the scroller
+  // belongs to another document, or it sits in a Canvas card (scaled by a
+  // transform the placement does not know).
+  //
+  // On a phone since 1.6.2; on the desktop since 1.6.5, while no torch can
+  // be on. A fixed caret trailed every wheel tick by one frame - a whole
+  // scroll step, 55 px, then back: "the cursor jitters around when
+  // scrolling" (a Reddit user, who blamed Smooth movement; it did the same
+  // with it off). The torch keeps the fixed wrapper: inside the scroller the
+  // caret would sit under its darkness and its glow, which is what the
+  // phone accepts and the desktop's layering (z 10010-10012) was built
+  // against. Word-Smith's bands and bar need no clip in the scroller: they
+  // sit above its stacking context.
   _wrapperHome(doc, view) {
     const app = doc.querySelector(".app-container") || doc.body;
-    if (!doc.body.classList.contains("is-mobile")) return app;
     if (!view || !view.hasFocus) return app;
+    if (!doc.body.classList.contains("is-mobile") && this.torchPossible()) return app;
     const sc = view.scrollDOM;
-    return sc && sc.isConnected && sc.ownerDocument === doc ? sc : app;
+    if (!sc || !sc.isConnected || sc.ownerDocument !== doc) return app;
+    return sc.closest(".canvas-node") ? app : sc;
   },
   ensureCanvasForView(view) {
     const targetDoc = this._focusedForeignDoc(view) || view && view.dom.ownerDocument || this.canvasWrapper && this.canvasWrapper.ownerDocument || typeof activeDocument !== "undefined" && activeDocument || document;

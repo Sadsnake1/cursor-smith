@@ -335,22 +335,35 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("the key names the plugin", T.DEVICE_ENABLED_KEY === "cursor-smith-enabled-on-this-device");
   }
 
-  // --- the wrapper's home on a phone ---------------------------------------------
+  // --- the wrapper's home ----------------------------------------------------------
   // Inside the focused editor's scroller (a layer of the scrolled content,
-  // carried by the compositor between ticks); the app container everywhere
-  // else, and on a phone too while focus is elsewhere or the scroller is
-  // another document's.
+  // carried by the compositor between ticks) - on a phone since 1.6.2, on the
+  // desktop since 1.6.5 while no torch can be on; the app container while
+  // focus is elsewhere, the scroller is another document's or in a Canvas
+  // card, and on the desktop with a torch.
   {
     const e = mk();
     const docOf = (mobile, app) => ({ body: { classList: { contains: (c) => c === "is-mobile" && mobile } }, querySelector: (sel) => (sel === ".app-container" ? app : null) });
     const app = { name: "app" };
     const deskDoc = docOf(false, app), phoneDoc = docOf(true, app);
-    const sc = { isConnected: true, ownerDocument: phoneDoc };
+    const scOf = (doc, card = false) => ({ isConnected: true, ownerDocument: doc, closest: (sel) => (card && sel === ".canvas-node" ? {} : null) });
+    const sc = scOf(phoneDoc);
     const view = { hasFocus: true, scrollDOM: sc };
-    ok("desktop: the app container, editor focused or not", e._wrapperHome(deskDoc, view) === app && e._wrapperHome(deskDoc, null) === app);
     ok("a phone with the editor focused: its scroller", e._wrapperHome(phoneDoc, view) === sc);
     ok("...focus elsewhere: the app container", e._wrapperHome(phoneDoc, { hasFocus: false, scrollDOM: sc }) === app && e._wrapperHome(phoneDoc, null) === app);
-    ok("...a scroller of another document, or a detached one: the app container", e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: { isConnected: true, ownerDocument: deskDoc } }) === app && e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: { isConnected: false, ownerDocument: phoneDoc } }) === app);
+    ok("...a scroller of another document, or a detached one: the app container", e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: scOf(deskDoc) }) === app && e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: Object.assign(scOf(phoneDoc), { isConnected: false }) }) === app);
+    // The desktop (1.6.5): a wheel tick left the fixed caret a scroll step
+    // behind for a frame - "the cursor jitters around when scrolling".
+    const dsc = scOf(deskDoc);
+    ok("desktop with the editor focused and no torch: its scroller too", e._wrapperHome(deskDoc, { hasFocus: true, scrollDOM: dsc }) === dsc);
+    ok("...focus elsewhere: the app container", e._wrapperHome(deskDoc, { hasFocus: false, scrollDOM: dsc }) === app && e._wrapperHome(deskDoc, null) === app);
+    const torch = mk({ torchEffect: true });
+    ok("...but with the torch on, the app container (its layers are built around the fixed wrapper)", torch._wrapperHome(deskDoc, { hasFocus: true, scrollDOM: dsc }) === app);
+    const vimTorch = mk({ vimModeEnabled: true });
+    vimTorch.settings.vimModes = Object.assign({}, vimTorch.settings.vimModes, { insert: Object.assign({}, (vimTorch.settings.vimModes || {}).insert, { torchEffect: true }) });
+    ok("...and with a Vim mode that lights one, too", vimTorch._wrapperHome(deskDoc, { hasFocus: true, scrollDOM: dsc }) === app);
+    ok("...a phone keeps its scroller with a torch, as since 1.6.2", torch._wrapperHome(phoneDoc, view) === sc);
+    ok("an editor in a Canvas card (scaled by a transform): the app container, desktop and phone", e._wrapperHome(deskDoc, { hasFocus: true, scrollDOM: scOf(deskDoc, true) }) === app && e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: scOf(phoneDoc, true) }) === app);
     ok("...and no app container: the body", e._wrapperHome({ body: { classList: { contains: () => false } }, querySelector: () => null }, null).classList !== undefined);
     const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
     ok("the tick re-places the canvas on every tick the scrolled wrapper's client position moved", /if \(!this\._wrapperPos \|\| this\._wrapperPos\.left !== left \|\| this\._wrapperPos\.top !== top\) \{\s*this\._wrapperPos = \{ left, top \};\s*this\._canvasPlaced = false;/.test(src));

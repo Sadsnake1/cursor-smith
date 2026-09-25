@@ -42,17 +42,29 @@ import type CursorSmithPlugin from "./plugin";
 
 export const engineMethods = {
   // The element the canvas wrapper hangs from: the focused editor's
-  // scroller on a phone (is-mobile on the body), where the wrapper rides
-  // with the scrolled content; the app container, fixed, everywhere else -
-  // and on a phone too while focus is not in the editor (a search field, a
-  // prompt: those carets are clipped to their own boxes by the fixed
-  // wrapper) or the scroller belongs to another document.
+  // scroller, where the wrapper rides with the scrolled content - the
+  // compositor carries it with the text between ticks; the app container,
+  // fixed, while focus is not in the editor (a search field, a prompt: those
+  // carets are clipped to their own boxes by the fixed wrapper), the scroller
+  // belongs to another document, or it sits in a Canvas card (scaled by a
+  // transform the placement does not know).
+  //
+  // On a phone since 1.6.2; on the desktop since 1.6.5, while no torch can
+  // be on. A fixed caret trailed every wheel tick by one frame - a whole
+  // scroll step, 55 px, then back: "the cursor jitters around when
+  // scrolling" (a Reddit user, who blamed Smooth movement; it did the same
+  // with it off). The torch keeps the fixed wrapper: inside the scroller the
+  // caret would sit under its darkness and its glow, which is what the
+  // phone accepts and the desktop's layering (z 10010-10012) was built
+  // against. Word-Smith's bands and bar need no clip in the scroller: they
+  // sit above its stacking context.
   _wrapperHome(this: CursorSmithPlugin, doc: Document, view: EditorView | null | undefined): HTMLElement {
     const app = doc.querySelector<HTMLElement>(".app-container") || doc.body;
-    if (!doc.body.classList.contains("is-mobile")) return app;
     if (!view || !view.hasFocus) return app;
+    if (!doc.body.classList.contains("is-mobile") && this.torchPossible()) return app;
     const sc = view.scrollDOM;
-    return sc && sc.isConnected && sc.ownerDocument === doc ? sc : app;
+    if (!sc || !sc.isConnected || sc.ownerDocument !== doc) return app;
+    return sc.closest(".canvas-node") ? app : sc;
   },
 
   ensureCanvasForView(this: CursorSmithPlugin, view: EditorView | null | undefined) {
@@ -121,17 +133,17 @@ export const engineMethods = {
       this._wrapperPos = null;
       this._dirtyRaw = null;
     }
-    // Where the wrapper lives. On a phone, inside the focused editor's
-    // scroller as a layer of the scrolled content (_wrapperHome): the
-    // compositor scrolls the note a frame or more ahead of the page there,
-    // and a fixed overlay placed by the page trails every fling by that
-    // much - "it still floats up and down on the phone" after the scroll
-    // lock (§1.26). Inside the scroller the canvas is carried with the
-    // text between ticks, like CodeMirror's own cursor layer beside it; a
-    // tick only re-places the element (the tick's scrolled branch).
-    // Elsewhere, and on desktop, the fixed wrapper in .app-container as
-    // always: the torch's layers and Word-Smith's covers are built around
-    // it, and a fixed caret over a wheel scroll trails by a frame at most.
+    // Where the wrapper lives. Inside the focused editor's scroller as a
+    // layer of the scrolled content (_wrapperHome): the compositor scrolls
+    // the note a frame or more ahead of the page, and a fixed overlay placed
+    // by the page trails every fling by that much - "it still floats up and
+    // down on the phone" after the scroll lock (§1.26), a whole wheel step
+    // for a frame on the desktop (§1.29). Inside the scroller the canvas is
+    // carried with the text between ticks, like CodeMirror's own cursor
+    // layer beside it; a tick only re-places the element (the tick's
+    // scrolled branch). Elsewhere, and on the desktop while a torch can be
+    // on, the fixed wrapper in .app-container: the torch's layers and
+    // Word-Smith's covers are built around it.
     const home = this._wrapperHome(targetDoc, view);
     if (this.canvasWrapper.parentElement !== home) {
       home.appendChild(this.canvasWrapper);
@@ -338,7 +350,7 @@ export const engineMethods = {
           this.canvasWrapper.classList.contains("cursor-smith-wrapper-scrolled") &&
           this.canvasWrapper.parentElement === view.scrollDOM;
         if (this.canvasWrapper && this.canvas && scrolledWrapper && view) {
-          // Inside the scroller (a phone; _wrapperHome): the wrapper is the
+          // Inside the scroller (_wrapperHome): the wrapper is the
           // content box at the content's origin, so its client position -
           // _wrapperPos, what the canvas is placed against - moves with every
           // scroll, and the canvas is re-placed on every tick that saw it

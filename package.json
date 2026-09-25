@@ -1,6 +1,6 @@
 {
   "name": "cursor-smith",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "Forge your cursor with the most advanced cursor engine there is.",
   "private": true,
   "main": "main.js",

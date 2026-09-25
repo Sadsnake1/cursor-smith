@@ -221,7 +221,7 @@ section("the plugin review's rules (static styles, settings headings)");
   ok("the manifest asks for the Obsidian this needs",
      JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "manifest.json"), "utf8")).minAppVersion === "1.13.7");
   ok("...and versions.json says so for this release",
-     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "versions.json"), "utf8"))["1.6.4"] === "1.13.7");
+     JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "versions.json"), "utf8"))["1.6.5"] === "1.13.7");
 }
 
 // ---------------------------------------------------------------------------

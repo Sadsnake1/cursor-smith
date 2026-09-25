@@ -111,6 +111,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _paneRectFrom: MeasureMethods["_paneRectFrom"];
   declare getActiveRect: MeasureMethods["getActiveRect"];
   declare lineSpan: MeasureMethods["lineSpan"];
+  declare caretThickness: MeasureMethods["caretThickness"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts

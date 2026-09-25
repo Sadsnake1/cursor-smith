@@ -9,7 +9,7 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS } from "./constants";
+import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX } from "./constants";
 import { isTextCaretHost } from "./motion";
 import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache } from "./types";
@@ -266,7 +266,7 @@ export const measureMethods = {
 
       let finalWidth = charWidth;
       if (this.styleFor("cursorStyle") === "Line") {
-        finalWidth = this.styleFor("caretWidthPx");
+        finalWidth = this.caretThickness();
       }
 
       // Height: match the browser's native selection highlight box by
@@ -439,7 +439,7 @@ export const measureMethods = {
     if (lh && lh.endsWith("px")) h = parseFloat(lh);
     else if (lh && !isNaN(parseFloat(lh)) && lh !== "normal") h = st.fontSize * parseFloat(lh);
     const centerY = (c.top + c.bottom) / 2;
-    const w = this.styleFor("cursorStyle") === "Line" ? this.styleFor("caretWidthPx") : st.charWidth;
+    const w = this.styleFor("cursorStyle") === "Line" ? this.caretThickness() : st.charWidth;
     return {
       x: c.x, top: centerY - h / 2, bottom: centerY + h / 2, h, w,
       actualCharWidth: st.charWidth,
@@ -725,7 +725,7 @@ export const measureMethods = {
 
       let finalWidth = charWidth;
       if (this.styleFor("cursorStyle") === "Line") {
-        finalWidth = this.styleFor("caretWidthPx");
+        finalWidth = this.caretThickness();
       }
 
       return {
@@ -1354,6 +1354,14 @@ export const measureMethods = {
     return active.w;
   },
 
+  // The Line cursor's thickness, in px: the setting, in 0.1 px steps since
+  // 1.6.6 (issue #32), held between 0.5 and CARET_THICKNESS_MAX - a value
+  // saved before the cap came down from 12 draws at the cap.
+  caretThickness(this: CursorSmithPlugin): number {
+    const v = Number(this.styleFor("caretWidthPx"));
+    return Number.isFinite(v) && v > 0 ? Math.max(0.5, Math.min(CARET_THICKNESS_MAX, v)) : 2;
+  },
+
   // Thickness of the Underline cursor's bar, in px.
   //
   // 0 (the default) means "auto": 15% of the line height, which is exactly
@@ -1361,11 +1369,13 @@ export const measureMethods = {
   // any Vim mode that never overrode the key, keeps the look it already had.
   // Anything else is a literal pixel thickness, clamped to the line height so
   // a large value on a small font degrades to a filled block rather than
-  // painting outside the line.
+  // painting outside the line. Fractional since 1.6.6, like the Line's (the
+  // slider steps by 0.1 px; it was rounded to whole pixels here), and never
+  // above CARET_THICKNESS_MAX.
   underlineThickness(this: CursorSmithPlugin, lineHeight: number): number {
     const h = Math.max(1, Math.round(lineHeight || 0));
     const px = this.look.underlineWidthPx || 0;
-    if (px > 0) return Math.max(1, Math.min(Math.round(px), h));
+    if (px > 0) return Math.max(0.5, Math.min(px, CARET_THICKNESS_MAX, h));
     return Math.max(2, Math.round(h * 0.15));
   },
 };

@@ -1226,13 +1226,14 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // card reads as "Cursor style, then the options for the style you
     // picked".
     const line = isStyle("Line"), underline = isStyle("Underline"), box = isStyle("Box");
-    // Steps of 0.05 px since 1.6.6: "at 1 pixel the cursor is too narrow, at
+    // Steps of 0.1 px since 1.6.6 (0.05 was too fine): "at 1 pixel the cursor is too narrow, at
     // 2 wider than I'd like; I'd like to try 1.25, 1.50 and 1.75" (issue #32).
-    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [0.5, 12, 0.05], { depth: 1, when: line }));
+    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [0.5, 7, 0.1], { depth: 1, when: line }));
     appearance.push(slider("Cursor height", "How tall the Line cursor is, as a percentage of the line.", "caretHeightPct", [20, 100, 5], { depth: 1, fallback: 100, when: line }));
     appearance.push(toggle("Serifs", "Adds I-beam serifs at the top and bottom of the line.", "lineSerifs", { depth: 1, when: line }));
+    // The same 0.1 px steps and 7 px ceiling as the Line's (1.6.6).
     appearance.push(slider("Underline thickness", "Underline thickness in pixels. 0 fits the line height.",
-      "underlineWidthPx", [0, 12, 1], { depth: 1, fallback: 0, when: underline }));
+      "underlineWidthPx", [0, 7, 0.1], { depth: 1, fallback: 0, when: underline }));
     appearance.push(toggle("Show letter inside cursor", "Shows the letter inside the block, colors flipped.",
       "showChar", { depth: 1, gate: true, when: box }));
     appearance.push(dropdown("Letter color",

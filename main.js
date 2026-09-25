@@ -47,6 +47,7 @@ var GEOMETRY_TTL_MS = 400;
 var DEVICE_ENABLED_KEY = "cursor-smith-enabled-on-this-device";
 var INPUT_HOT_MS = 500;
 var SCROLL_LOCK_MS = 120;
+var CARET_THICKNESS_MAX = 7;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
 var WATCHDOG_INTERVAL_MS = 2e3;
@@ -3191,14 +3192,14 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       (s) => renderCursorStyleSetting(s, afterWrite("cursorStyle"))
     ));
     const line = isStyle("Line"), underline = isStyle("Underline"), box = isStyle("Box");
-    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [0.5, 12, 0.05], { depth: 1, when: line }));
+    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [0.5, 7, 0.1], { depth: 1, when: line }));
     appearance.push(slider("Cursor height", "How tall the Line cursor is, as a percentage of the line.", "caretHeightPct", [20, 100, 5], { depth: 1, fallback: 100, when: line }));
     appearance.push(toggle("Serifs", "Adds I-beam serifs at the top and bottom of the line.", "lineSerifs", { depth: 1, when: line }));
     appearance.push(slider(
       "Underline thickness",
       "Underline thickness in pixels. 0 fits the line height.",
       "underlineWidthPx",
-      [0, 12, 1],
+      [0, 7, 0.1],
       { depth: 1, fallback: 0, when: underline }
     ));
     appearance.push(toggle(
@@ -3792,7 +3793,7 @@ var measureMethods = {
       } = sc;
       let finalWidth = charWidth;
       if (this.styleFor("cursorStyle") === "Line") {
-        finalWidth = this.styleFor("caretWidthPx");
+        finalWidth = this.caretThickness();
       }
       let h = Math.max(4, c.bottom - c.top);
       const rawLineHeight = lineHeightStr;
@@ -3943,7 +3944,7 @@ var measureMethods = {
     if (lh && lh.endsWith("px")) h = parseFloat(lh);
     else if (lh && !isNaN(parseFloat(lh)) && lh !== "normal") h = st.fontSize * parseFloat(lh);
     const centerY = (c.top + c.bottom) / 2;
-    const w = this.styleFor("cursorStyle") === "Line" ? this.styleFor("caretWidthPx") : st.charWidth;
+    const w = this.styleFor("cursorStyle") === "Line" ? this.caretThickness() : st.charWidth;
     return {
       x: c.x,
       top: centerY - h / 2,
@@ -4120,7 +4121,7 @@ var measureMethods = {
       const height = Math.max(4, c.bottom - c.top || fontSize * 1.2);
       let finalWidth = charWidth;
       if (this.styleFor("cursorStyle") === "Line") {
-        finalWidth = this.styleFor("caretWidthPx");
+        finalWidth = this.caretThickness();
       }
       return {
         x: c.left,
@@ -4592,6 +4593,13 @@ var measureMethods = {
   renderWidth(active) {
     return active.w;
   },
+  // The Line cursor's thickness, in px: the setting, in 0.1 px steps since
+  // 1.6.6 (issue #32), held between 0.5 and CARET_THICKNESS_MAX - a value
+  // saved before the cap came down from 12 draws at the cap.
+  caretThickness() {
+    const v = Number(this.styleFor("caretWidthPx"));
+    return Number.isFinite(v) && v > 0 ? Math.max(0.5, Math.min(CARET_THICKNESS_MAX, v)) : 2;
+  },
   // Thickness of the Underline cursor's bar, in px.
   //
   // 0 (the default) means "auto": 15% of the line height, which is exactly
@@ -4599,11 +4607,13 @@ var measureMethods = {
   // any Vim mode that never overrode the key, keeps the look it already had.
   // Anything else is a literal pixel thickness, clamped to the line height so
   // a large value on a small font degrades to a filled block rather than
-  // painting outside the line.
+  // painting outside the line. Fractional since 1.6.6, like the Line's (the
+  // slider steps by 0.1 px; it was rounded to whole pixels here), and never
+  // above CARET_THICKNESS_MAX.
   underlineThickness(lineHeight) {
     const h = Math.max(1, Math.round(lineHeight || 0));
     const px = this.look.underlineWidthPx || 0;
-    if (px > 0) return Math.max(1, Math.min(Math.round(px), h));
+    if (px > 0) return Math.max(0.5, Math.min(px, CARET_THICKNESS_MAX, h));
     return Math.max(2, Math.round(h * 0.15));
   }
 };

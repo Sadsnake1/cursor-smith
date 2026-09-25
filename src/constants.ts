@@ -244,6 +244,10 @@ export const INPUT_HOT_MS = 500;
 // and lets go promptly after the last one; measured on a touch drag, the
 // drawn caret went from a full step behind to a part of one.
 export const SCROLL_LOCK_MS = 120;
+// The thickest a Line or an Underline cursor may be, in px (1.6.6: the
+// sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
+// values above it draw at it.
+export const CARET_THICKNESS_MAX = 7;
 
 // How long the caret's computed style (font, colour, line height, the glyph
 // width, the row's extent) is trusted, in ms. The cache is keyed on a style

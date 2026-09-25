@@ -25,6 +25,15 @@ const RAIL_EFFECTS: RailEffect[] = [
   { key: "torchEffect", name: "Torch spotlight", icon: "cursor-smith-candle", desc: "Darkens everything except a pool of light around the cursor." },
 ];
 
+// Obsidian's private hotkey and settings APIs (1.13.7), typed for the one
+// card that uses them (hotkeysRow). A build without them draws the names
+// alone and lands on the Hotkeys tab unsearched.
+interface HotkeysApp {
+  commands?: { commands?: Record<string, { name?: string } | undefined> };
+  hotkeyManager?: { printHotkeyForCommand?(id: string): string };
+  setting?: { open?(): void; openTabById?(id: string): { setQuery?(q: string): void } | undefined };
+}
+
 // A small prompt: a title, one text field, OK. What Save and Import on the
 // preset strip open. `submit` answers true to close, false to keep the
 // prompt (nothing to do), or a string to show under the field and keep it.
@@ -370,7 +379,75 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     setting.settingEl.removeClass(
       "cursor-smith-sub", "cursor-smith-sub-1", "cursor-smith-sub-2", "cursor-smith-sub-3",
       "cursor-smith-note-row", "cursor-smith-note-warning", "cursor-smith-subsection-row",
-      "cursor-smith-color-row", "cursor-smith-reduced-notice");
+      "cursor-smith-color-row", "cursor-smith-reduced-notice", "cursor-smith-keys");
+  }
+
+  // The hotkeys card, as Word-Smith has one: a keyboard icon and a line per
+  // command with the hotkey it has now, in Obsidian's own chip ("Blank" with
+  // none) and its plus, which opens Settings -> Hotkeys searched for that
+  // command - where the key is set; this card only says. The keys are read
+  // again on every refresh, so a key set there shows on the way back; the
+  // text is rewritten only when it differs. The icon sits on settingEl,
+  // outside what Obsidian empties, so the last render's goes first.
+  hotkeysRow(ids: string[]): SettingDefinitionRender {
+    const app = () => ((this.app as unknown as HotkeysApp | undefined) || {});
+    const cmds = () => { const a = app(); return (a.commands && a.commands.commands) || {}; };
+    const keyOf = (full: string) => {
+      const hm = app().hotkeyManager;
+      try { return String((hm && hm.printHotkeyForCommand && hm.printHotkeyForCommand(full)) || ""); } catch { return ""; /* a build without the manager: no key to show */ }
+    };
+    return {
+      name: "",
+      desc: "Hotkeys",
+      searchable: false,
+      visible: () => ids.some((id) => !!cmds()["cursor-smith:" + id]),
+      render: (setting) => {
+        this.resetRow(setting);
+        setting.settingEl.addClass("cursor-smith-keys");
+        setting.settingEl.querySelectorAll(".cursor-smith-keys-icon").forEach((old) => { old.remove(); });
+        const icon = setting.settingEl.createSpan({ cls: "cursor-smith-keys-icon" });
+        setIcon(icon, "keyboard");
+        setting.settingEl.prepend(icon);
+        const chips: [string, HTMLElement][] = [];
+        setting.descEl.empty();
+        for (const id of ids) {
+          const full = "cursor-smith:" + id;
+          const cmd = cmds()[full];
+          if (!cmd) continue;
+          const name = String(cmd.name || id).replace(/^Cursor-Smith: /, "");
+          const line = setting.descEl.createDiv({ cls: "cursor-smith-keys-line" });
+          line.createSpan({ cls: "cursor-smith-keys-name", text: name });
+          const ctl = line.createSpan({ cls: "cursor-smith-keys-ctl" });
+          const keys = keyOf(full);
+          chips.push([full, ctl.createSpan({ cls: "setting-hotkey cursor-smith-keys-key" + (keys ? "" : " mod-empty is-blank"), text: keys || "Blank" })]);
+          const add = ctl.createEl("button", { cls: "clickable-icon setting-add-hotkey-button cursor-smith-keys-add", attr: { type: "button", "aria-label": "Set a hotkey for " + name } });
+          setIcon(add, "plus-circle");
+          add.addEventListener("click", () => { this.openHotkeysFor(String(cmd.name || name)); });
+        }
+        setting.descEl.createDiv({ cls: "cursor-smith-keys-note", text: "Or set them under Settings \u2192 Hotkeys." });
+        this.onRefresh(() => {
+          for (const [full, el] of chips) {
+            if (el.isConnected === false) continue;
+            const keys = keyOf(full);
+            const text = keys || "Blank";
+            if (el.textContent !== text) el.setText(text);
+            el.toggleClass("is-blank", !keys);
+            el.toggleClass("mod-empty", !keys);
+          }
+        });
+      },
+    };
+  }
+
+  // Settings -> Hotkeys with one command searched, through the tab's own
+  // setQuery; a build without it still lands on the Hotkeys tab.
+  openHotkeysFor(name: string) {
+    const app = ((this.app as unknown as HotkeysApp | undefined) || {});
+    try {
+      if (app.setting && app.setting.open) app.setting.open();
+      const tab = app.setting && app.setting.openTabById ? app.setting.openTabById("hotkeys") : undefined;
+      if (tab && typeof tab.setQuery === "function") tab.setQuery(name);
+    } catch { /* a build without the settings API: nothing to open */ }
   }
 
   // A muted note under a group's rows (no presets yet, what Command mode
@@ -703,6 +780,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         control: { type: "toggle", key: "respectReducedMotion", defaultValue: true },
       },
     ];
+    // Under the toggles, as Word-Smith has them: the keys for the commands.
+    items.push(this.hotkeysRow(["toggle", "toggle-cua-vim-mode", "cycle-preset"]));
     return this.section("Behavior", items);
   }
 

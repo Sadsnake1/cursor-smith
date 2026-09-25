@@ -1013,3 +1013,34 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   font-weight: 600;
 }
 
+/* --- The hotkeys card (the Behavior page) --------------------------------------
+   As Word-Smith's: a keyboard icon and a line per command with the hotkey it
+   has now - Obsidian's own `setting-hotkey` chip ("Blank" when empty) and its
+   `setting-add-hotkey-button`, both dressed by app.css, so a theme that
+   restyles the Hotkeys page restyles this card too. */
+.setting-item.cursor-smith-keys {
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background-color: var(--background-secondary);
+}
+.setting-item.cursor-smith-keys::before { content: none; }
+.setting-item.cursor-smith-keys .setting-item-name:empty { display: none; }
+.setting-item.cursor-smith-keys .setting-item-description { padding-top: 0; }
+.setting-item.cursor-smith-keys.cursor-smith-keys.cursor-smith-keys,
+.is-phone .modal .setting-item.cursor-smith-keys.cursor-smith-keys { flex-direction: row; align-items: flex-start; }
+.setting-item.cursor-smith-keys .setting-item-info { flex: 1 1 0; }
+.setting-item.cursor-smith-keys .setting-item-control { display: none; }
+.cursor-smith-keys-icon { display: inline-flex; flex-shrink: 0; margin-top: 1px; color: var(--text-muted); }
+.cursor-smith-keys-icon svg { width: 16px; height: 16px; }
+.cursor-smith-keys-line { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.cursor-smith-keys-name { color: var(--text-normal); }
+/* the chip and the plus beside the name, level on one line: Obsidian's
+   .setting-hotkey carries a top margin that would sit the chip low */
+.cursor-smith-keys-ctl { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.cursor-smith-keys-ctl .setting-hotkey { margin: 0; align-self: center; }
+.cursor-smith-keys-key { white-space: nowrap; }
+.cursor-smith-keys-note { margin-top: 4px; font-size: var(--font-ui-smaller); color: var(--text-faint); }

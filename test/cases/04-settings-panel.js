@@ -748,6 +748,43 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
     ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
     ok("the five other switches are on the General page", ["Note editor only", "Hide real cursor", "Hide cursor when unfocused", "Low power mode", "Respect reduced motion"].every((n) => rows.find((r) => r.name === n).page === "Behavior"));
+    // The hotkeys card under the Behavior toggles, as Word-Smith has one: a
+    // line per command with its key in Obsidian's chip, and the plus that
+    // opens Settings -> Hotkeys searched for it (1.6.7).
+    {
+      const behaviorRows = rows.filter((r) => r.page === "Behavior");
+      const card = behaviorRows.find((r) => r.def && r.def.desc === "Hotkeys");
+      ok("the Behavior page ends with the hotkeys card, under the toggles", !!card && behaviorRows[behaviorRows.length - 1] === card, behaviorRows.map((r) => r.name || r.def.desc));
+      const opened = [];
+      let key = "";
+      rows.tab.app = {
+        commands: { commands: {
+          "cursor-smith:toggle": { name: "Cursor-Smith: Toggle on/off" },
+          "cursor-smith:toggle-cua-vim-mode": { name: "Cursor-Smith: Toggle Vim mode" },
+          "cursor-smith:cycle-preset": { name: "Cursor-Smith: Cycle preset" },
+        } },
+        hotkeyManager: { printHotkeyForCommand: (id) => (id === "cursor-smith:toggle" ? key : "") },
+        setting: { open() { opened.push("open"); }, openTabById(id) { opened.push(id); return { setQuery(q) { opened.push("q:" + q); } }; } },
+      };
+      ok("...shown while the plugin's commands exist", card.def.visible() === true);
+      const render = () => card.def.render({ settingEl: card.settingEl, controlEl: card.controlEl, descEl: card.descEl, nameEl: card.nameEl });
+      render();
+      const lines = card.descEl.querySelectorAll(".cursor-smith-keys-line");
+      const names = lines.map((l) => l.children[0].text);
+      ok("...a line per command, named without the plugin's prefix", names.join() === "Toggle on/off,Toggle Vim mode,Cycle preset", names);
+      const chips = card.descEl.querySelectorAll(".cursor-smith-keys-key");
+      ok("...each key in Obsidian's own chip, Blank with none", chips.length === 3 && chips.every((c) => c.text === "Blank" && c.classes.includes("setting-hotkey") && c.classes.includes("mod-empty")), chips.map((c) => c.text));
+      key = "Ctrl + Alt + C";
+      rows.tab.runRefreshers();
+      ok("...read again on a refresh: a key set meanwhile shows", chips[0].text === "Ctrl + Alt + C" && !chips[0].classes.includes("mod-empty") && chips[1].text === "Blank", chips.map((c) => c.text));
+      card.descEl.querySelectorAll(".cursor-smith-keys-add")[1].click();
+      ok("...its plus opens Settings -> Hotkeys searched for that command", opened.join() === "open,hotkeys,q:Cursor-Smith: Toggle Vim mode", opened);
+      render();
+      ok("...and a render again (update keeps the row) leaves one keyboard icon", card.settingEl.querySelectorAll(".cursor-smith-keys-icon").length === 1);
+      rows.tab.app = { commands: { commands: {} } };
+      ok("...and no card when the commands are not there", card.def.visible() === false);
+      delete rows.tab.app;
+    }
     // Issue #31: "Enable on this device" heads the Behavior page - a rendered row
     // over Obsidian's per-device local storage, not a settings key, so the
     // synced settings never carry it.

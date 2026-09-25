@@ -31,7 +31,7 @@ https://github.com/user-attachments/assets/1781c934-c1a6-475f-8f21-dbf5d81bc2b0
 
 ## The cursor
 
-Box, Line or Underline. Your colors for dark and light themes, or a gradient. Thickness, opacity, glow, translucency, a letter showing through the box.
+Box, Line or Underline, solid or hollow. Your colors for dark and light themes, or a gradient. Thickness in tenth-of-a-pixel steps, a shorter Line if you like, opacity, glow, translucency, a letter showing through the box.
 
 It can blink the way you like: speed, balance, fade, breathing, or not at all, or not while you type. It can glide to its new spot instead of jumping there, faster when you type fast.
 
@@ -39,11 +39,12 @@ Multiple cursors get all of it. Every caret you add is drawn, styled and animate
 
 ## The effects
 
-Ten of them, from subtle to absurd. Each has its own switch and its own settings.
+Eleven of them, from subtle to absurd. Each has its own switch and its own settings, and they stack.
 
 | Effect | What it does |
 |---|---|
-| **Pop effects** | Letters pop out as you type, deletions burst, Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
+| **Pop effects** | Letters pop out as you type, or rise straight up and fade. Deletions burst, Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
+| **Typewriter** | The cursor strikes like a typewriter key: a springy dip, an ink stamp on each letter, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
@@ -68,15 +69,16 @@ The top of the panel is short: enable the plugin, Vim mode on or off, your prese
 
 | Page | What's in it |
 |---|---|
-| **Behavior** | Notes only, hide the real cursor, hide when Obsidian isn't focused, low power mode, respect reduced motion |
+| **Behavior** | Enable on this device, notes only, hide the real cursor, hide when Obsidian isn't focused, low power mode, respect reduced motion, and your hotkeys |
 | **Vim** | Obsidian's Vim key bindings and the status bar indicator |
 | **Appearance** | Shape, color, opacity |
 | **Blinking** | If it blinks, how, and how fast |
 | **Smooth movement** | Gliding instead of jumping |
 | **Effects** | Pick an effect, see its settings. A tick marks the ones that are on |
+
 ## Presets
 
-Dial in a cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it, the other person imports it and has your cursor. Six come with the plugin to start from.
+Dial in a cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it, the other person imports it and has your cursor. Seven come with the plugin to start from.
 
 ## Vim mode
 
@@ -84,7 +86,7 @@ Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get t
 
 ## Commands
 
-Four, all in the Command Palette, all take a hotkey.
+Four, all in the Command Palette, all take a hotkey. The Behavior page shows the keys you've set, with a button to set them.
 
 | Command | What it does |
 |---|---|
@@ -105,7 +107,7 @@ Four, all in the Command Palette, all take a hotkey.
 
 ## Building from source
 
-A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (1,400 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
+A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (1,600 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
 
 ## Pairs with Word-Smith
 

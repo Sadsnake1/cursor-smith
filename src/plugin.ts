@@ -1195,7 +1195,7 @@ export default class CursorSmithPlugin extends Plugin {
     void this.saveSettings();
   }
 
-  // "On this device" (issue #31): saved to this device's local storage, off
+  // "Enable on this device" (issue #31): saved to this device's local storage, off
   // as the string "off" - Obsidian's saveLocalStorage drops a falsy value,
   // so `false` read back as nothing - and on as nothing (so a new device
   // starts on); the engines follow at once. The synced "Enable plugin" is

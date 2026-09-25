@@ -101,7 +101,7 @@ Four, all in the Command Palette, all take a hotkey.
 
 **Mobile.** Works on phones and tablets. The settings are built for a thumb.
 
-**One device only.** *Behavior → On this device* switches the cursor off on the device you're holding and nowhere else; it isn't synced. Keep Obsidian's own cursor on the phone while the desktop keeps this one.
+**One device only.** *Behavior → Enable on this device* switches the cursor off on the device you're holding and nowhere else. Keep Obsidian's own cursor on the phone while the desktop keeps this one.
 
 ## Building from source
 

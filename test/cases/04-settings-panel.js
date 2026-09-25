@@ -747,13 +747,14 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
     ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
     ok("the five other switches are on the General page", ["Note editor only", "Hide real cursor", "Hide cursor when unfocused", "Low power mode", "Respect reduced motion"].every((n) => rows.find((r) => r.name === n).page === "Behavior"));
-    // Issue #31: "On this device" heads the Behavior page - a rendered row
+    // Issue #31: "Enable on this device" heads the Behavior page - a rendered row
     // over Obsidian's per-device local storage, not a settings key, so the
     // synced settings never carry it.
     {
-      const here = rows.find((r) => r.name === "On this device");
+      const here = rows.find((r) => r.name === "Enable on this device");
       const behavior = rows.filter((r) => r.page === "Behavior").map((r) => r.name);
-      ok("On this device heads the Behavior page, before Note editor only", !!here && here.page === "Behavior" && behavior[0] === "On this device" && behavior[1] === "Note editor only", behavior.slice(0, 3));
+      ok("Enable on this device heads the Behavior page, before Note editor only", !!here && here.page === "Behavior" && behavior[0] === "Enable on this device" && behavior[1] === "Note editor only", behavior.slice(0, 3));
+      ok("...an on/off switch for this device, its line saying so and never the word sync (read as a sync option on a tablet)", !!here && /this device only/.test(here.desc) && !/sync/i.test(here.desc), here && here.desc);
       ok("...as a rendered row, not a settings key", !!here && typeof here.def.render === "function" && !here.def.control);
       const calls = [];
       rows.plugin._deviceEnabled = false;
@@ -786,6 +787,16 @@ section("settings panel: the rail, the summaries, the resets, the cards");
       const before = info.children.length;
       rows.tab.decorateIcons();
       ok("...and a second pass has nothing to do", info.children.length === before && info.children[0] === icon);
+      // Obsidian keeps the entry across update() and writes its description
+      // again, a fresh icon in it: that one moves and last time's goes - it
+      // stacked one icon per preset picked until 1.6.5.
+      for (let i = 0; i < 3; i++) {
+        const again = desc.createSpan({ cls: "cursor-smith-page-icon" }); again.icon = "palette";
+        desc.children.unshift(desc.children.pop());
+        rows.tab.decorateIcons();
+      }
+      const icons = info.children.filter((c) => c.classes.includes("cursor-smith-page-icon"));
+      ok("a description written again with a fresh icon leaves ONE icon in front, not one per render", icons.length === 1 && info.children[0] === icons[0] && !desc.children.some((c) => c.classes.includes("cursor-smith-page-icon")), icons.length);
       // Obsidian 1.13 renders a sub-page's rows beside the tab's container,
       // not inside it: the pass covers the container's parent, and the
       // effect headings on the Effects page get their icons moved too.

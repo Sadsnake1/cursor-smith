@@ -2366,6 +2366,14 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   // A leading icon still inside its description moves to the front of
   // the entry's info block, which takes the grid class. Nothing to do
   // once it has moved (its parent is the info block, not a description).
+  //
+  // Obsidian keeps an entry's element across update() and writes its
+  // description again - with a fresh icon in it - so the icon moved last
+  // time goes first: every preset picked added one more to every page entry
+  // until 1.6.5 ("repeating icons whenever I click on a different preset",
+  // a tablet user on Reddit; nine after eight clicks on the desktop too).
+  // The rule in ARCHITECTURE: what a render adds outside controlEl cleans
+  // up after itself.
   decorateIcons() {
     const root = this._decorateRoot();
     if (!root) return;
@@ -2374,6 +2382,9 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       if (!desc || !desc.hasClass("setting-item-description")) continue;
       const info = desc.parentElement;
       if (!info || !info.hasClass("setting-item-info")) continue;
+      for (const old of Array.from(info.children)) {
+        if (old !== icon && old.hasClass("cursor-smith-page-icon")) old.remove();
+      }
       info.addClass("cursor-smith-iconed");
       info.prepend(icon);
     }
@@ -2717,7 +2728,10 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     const items = [
       // Per device, not a settings key: Obsidian's local storage, which does
       // not sync (issue #31, "disable the extension on a specific device").
-      this.row("On this device", "Off keeps Obsidian's own cursor on this device only. Not synced: the other devices keep their own choice.", (s) => {
+      // Named like "Enable plugin" since 1.6.5: as "On this device", with
+      // "Not synced" in its line, a tablet user on Reddit read it as a sync
+      // option, turned it off, and the cursor stopped - which is what off does.
+      this.row("Enable on this device", "Off brings back Obsidian's own cursor on this device only. Your other devices keep their setting.", (s) => {
         s.addToggle((tg) => tg.setValue(this.plugin._deviceEnabled !== false).onChange((v) => {
           this.plugin.setDeviceEnabled(v);
         }));
@@ -11216,7 +11230,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     else this.disable();
     void this.saveSettings();
   }
-  // "On this device" (issue #31): saved to this device's local storage, off
+  // "Enable on this device" (issue #31): saved to this device's local storage, off
   // as the string "off" - Obsidian's saveLocalStorage drops a falsy value,
   // so `false` read back as nothing - and on as nothing (so a new device
   // starts on); the engines follow at once. The synced "Enable plugin" is

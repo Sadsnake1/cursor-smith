@@ -151,6 +151,16 @@ export const paintFrameMethods = {
       ctx.scale(breath, breath);
       ctx.translate(-cx, -cy);
     }
+    // Typewriter: the caret dips with each character typed and springs back
+    // (typewriterDip) - the whole caret, like breathing, and the damage rect
+    // reaches down with it.
+    const dip = a ? this.typewriterDip(performance.now()) : 0;
+    const dipping = dip > 0.01;
+    if (dipping) {
+      ctx.save();
+      ctx.translate(0, dip);
+      if (cb) cb.y1 += dip;
+    }
     // Before the dispatch, not inside the Box branch: this both sets the
     // blend for a highlighter-translucent box AND clears it for every other
     // style, and the other styles don't call drawBoxCursor.
@@ -166,6 +176,7 @@ export const paintFrameMethods = {
         this.drawBoxCursor();
         break;
     }
+    if (dipping) ctx.restore();
     if (breathing) ctx.restore();
 
     // Multi-cursor. The full-effect secondaries are painted with the very

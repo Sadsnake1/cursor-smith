@@ -112,6 +112,7 @@ export const DEFAULT_SETTINGS = {
   popEffects: true,
   popLetters: true,        
   popLettersRise: false,  // the letter floats straight up from the cursor's top and fades
+  popTypewriter: false,    // the caret dips a little with each character and springs back
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -475,6 +476,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "caretHeightPct",
   // Popping letters rising straight up (1.6.7). Appended, off by default.
   "popLettersRise",
+  // Typewriter, a pop effect (1.6.7). Appended, off by default.
+  "popTypewriter",
 ];
 
 // ---------------------------------------------------------------------------

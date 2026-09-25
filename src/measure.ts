@@ -9,8 +9,8 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX } from "./constants";
-import { isTextCaretHost, lastGrapheme } from "./motion";
+import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TYPEWRITER_DIP, TYPEWRITER_DOWN, TYPEWRITER_MS } from "./constants";
+import { isTextCaretHost, lastGrapheme, easeInOutSine } from "./motion";
 import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache } from "./types";
 import type CursorSmithPlugin from "./plugin";
@@ -877,6 +877,8 @@ export const measureMethods = {
           if (this.look.popEffects && this.look.popLetters) {
             this.spawnLetterParticle(justTyped, last);
           }
+          // Typewriter: the stroke starts now (typewriterDip).
+          if (this.look.popEffects && this.look.popTypewriter) this._typewriterT = performance.now();
           return justTyped;
         }
       }
@@ -1355,6 +1357,22 @@ export const measureMethods = {
 
   renderWidth(this: CursorSmithPlugin, active: CaretRecord): number {
     return active.w;
+  },
+
+  // Typewriter: how far down the caret is drawn at `now`, in px - a quick
+  // dip on each character typed (TYPEWRITER_DOWN of the stroke, easing out)
+  // and a spring back up (the rest, easing in and out), TYPEWRITER_DIP of
+  // the line height at the bottom. 0 when off or between strokes.
+  typewriterDip(this: CursorSmithPlugin, now: number): number {
+    if (!(this.look.popEffects && this.look.popTypewriter)) return 0;
+    const a = this.animActive;
+    const dt = now - (this._typewriterT || 0);
+    if (!a || !this._typewriterT || dt < 0 || dt >= TYPEWRITER_MS) return 0;
+    const u = dt / TYPEWRITER_MS;
+    const shape = u < TYPEWRITER_DOWN
+      ? 1 - Math.pow(1 - u / TYPEWRITER_DOWN, 2)
+      : 1 - easeInOutSine((u - TYPEWRITER_DOWN) / (1 - TYPEWRITER_DOWN));
+    return shape * TYPEWRITER_DIP * (a.h || 20);
   },
 
   // The Line cursor's thickness, in px: the setting, in 0.1 px steps since

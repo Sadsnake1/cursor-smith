@@ -250,6 +250,12 @@ export const SCROLL_LOCK_MS = 120;
 export const POP_RISE_MS = 650;
 export const POP_RISE_LINES = 0.9;
 export const POP_RISE_ALPHA = 0.7;
+// Typewriter (a pop effect): each character typed dips the caret by this
+// share of the line height and springs it back, the whole stroke this long,
+// the first TYPEWRITER_DOWN of it going down.
+export const TYPEWRITER_MS = 170;
+export const TYPEWRITER_DIP = 0.12;
+export const TYPEWRITER_DOWN = 0.25;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.

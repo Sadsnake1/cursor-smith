@@ -50,6 +50,9 @@ var SCROLL_LOCK_MS = 120;
 var POP_RISE_MS = 650;
 var POP_RISE_LINES = 0.9;
 var POP_RISE_ALPHA = 0.7;
+var TYPEWRITER_MS = 170;
+var TYPEWRITER_DIP = 0.12;
+var TYPEWRITER_DOWN = 0.25;
 var CARET_THICKNESS_MAX = 7;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
@@ -371,6 +374,8 @@ var DEFAULT_SETTINGS = {
   popLetters: true,
   popLettersRise: false,
   // the letter floats straight up from the cursor's top and fades
+  popTypewriter: false,
+  // the caret dips a little with each character and springs back
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -840,7 +845,9 @@ var LOOK_KEYS = [
   // full line, so an older code imports as the caret it described.
   "caretHeightPct",
   // Popping letters rising straight up (1.6.7). Appended, off by default.
-  "popLettersRise"
+  "popLettersRise",
+  // Typewriter, a pop effect (1.6.7). Appended, off by default.
+  "popTypewriter"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -3362,6 +3369,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       "backspaceDisintegrate",
       { depth: 1, gate: true, when: pop }
     ));
+    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, when: pop }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider(
@@ -4276,6 +4284,7 @@ var measureMethods = {
           if (this.look.popEffects && this.look.popLetters) {
             this.spawnLetterParticle(justTyped, last);
           }
+          if (this.look.popEffects && this.look.popTypewriter) this._typewriterT = performance.now();
           return justTyped;
         }
       }
@@ -4617,6 +4626,19 @@ var measureMethods = {
   },
   renderWidth(active) {
     return active.w;
+  },
+  // Typewriter: how far down the caret is drawn at `now`, in px - a quick
+  // dip on each character typed (TYPEWRITER_DOWN of the stroke, easing out)
+  // and a spring back up (the rest, easing in and out), TYPEWRITER_DIP of
+  // the line height at the bottom. 0 when off or between strokes.
+  typewriterDip(now) {
+    if (!(this.look.popEffects && this.look.popTypewriter)) return 0;
+    const a = this.animActive;
+    const dt = now - (this._typewriterT || 0);
+    if (!a || !this._typewriterT || dt < 0 || dt >= TYPEWRITER_MS) return 0;
+    const u = dt / TYPEWRITER_MS;
+    const shape = u < TYPEWRITER_DOWN ? 1 - Math.pow(1 - u / TYPEWRITER_DOWN, 2) : 1 - easeInOutSine((u - TYPEWRITER_DOWN) / (1 - TYPEWRITER_DOWN));
+    return shape * TYPEWRITER_DIP * (a.h || 20);
   },
   // The Line cursor's thickness, in px: the setting, in 0.1 px steps since
   // 1.6.6 (issue #32), held between 0.5 and CARET_THICKNESS_MAX - a value
@@ -8387,6 +8409,13 @@ var paintFrameMethods = {
       ctx.scale(breath, breath);
       ctx.translate(-cx, -cy);
     }
+    const dip = a ? this.typewriterDip(performance.now()) : 0;
+    const dipping = dip > 0.01;
+    if (dipping) {
+      ctx.save();
+      ctx.translate(0, dip);
+      if (cb) cb.y1 += dip;
+    }
     this.applyCanvasBlend();
     switch (this.styleFor("cursorStyle")) {
       case "Line":
@@ -8399,6 +8428,7 @@ var paintFrameMethods = {
         this.drawBoxCursor();
         break;
     }
+    if (dipping) ctx.restore();
     if (breathing) ctx.restore();
     const secBounds = this.drawFullSecondaries();
     this.drawSecondaryCarets();
@@ -11689,6 +11719,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.heat = 0;
     this._lastSparkT = 0;
     this._popRainbowHue = 0;
+    this._typewriterT = 0;
     this._hideNativeSig = null;
     this._selSig = null;
     this._idleWakeMs = 0;

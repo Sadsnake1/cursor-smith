@@ -112,6 +112,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare getActiveRect: MeasureMethods["getActiveRect"];
   declare lineSpan: MeasureMethods["lineSpan"];
   declare caretThickness: MeasureMethods["caretThickness"];
+  declare typewriterDip: MeasureMethods["typewriterDip"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts
@@ -404,6 +405,8 @@ export default class CursorSmithPlugin extends Plugin {
   _perf!: PerfCounters | null;
   _popKeyPending!: number;
   _popRainbowHue!: number;
+  // When the last character was typed, for Typewriter (typewriterDip).
+  _typewriterT!: number;
   _presCacheT!: number;
   _presCacheV!: boolean;
   _realKeyT!: number;
@@ -1661,6 +1664,7 @@ export default class CursorSmithPlugin extends Plugin {
     // letters either side of it are on, not start a second, unrelated one that
     // happens to be running at the same time.
     this._popRainbowHue = 0;
+    this._typewriterT = 0;
 
     // Dedupe for the hide-native body class (see ensureCanvasForView). null
     // rather than a boolean so the first frame after a reset always differs

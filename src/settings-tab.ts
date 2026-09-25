@@ -1345,6 +1345,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // are the bigger, rarer events.
     effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
+    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, when: pop }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],

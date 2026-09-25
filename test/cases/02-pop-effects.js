@@ -525,3 +525,44 @@ section("Popping letters: rise straight up (1.6.7)");
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
   ok("the switch sits under Popping letters", /toggle\("Rise straight up", [^;]*"popLettersRise", \{ depth: 2, when: all\(pop, on\("popLetters"\)\) \}\)/.test(src));
 }
+
+// ---------------------------------------------------------------------------
+section("Typewriter (1.6.7)");
+
+// Each character typed dips the caret a little and springs it back up.
+{
+  const mk = (over) => {
+    const e = makeEngine(Object.assign({ popEffects: true, popTypewriter: true }, over));
+    e.styleFor = (k) => e.settings[k];
+    e.look = e.settings;
+    e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
+    return e;
+  };
+  const e = mk({});
+  const t0 = 10000;
+  e._typewriterT = t0;
+  const d = (ms) => e.typewriterDip(t0 + ms);
+  const peak = Math.max(...Array.from({ length: 171 }, (_, i) => d(i)));
+  ok("it starts at rest, dips, and is back by the end of the stroke", d(0) === 0 && d(40) > d(10) && d(169) < 0.5 && d(170) === 0 && d(400) === 0, [d(0), d(10), d(40), d(100), d(169), d(170)].map((v) => +v.toFixed(2)));
+  ok("...down fast, back slower: deepest in the first quarter", d(42) >= peak - 0.2 && d(20) > d(120), [d(20), d(42), d(120)].map((v) => +v.toFixed(2)));
+  ok("...a little: at most an eighth of the line (3 px on a 24 px line)", peak > 2 && peak <= 24 * 0.12 + 1e-9, +peak.toFixed(2));
+  ok("off (or with Pop effects off), no dip at all", mk({ popTypewriter: false })._typewriterT === undefined || (() => { const o = mk({ popTypewriter: false }); o._typewriterT = t0; return o.typewriterDip(t0 + 40) === 0; })());
+  ok("...and none with the group off", (() => { const o = mk({ popEffects: false }); o._typewriterT = t0; return o.typewriterDip(t0 + 40) === 0; })());
+  // The stroke starts on a character typed, not on a click or an arrow.
+  const text = "the table.";
+  const cmOf = (txt) => ({ workspace: { activeEditor: { editor: { cm: { state: { doc: { sliceString: (a, b) => txt.slice(a, b), length: txt.length } } } } } } });
+  const at = (pos, docLen) => ({ x: pos * 8, top: 20, w: 8, h: 24, actualCharWidth: 8, pos, docLen, char: "a" });
+  const k = mk({ popLetters: false });
+  k.app = cmOf(text);
+  k._typewriterT = 0;
+  k.lastActive = at(4, text.length);
+  k.resolveHoldChar(at(9, text.length));
+  ok("a click ahead strikes nothing", k._typewriterT === 0);
+  k.lastActive = at(4, text.length - 1);
+  k.resolveHoldChar(at(5, text.length));
+  ok("a character typed strikes", k._typewriterT > 0);
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "paint-frame.ts"), "utf8");
+  ok("the whole caret is drawn dipped, and the damage rect reaches down with it", /ctx\.translate\(0, dip\);\s*if \(cb\) cb\.y1 \+= dip;/.test(src));
+  const tab = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  ok("the switch sits in Pop effects", /toggle\("Typewriter", [^;]*"popTypewriter", \{ depth: 1, when: pop \}\)/.test(tab));
+}

@@ -117,6 +117,7 @@ export interface Look {
   caretWidthPx: number;
   caretHeightPct: number;
   popLettersRise: boolean;
+  popTypewriter: boolean;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;

@@ -32,10 +32,6 @@ import {
   POP_RISE_ALPHA,
   POP_RISE_LINES,
   POP_RISE_MS,
-  TW_INK_ALPHA,
-  TW_INK_MS,
-  TW_INK_SCALE,
-  TW_RETURN_MS,
   THUNDER_BANDS,
   THUNDER_LIFE_MS,
   THUNDER_MAX_ANGLE,
@@ -101,7 +97,7 @@ export const effectsPopsMethods = {
     this.particles.push({
       char, stamp: true,
       x: anchor.x, y: anchor.top,
-      vx: 0, vy: 0, rotation: 0, alpha: TW_INK_ALPHA,
+      vx: 0, vy: 0, rotation: 0, alpha: this.twOpt("typewriterInkOpacity", 0.05, 1),
       lh: anchor.h || 20,
       fontSize: anchor.fontSize, fontFamily: anchor.fontFamily,
       fontWeight: anchor.fontWeight, fontStyle: anchor.fontStyle,
@@ -135,7 +131,7 @@ export const effectsPopsMethods = {
     if (!ctx || !this.typeReturns.length) return;
     const now = performance.now();
     this.typeReturns = this.typeReturns.filter((r) => {
-      const u = (now - r.start) / TW_RETURN_MS;
+      const u = (now - r.start) / this.twOpt("typewriterReturnMs", 80, 2000);
       if (u >= 1) return false;
       const ease = (v: number) => 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 3);
       const head = r.x0 - (r.x0 - r.xs) * ease(u / 0.6);
@@ -145,7 +141,7 @@ export const effectsPopsMethods = {
       ctx.globalAlpha = Math.max(0, alpha);
       ctx.strokeStyle = r.color;
       ctx.lineCap = "round";
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = this.twOpt("typewriterReturnWidth", 0.25, 8);
       ctx.beginPath();
       ctx.moveTo(tail, r.y);
       ctx.lineTo(head, r.y);
@@ -178,7 +174,8 @@ export const effectsPopsMethods = {
       if (p.stamp) {
         // Overprinted on its cell, on the real glyph's baseline (the Box's
         // own metrics), bigger and bolder at first and shrinking onto it.
-        const t = (now - p.start) / TW_INK_MS;
+        const t = (now - p.start) / this.twOpt("typewriterInkMs", 80, 3000);
+        const inkScale = this.twOpt("typewriterInkSize", 1, 3);
         if (t >= 1) return false;
         const size = p.fontSize || 16;
         const lh = p.lh || size * 1.4;
@@ -188,8 +185,8 @@ export const effectsPopsMethods = {
         const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
         const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
-        const grow = 1 + (TW_INK_SCALE - 1) * Math.pow(1 - Math.min(1, t / 0.45), 2);
-        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t));
+        const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t / 0.45), 2);
+        p.alpha = this.twOpt("typewriterInkOpacity", 0.05, 1) * (1 - easeInOutSine(t));
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.translate(cx, cy);
@@ -199,7 +196,7 @@ export const effectsPopsMethods = {
         ctx.textBaseline = "alphabetic";
         ctx.fillText(p.char, p.x, baseline);
         ctx.restore();
-        const ext = Math.max(m.width, size) * TW_INK_SCALE;
+        const ext = Math.max(m.width, size) * inkScale;
         this._markDirty(cx - ext, p.y - lh * 0.3, ext * 2, lh * 1.6);
         return true;
       }

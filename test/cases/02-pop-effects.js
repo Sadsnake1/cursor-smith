@@ -529,7 +529,8 @@ section("Popping letters: rise straight up (1.6.7)");
 // ---------------------------------------------------------------------------
 section("Typewriter (1.6.7)");
 
-// Each character typed dips the caret a little and springs it back up.
+// Typewriter is the group's switch: alone it moves nothing ("the spring
+// action should be set only with Springy strike"); its parts do.
 {
   const mk = (over) => {
     const e = makeEngine(Object.assign({ typewriter: true }, over));
@@ -541,14 +542,12 @@ section("Typewriter (1.6.7)");
   const e = mk({});
   const t0 = 10000;
   e._typewriterT = t0;
-  const d = (ms) => e.typewriterPose(t0 + ms).dy;
-  const peak = Math.max(...Array.from({ length: 171 }, (_, i) => d(i)));
-  ok("it starts at rest, dips, and is back by the end of the stroke", d(0) === 0 && d(40) > d(10) && d(169) < 0.5 && d(170) === 0 && d(400) === 0, [d(0), d(10), d(40), d(100), d(169), d(170)].map((v) => +v.toFixed(2)));
-  ok("...down fast, back slower: deepest in the first quarter", d(42) >= peak - 0.2 && d(20) > d(120), [d(20), d(42), d(120)].map((v) => +v.toFixed(2)));
-  ok("...a little: at most an eighth of the line (3 px on a 24 px line)", peak > 2 && peak <= 24 * 0.12 + 1e-9, +peak.toFixed(2));
-  ok("off, no dip at all", (() => { const o = mk({ typewriter: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy === 0; })());
-  ok("...its own effect: Pop effects off does not stop it", (() => { const o = mk({ popEffects: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy > 0; })());
-  ok("the plain stroke neither squashes nor moves sideways", e.typewriterPose(t0 + 40).sy === 1 && e.typewriterPose(t0 + 40).dx === 0);
+  ok("Typewriter alone does not move the caret", [0, 20, 40, 100, 200].every((ms) => { const p = e.typewriterPose(t0 + ms); return p.dx === 0 && p.dy === 0 && p.sy === 1; }));
+  const sp = mk({ typewriterSpring: true });
+  sp._typewriterT = t0;
+  ok("...Springy strike does", sp.typewriterPose(t0 + 40).dy > 0);
+  ok("...with Pop effects off too: an effect of its own", (() => { const o = mk({ typewriterSpring: true, popEffects: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy > 0; })());
+  ok("...and nothing with Typewriter off, whatever its parts say", (() => { const o = mk({ typewriter: false, typewriterSpring: true, typewriterAdvance: true }); o._typewriterT = t0; const p = o.typewriterPose(t0 + 40); return p.dy === 0 && p.dx === 0; })());
   // The stroke starts on a character typed, not on a click or an arrow.
   const text = "the table.";
   const cmOf = (txt) => ({ workspace: { activeEditor: { editor: { cm: { state: { doc: { sliceString: (a, b) => txt.slice(a, b), length: txt.length } } } } } } });
@@ -626,7 +625,69 @@ section("Typewriter's sub-options (1.6.7)");
   ok("...and gone after it", cr.typeReturns.length === 0);
   ok("a return on a line with nothing to sweep is not spawned", (() => { const q = mk({ typewriterReturn: true }); q.spawnCarriageReturn({ x: 41, top: 0, h: 24, rowLeft: 40 }, { x: 40, top: 24, h: 24 }); return q.typeReturns.length === 0; })());
   const tab2 = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
-  ok("the four switches sit under Typewriter", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 1, when: tw }`)));
+  ok("the four switches sit under Typewriter, each opening its sliders", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 1, gate: true, when: tw }`)));
   const carets = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "carets.ts"), "utf8");
   ok("Enter fires the carriage return from where the old line ended", carets.includes("typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);"));
+}
+
+// ---------------------------------------------------------------------------
+section("Typewriter's sliders (1.6.7)");
+
+// Each part's sliders do what they say; the defaults are the values the
+// parts were built with.
+{
+  const mk = (over) => {
+    const e = makeEngine(Object.assign({ typewriter: true }, over));
+    e.styleFor = (k) => e.settings[k];
+    e.look = e.settings;
+    e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
+    e.particles = []; e.typeReturns = [];
+    e._markDirty = () => {};
+    e._typewriterT = 10000;
+    return e;
+  };
+  const poses = (e, n) => Array.from({ length: n + 1 }, (_, i) => e.typewriterPose(10000 + i));
+  const deepest = (ps) => Math.max(...ps.map((p) => p.dy));
+  const def = poses(mk({ typewriterSpring: true }), 240), deep = poses(mk({ typewriterSpring: true, typewriterDepth: 36 }), 240);
+  ok("Depth: twice the percentage, twice as deep", Math.abs(deepest(deep) - 2 * deepest(def)) < 1e-6 && Math.abs(deepest(def) - 24 * 0.18) < 0.05, [deepest(def), deepest(deep)].map((v) => +v.toFixed(2)));
+  const flat = poses(mk({ typewriterSpring: true, typewriterBounce: 0 }), 240);
+  ok("Bounce 0: back to rest, never past it", Math.min(...flat.map((p) => p.dy)) === 0 && Math.min(...def.map((p) => p.dy)) < 0);
+  const big = poses(mk({ typewriterSpring: true, typewriterBounce: 2 }), 240);
+  ok("...Bounce 2: twice as far past rest", Math.abs(Math.min(...big.map((p) => p.dy)) - 2 * Math.min(...def.map((p) => p.dy))) < 1e-6);
+  const noSquash = poses(mk({ typewriterSpring: true, typewriterSquash: 0 }), 240);
+  ok("Squash 0: the caret keeps its height", noSquash.every((p) => p.sy === 1) && Math.min(...def.map((p) => p.sy)) < 0.9);
+  const slow = poses(mk({ typewriterSpring: true, typewriterStrikeMs: 480 }), 480);
+  ok("Duration: a 480 ms strike is still moving at 300 ms, the default one is not", slow[300].dy !== 0 && def[240].dy === 0 && mk({ typewriterSpring: true }).typewriterPose(10300).dy === 0);
+  const far = poses(mk({ typewriterAdvance: true, typewriterAdvanceCw: 1 }), 150);
+  ok("Distance: a whole character past its spot at 1", Math.abs(Math.max(...far.map((p) => p.dx)) - 8) < 0.05, +Math.max(...far.map((p) => p.dx)).toFixed(2));
+  const longAdv = mk({ typewriterAdvance: true, typewriterAdvanceMs: 300 });
+  ok("...Duration: still out at 200 ms when it lasts 300", longAdv.typewriterPose(10200).dx > 0 && mk({ typewriterAdvance: true }).typewriterPose(10200).dx === 0);
+  // Ink stamp: size, opacity and duration read as it draws.
+  const inkDraw = (over, ms) => {
+    const e = mk(Object.assign({ typewriterInk: true }, over));
+    e.fontString = (size, fam, w, st) => [st, w, size + "px", fam].join(" ");
+    const out = {};
+    e.ctx = { save() {}, restore() {}, translate() {}, scale(x) { if (out.s === undefined) out.s = x; }, measureText: () => ({ width: 9, fontBoundingBoxAscent: 13, fontBoundingBoxDescent: 3 }),
+      globalAlpha: 1, fillStyle: "", font: "", textAlign: "", textBaseline: "", fillText() { out.a = this.globalAlpha; } };
+    e.spawnInkStamp("k", { x: 100, top: 200, h: 24, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#ddd" });
+    e.particles[0].start = performance.now() - ms;
+    e.drawLettersParticles();
+    return { s: out.s, a: out.a, alive: e.particles.length };
+  };
+  const i0 = inkDraw({}, 0), iBig = inkDraw({ typewriterInkSize: 1.8 }, 0), iFaint = inkDraw({ typewriterInkOpacity: 0.4 }, 0);
+  ok("Ink stamp Size and Opacity set how it starts", Math.abs(i0.s - 1.3) < 0.01 && Math.abs(iBig.s - 1.8) < 0.01 && Math.abs(i0.a - 0.9) < 0.01 && Math.abs(iFaint.a - 0.4) < 0.01, [i0.s, iBig.s, i0.a, iFaint.a]);
+  ok("...Duration: gone at 450 ms by default, still there when it lasts 900", inkDraw({}, 450).alive === 0 && inkDraw({ typewriterInkMs: 900 }, 450).alive === 1);
+  // Carriage return: thickness and duration.
+  const retDraw = (over, ms) => {
+    const e = mk(Object.assign({ typewriterReturn: true }, over));
+    const widths = [];
+    e.ctx = { save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() { widths.push(this.lineWidth); }, globalAlpha: 1, strokeStyle: "", lineCap: "", lineWidth: 1 };
+    e.spawnCarriageReturn({ x: 400, top: 200, h: 24, fontSize: 16, rowLeft: 40 }, { x: 40, top: 224, h: 24 });
+    e.typeReturns[0].start = performance.now() - ms;
+    e.drawCarriageReturns();
+    return { w: widths[0], alive: e.typeReturns.length };
+  };
+  ok("Carriage return Thickness sets the streak's width", retDraw({}, 50).w === 1.5 && retDraw({ typewriterReturnWidth: 3 }, 50).w === 3);
+  ok("...Duration: gone at 350 ms by default, still sweeping when it takes 800", retDraw({}, 350).alive === 0 && retDraw({ typewriterReturnMs: 800 }, 350).alive === 1);
+  ok("a value outside a slider's range is held in it", mk({ typewriterDepth: 999 }).twOpt("typewriterDepth", 0, 60) === 60 && mk({ typewriterDepth: "x" }).twOpt("typewriterDepth", 0, 60) === 18);
 }

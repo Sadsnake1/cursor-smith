@@ -122,6 +122,17 @@ export interface Look {
   typewriterInk: boolean;
   typewriterReturn: boolean;
   typewriterAdvance: boolean;
+  typewriterDepth: number;
+  typewriterBounce: number;
+  typewriterSquash: number;
+  typewriterStrikeMs: number;
+  typewriterInkMs: number;
+  typewriterInkSize: number;
+  typewriterInkOpacity: number;
+  typewriterReturnMs: number;
+  typewriterReturnWidth: number;
+  typewriterAdvanceCw: number;
+  typewriterAdvanceMs: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;

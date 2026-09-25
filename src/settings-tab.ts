@@ -13,7 +13,7 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 // is registered by the plugin at load (CANDLE_ICON in plugin.ts).
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
-  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key as you type." },
+  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -1365,12 +1365,24 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // Typewriter: an effect of its own since the day it was made (1.6.7) -
     // the caret strikes like a key, with four ways to make more of it.
     const showTw = shown("typewriter");
-    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "typewriter", { gate: true, when: showTw }));
+    effects.push(toggle("Typewriter", "The cursor strikes like a typewriter key. Pick the parts below.", "typewriter", { gate: true, when: showTw }));
     const tw = all(showTw, on("typewriter"));
-    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 1, when: tw }));
-    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, when: tw }));
-    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, when: tw }));
-    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 1, when: tw }));
+    const twOn = (key: keyof Look) => all(tw, on(key));
+    effects.push(toggle("Springy strike", "The cursor dips with each key and springs back, a little past rest.", "typewriterSpring", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Strike depth", "How far the cursor dips, as a percentage of the line.", "typewriterDepth", [5, 40, 1], { depth: 2, fallback: 18, when: twOn("typewriterSpring") }));
+    effects.push(slider("Bounce", "How far it springs past rest on the way back. 0 stops at rest.", "typewriterBounce", [0, 2, 0.1], { depth: 2, fallback: 1, when: twOn("typewriterSpring") }));
+    effects.push(slider("Squash", "How much shorter the cursor gets at the bottom, as a percentage.", "typewriterSquash", [0, 40, 1], { depth: 2, fallback: 14, when: twOn("typewriterSpring") }));
+    effects.push(slider("Strike duration", "How long one strike lasts, in milliseconds.", "typewriterStrikeMs", [120, 600, 10], { depth: 2, fallback: 240, when: twOn("typewriterSpring") }));
+    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Stamp duration", "How long the stamp lasts, in milliseconds.", "typewriterInkMs", [150, 1000, 10], { depth: 2, fallback: 400, when: twOn("typewriterInk") }));
+    effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
+    effects.push(slider("Stamp opacity", "How solid the stamp starts.", "typewriterInkOpacity", [0.2, 1, 0.05], { depth: 2, fallback: 0.9, when: twOn("typewriterInk") }));
+    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
+    effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));
+    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
+    effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));

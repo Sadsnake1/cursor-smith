@@ -9,10 +9,11 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TYPEWRITER_DIP, TYPEWRITER_DOWN, TYPEWRITER_MS, TW_ADVANCE_CW, TW_ADVANCE_MS, TW_SPRING_DIP, TW_SPRING_DOWN, TW_SPRING_MS, TW_SQUASH } from "./constants";
-import { isTextCaretHost, lastGrapheme, easeInOutSine } from "./motion";
+import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN } from "./constants";
+import { isTextCaretHost, lastGrapheme } from "./motion";
+import { DEFAULT_SETTINGS } from "./settings";
 import type { EditorView } from "@codemirror/view";
-import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache, TypewriterPose } from "./types";
+import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache, TypewriterPose, Look } from "./types";
 import type CursorSmithPlugin from "./plugin";
 
 export const measureMethods = {
@@ -1363,14 +1364,22 @@ export const measureMethods = {
     return active.w;
   },
 
+  // A Typewriter slider's value: the look's, or the default, held in the
+  // slider's own range so a hand-edited file cannot throw the caret about.
+  twOpt(this: CursorSmithPlugin, key: keyof Look, lo: number, hi: number): number {
+    const v = Number(this.look[key] ?? DEFAULT_SETTINGS[key]);
+    const d = Number(DEFAULT_SETTINGS[key]);
+    return Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : d));
+  },
+
   // Typewriter: where the caret is drawn at `now` - dx, dy in px and sy,
-  // its height as a share, squashed about its bottom edge. The plain stroke
-  // is a quick dip on each character typed (TYPEWRITER_DOWN of it, easing
-  // out) and a return (the rest, easing in and out), TYPEWRITER_DIP of the
-  // line height at the bottom. Springy strike swaps that for a deeper dip on
-  // a damped spring that rises past rest before it settles, the caret
-  // squashed at the bottom and stretched a little on the rebound; Carriage
-  // advance carries it forward past its spot and back. At rest: 0, 0, 1.
+  // its height as a share, squashed about its bottom edge. Typewriter alone
+  // moves nothing (it was a small dip until the user's word: "the spring
+  // action should be set only with Springy strike"). Springy strike dips it
+  // on a damped spring that rises past rest before it settles, squashed at
+  // the bottom and stretched a little on the rebound (Depth, Bounce, Squash,
+  // Duration); Carriage advance carries it forward past its new spot and
+  // back (Distance, Duration). At rest: 0, 0, 1.
   typewriterPose(this: CursorSmithPlugin, now: number): TypewriterPose {
     const rest = { dx: 0, dy: 0, sy: 1 };
     if (!this.look.typewriter) return rest;
@@ -1380,28 +1389,29 @@ export const measureMethods = {
     const lh = a.h || 20;
     const pose = { dx: 0, dy: 0, sy: 1 };
     if (this.look.typewriterSpring) {
-      if (dt < TW_SPRING_MS) {
-        const u = dt / TW_SPRING_MS;
+      const ms = this.twOpt("typewriterStrikeMs", 80, 1000);
+      if (dt < ms) {
+        const u = dt / ms;
         let sh;
         if (u < TW_SPRING_DOWN) sh = 1 - Math.pow(1 - u / TW_SPRING_DOWN, 2);
         else {
           const v = (u - TW_SPRING_DOWN) / (1 - TW_SPRING_DOWN);
           sh = Math.cos(v * Math.PI * 1.5) * Math.pow(1 - v, 1.2);
+          // Past rest (the negative lobe): Bounce scales it, 0 none.
+          if (sh < 0) sh *= this.twOpt("typewriterBounce", 0, 3);
         }
-        pose.dy = sh * TW_SPRING_DIP * lh;
-        pose.sy = sh > 0 ? 1 - TW_SQUASH * sh : 1 + 0.25 * -sh;
+        pose.dy = sh * (this.twOpt("typewriterDepth", 0, 60) / 100) * lh;
+        const squash = this.twOpt("typewriterSquash", 0, 60) / 100;
+        pose.sy = sh > 0 ? 1 - squash * sh : 1 + squash * 1.8 * -sh;
       }
-    } else if (dt < TYPEWRITER_MS) {
-      const u = dt / TYPEWRITER_MS;
-      const sh = u < TYPEWRITER_DOWN
-        ? 1 - Math.pow(1 - u / TYPEWRITER_DOWN, 2)
-        : 1 - easeInOutSine((u - TYPEWRITER_DOWN) / (1 - TYPEWRITER_DOWN));
-      pose.dy = sh * TYPEWRITER_DIP * lh;
     }
-    if (this.look.typewriterAdvance && dt < TW_ADVANCE_MS) {
-      const u = dt / TW_ADVANCE_MS;
-      // sin(pi u)(1-u) peaks at 0.5796 (u = 0.35): scaled so the peak is the reach.
-      pose.dx = (Math.sin(Math.PI * u) * (1 - u) / 0.5796) * TW_ADVANCE_CW * (a.actualCharWidth || a.w || 8);
+    if (this.look.typewriterAdvance) {
+      const ms = this.twOpt("typewriterAdvanceMs", 40, 1000);
+      if (dt < ms) {
+        const u = dt / ms;
+        // sin(pi u)(1-u) peaks at 0.5796 (u = 0.35): scaled so the peak is the reach.
+        pose.dx = (Math.sin(Math.PI * u) * (1 - u) / 0.5796) * this.twOpt("typewriterAdvanceCw", 0, 3) * (a.actualCharWidth || a.w || 8);
+      }
     }
     return pose;
   },

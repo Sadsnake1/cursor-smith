@@ -117,6 +117,18 @@ export const DEFAULT_SETTINGS = {
   typewriterInk: false,    // the letter typed is overprinted bigger and bolder, then settles
   typewriterReturn: false, // Enter sweeps a streak back along the line, with a spark at its end
   typewriterAdvance: false,// each keystroke carries the caret a little past its spot
+  // Their sliders (1.6.7); the defaults are the values they were built with.
+  typewriterDepth: 18,        // Springy strike: % of the line the caret dips
+  typewriterBounce: 1,        // ...how far past rest it rebounds, x the natural bounce
+  typewriterSquash: 14,       // ...% shorter at the bottom of the strike
+  typewriterStrikeMs: 240,    // ...the whole stroke
+  typewriterInkMs: 400,       // Ink stamp: how long it lasts
+  typewriterInkSize: 1.3,     // ...how big it starts, x the letter
+  typewriterInkOpacity: 0.9,  // ...how solid it starts
+  typewriterReturnMs: 300,    // Carriage return: how long the sweep takes
+  typewriterReturnWidth: 1.5, // ...the streak's thickness, px
+  typewriterAdvanceCw: 0.25,  // Carriage advance: how far past its spot, in characters
+  typewriterAdvanceMs: 150,   // ...the whole overshoot
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -483,6 +495,9 @@ export const LOOK_KEYS: (keyof Look)[] = [
   // Typewriter (1.6.7), an effect of its own with four sub-options. Appended,
   // all off by default.
   "typewriter", "typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance",
+  "typewriterDepth", "typewriterBounce", "typewriterSquash", "typewriterStrikeMs",
+  "typewriterInkMs", "typewriterInkSize", "typewriterInkOpacity",
+  "typewriterReturnMs", "typewriterReturnWidth", "typewriterAdvanceCw", "typewriterAdvanceMs",
 ];
 
 // ---------------------------------------------------------------------------

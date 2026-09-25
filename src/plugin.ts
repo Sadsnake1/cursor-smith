@@ -114,6 +114,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare lineSpan: MeasureMethods["lineSpan"];
   declare caretThickness: MeasureMethods["caretThickness"];
   declare typewriterPose: MeasureMethods["typewriterPose"];
+  declare twOpt: MeasureMethods["twOpt"];
   declare spawnInkStamp: EffectsMethods["spawnInkStamp"];
   declare spawnCarriageReturn: EffectsMethods["spawnCarriageReturn"];
   declare drawCarriageReturns: EffectsMethods["drawCarriageReturns"];

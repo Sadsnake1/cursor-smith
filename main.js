@@ -50,19 +50,7 @@ var SCROLL_LOCK_MS = 120;
 var POP_RISE_MS = 650;
 var POP_RISE_LINES = 0.9;
 var POP_RISE_ALPHA = 0.7;
-var TYPEWRITER_MS = 170;
-var TYPEWRITER_DIP = 0.12;
-var TYPEWRITER_DOWN = 0.25;
-var TW_SPRING_MS = 240;
-var TW_SPRING_DIP = 0.18;
 var TW_SPRING_DOWN = 0.18;
-var TW_SQUASH = 0.14;
-var TW_INK_MS = 400;
-var TW_INK_SCALE = 1.3;
-var TW_INK_ALPHA = 0.9;
-var TW_RETURN_MS = 300;
-var TW_ADVANCE_MS = 150;
-var TW_ADVANCE_CW = 0.25;
 var CARET_THICKNESS_MAX = 7;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
@@ -396,6 +384,29 @@ var DEFAULT_SETTINGS = {
   // Enter sweeps a streak back along the line, with a spark at its end
   typewriterAdvance: false,
   // each keystroke carries the caret a little past its spot
+  // Their sliders (1.6.7); the defaults are the values they were built with.
+  typewriterDepth: 18,
+  // Springy strike: % of the line the caret dips
+  typewriterBounce: 1,
+  // ...how far past rest it rebounds, x the natural bounce
+  typewriterSquash: 14,
+  // ...% shorter at the bottom of the strike
+  typewriterStrikeMs: 240,
+  // ...the whole stroke
+  typewriterInkMs: 400,
+  // Ink stamp: how long it lasts
+  typewriterInkSize: 1.3,
+  // ...how big it starts, x the letter
+  typewriterInkOpacity: 0.9,
+  // ...how solid it starts
+  typewriterReturnMs: 300,
+  // Carriage return: how long the sweep takes
+  typewriterReturnWidth: 1.5,
+  // ...the streak's thickness, px
+  typewriterAdvanceCw: 0.25,
+  // Carriage advance: how far past its spot, in characters
+  typewriterAdvanceMs: 150,
+  // ...the whole overshoot
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -872,7 +883,18 @@ var LOOK_KEYS = [
   "typewriterSpring",
   "typewriterInk",
   "typewriterReturn",
-  "typewriterAdvance"
+  "typewriterAdvance",
+  "typewriterDepth",
+  "typewriterBounce",
+  "typewriterSquash",
+  "typewriterStrikeMs",
+  "typewriterInkMs",
+  "typewriterInkSize",
+  "typewriterInkOpacity",
+  "typewriterReturnMs",
+  "typewriterReturnWidth",
+  "typewriterAdvanceCw",
+  "typewriterAdvanceMs"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -2181,7 +2203,7 @@ var DemoStrip = class {
 // src/settings-tab.ts
 var RAIL_EFFECTS = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
-  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key as you type." },
+  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -3409,12 +3431,24 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("thunderstrike") || !!get("fireworks"));
     effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
     const showTw = shown("typewriter");
-    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "typewriter", { gate: true, when: showTw }));
+    effects.push(toggle("Typewriter", "The cursor strikes like a typewriter key. Pick the parts below.", "typewriter", { gate: true, when: showTw }));
     const tw = all(showTw, on("typewriter"));
-    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 1, when: tw }));
-    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, when: tw }));
-    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, when: tw }));
-    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 1, when: tw }));
+    const twOn = (key) => all(tw, on(key));
+    effects.push(toggle("Springy strike", "The cursor dips with each key and springs back, a little past rest.", "typewriterSpring", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Strike depth", "How far the cursor dips, as a percentage of the line.", "typewriterDepth", [5, 40, 1], { depth: 2, fallback: 18, when: twOn("typewriterSpring") }));
+    effects.push(slider("Bounce", "How far it springs past rest on the way back. 0 stops at rest.", "typewriterBounce", [0, 2, 0.1], { depth: 2, fallback: 1, when: twOn("typewriterSpring") }));
+    effects.push(slider("Squash", "How much shorter the cursor gets at the bottom, as a percentage.", "typewriterSquash", [0, 40, 1], { depth: 2, fallback: 14, when: twOn("typewriterSpring") }));
+    effects.push(slider("Strike duration", "How long one strike lasts, in milliseconds.", "typewriterStrikeMs", [120, 600, 10], { depth: 2, fallback: 240, when: twOn("typewriterSpring") }));
+    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Stamp duration", "How long the stamp lasts, in milliseconds.", "typewriterInkMs", [150, 1e3, 10], { depth: 2, fallback: 400, when: twOn("typewriterInk") }));
+    effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
+    effects.push(slider("Stamp opacity", "How solid the stamp starts.", "typewriterInkOpacity", [0.2, 1, 0.05], { depth: 2, fallback: 0.9, when: twOn("typewriterInk") }));
+    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
+    effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));
+    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
+    effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
     const trail = all(showTrail, on("flameTrail"));
@@ -4662,14 +4696,21 @@ var measureMethods = {
   renderWidth(active) {
     return active.w;
   },
+  // A Typewriter slider's value: the look's, or the default, held in the
+  // slider's own range so a hand-edited file cannot throw the caret about.
+  twOpt(key, lo, hi) {
+    const v = Number(this.look[key] ?? DEFAULT_SETTINGS[key]);
+    const d = Number(DEFAULT_SETTINGS[key]);
+    return Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : d));
+  },
   // Typewriter: where the caret is drawn at `now` - dx, dy in px and sy,
-  // its height as a share, squashed about its bottom edge. The plain stroke
-  // is a quick dip on each character typed (TYPEWRITER_DOWN of it, easing
-  // out) and a return (the rest, easing in and out), TYPEWRITER_DIP of the
-  // line height at the bottom. Springy strike swaps that for a deeper dip on
-  // a damped spring that rises past rest before it settles, the caret
-  // squashed at the bottom and stretched a little on the rebound; Carriage
-  // advance carries it forward past its spot and back. At rest: 0, 0, 1.
+  // its height as a share, squashed about its bottom edge. Typewriter alone
+  // moves nothing (it was a small dip until the user's word: "the spring
+  // action should be set only with Springy strike"). Springy strike dips it
+  // on a damped spring that rises past rest before it settles, squashed at
+  // the bottom and stretched a little on the rebound (Depth, Bounce, Squash,
+  // Duration); Carriage advance carries it forward past its new spot and
+  // back (Distance, Duration). At rest: 0, 0, 1.
   typewriterPose(now) {
     const rest = { dx: 0, dy: 0, sy: 1 };
     if (!this.look.typewriter) return rest;
@@ -4679,25 +4720,27 @@ var measureMethods = {
     const lh = a.h || 20;
     const pose = { dx: 0, dy: 0, sy: 1 };
     if (this.look.typewriterSpring) {
-      if (dt < TW_SPRING_MS) {
-        const u = dt / TW_SPRING_MS;
+      const ms = this.twOpt("typewriterStrikeMs", 80, 1e3);
+      if (dt < ms) {
+        const u = dt / ms;
         let sh;
         if (u < TW_SPRING_DOWN) sh = 1 - Math.pow(1 - u / TW_SPRING_DOWN, 2);
         else {
           const v = (u - TW_SPRING_DOWN) / (1 - TW_SPRING_DOWN);
           sh = Math.cos(v * Math.PI * 1.5) * Math.pow(1 - v, 1.2);
+          if (sh < 0) sh *= this.twOpt("typewriterBounce", 0, 3);
         }
-        pose.dy = sh * TW_SPRING_DIP * lh;
-        pose.sy = sh > 0 ? 1 - TW_SQUASH * sh : 1 + 0.25 * -sh;
+        pose.dy = sh * (this.twOpt("typewriterDepth", 0, 60) / 100) * lh;
+        const squash = this.twOpt("typewriterSquash", 0, 60) / 100;
+        pose.sy = sh > 0 ? 1 - squash * sh : 1 + squash * 1.8 * -sh;
       }
-    } else if (dt < TYPEWRITER_MS) {
-      const u = dt / TYPEWRITER_MS;
-      const sh = u < TYPEWRITER_DOWN ? 1 - Math.pow(1 - u / TYPEWRITER_DOWN, 2) : 1 - easeInOutSine((u - TYPEWRITER_DOWN) / (1 - TYPEWRITER_DOWN));
-      pose.dy = sh * TYPEWRITER_DIP * lh;
     }
-    if (this.look.typewriterAdvance && dt < TW_ADVANCE_MS) {
-      const u = dt / TW_ADVANCE_MS;
-      pose.dx = Math.sin(Math.PI * u) * (1 - u) / 0.5796 * TW_ADVANCE_CW * (a.actualCharWidth || a.w || 8);
+    if (this.look.typewriterAdvance) {
+      const ms = this.twOpt("typewriterAdvanceMs", 40, 1e3);
+      if (dt < ms) {
+        const u = dt / ms;
+        pose.dx = Math.sin(Math.PI * u) * (1 - u) / 0.5796 * this.twOpt("typewriterAdvanceCw", 0, 3) * (a.actualCharWidth || a.w || 8);
+      }
     }
     return pose;
   },
@@ -5452,7 +5495,7 @@ var effectsPopsMethods = {
       vx: 0,
       vy: 0,
       rotation: 0,
-      alpha: TW_INK_ALPHA,
+      alpha: this.twOpt("typewriterInkOpacity", 0.05, 1),
       lh: anchor.h || 20,
       fontSize: anchor.fontSize,
       fontFamily: anchor.fontFamily,
@@ -5487,7 +5530,7 @@ var effectsPopsMethods = {
     if (!ctx || !this.typeReturns.length) return;
     const now = performance.now();
     this.typeReturns = this.typeReturns.filter((r) => {
-      const u = (now - r.start) / TW_RETURN_MS;
+      const u = (now - r.start) / this.twOpt("typewriterReturnMs", 80, 2e3);
       if (u >= 1) return false;
       const ease = (v) => 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 3);
       const head = r.x0 - (r.x0 - r.xs) * ease(u / 0.6);
@@ -5497,7 +5540,7 @@ var effectsPopsMethods = {
       ctx.globalAlpha = Math.max(0, alpha);
       ctx.strokeStyle = r.color;
       ctx.lineCap = "round";
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = this.twOpt("typewriterReturnWidth", 0.25, 8);
       ctx.beginPath();
       ctx.moveTo(tail, r.y);
       ctx.lineTo(head, r.y);
@@ -5525,7 +5568,8 @@ var effectsPopsMethods = {
     const now = performance.now();
     this.particles = this.particles.filter((p) => {
       if (p.stamp) {
-        const t2 = (now - p.start) / TW_INK_MS;
+        const t2 = (now - p.start) / this.twOpt("typewriterInkMs", 80, 3e3);
+        const inkScale = this.twOpt("typewriterInkSize", 1, 3);
         if (t2 >= 1) return false;
         const size = p.fontSize || 16;
         const lh = p.lh || size * 1.4;
@@ -5535,8 +5579,8 @@ var effectsPopsMethods = {
         const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
         const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
-        const grow = 1 + (TW_INK_SCALE - 1) * Math.pow(1 - Math.min(1, t2 / 0.45), 2);
-        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t2));
+        const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t2 / 0.45), 2);
+        p.alpha = this.twOpt("typewriterInkOpacity", 0.05, 1) * (1 - easeInOutSine(t2));
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.translate(cx, cy);
@@ -5546,7 +5590,7 @@ var effectsPopsMethods = {
         ctx.textBaseline = "alphabetic";
         ctx.fillText(p.char, p.x, baseline);
         ctx.restore();
-        const ext2 = Math.max(m.width, size) * TW_INK_SCALE;
+        const ext2 = Math.max(m.width, size) * inkScale;
         this._markDirty(cx - ext2, p.y - lh * 0.3, ext2 * 2, lh * 1.6);
         return true;
       }

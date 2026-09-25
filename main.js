@@ -340,6 +340,8 @@ var DEFAULT_SETTINGS = {
   respectReducedMotion: true,
   // --- global caret properties ---
   caretWidthPx: 2,
+  // The Line cursor's height as a share of the line, centred (issue #33).
+  caretHeightPct: 100,
   // --- Pop Effects ---------------------------------------------------------
   // One group for everything the caret throws off in response to a keystroke.
   // popEffects is the master gate; the three effects under it are independent
@@ -815,7 +817,10 @@ var LOOK_KEYS = [
   // are "off", so an older code imports as the smear it described.
   "smearMaxLength",
   "smearConserveVolume",
-  "smearVolumeStrength"
+  "smearVolumeStrength",
+  // The Line cursor's height (1.6.6, issue #33). Appended; the default is the
+  // full line, so an older code imports as the caret it described.
+  "caretHeightPct"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -3186,7 +3191,8 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       (s) => renderCursorStyleSetting(s, afterWrite("cursorStyle"))
     ));
     const line = isStyle("Line"), underline = isStyle("Underline"), box = isStyle("Box");
-    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [1, 12, 1], { depth: 1, when: line }));
+    appearance.push(slider("Cursor thickness", "How thick the Line cursor is, in pixels.", "caretWidthPx", [0.5, 12, 0.05], { depth: 1, when: line }));
+    appearance.push(slider("Cursor height", "How tall the Line cursor is, as a percentage of the line.", "caretHeightPct", [20, 100, 5], { depth: 1, fallback: 100, when: line }));
     appearance.push(toggle("Serifs", "Adds I-beam serifs at the top and bottom of the line.", "lineSerifs", { depth: 1, when: line }));
     appearance.push(slider(
       "Underline thickness",
@@ -4565,7 +4571,23 @@ var measureMethods = {
       const uThickness = this.underlineThickness(active.h);
       return { x: active.x, y: active.top + active.h - uThickness, w: active.actualCharWidth, h: uThickness };
     }
+    if (this.styleFor("cursorStyle") === "Line") {
+      const span = this.lineSpan(active.top, active.h);
+      return { x: active.x, y: span.top, w: this.renderWidth(active), h: span.h };
+    }
     return { x: active.x, y: active.top, w: this.renderWidth(active), h: active.h };
+  },
+  // The Line cursor's vertical extent in a line box (top, h): Cursor height
+  // (caretHeightPct) of it, centred on the line - "the cursor height, which
+  // matches the height of the line itself exactly, is a bit too large for
+  // me" (issue #33, as VS Code allows). 100 is the whole line, as always.
+  // One helper for the painter, the serifs, the smear's rect and the trail
+  // ghosts, so the parts of the caret agree.
+  lineSpan(top, h) {
+    const pct = Math.max(20, Math.min(100, Number(this.styleFor("caretHeightPct") ?? 100) || 100)) / 100;
+    if (pct >= 1) return { top, h };
+    const hh = h * pct;
+    return { top: top + (h - hh) / 2, h: hh };
   },
   renderWidth(active) {
     return active.w;
@@ -6843,9 +6865,9 @@ var paintShapeMethods = {
   // trapezoid, widest at its outer edge, narrowing by SERIF_TAPER where it
   // meets the stem. Returns the union bounds too, so the caller can size a
   // gradient or pattern over the whole glyph rather than the stem alone.
-  serifQuads(active, rx, rw) {
+  serifQuads(active, rx, rw, ry = active.top, rh = active.h) {
     const stem = rw;
-    const lineH = active.h;
+    const lineH = rh;
     const thickness = Math.max(
       1,
       Math.round(Math.min(stem * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO))
@@ -6853,7 +6875,7 @@ var paintShapeMethods = {
     const charW = active.actualCharWidth;
     const raw = charW && charW > 0 ? charW : stem * 7;
     const span = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO));
-    const c = this.cursorCorners(rx, active.top, rw, lineH);
+    const c = this.cursorCorners(rx, ry, rw, lineH);
     const dir = this._smearDir;
     const anchor = (a, b) => {
       const ex = b.x - a.x, ey = b.y - a.y;
@@ -6918,8 +6940,13 @@ var paintShapeMethods = {
     const settings = this.look;
     if (!settings.crtEffect || !this.trail.length) return;
     ctx.save();
-    this.forEachTrailPoint((p, alpha, age) => {
+    this.forEachTrailPoint((p0, alpha, age) => {
       const a = alpha * bodyOpacity;
+      let p = p0;
+      if (style === "Line") {
+        const span = this.lineSpan(p0.y, p0.h);
+        p = { ...p0, y: span.top, h: span.h };
+      }
       if (settings.crtNeon) {
         if (style === "Underline") {
           const uThickness = this.underlineThickness(p.h);
@@ -6998,14 +7025,15 @@ var paintShapeMethods = {
       rw = active.actualCharWidth;
       rh = uThickness;
     } else {
+      const span = this.lineSpan(active.top, active.h);
       rx = active.x;
-      ry = active.top;
+      ry = span.top;
       rw = this.renderWidth(active);
-      rh = active.h;
+      rh = span.h;
     }
     const gsGen = this._glitchNow(now);
     const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
-    const serifs = wantSerifs ? this.serifQuads(active, rx, rw) : null;
+    const serifs = wantSerifs ? this.serifQuads(active, rx, rw, ry, rh) : null;
     if (gsGen) {
       this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha2 * bodyOpacity, gsGen);
     } else {

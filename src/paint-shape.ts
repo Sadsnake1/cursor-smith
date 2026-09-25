@@ -192,9 +192,9 @@ export const paintShapeMethods = {
   // trapezoid, widest at its outer edge, narrowing by SERIF_TAPER where it
   // meets the stem. Returns the union bounds too, so the caller can size a
   // gradient or pattern over the whole glyph rather than the stem alone.
-  serifQuads(this: CursorSmithPlugin, active: CaretRecord, rx: number, rw: number) {
+  serifQuads(this: CursorSmithPlugin, active: CaretRecord, rx: number, rw: number, ry: number = active.top, rh: number = active.h) {
     const stem = rw;
-    const lineH = active.h;
+    const lineH = rh;
 
     // Clamped against BOTH the stem and the line height - see the constants.
     const thickness = Math.max(
@@ -226,7 +226,7 @@ export const paintShapeMethods = {
     // the caret is wide - no smear, or a purely vertical one - half its width
     // back from either corner is the midpoint, so this reduces exactly to the
     // old behaviour everywhere it was already correct.
-    const c = this.cursorCorners(rx, active.top, rw, lineH);
+    const c = this.cursorCorners(rx, ry, rw, lineH);
     const dir = this._smearDir;
     const anchor = (a: Pt, b: Pt) => {
       const ex = b.x - a.x, ey = b.y - a.y;
@@ -298,8 +298,11 @@ export const paintShapeMethods = {
     const settings = this.look;
     if (!settings.crtEffect || !this.trail.length) return;
     ctx.save();
-    this.forEachTrailPoint((p, alpha, age) => {
+    this.forEachTrailPoint((p0, alpha, age) => {
       const a = alpha * bodyOpacity;
+      // A Line ghost is as tall as the caret it echoes (lineSpan).
+      let p = p0;
+      if (style === "Line") { const span = this.lineSpan(p0.y, p0.h); p = { ...p0, y: span.top, h: span.h }; }
       if (settings.crtNeon) {
         if (style === "Underline") {
           const uThickness = this.underlineThickness(p.h);
@@ -395,10 +398,12 @@ export const paintShapeMethods = {
       rw = active.actualCharWidth;
       rh = uThickness;
     } else {
+      // Cursor height (lineSpan): the whole line by default.
+      const span = this.lineSpan(active.top, active.h);
       rx = active.x;
-      ry = active.top;
+      ry = span.top;
       rw = this.renderWidth(active);
-      rh = active.h;
+      rh = span.h;
     }
 
     // Signal Glitch replaces the caret body for the length of a burst. For a
@@ -412,7 +417,7 @@ export const paintShapeMethods = {
     // is already a horizontal bar, so capping it with two more reads as a
     // stack of lines rather than a glyph.
     const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
-    const serifs = wantSerifs ? this.serifQuads(active, rx, rw) : null;
+    const serifs = wantSerifs ? this.serifQuads(active, rx, rw, ry, rh) : null;
 
     if (gsGen) {
       this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity, gsGen);

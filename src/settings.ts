@@ -97,7 +97,9 @@ export const DEFAULT_SETTINGS = {
   respectReducedMotion: true,
 
   // --- global caret properties ---
-  caretWidthPx: 2,         
+  caretWidthPx: 2,
+  // The Line cursor's height as a share of the line, centred (issue #33).
+  caretHeightPct: 100,
   // --- Pop Effects ---------------------------------------------------------
   // One group for everything the caret throws off in response to a keystroke.
   // popEffects is the master gate; the three effects under it are independent
@@ -467,6 +469,9 @@ export const LOOK_KEYS: (keyof Look)[] = [
   // Motion Smear's cap and volume conservation (1.5.4). Appended; the defaults
   // are "off", so an older code imports as the smear it described.
   "smearMaxLength", "smearConserveVolume", "smearVolumeStrength",
+  // The Line cursor's height (1.6.6, issue #33). Appended; the default is the
+  // full line, so an older code imports as the caret it described.
+  "caretHeightPct",
 ];
 
 // ---------------------------------------------------------------------------

@@ -1328,7 +1328,26 @@ export const measureMethods = {
       const uThickness = this.underlineThickness(active.h);
       return { x: active.x, y: active.top + active.h - uThickness, w: active.actualCharWidth, h: uThickness };
     }
+    if (this.styleFor("cursorStyle") === "Line") {
+      // The same span the painter uses: this is the rect the smear chases,
+      // and with the smear on it is what gets painted (see Underline above).
+      const span = this.lineSpan(active.top, active.h);
+      return { x: active.x, y: span.top, w: this.renderWidth(active), h: span.h };
+    }
     return { x: active.x, y: active.top, w: this.renderWidth(active), h: active.h };
+  },
+
+  // The Line cursor's vertical extent in a line box (top, h): Cursor height
+  // (caretHeightPct) of it, centred on the line - "the cursor height, which
+  // matches the height of the line itself exactly, is a bit too large for
+  // me" (issue #33, as VS Code allows). 100 is the whole line, as always.
+  // One helper for the painter, the serifs, the smear's rect and the trail
+  // ghosts, so the parts of the caret agree.
+  lineSpan(this: CursorSmithPlugin, top: number, h: number): { top: number; h: number } {
+    const pct = Math.max(20, Math.min(100, Number(this.styleFor("caretHeightPct") ?? 100) || 100)) / 100;
+    if (pct >= 1) return { top, h };
+    const hh = h * pct;
+    return { top: top + (h - hh) / 2, h: hh };
   },
 
   renderWidth(this: CursorSmithPlugin, active: CaretRecord): number {

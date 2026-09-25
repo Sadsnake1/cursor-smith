@@ -461,3 +461,42 @@ section("I-beam serifs");
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+section("the Line cursor: height and fine thickness (issues #32, #33)");
+
+{
+  const mk = (over) => {
+    const e = makeEngine(Object.assign({ cursorStyle: "Line", lineSerifs: false }, over));
+    e.ctx = makePathCtx();
+    e.styleFor = (k) => e.settings[k];
+    e.look = e.settings;
+    e.smearCorners = () => null;
+    return e;
+  };
+  const full = mk({});
+  ok("by default the Line cursor spans the whole line", JSON.stringify(full.lineSpan(40, 24)) === JSON.stringify({ top: 40, h: 24 }));
+  const short = mk({ caretHeightPct: 50 });
+  const sp = short.lineSpan(40, 24);
+  ok("at 50% it is half the line, centred on it", sp.h === 12 && sp.top === 46, sp);
+  ok("...clamped: never under 20%, never over the line", mk({ caretHeightPct: 5 }).lineSpan(0, 100).h === 20 && mk({ caretHeightPct: 150 }).lineSpan(0, 100).h === 100);
+  // The smear chases getActiveRect and paints it when on: the same span.
+  short.animActive = { x: 100, top: 40, w: 1.25, h: 24, actualCharWidth: 9 };
+  const r = short.getActiveRect();
+  ok("the smear's rect is the same shortened span, at the fine width", r.y === 46 && r.h === 12 && r.w === 1.25, r);
+  const box = mk({ cursorStyle: "Box", caretHeightPct: 50 });
+  box.animActive = { x: 100, top: 40, w: 9, h: 24, actualCharWidth: 9 };
+  ok("...and only for the Line style: a Box keeps the whole line", box.getActiveRect().h === 24);
+  // The serifs cap the shortened stem, not the line box.
+  const serifs = mk({ caretHeightPct: 50, lineSerifs: true }).serifQuads({ x: 100, top: 40, w: 2, h: 24, actualCharWidth: 9 }, 100, 2, 46, 12);
+  const ys = serifs.quads.flatMap((q) => [q.tl.y, q.tr.y, q.br.y, q.bl.y]);
+  ok("...the serifs sit on the shortened stem's ends", Math.min(...ys) === 46 && Math.max(...ys) === 58, [Math.min(...ys), Math.max(...ys)]);
+  // Share codes keep the fine width and the height.
+  const code = T.presetToCode("x", Object.assign({}, T.DEFAULT_SETTINGS, { caretWidthPx: 1.25, caretHeightPct: 60 }));
+  const back = T.codeToPreset(code);
+  const got = back && back.snap;
+  ok("a share code carries a 1.25 px thickness and a 60% height", got && got.caretWidthPx === 1.25 && got.caretHeightPct === 60, got && [got.caretWidthPx, got.caretHeightPct]);
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  ok("the thickness slider steps by 0.05 px from 0.5", src.includes(`"caretWidthPx", [0.5, 12, 0.05]`));
+  ok("...and the height slider sits under it, for the Line style", /slider\("Cursor height", [^;]*"caretHeightPct", \[20, 100, 5\], \{ depth: 1, fallback: 100, when: line \}\)/.test(src));
+}

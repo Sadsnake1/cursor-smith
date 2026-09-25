@@ -115,6 +115,7 @@ export interface Look {
   overlayBlinkSync: boolean;
   overlayBlinkDepth: number;
   caretWidthPx: number;
+  caretHeightPct: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;

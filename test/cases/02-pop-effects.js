@@ -541,13 +541,14 @@ section("Typewriter (1.6.7)");
   const e = mk({});
   const t0 = 10000;
   e._typewriterT = t0;
-  const d = (ms) => e.typewriterDip(t0 + ms);
+  const d = (ms) => e.typewriterPose(t0 + ms).dy;
   const peak = Math.max(...Array.from({ length: 171 }, (_, i) => d(i)));
   ok("it starts at rest, dips, and is back by the end of the stroke", d(0) === 0 && d(40) > d(10) && d(169) < 0.5 && d(170) === 0 && d(400) === 0, [d(0), d(10), d(40), d(100), d(169), d(170)].map((v) => +v.toFixed(2)));
   ok("...down fast, back slower: deepest in the first quarter", d(42) >= peak - 0.2 && d(20) > d(120), [d(20), d(42), d(120)].map((v) => +v.toFixed(2)));
   ok("...a little: at most an eighth of the line (3 px on a 24 px line)", peak > 2 && peak <= 24 * 0.12 + 1e-9, +peak.toFixed(2));
-  ok("off (or with Pop effects off), no dip at all", mk({ popTypewriter: false })._typewriterT === undefined || (() => { const o = mk({ popTypewriter: false }); o._typewriterT = t0; return o.typewriterDip(t0 + 40) === 0; })());
-  ok("...and none with the group off", (() => { const o = mk({ popEffects: false }); o._typewriterT = t0; return o.typewriterDip(t0 + 40) === 0; })());
+  ok("off, no dip at all", (() => { const o = mk({ popTypewriter: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy === 0; })());
+  ok("...and none with the group off", (() => { const o = mk({ popEffects: false }); o._typewriterT = t0; return o.typewriterPose(t0 + 40).dy === 0; })());
+  ok("the plain stroke neither squashes nor moves sideways", e.typewriterPose(t0 + 40).sy === 1 && e.typewriterPose(t0 + 40).dx === 0);
   // The stroke starts on a character typed, not on a click or an arrow.
   const text = "the table.";
   const cmOf = (txt) => ({ workspace: { activeEditor: { editor: { cm: { state: { doc: { sliceString: (a, b) => txt.slice(a, b), length: txt.length } } } } } } });
@@ -562,7 +563,69 @@ section("Typewriter (1.6.7)");
   k.resolveHoldChar(at(5, text.length));
   ok("a character typed strikes", k._typewriterT > 0);
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "paint-frame.ts"), "utf8");
-  ok("the whole caret is drawn dipped, and the damage rect reaches down with it", /ctx\.translate\(0, dip\);\s*if \(cb\) cb\.y1 \+= dip;/.test(src));
+  ok("the whole caret is drawn in its pose, and the damage rect follows it", /ctx\.translate\(pose\.dx, pose\.dy\);/.test(src) && /cb\.y1 \+= Math\.max\(0, pose\.dy\);/.test(src));
   const tab = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
-  ok("the switch sits in Pop effects", /toggle\("Typewriter", [^;]*"popTypewriter", \{ depth: 1, when: pop \}\)/.test(tab));
+  ok("the switch sits in Pop effects, opening its own sub-options", /toggle\("Typewriter", [^;]*"popTypewriter", \{ depth: 1, gate: true, when: pop \}\)/.test(tab));
+}
+
+// ---------------------------------------------------------------------------
+section("Typewriter's sub-options (1.6.7)");
+
+{
+  const mk = (over) => {
+    const e = makeEngine(Object.assign({ popEffects: true, popTypewriter: true }, over));
+    e.styleFor = (k) => e.settings[k];
+    e.look = e.settings;
+    e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
+    e.particles = []; e.typeReturns = [];
+    e._markDirty = () => {};
+    return e;
+  };
+  const t0 = 10000;
+  // Springy strike: deeper, past rest on the rebound, squashed at the bottom.
+  const sp = mk({ typewriterSpring: true });
+  sp._typewriterT = t0;
+  const poses = Array.from({ length: 241 }, (_, i) => sp.typewriterPose(t0 + i));
+  const deepest = Math.max(...poses.map((p) => p.dy)), highest = Math.min(...poses.map((p) => p.dy));
+  ok("Springy strike dips deeper than the plain stroke", deepest > 24 * 0.12 && deepest <= 24 * 0.18 + 1e-9, +deepest.toFixed(2));
+  ok("...rises past rest on the rebound, then settles", highest < -0.3 && sp.typewriterPose(t0 + 240).dy === 0, [+highest.toFixed(2)]);
+  const atBottom = poses.reduce((b, p) => (p.dy > b.dy ? p : b));
+  const tallest = Math.max(...poses.map((p) => p.sy));
+  ok("...squashed at the bottom, stretched a little on the rebound", atBottom.sy < 0.9 && tallest > 1, [+atBottom.sy.toFixed(3), +tallest.toFixed(3)]);
+  // Carriage advance: forward past the spot and back, never behind it.
+  const ad = mk({ typewriterAdvance: true });
+  ad._typewriterT = t0;
+  const dxs = Array.from({ length: 151 }, (_, i) => ad.typewriterPose(t0 + i).dx);
+  ok("Carriage advance carries the caret forward a quarter character and back", Math.max(...dxs) > 1.8 && Math.max(...dxs) <= 8 * 0.25 + 0.05 && Math.min(...dxs) >= 0 && ad.typewriterPose(t0 + 150).dx === 0, [+Math.max(...dxs).toFixed(2)]);
+  // Ink stamp: on its own cell, starting big and bold, shrinking and fading.
+  const ink = mk({ typewriterInk: true });
+  ink.fontString = (size, fam, w, st) => [st, w, size + "px", fam].join(" ");
+  const drawn = [], scales = [];
+  ink.ctx = { save() {}, restore() {}, translate() {}, scale(x) { scales.push(x); }, measureText: () => ({ width: 9, fontBoundingBoxAscent: 13, fontBoundingBoxDescent: 3 }),
+    globalAlpha: 1, fillStyle: "", font: "", textAlign: "", textBaseline: "", fillText(ch, x, y) { drawn.push({ ch, x, y, a: this.globalAlpha, font: this.font }); } };
+  ink.spawnInkStamp("k", { x: 100, top: 200, h: 24, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#ddd", actualCharWidth: 8 });
+  const st = ink.particles[0];
+  ok("Ink stamp overprints the letter on its own cell, in the text's colour", st && st.stamp && st.x === 100 && st.y === 200 && st.color === "#ddd", st);
+  const frame = (ms) => { st.start = performance.now() - ms; drawn.length = 0; scales.length = 0; ink.drawLettersParticles(); return { d: drawn[0], s: scales[0] }; };
+  const f0 = frame(0), f1 = frame(200);
+  ok("...bold, bigger at first and shrinking onto the letter, fading", /bold/.test(f0.d.font) && f0.s > 1.25 && f1.s < f0.s && f1.d.a < f0.d.a, [f0.s, f1.s, f0.d.a, f1.d.a].map((v) => +v.toFixed(2)));
+  ok("...on the letter's baseline (the Box's metrics), from its left edge", f0.d.x === 100 && Math.abs(f0.d.y - (200 + 13 + (24 - 16) / 2)) < 1e-9, [f0.d.x, f0.d.y]);
+  // Carriage return: a streak back along the old line, and the spark.
+  const cr = mk({ typewriterReturn: true });
+  const strokes = [];
+  cr.ctx = { save() {}, restore() {}, beginPath() { strokes.push([]); }, moveTo(x, y) { strokes[strokes.length - 1].push([x, y]); }, lineTo(x, y) { strokes[strokes.length - 1].push([x, y]); }, stroke() {}, globalAlpha: 1, strokeStyle: "", lineCap: "", lineWidth: 1 };
+  cr.spawnCarriageReturn({ x: 400, top: 200, h: 24, fontSize: 16, rowLeft: 40 }, { x: 40, top: 224, h: 24 });
+  const r = cr.typeReturns[0];
+  ok("Carriage return runs from the old line's end back to its start", r && r.x0 === 400 && r.xs === 40, r);
+  r.start = performance.now() - 150; strokes.length = 0; cr.drawCarriageReturns();
+  const streak = strokes[0];
+  ok("...its head swept back toward the start, its tail following", streak && streak[1][0] < 150 && streak[0][0] > streak[1][0], streak);
+  ok("...with a spark of four ticks at the line's end", strokes[1] && strokes[1].length === 8 && strokes[1].every(([x]) => Math.abs(x - 400) < 24), strokes[1] && strokes[1].length);
+  r.start = performance.now() - 5000; cr.drawCarriageReturns();
+  ok("...and gone after it", cr.typeReturns.length === 0);
+  ok("a return on a line with nothing to sweep is not spawned", (() => { const q = mk({ typewriterReturn: true }); q.spawnCarriageReturn({ x: 41, top: 0, h: 24, rowLeft: 40 }, { x: 40, top: 24, h: 24 }); return q.typeReturns.length === 0; })());
+  const tab2 = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  ok("the four switches sit under Typewriter", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 2, when: tw }`)));
+  const carets = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "carets.ts"), "utf8");
+  ok("Enter fires the carriage return from where the old line ended", carets.includes("typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);"));
 }

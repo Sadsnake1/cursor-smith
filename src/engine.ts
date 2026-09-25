@@ -901,6 +901,8 @@ export const engineMethods = {
       // Same reasoning: a bolt is aged and expired inside its draw call,
       // so a skipped frame would leave one frozen on screen.
       (this.thunderbolts && this.thunderbolts.length > 0) ||
+      // A carriage return is aged inside its draw call too.
+      (this.typeReturns && this.typeReturns.length > 0) ||
       // And again for a firework. Note this covers a shell still sitting
       // out its stagger delay, which paints nothing yet but must not be
       // allowed to drop the loop into the idle heartbeat - the volley

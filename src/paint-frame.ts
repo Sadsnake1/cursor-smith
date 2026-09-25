@@ -105,6 +105,7 @@ export const paintFrameMethods = {
     this._dirty = null;
 
     this.drawLettersParticles();
+    this.drawCarriageReturns();
     // Underneath everything else: it's a background guide, and the cursor and
     // its motes should read as sitting on top of it.
     this.drawBracketTether();
@@ -152,14 +153,26 @@ export const paintFrameMethods = {
       ctx.translate(-cx, -cy);
     }
     // Typewriter: the caret dips with each character typed and springs back
-    // (typewriterDip) - the whole caret, like breathing, and the damage rect
-    // reaches down with it.
-    const dip = a ? this.typewriterDip(performance.now()) : 0;
-    const dipping = dip > 0.01;
-    if (dipping) {
+    // (typewriterPose) - shifted and squashed as a whole, like breathing,
+    // and the damage rect follows it.
+    const pose = a ? this.typewriterPose(performance.now()) : null;
+    const dipping = !!pose && !!a && (Math.abs(pose.dx) > 0.01 || Math.abs(pose.dy) > 0.01 || Math.abs(pose.sy - 1) > 0.001);
+    if (dipping && pose && a) {
       ctx.save();
-      ctx.translate(0, dip);
-      if (cb) cb.y1 += dip;
+      ctx.translate(pose.dx, pose.dy);
+      if (Math.abs(pose.sy - 1) > 0.001) {
+        const bx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+        const by = a.top + (a.h || 0);
+        ctx.translate(bx, by);
+        ctx.scale(1, pose.sy);
+        ctx.translate(-bx, -by);
+      }
+      if (cb) {
+        cb.x0 += Math.min(0, pose.dx);
+        cb.x1 += Math.max(0, pose.dx);
+        cb.y0 += Math.min(0, pose.dy) - (a.h || 0) * Math.max(0, pose.sy - 1);
+        cb.y1 += Math.max(0, pose.dy);
+      }
     }
     // Before the dispatch, not inside the Box branch: this both sets the
     // blend for a highlighter-translucent box AND clears it for every other

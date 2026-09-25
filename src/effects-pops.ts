@@ -32,6 +32,10 @@ import {
   POP_RISE_ALPHA,
   POP_RISE_LINES,
   POP_RISE_MS,
+  TW_INK_ALPHA,
+  TW_INK_MS,
+  TW_INK_SCALE,
+  TW_RETURN_MS,
   THUNDER_BANDS,
   THUNDER_LIFE_MS,
   THUNDER_MAX_ANGLE,
@@ -39,7 +43,7 @@ import {
   THUNDER_MIN_REACH,
   THUNDER_PASSES,
 } from "./constants";
-import { glitchNoise } from "./motion";
+import { easeInOutSine, glitchNoise } from "./motion";
 import type { CaretRecord, FireworkSpark, GlitchState, Pt, ThunderBand } from "./types";
 import type CursorSmithPlugin from "./plugin";
 
@@ -89,12 +93,116 @@ export const effectsPopsMethods = {
     });
   },
 
+  // Typewriter's ink stamp: the letter just typed, overprinted on its own
+  // cell (anchor: the caret it was typed at) bigger and bolder, shrinking
+  // onto the real one and fading.
+  spawnInkStamp(this: CursorSmithPlugin, char: string, anchor: CaretRecord) {
+    if (!char.trim()) return;
+    this.particles.push({
+      char, stamp: true,
+      x: anchor.x, y: anchor.top,
+      vx: 0, vy: 0, rotation: 0, alpha: TW_INK_ALPHA,
+      lh: anchor.h || 20,
+      fontSize: anchor.fontSize, fontFamily: anchor.fontFamily,
+      fontWeight: anchor.fontWeight, fontStyle: anchor.fontStyle,
+      color: anchor.textColor || this.getActiveColor() || "#888888",
+      start: performance.now(),
+    });
+  },
+
+  // Typewriter's carriage return, on Enter: from the caret the old line ended
+  // at (from) back to the start of that line - its visual row, or where the
+  // caret now is.
+  spawnCarriageReturn(this: CursorSmithPlugin, from: CaretRecord, to: CaretRecord) {
+    if (!from || !to) return;
+    const xs = typeof from.rowLeft === "number" ? from.rowLeft : Math.min(from.x, to.x);
+    const x0 = from.x;
+    if (!(x0 - xs > 2)) return;
+    this.typeReturns.push({
+      x0, xs,
+      y: from.top + (from.h || 20) / 2 + (from.fontSize || 16) * 0.3,
+      h: from.h || 20,
+      color: this.getActiveColor() || from.textColor || "#888888",
+      start: performance.now(),
+    });
+  },
+
+  // The streak sweeps from the line's end to its start, easing out, its
+  // tail following a beat behind; the spark at the end is four short strokes
+  // growing out and fading. Crisp lines, no glow.
+  drawCarriageReturns(this: CursorSmithPlugin) {
+    const ctx = this.ctx;
+    if (!ctx || !this.typeReturns.length) return;
+    const now = performance.now();
+    this.typeReturns = this.typeReturns.filter((r) => {
+      const u = (now - r.start) / TW_RETURN_MS;
+      if (u >= 1) return false;
+      const ease = (v: number) => 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 3);
+      const head = r.x0 - (r.x0 - r.xs) * ease(u / 0.6);
+      const tail = r.x0 - (r.x0 - r.xs) * ease((u - 0.25) / 0.75);
+      const alpha = 0.75 * (1 - easeInOutSine(u));
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, alpha);
+      ctx.strokeStyle = r.color;
+      ctx.lineCap = "round";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tail, r.y);
+      ctx.lineTo(head, r.y);
+      ctx.stroke();
+      // The ding: four ticks around the old line's end, above the streak.
+      const sparkU = Math.min(1, u / 0.8);
+      const inner = r.h * (0.12 + 0.1 * sparkU), outer = r.h * (0.22 + 0.2 * sparkU);
+      const cx = r.x0, cy = r.y - r.h * 0.45;
+      ctx.globalAlpha = Math.max(0, 0.8 * (1 - sparkU));
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        ctx.moveTo(cx + ux * inner, cy + uy * inner);
+        ctx.lineTo(cx + ux * outer, cy + uy * outer);
+      }
+      ctx.stroke();
+      ctx.restore();
+      const pad = r.h * 0.5;
+      this._markDirty(r.xs - pad, cy - outer - 2, (r.x0 - r.xs) + outer + pad * 2, (r.y - cy) + outer + pad);
+      return true;
+    });
+  },
+
   drawLettersParticles(this: CursorSmithPlugin) {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = performance.now();
     
     this.particles = this.particles.filter(p => {
+      if (p.stamp) {
+        // Overprinted on its cell, on the real glyph's baseline (the Box's
+        // own metrics), bigger and bolder at first and shrinking onto it.
+        const t = (now - p.start) / TW_INK_MS;
+        if (t >= 1) return false;
+        const size = p.fontSize || 16;
+        const lh = p.lh || size * 1.4;
+        ctx.save();
+        ctx.font = this.fontString(size, p.fontFamily, "bold", p.fontStyle || "normal");
+        const m = ctx.measureText(p.char);
+        const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
+        const baseline = p.y + ascent + (lh - ascent - descent) / 2;
+        const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
+        const grow = 1 + (TW_INK_SCALE - 1) * Math.pow(1 - Math.min(1, t / 0.45), 2);
+        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t));
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.translate(cx, cy);
+        ctx.scale(grow, grow);
+        ctx.translate(-cx, -cy);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(p.char, p.x, baseline);
+        ctx.restore();
+        const ext = Math.max(m.width, size) * TW_INK_SCALE;
+        this._markDirty(cx - ext, p.y - lh * 0.3, ext * 2, lh * 1.6);
+        return true;
+      }
       if (p.rise) {
         // Straight up from the cursor's top, easing out, fading as it goes.
         const t = (now - p.start) / POP_RISE_MS;

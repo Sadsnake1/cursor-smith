@@ -256,6 +256,25 @@ export const POP_RISE_ALPHA = 0.7;
 export const TYPEWRITER_MS = 170;
 export const TYPEWRITER_DIP = 0.12;
 export const TYPEWRITER_DOWN = 0.25;
+// Typewriter's four sub-options (1.6.7, "make it more cool"):
+// Springy strike - a deeper dip on a damped spring that rises a little past
+// rest before settling, the caret squashed at the bottom of the strike.
+export const TW_SPRING_MS = 240;
+export const TW_SPRING_DIP = 0.18;        // share of the line height
+export const TW_SPRING_DOWN = 0.18;       // share of the stroke going down
+export const TW_SQUASH = 0.14;            // how much shorter at the bottom
+// Ink stamp - the letter overprinted bigger and bolder, shrinking onto the
+// real one and fading.
+export const TW_INK_MS = 300;
+export const TW_INK_SCALE = 1.3;
+export const TW_INK_ALPHA = 0.9;
+// Carriage return - on Enter a streak sweeps back along the old line to its
+// start, and a four-point spark flashes where the line ended.
+export const TW_RETURN_MS = 300;
+// Carriage advance - each keystroke carries the caret this many character
+// widths past its new spot and settles it back.
+export const TW_ADVANCE_MS = 150;
+export const TW_ADVANCE_CW = 0.25;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.

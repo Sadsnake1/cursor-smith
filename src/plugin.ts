@@ -39,6 +39,7 @@ import type {
   TetherSeg,
   Thunderbolt,
   TrailPoint,
+  TypeReturn,
 } from "./types";
 
 import { measureMethods } from "./measure";
@@ -112,7 +113,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare getActiveRect: MeasureMethods["getActiveRect"];
   declare lineSpan: MeasureMethods["lineSpan"];
   declare caretThickness: MeasureMethods["caretThickness"];
-  declare typewriterDip: MeasureMethods["typewriterDip"];
+  declare typewriterPose: MeasureMethods["typewriterPose"];
+  declare spawnInkStamp: EffectsMethods["spawnInkStamp"];
+  declare spawnCarriageReturn: EffectsMethods["spawnCarriageReturn"];
+  declare drawCarriageReturns: EffectsMethods["drawCarriageReturns"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts
@@ -512,6 +516,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare smearShape: Quad | null;
   stardust!: StardustMote[];
   thunderbolts!: Thunderbolt[];
+  typeReturns!: TypeReturn[];
   torchEngineActive!: boolean;
   torchRaf!: number;
   declare trail: TrailPoint[];
@@ -1573,6 +1578,7 @@ export default class CursorSmithPlugin extends Plugin {
     // Last caret sample. See updateHotHeadInertia.
     this._hotPrev = null;
     this.thunderbolts = [];
+    this.typeReturns = [];
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then
     // burst) whose sparks don't exist yet when it launches, so it can't be

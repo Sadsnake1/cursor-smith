@@ -1345,7 +1345,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // are the bigger, rarer events.
     effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
-    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, when: pop }));
+    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, gate: true, when: pop }));
+    const tw = all(pop, on("popTypewriter"));
+    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 2, when: tw }));
+    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 2, when: tw }));
+    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 2, when: tw }));
+    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 2, when: tw }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],

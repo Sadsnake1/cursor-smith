@@ -123,7 +123,7 @@ section("frame governor: _isAnimating");
   // Pools that MUST claim the hot gear: each is aged or advanced inside a draw
   // call, so a skipped frame freezes it rather than letting it expire.
   const ANIMATING_POOLS = [
-    "trail", "particles", "flamePixels", "flameEmbers", "thunderbolts", "fireworks",
+    "trail", "particles", "flamePixels", "flameEmbers", "thunderbolts", "fireworks", "typeReturns",
   ];
   for (const pool of ANIMATING_POOLS) {
     // The trail only under CRT, which is the one thing that paints it.

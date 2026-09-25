@@ -118,6 +118,10 @@ export interface Look {
   caretHeightPct: number;
   popLettersRise: boolean;
   popTypewriter: boolean;
+  typewriterSpring: boolean;
+  typewriterInk: boolean;
+  typewriterReturn: boolean;
+  typewriterAdvance: boolean;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;
@@ -314,7 +318,16 @@ export interface LetterParticle {
   fontSize: number; fontFamily: string; color: string; start: number;
   // "Rise straight up": floats from the cursor's top, a line height (lh) up.
   rise?: boolean; lh?: number;
+  // Typewriter's ink stamp: overprinted on the letter's own cell (x is its
+  // left edge, y the line top), in its own font.
+  stamp?: boolean; fontWeight?: string; fontStyle?: string;
 }
+// Typewriter's carriage return: a streak from the old line's end (x0) back
+// to its start (xs) at height y, and the spark at x0.
+export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number }
+// Where Typewriter holds the caret at a moment: shifted by dx, dy and
+// squashed to sy of its height about its bottom edge.
+export interface TypewriterPose { dx: number; dy: number; sy: number }
 // One pool for three effects - Pixel Trail puffs (`trail`), Speed Demon
 // sparks (`spark`, with their colour channels cached) and Thunderstrike
 // debris (neither) - so one loop ages and clears them all.

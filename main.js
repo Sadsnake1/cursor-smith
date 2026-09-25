@@ -53,6 +53,16 @@ var POP_RISE_ALPHA = 0.7;
 var TYPEWRITER_MS = 170;
 var TYPEWRITER_DIP = 0.12;
 var TYPEWRITER_DOWN = 0.25;
+var TW_SPRING_MS = 240;
+var TW_SPRING_DIP = 0.18;
+var TW_SPRING_DOWN = 0.18;
+var TW_SQUASH = 0.14;
+var TW_INK_MS = 300;
+var TW_INK_SCALE = 1.3;
+var TW_INK_ALPHA = 0.9;
+var TW_RETURN_MS = 300;
+var TW_ADVANCE_MS = 150;
+var TW_ADVANCE_CW = 0.25;
 var CARET_THICKNESS_MAX = 7;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
@@ -376,6 +386,14 @@ var DEFAULT_SETTINGS = {
   // the letter floats straight up from the cursor's top and fades
   popTypewriter: false,
   // the caret dips a little with each character and springs back
+  typewriterSpring: false,
+  // a deeper, springy strike that bounces past rest, squashed at the bottom
+  typewriterInk: false,
+  // the letter typed is overprinted bigger and bolder, then settles
+  typewriterReturn: false,
+  // Enter sweeps a streak back along the line, with a spark at its end
+  typewriterAdvance: false,
+  // each keystroke carries the caret a little past its spot
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -846,8 +864,13 @@ var LOOK_KEYS = [
   "caretHeightPct",
   // Popping letters rising straight up (1.6.7). Appended, off by default.
   "popLettersRise",
-  // Typewriter, a pop effect (1.6.7). Appended, off by default.
-  "popTypewriter"
+  // Typewriter, a pop effect (1.6.7), and its four sub-options. Appended,
+  // all off by default.
+  "popTypewriter",
+  "typewriterSpring",
+  "typewriterInk",
+  "typewriterReturn",
+  "typewriterAdvance"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -3369,7 +3392,12 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       "backspaceDisintegrate",
       { depth: 1, gate: true, when: pop }
     ));
-    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, when: pop }));
+    effects.push(toggle("Typewriter", "The cursor dips a little with each key and springs back up.", "popTypewriter", { depth: 1, gate: true, when: pop }));
+    const tw = all(pop, on("popTypewriter"));
+    effects.push(toggle("Springy strike", "A deeper dip that bounces past rest, the cursor squashed on impact.", "typewriterSpring", { depth: 2, when: tw }));
+    effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 2, when: tw }));
+    effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 2, when: tw }));
+    effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its spot and back.", "typewriterAdvance", { depth: 2, when: tw }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider(
@@ -4284,7 +4312,10 @@ var measureMethods = {
           if (this.look.popEffects && this.look.popLetters) {
             this.spawnLetterParticle(justTyped, last);
           }
-          if (this.look.popEffects && this.look.popTypewriter) this._typewriterT = performance.now();
+          if (this.look.popEffects && this.look.popTypewriter) {
+            this._typewriterT = performance.now();
+            if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
+          }
           return justTyped;
         }
       }
@@ -4627,18 +4658,44 @@ var measureMethods = {
   renderWidth(active) {
     return active.w;
   },
-  // Typewriter: how far down the caret is drawn at `now`, in px - a quick
-  // dip on each character typed (TYPEWRITER_DOWN of the stroke, easing out)
-  // and a spring back up (the rest, easing in and out), TYPEWRITER_DIP of
-  // the line height at the bottom. 0 when off or between strokes.
-  typewriterDip(now) {
-    if (!(this.look.popEffects && this.look.popTypewriter)) return 0;
+  // Typewriter: where the caret is drawn at `now` - dx, dy in px and sy,
+  // its height as a share, squashed about its bottom edge. The plain stroke
+  // is a quick dip on each character typed (TYPEWRITER_DOWN of it, easing
+  // out) and a return (the rest, easing in and out), TYPEWRITER_DIP of the
+  // line height at the bottom. Springy strike swaps that for a deeper dip on
+  // a damped spring that rises past rest before it settles, the caret
+  // squashed at the bottom and stretched a little on the rebound; Carriage
+  // advance carries it forward past its spot and back. At rest: 0, 0, 1.
+  typewriterPose(now) {
+    const rest = { dx: 0, dy: 0, sy: 1 };
+    if (!(this.look.popEffects && this.look.popTypewriter)) return rest;
     const a = this.animActive;
     const dt = now - (this._typewriterT || 0);
-    if (!a || !this._typewriterT || dt < 0 || dt >= TYPEWRITER_MS) return 0;
-    const u = dt / TYPEWRITER_MS;
-    const shape = u < TYPEWRITER_DOWN ? 1 - Math.pow(1 - u / TYPEWRITER_DOWN, 2) : 1 - easeInOutSine((u - TYPEWRITER_DOWN) / (1 - TYPEWRITER_DOWN));
-    return shape * TYPEWRITER_DIP * (a.h || 20);
+    if (!a || !this._typewriterT || dt < 0) return rest;
+    const lh = a.h || 20;
+    const pose = { dx: 0, dy: 0, sy: 1 };
+    if (this.look.typewriterSpring) {
+      if (dt < TW_SPRING_MS) {
+        const u = dt / TW_SPRING_MS;
+        let sh;
+        if (u < TW_SPRING_DOWN) sh = 1 - Math.pow(1 - u / TW_SPRING_DOWN, 2);
+        else {
+          const v = (u - TW_SPRING_DOWN) / (1 - TW_SPRING_DOWN);
+          sh = Math.cos(v * Math.PI * 1.5) * Math.pow(1 - v, 1.2);
+        }
+        pose.dy = sh * TW_SPRING_DIP * lh;
+        pose.sy = sh > 0 ? 1 - TW_SQUASH * sh : 1 + 0.25 * -sh;
+      }
+    } else if (dt < TYPEWRITER_MS) {
+      const u = dt / TYPEWRITER_MS;
+      const sh = u < TYPEWRITER_DOWN ? 1 - Math.pow(1 - u / TYPEWRITER_DOWN, 2) : 1 - easeInOutSine((u - TYPEWRITER_DOWN) / (1 - TYPEWRITER_DOWN));
+      pose.dy = sh * TYPEWRITER_DIP * lh;
+    }
+    if (this.look.typewriterAdvance && dt < TW_ADVANCE_MS) {
+      const u = dt / TW_ADVANCE_MS;
+      pose.dx = Math.sin(Math.PI * u) * (1 - u) / 0.5796 * TW_ADVANCE_CW * (a.actualCharWidth || a.w || 8);
+    }
+    return pose;
   },
   // The Line cursor's thickness, in px: the setting, in 0.1 px steps since
   // 1.6.6 (issue #32), held between 0.5 and CARET_THICKNESS_MAX - a value
@@ -5378,11 +5435,117 @@ var effectsPopsMethods = {
       start: performance.now()
     });
   },
+  // Typewriter's ink stamp: the letter just typed, overprinted on its own
+  // cell (anchor: the caret it was typed at) bigger and bolder, shrinking
+  // onto the real one and fading.
+  spawnInkStamp(char, anchor) {
+    if (!char.trim()) return;
+    this.particles.push({
+      char,
+      stamp: true,
+      x: anchor.x,
+      y: anchor.top,
+      vx: 0,
+      vy: 0,
+      rotation: 0,
+      alpha: TW_INK_ALPHA,
+      lh: anchor.h || 20,
+      fontSize: anchor.fontSize,
+      fontFamily: anchor.fontFamily,
+      fontWeight: anchor.fontWeight,
+      fontStyle: anchor.fontStyle,
+      color: anchor.textColor || this.getActiveColor() || "#888888",
+      start: performance.now()
+    });
+  },
+  // Typewriter's carriage return, on Enter: from the caret the old line ended
+  // at (from) back to the start of that line - its visual row, or where the
+  // caret now is.
+  spawnCarriageReturn(from, to) {
+    if (!from || !to) return;
+    const xs = typeof from.rowLeft === "number" ? from.rowLeft : Math.min(from.x, to.x);
+    const x0 = from.x;
+    if (!(x0 - xs > 2)) return;
+    this.typeReturns.push({
+      x0,
+      xs,
+      y: from.top + (from.h || 20) / 2 + (from.fontSize || 16) * 0.3,
+      h: from.h || 20,
+      color: this.getActiveColor() || from.textColor || "#888888",
+      start: performance.now()
+    });
+  },
+  // The streak sweeps from the line's end to its start, easing out, its
+  // tail following a beat behind; the spark at the end is four short strokes
+  // growing out and fading. Crisp lines, no glow.
+  drawCarriageReturns() {
+    const ctx = this.ctx;
+    if (!ctx || !this.typeReturns.length) return;
+    const now = performance.now();
+    this.typeReturns = this.typeReturns.filter((r) => {
+      const u = (now - r.start) / TW_RETURN_MS;
+      if (u >= 1) return false;
+      const ease = (v) => 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 3);
+      const head = r.x0 - (r.x0 - r.xs) * ease(u / 0.6);
+      const tail = r.x0 - (r.x0 - r.xs) * ease((u - 0.25) / 0.75);
+      const alpha = 0.75 * (1 - easeInOutSine(u));
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, alpha);
+      ctx.strokeStyle = r.color;
+      ctx.lineCap = "round";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tail, r.y);
+      ctx.lineTo(head, r.y);
+      ctx.stroke();
+      const sparkU = Math.min(1, u / 0.8);
+      const inner = r.h * (0.12 + 0.1 * sparkU), outer = r.h * (0.22 + 0.2 * sparkU);
+      const cx = r.x0, cy = r.y - r.h * 0.45;
+      ctx.globalAlpha = Math.max(0, 0.8 * (1 - sparkU));
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        ctx.moveTo(cx + ux * inner, cy + uy * inner);
+        ctx.lineTo(cx + ux * outer, cy + uy * outer);
+      }
+      ctx.stroke();
+      ctx.restore();
+      const pad = r.h * 0.5;
+      this._markDirty(r.xs - pad, cy - outer - 2, r.x0 - r.xs + outer + pad * 2, r.y - cy + outer + pad);
+      return true;
+    });
+  },
   drawLettersParticles() {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = performance.now();
     this.particles = this.particles.filter((p) => {
+      if (p.stamp) {
+        const t2 = (now - p.start) / TW_INK_MS;
+        if (t2 >= 1) return false;
+        const size = p.fontSize || 16;
+        const lh = p.lh || size * 1.4;
+        ctx.save();
+        ctx.font = this.fontString(size, p.fontFamily, "bold", p.fontStyle || "normal");
+        const m = ctx.measureText(p.char);
+        const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
+        const baseline = p.y + ascent + (lh - ascent - descent) / 2;
+        const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
+        const grow = 1 + (TW_INK_SCALE - 1) * Math.pow(1 - Math.min(1, t2 / 0.45), 2);
+        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t2));
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.translate(cx, cy);
+        ctx.scale(grow, grow);
+        ctx.translate(-cx, -cy);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(p.char, p.x, baseline);
+        ctx.restore();
+        const ext2 = Math.max(m.width, size) * TW_INK_SCALE;
+        this._markDirty(cx - ext2, p.y - lh * 0.3, ext2 * 2, lh * 1.6);
+        return true;
+      }
       if (p.rise) {
         const t2 = (now - p.start) / POP_RISE_MS;
         if (t2 >= 1) return false;
@@ -8391,6 +8554,7 @@ var paintFrameMethods = {
     }
     this._dirty = null;
     this.drawLettersParticles();
+    this.drawCarriageReturns();
     this.drawBracketTether();
     this.drawStardust();
     this.drawFlamePixels();
@@ -8409,12 +8573,24 @@ var paintFrameMethods = {
       ctx.scale(breath, breath);
       ctx.translate(-cx, -cy);
     }
-    const dip = a ? this.typewriterDip(performance.now()) : 0;
-    const dipping = dip > 0.01;
-    if (dipping) {
+    const pose = a ? this.typewriterPose(performance.now()) : null;
+    const dipping = !!pose && !!a && (Math.abs(pose.dx) > 0.01 || Math.abs(pose.dy) > 0.01 || Math.abs(pose.sy - 1) > 1e-3);
+    if (dipping && pose && a) {
       ctx.save();
-      ctx.translate(0, dip);
-      if (cb) cb.y1 += dip;
+      ctx.translate(pose.dx, pose.dy);
+      if (Math.abs(pose.sy - 1) > 1e-3) {
+        const bx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+        const by = a.top + (a.h || 0);
+        ctx.translate(bx, by);
+        ctx.scale(1, pose.sy);
+        ctx.translate(-bx, -by);
+      }
+      if (cb) {
+        cb.x0 += Math.min(0, pose.dx);
+        cb.x1 += Math.max(0, pose.dx);
+        cb.y0 += Math.min(0, pose.dy) - (a.h || 0) * Math.max(0, pose.sy - 1);
+        cb.y1 += Math.max(0, pose.dy);
+      }
     }
     this.applyCanvasBlend();
     switch (this.styleFor("cursorStyle")) {
@@ -10073,7 +10249,8 @@ var engineMethods = {
     // lumpy burst instead of a steady flame.
     !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) || // Same reasoning: a bolt is aged and expired inside its draw call,
     // so a skipped frame would leave one frozen on screen.
-    this.thunderbolts && this.thunderbolts.length > 0 || // And again for a firework. Note this covers a shell still sitting
+    this.thunderbolts && this.thunderbolts.length > 0 || // A carriage return is aged inside its draw call too.
+    this.typeReturns && this.typeReturns.length > 0 || // And again for a firework. Note this covers a shell still sitting
     // out its stagger delay, which paints nothing yet but must not be
     // allowed to drop the loop into the idle heartbeat - the volley
     // would land in lumps a tenth of a second apart.
@@ -10990,6 +11167,7 @@ var caretsMethods = {
       }
       if (this._enterPending && now - this._enterPending < 250) {
         this.spawnThunderbolt(caret);
+        if (this.look.popEffects && this.look.popTypewriter && this.look.typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);
       }
       if (this._popKeyPending && now - this._popKeyPending < 250) {
         this.spawnFireworks(caret);
@@ -11675,6 +11853,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.hotBurns = [];
     this._hotPrev = null;
     this.thunderbolts = [];
+    this.typeReturns = [];
     this.fireworks = [];
     this._lastFireworkT = 0;
     this.glitch = null;

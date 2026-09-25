@@ -65,6 +65,42 @@ section("engine state: one reset site");
   ok("a used engine resets to exactly fresh", snap(e) === before);
 }
 
+// The engine's teardown takes every wrapper and canvas with it, in every
+// document (1.6.6). It used to leave the wrapper whenever its overflow came
+// from the stylesheet rather than an inline style - always, since 1.5.x -
+// so each enable() left one behind, and with the plugin switched off in
+// Obsidian's list (its stylesheet gone) they covered the window.
+{
+  const docOf = (items) => {
+    const removed = [];
+    const els = items.map((cls) => ({ cls, remove() { removed.push(cls); } }));
+    const classes = new Set(["cursor-smith-active", "cursor-smith-hide-native", "other"]);
+    return { removed, classes, body: { classList: { remove: (...c) => c.forEach((k) => classes.delete(k)), add() {}, contains: (k) => classes.has(k), toggle() {} } },
+      querySelectorAll: (sel) => els.filter((el) => sel.split(",").some((one) => el.cls.split(" ").includes(one.trim().slice(1)))), querySelector: () => null };
+  };
+  const e = Object.create(Plugin.prototype);
+  e._resetEngineState();
+  e.settings = Object.assign({}, T.DEFAULT_SETTINGS);
+  const main = docOf(["cursor-smith-wrapper cursor-smith-wrapper-scrolled", "cursor-smith-wrapper", "cursor-smith-wrapper", "cursor-smith-canvas", "cm-line"]);
+  const popout = docOf(["cursor-smith-wrapper"]);
+  const realDoc = global.document;
+  global.document = main;
+  try {
+    e.registeredDocuments = new Set([popout]);
+    e._observeEditorLayout = () => {};
+    e.canvasWrapper = { ownerDocument: main };
+    e.disableCanvasEngine();
+    ok("every wrapper and canvas in the main document goes, scrolled or fixed, nothing else", main.removed.length === 4 && !main.removed.includes("cm-line"), main.removed);
+    ok("...and in every registered document", popout.removed.length === 1, popout.removed);
+    ok("...its body classes off", !main.classes.has("cursor-smith-active") && !main.classes.has("cursor-smith-hide-native") && main.classes.has("other"));
+    ok("...and the references dropped", e.canvasWrapper === null && e.canvas === null);
+  } finally {
+    global.document = realDoc;
+  }
+  const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
+  ok("unloading a document sweeps every layer there, referenced or not (the stylesheet goes with the plugin)", /querySelectorAll\("\.cursor-smith-wrapper, \.cursor-smith-canvas, \.cursor-smith-torch-overlay"\)\.forEach/.test(plug));
+}
+
 // ---------------------------------------------------------------------------
 section("frame governor: _isAnimating");
 
@@ -366,6 +402,9 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("an editor in a Canvas card (scaled by a transform): the app container, desktop and phone", e._wrapperHome(deskDoc, { hasFocus: true, scrollDOM: scOf(deskDoc, true) }) === app && e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: scOf(phoneDoc, true) }) === app);
     ok("...and no app container: the body", e._wrapperHome({ body: { classList: { contains: () => false } }, querySelector: () => null }, null).classList !== undefined);
     const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    // Sized to the content's own box, not the scroller's scroll size, which
+    // includes the wrapper: that could only grow (1.6.6, a phone).
+    ok("the scrolled wrapper is sized from the content's box and the scroller's client size, never its scroll size", /const cr = view\.contentDOM\.getBoundingClientRect\(\);\s*const width = Math\.max\(1, sc\.clientWidth, Math\.ceil\(cr\.right - left\)\);\s*const height = Math\.max\(1, sc\.clientHeight, Math\.ceil\(cr\.bottom - top\)\);/.test(src) && !/sc\.scrollWidth|sc\.scrollHeight/.test(src));
     ok("the tick re-places the canvas on every tick the scrolled wrapper's client position moved", /if \(!this\._wrapperPos \|\| this\._wrapperPos\.left !== left \|\| this\._wrapperPos\.top !== top\) \{\s*this\._wrapperPos = \{ left, top \};\s*this\._canvasPlaced = false;/.test(src));
     ok("...sized to the content at its origin, the fixed mode's inline top, left and clip taken off", /removeProperty\("top"\);\s*this\.canvasWrapper\.style\.removeProperty\("left"\);\s*this\.canvasWrapper\.style\.removeProperty\("clip-path"\);\s*this\.canvasWrapper\.style\.width = width \+ "px";\s*this\.canvasWrapper\.style\.height = height \+ "px";/.test(src));
     const css = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "styles.css"), "utf8");

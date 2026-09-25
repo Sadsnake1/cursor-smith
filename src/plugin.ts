@@ -251,6 +251,7 @@ export default class CursorSmithPlugin extends Plugin {
   // --- engine.ts
   declare ensureCanvasForView: EngineMethods["ensureCanvasForView"];
   declare _wrapperHome: EngineMethods["_wrapperHome"];
+  declare _removeLayers: EngineMethods["_removeLayers"];
   declare disableCanvasEngine: EngineMethods["disableCanvasEngine"];
   declare enableCanvasEngine: EngineMethods["enableCanvasEngine"];
   declare resizeCanvas: EngineMethods["resizeCanvas"];
@@ -889,6 +890,9 @@ export default class CursorSmithPlugin extends Plugin {
       // unloads one of them into this same window.
       doc.getElementById("cursor-smith-dynamic-styles")?.remove();
       doc.querySelector(".cursor-smith-torch-glow")?.remove();
+      // Every layer, referenced or not: with the plugin off its stylesheet
+      // is gone, and a layer left behind is a plain box over the window.
+      doc.querySelectorAll(".cursor-smith-wrapper, .cursor-smith-canvas, .cursor-smith-torch-overlay").forEach((el) => { el.remove(); });
       doc.body?.classList.remove(
         "cursor-smith-active", "cursor-smith-hide-native", "cursor-smith-torch-active");
     } catch { /* document already torn down with its window */ }

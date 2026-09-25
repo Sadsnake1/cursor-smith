@@ -9423,6 +9423,19 @@ var engineMethods = {
       }
     }
   },
+  // The canvas layers this plugin put into a document (and one more it
+  // names, the wrapper's own document when that is not registered), gone.
+  _removeLayers(extra = null) {
+    const docs = /* @__PURE__ */ new Set([document, ...Array.from(this.registeredDocuments)]);
+    if (extra) docs.add(extra);
+    for (const doc of docs) {
+      if (!doc || !doc.body) continue;
+      doc.body.classList.remove("cursor-smith-active", "cursor-smith-hide-native");
+      doc.querySelectorAll(".cursor-smith-wrapper, .cursor-smith-canvas").forEach((el) => {
+        el.remove();
+      });
+    }
+  },
   disableCanvasEngine() {
     this.canvasEngineActive = false;
     if (this.canvasRaf) {
@@ -9439,20 +9452,7 @@ var engineMethods = {
     this._paneRectCache = null;
     this._mainRectCache = null;
     this._observeEditorLayout(null);
-    const docs = [document, ...Array.from(this.registeredDocuments)];
-    for (const doc of docs) {
-      if (doc && doc.body) {
-        doc.body.classList.remove("cursor-smith-active", "cursor-smith-hide-native");
-        const canvas = doc.querySelector(".cursor-smith-canvas");
-        if (canvas) {
-          if (canvas.parentElement && canvas.parentElement.style.overflow === "hidden") {
-            canvas.parentElement.remove();
-          } else {
-            canvas.remove();
-          }
-        }
-      }
-    }
+    this._removeLayers(this.canvasWrapper ? this.canvasWrapper.ownerDocument : null);
     this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
@@ -9541,8 +9541,9 @@ var engineMethods = {
           const sr = sc.getBoundingClientRect();
           const top = Math.round(sr.top - sc.scrollTop);
           const left = Math.round(sr.left - sc.scrollLeft);
-          const width = Math.max(1, sc.scrollWidth);
-          const height = Math.max(1, sc.scrollHeight);
+          const cr = view.contentDOM.getBoundingClientRect();
+          const width = Math.max(1, sc.clientWidth, Math.ceil(cr.right - left));
+          const height = Math.max(1, sc.clientHeight, Math.ceil(cr.bottom - top));
           this._clipTop = Math.round(sr.top);
           const key = "scrolled|" + width + "," + height;
           if (key !== this._lastWrapperRect) {
@@ -11082,6 +11083,9 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     try {
       doc.getElementById("cursor-smith-dynamic-styles")?.remove();
       doc.querySelector(".cursor-smith-torch-glow")?.remove();
+      doc.querySelectorAll(".cursor-smith-wrapper, .cursor-smith-canvas, .cursor-smith-torch-overlay").forEach((el) => {
+        el.remove();
+      });
       doc.body?.classList.remove(
         "cursor-smith-active",
         "cursor-smith-hide-native",

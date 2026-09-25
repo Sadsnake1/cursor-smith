@@ -174,6 +174,18 @@ export const engineMethods = {
     }
   },
 
+  // The canvas layers this plugin put into a document (and one more it
+  // names, the wrapper's own document when that is not registered), gone.
+  _removeLayers(this: CursorSmithPlugin, extra: Document | null = null) {
+    const docs = new Set<Document>([document, ...Array.from(this.registeredDocuments)]);
+    if (extra) docs.add(extra);
+    for (const doc of docs) {
+      if (!doc || !doc.body) continue;
+      doc.body.classList.remove("cursor-smith-active", "cursor-smith-hide-native");
+      doc.querySelectorAll(".cursor-smith-wrapper, .cursor-smith-canvas").forEach((el) => { el.remove(); });
+    }
+  },
+
   disableCanvasEngine(this: CursorSmithPlugin) {
     this.canvasEngineActive = false;
     if (this.canvasRaf) {
@@ -191,20 +203,18 @@ export const engineMethods = {
     this._paneRectCache = null;
     this._mainRectCache = null;
     this._observeEditorLayout(null);
-    const docs = [document, ...Array.from(this.registeredDocuments)];
-    for (const doc of docs) {
-      if (doc && doc.body) {
-        doc.body.classList.remove("cursor-smith-active", "cursor-smith-hide-native");
-        const canvas = doc.querySelector(".cursor-smith-canvas");
-        if (canvas) {
-          if (canvas.parentElement && canvas.parentElement.style.overflow === "hidden") {
-            canvas.parentElement.remove();
-          } else {
-            canvas.remove();
-          }
-        }
-      }
-    }
+    // Every wrapper and canvas in every document, not the first canvas: this
+    // used to remove the canvas and its wrapper only when the wrapper's
+    // INLINE overflow said hidden - the stylesheet has said it since 1.5.x,
+    // so the wrapper stayed behind, empty, on every enable() (each settings
+    // change, preset, look). Invisible while the stylesheet was loaded; the
+    // moment the plugin was switched off in Obsidian's own list the
+    // stylesheet went with it and the leftovers were plain boxes the size
+    // of the window: "the screen goes blank and I can't slide open the file
+    // tree" (a phone, 2026-09-25). The ones left in a note's scroller also
+    // held its scroll height up (see the scrolled branch). A sweep, so
+    // what an older version left is cleared by the first enable() too.
+    this._removeLayers(this.canvasWrapper ? this.canvasWrapper.ownerDocument : null);
     this.canvasWrapper = null;
     this.canvas = null;
     this.ctx = null;
@@ -359,12 +369,22 @@ export const engineMethods = {
           // own overflow clips it. The chrome insets, the status-bar cut and
           // the covers are the fixed wrapper's business: the bars sit above
           // the scroller's stacking context regardless.
+          //
+          // Sized to the CONTENT's extent (its own box, measured from the
+          // origin), never to the scroller's scrollWidth x scrollHeight: those
+          // include this wrapper, so the size could only ever grow - a long
+          // note, then a short one in the same tab, left 13,000 px of empty
+          // scroll under it, and a tap down there put the cursor at the end
+          // of the note and scrolled back to it: "the cursor is not where
+          // the tap is ... the page automatically scrolls there" (a phone,
+          // 2026-09-25). A phone turned from landscape did the same sideways.
           const sc = view.scrollDOM;
           const sr = sc.getBoundingClientRect();
           const top = Math.round(sr.top - sc.scrollTop);
           const left = Math.round(sr.left - sc.scrollLeft);
-          const width = Math.max(1, sc.scrollWidth);
-          const height = Math.max(1, sc.scrollHeight);
+          const cr = view.contentDOM.getBoundingClientRect();
+          const width = Math.max(1, sc.clientWidth, Math.ceil(cr.right - left));
+          const height = Math.max(1, sc.clientHeight, Math.ceil(cr.bottom - top));
           this._clipTop = Math.round(sr.top);
           const key = "scrolled|" + width + "," + height;
           if (key !== this._lastWrapperRect) {

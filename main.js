@@ -51,6 +51,7 @@ var POP_RISE_MS = 650;
 var POP_RISE_LINES = 0.9;
 var POP_RISE_ALPHA = 0.7;
 var TW_SPRING_DOWN = 0.18;
+var TW_INK_ALPHA = 0.9;
 var CARET_THICKNESS_MAX = 7;
 var CARET_STYLE_TTL_MS = 1e3;
 var SMEAR_SETTLE_V = 30;
@@ -397,8 +398,6 @@ var DEFAULT_SETTINGS = {
   // Ink stamp: how long it lasts
   typewriterInkSize: 1.3,
   // ...how big it starts, x the letter
-  typewriterInkOpacity: 0.9,
-  // ...how solid it starts
   typewriterReturnMs: 300,
   // Carriage return: how long the sweep takes
   typewriterReturnWidth: 1.5,
@@ -890,7 +889,6 @@ var LOOK_KEYS = [
   "typewriterStrikeMs",
   "typewriterInkMs",
   "typewriterInkSize",
-  "typewriterInkOpacity",
   "typewriterReturnMs",
   "typewriterReturnWidth",
   "typewriterAdvanceCw",
@@ -3442,7 +3440,6 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Stamp duration", "How long the stamp lasts, in milliseconds.", "typewriterInkMs", [150, 1e3, 10], { depth: 2, fallback: 400, when: twOn("typewriterInk") }));
     effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
-    effects.push(slider("Stamp opacity", "How solid the stamp starts.", "typewriterInkOpacity", [0.2, 1, 0.05], { depth: 2, fallback: 0.9, when: twOn("typewriterInk") }));
     effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
     effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));
@@ -5495,7 +5492,7 @@ var effectsPopsMethods = {
       vx: 0,
       vy: 0,
       rotation: 0,
-      alpha: this.twOpt("typewriterInkOpacity", 0.05, 1),
+      alpha: TW_INK_ALPHA,
       lh: anchor.h || 20,
       fontSize: anchor.fontSize,
       fontFamily: anchor.fontFamily,
@@ -5580,7 +5577,7 @@ var effectsPopsMethods = {
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
         const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
         const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t2 / 0.45), 2);
-        p.alpha = this.twOpt("typewriterInkOpacity", 0.05, 1) * (1 - easeInOutSine(t2));
+        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t2));
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.translate(cx, cy);

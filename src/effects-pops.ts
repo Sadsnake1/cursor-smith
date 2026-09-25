@@ -32,6 +32,7 @@ import {
   POP_RISE_ALPHA,
   POP_RISE_LINES,
   POP_RISE_MS,
+  TW_INK_ALPHA,
   THUNDER_BANDS,
   THUNDER_LIFE_MS,
   THUNDER_MAX_ANGLE,
@@ -97,7 +98,7 @@ export const effectsPopsMethods = {
     this.particles.push({
       char, stamp: true,
       x: anchor.x, y: anchor.top,
-      vx: 0, vy: 0, rotation: 0, alpha: this.twOpt("typewriterInkOpacity", 0.05, 1),
+      vx: 0, vy: 0, rotation: 0, alpha: TW_INK_ALPHA,
       lh: anchor.h || 20,
       fontSize: anchor.fontSize, fontFamily: anchor.fontFamily,
       fontWeight: anchor.fontWeight, fontStyle: anchor.fontStyle,
@@ -186,7 +187,7 @@ export const effectsPopsMethods = {
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
         const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
         const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t / 0.45), 2);
-        p.alpha = this.twOpt("typewriterInkOpacity", 0.05, 1) * (1 - easeInOutSine(t));
+        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t));
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.translate(cx, cy);

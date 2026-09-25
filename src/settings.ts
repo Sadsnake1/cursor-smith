@@ -124,7 +124,6 @@ export const DEFAULT_SETTINGS = {
   typewriterStrikeMs: 240,    // ...the whole stroke
   typewriterInkMs: 400,       // Ink stamp: how long it lasts
   typewriterInkSize: 1.3,     // ...how big it starts, x the letter
-  typewriterInkOpacity: 0.9,  // ...how solid it starts
   typewriterReturnMs: 300,    // Carriage return: how long the sweep takes
   typewriterReturnWidth: 1.5, // ...the streak's thickness, px
   typewriterAdvanceCw: 0.25,  // Carriage advance: how far past its spot, in characters
@@ -496,7 +495,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   // all off by default.
   "typewriter", "typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance",
   "typewriterDepth", "typewriterBounce", "typewriterSquash", "typewriterStrikeMs",
-  "typewriterInkMs", "typewriterInkSize", "typewriterInkOpacity",
+  "typewriterInkMs", "typewriterInkSize",
   "typewriterReturnMs", "typewriterReturnWidth", "typewriterAdvanceCw", "typewriterAdvanceMs",
 ];
 

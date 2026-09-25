@@ -128,7 +128,6 @@ export interface Look {
   typewriterStrikeMs: number;
   typewriterInkMs: number;
   typewriterInkSize: number;
-  typewriterInkOpacity: number;
   typewriterReturnMs: number;
   typewriterReturnWidth: number;
   typewriterAdvanceCw: number;

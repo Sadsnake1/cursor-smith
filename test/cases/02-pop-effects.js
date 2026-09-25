@@ -674,8 +674,8 @@ section("Typewriter's sliders (1.6.7)");
     e.drawLettersParticles();
     return { s: out.s, a: out.a, alive: e.particles.length };
   };
-  const i0 = inkDraw({}, 0), iBig = inkDraw({ typewriterInkSize: 1.8 }, 0), iFaint = inkDraw({ typewriterInkOpacity: 0.4 }, 0);
-  ok("Ink stamp Size and Opacity set how it starts", Math.abs(i0.s - 1.3) < 0.01 && Math.abs(iBig.s - 1.8) < 0.01 && Math.abs(i0.a - 0.9) < 0.01 && Math.abs(iFaint.a - 0.4) < 0.01, [i0.s, iBig.s, i0.a, iFaint.a]);
+  const i0 = inkDraw({}, 0), iBig = inkDraw({ typewriterInkSize: 1.8 }, 0);
+  ok("Ink stamp Size sets how big it starts; it always starts at 0.9 opacity", Math.abs(i0.s - 1.3) < 0.01 && Math.abs(iBig.s - 1.8) < 0.01 && Math.abs(i0.a - 0.9) < 0.01 && Math.abs(iBig.a - 0.9) < 0.01, [i0.s, iBig.s, i0.a, iBig.a]);
   ok("...Duration: gone at 450 ms by default, still there when it lasts 900", inkDraw({}, 450).alive === 0 && inkDraw({ typewriterInkMs: 900 }, 450).alive === 1);
   // Carriage return: thickness and duration.
   const retDraw = (over, ms) => {

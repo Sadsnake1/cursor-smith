@@ -254,6 +254,9 @@ export const POP_RISE_ALPHA = 0.7;
 // rest is the spring back. Everything else about the four sub-options is a
 // setting (typewriterDepth and the rest, 1.6.7).
 export const TW_SPRING_DOWN = 0.18;
+// Typewriter's Ink stamp starts this solid - fixed: its slider went at the
+// user's word, "keep it always at 0.9".
+export const TW_INK_ALPHA = 0.9;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.

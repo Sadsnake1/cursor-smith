@@ -265,7 +265,7 @@ export const TW_SPRING_DOWN = 0.18;       // share of the stroke going down
 export const TW_SQUASH = 0.14;            // how much shorter at the bottom
 // Ink stamp - the letter overprinted bigger and bolder, shrinking onto the
 // real one and fading.
-export const TW_INK_MS = 300;
+export const TW_INK_MS = 400;             // 300 at first; a tiny bit longer at the user's word
 export const TW_INK_SCALE = 1.3;
 export const TW_INK_ALPHA = 0.9;
 // Carriage return - on Enter a streak sweeps back along the old line to its

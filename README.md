@@ -19,6 +19,12 @@ Every effect has its own switch. Reduced motion is respected out of the box. It'
 
 https://github.com/user-attachments/assets/7eab19cc-b7ac-4476-bc40-514b4e75cf61
 
+
+
+https://github.com/user-attachments/assets/1781c934-c1a6-475f-8f21-dbf5d81bc2b0
+
+
+
 ## Install
 
 **Settings → Community plugins → Browse**, search **Cursor-Smith**, install, enable. It's on as soon as you enable it.

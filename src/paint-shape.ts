@@ -470,7 +470,8 @@ export const paintShapeMethods = {
     const color = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
     const hollow = this.styleFor("boxHollow");
-    const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
+    // Fractional, in the slider's 0.5 to 6 (0.1 px steps since 1.6.7).
+    const strokeW = hollow ? Math.max(0.5, Math.min(6, settings.boxHollowWidth || 2)) : 0;
 
     // Translucency is a flat multiplier on the alpha, applied everywhere this
     // style builds one - body, hollow outline, neon ghost and trail alike - so

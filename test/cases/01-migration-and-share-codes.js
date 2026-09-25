@@ -498,6 +498,7 @@ section("the Line cursor: height and fine thickness (issues #32, #33)");
   ok("a share code carries a 1.25 px thickness and a 60% height", got && got.caretWidthPx === 1.25 && got.caretHeightPct === 60, got && [got.caretWidthPx, got.caretHeightPct]);
   const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
   ok("the thickness slider steps by 0.1 px from 0.5 up to 7", src.includes(`"caretWidthPx", [0.5, 7, 0.1]`));
+  ok("...and the hollow Box's Outline width, from 0.5 to 6", src.includes(`"boxHollowWidth", [0.5, 6, 0.1]`));
   ok("...and the Underline's the same, from 0 (automatic)", src.includes(`"underlineWidthPx", [0, 7, 0.1]`));
   ok("a Line saved at 12 px draws at 7, one at 1.25 at 1.25", mk({ caretWidthPx: 12 }).caretThickness() === 7 && mk({ caretWidthPx: 1.25 }).caretThickness() === 1.25);
   ok("an Underline at 1.75 px is 1.75 (it was rounded to whole pixels), at 12 it is 7, at 0 automatic", mk({ cursorStyle: "Underline", underlineWidthPx: 1.75 }).underlineThickness(24) === 1.75 && mk({ cursorStyle: "Underline", underlineWidthPx: 12 }).underlineThickness(24) === 7 && mk({ cursorStyle: "Underline", underlineWidthPx: 0 }).underlineThickness(24) === 4);

@@ -3372,7 +3372,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       "Outline width",
       "Thickness of the hollow box's outline, in pixels.",
       "boxHollowWidth",
-      [1, 6, 1],
+      [0.5, 6, 0.1],
       { depth: 2, when: all(box, on("boxHollow")) }
     ));
     appearance.push(toggle("Gradient", "Blends several colors instead of one flat color.", "gradientEnabled", { gate: true }));
@@ -7457,7 +7457,7 @@ var paintShapeMethods = {
     const color = this.getActiveColor();
     const opacity = Math.max(0, Math.min(1, settings.cursorOpacity ?? 1));
     const hollow = this.styleFor("boxHollow");
-    const strokeW = hollow ? Math.max(1, Math.min(6, settings.boxHollowWidth || 2)) : 0;
+    const strokeW = hollow ? Math.max(0.5, Math.min(6, settings.boxHollowWidth || 2)) : 0;
     const translucent = !!this.styleFor("cursorTranslucent");
     const bodyOpacity = translucent ? opacity * TRANSLUCENT_ALPHA : opacity;
     this._paintTrail(ctx, "Box", color, bodyOpacity, strokeW);

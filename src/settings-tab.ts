@@ -1323,7 +1323,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     appearance.push(toggle("Hollow", "Draws only the outline of the box instead of a filled block.", "boxHollow", { depth: 1, gate: true, when: box }));
     // Nested one level deeper: Outline width is conditional on Hollow, which
     // is itself a sub-option of the style.
-    appearance.push(slider("Outline width", "Thickness of the hollow box's outline, in pixels.", "boxHollowWidth", [1, 6, 1],
+    // 0.1 px steps from 0.5 since 1.6.7, like the Line's and the Underline's.
+    appearance.push(slider("Outline width", "Thickness of the hollow box's outline, in pixels.", "boxHollowWidth", [0.5, 6, 0.1],
       { depth: 2, when: all(box, on("boxHollow")) }));
 
     appearance.push(toggle("Gradient", "Blends several colors instead of one flat color.", "gradientEnabled", { gate: true }));

@@ -102,6 +102,15 @@ section("torch: the settings window and the sidebar");
     ok("...no splits at all: none open", d._drawerOpen() === false);
     d.app = { get workspace() { throw new Error("gone"); } };
     ok("...and a throw reads as none open", d._drawerOpen() === false);
+    // A tablet's PINNED sidebar docks beside the note, open for good: not a
+    // drawer over it (issue #34, the torch hidden on an iPad the whole time).
+    const box = (left, right) => ({ getBoundingClientRect: () => ({ left, right, top: 0, bottom: 800 }) });
+    d.app = { workspace: { rootSplit: { containerEl: box(350, 1242) }, leftSplit: { collapsed: false, containerEl: box(0, 350) }, rightSplit: { collapsed: true } } };
+    ok("a pinned sidebar beside the note is not over it", d._drawerOpen() === false);
+    d.app = { workspace: { rootSplit: { containerEl: box(0, 1242) }, leftSplit: { collapsed: false, containerEl: box(16, 466) }, rightSplit: { collapsed: true } } };
+    ok("...a drawer slid over the note is", d._drawerOpen() === true);
+    d.app = { workspace: { rootSplit: { containerEl: box(0, 900) }, leftSplit: { collapsed: true }, rightSplit: { collapsed: false, containerEl: box(900, 1242) } } };
+    ok("...a pinned right sidebar beside it is not either", d._drawerOpen() === false);
   }
   ok("...and darkens only the note tabs of it, standing down with none in front: the views beside them stay lit", /const notes = usePane \? this\.getNoteTabRects\(/.test(torch) && /hideForModal = \(spare && \(this\.modalOpen \|\| \(notes !== null && notes\.length === 0\)\)\)/.test(torch) && /_torchPaintDarkness\(local, rKey, this\.look\.overlayDarkness, width, height, regions\)/.test(torch));
   ok("the pointer's window is recorded where the pointer is read", /this\._mouseDoc = doc;/.test(src("plugin.ts")));

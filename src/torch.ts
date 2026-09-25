@@ -610,15 +610,27 @@ export const torchMethods = {
     return spots;
   },
 
-  // A side pane open over the note: on a phone the drawers, on desktop the
-  // docks (only the phone reads it). The workspace's own flags, not the
-  // DOM: WorkspaceMobileDrawer and WorkspaceSidedock both carry
-  // `collapsed`.
+  // A side pane open OVER the note: on a phone the drawers, on desktop the
+  // docks (only the phone reads it). The workspace's own flags say open -
+  // WorkspaceMobileDrawer and WorkspaceSidedock both carry `collapsed` -
+  // and the geometry says over: an open pane whose box overlaps the note
+  // area (the root split). A tablet can PIN a sidebar, docked beside the
+  // note, open for good; read as a drawer, it kept the torch hidden the
+  // whole time (issue #34, an iPad: "Torch spotlight stopped working after
+  // the update"). With no box to measure it counts as over, as it always did.
   _drawerOpen(this: CursorSmithPlugin): boolean {
     try {
       const ws = this.app.workspace;
-      const l = ws.leftSplit, r = ws.rightSplit;
-      return !!((l && !l.collapsed) || (r && !r.collapsed));
+      const rootEl = ws.rootSplit && (ws.rootSplit as unknown as { containerEl?: HTMLElement }).containerEl;
+      const note = rootEl ? rootEl.getBoundingClientRect() : null;
+      const over = (split: unknown) => {
+        const s = split as { collapsed?: boolean; containerEl?: HTMLElement } | null;
+        if (!s || s.collapsed) return false;
+        if (!note || !s.containerEl) return true;
+        const r = s.containerEl.getBoundingClientRect();
+        return Math.min(r.right, note.right) - Math.max(r.left, note.left) > 8;
+      };
+      return over(ws.leftSplit) || over(ws.rightSplit);
     } catch { return false; /* a workspace mid-teardown */ }
   },
 

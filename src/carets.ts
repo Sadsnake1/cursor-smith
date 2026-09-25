@@ -88,7 +88,7 @@ export const caretsMethods = {
   // the new caret starts fresh, so nothing streaks across the page. Ranges
   // cannot cross without merging, so while the shape holds, index order does.
   rematchCaretStates(this: CursorSmithPlugin, view: EditorView | null | undefined) {
-    const sel = view && view.hasFocus ? view.state.selection : null;
+    const sel = view && this.editorFocused(view) ? view.state.selection : null;
     const count = sel ? sel.ranges.length : 1;
     const mainIndex = sel ? sel.mainIndex : 0;
     const prev = this._selShape;

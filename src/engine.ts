@@ -60,7 +60,7 @@ export const engineMethods = {
   // sit above its stacking context.
   _wrapperHome(this: CursorSmithPlugin, doc: Document, view: EditorView | null | undefined): HTMLElement {
     const app = doc.querySelector<HTMLElement>(".app-container") || doc.body;
-    if (!view || !view.hasFocus) return app;
+    if (!view || !this.editorFocused(view)) return app;
     if (!doc.body.classList.contains("is-mobile") && this.torchPossible()) return app;
     const sc = view.scrollDOM;
     if (!sc || !sc.isConnected || sc.ownerDocument !== doc) return app;
@@ -84,8 +84,12 @@ export const engineMethods = {
     // entirely. It answers non-null only while that other window actually
     // holds OS focus, so during normal editing this line contributes
     // nothing and the chain below is unchanged.
+    // ...except while the note's caret stays up with its window unfocused
+    // ("Hide cursor when unfocused" off, editorFocused): the settings
+    // window focused on a slider or a toggle, and the caret shown where the
+    // note is.
     const targetDoc =
-      this._focusedForeignDoc(view) ||
+      (this.editorFocused(view) ? null : this._focusedForeignDoc(view)) ||
       (view && view.dom.ownerDocument) ||
       (this.canvasWrapper && this.canvasWrapper.ownerDocument) ||
       (typeof activeDocument !== "undefined" && activeDocument) ||
@@ -411,7 +415,7 @@ export const engineMethods = {
           // only fall back to the viewport when it has none. Handing back the
           // whole viewport unconditionally is what let a caret in a Settings
           // text box paint outside the settings frame: see getCaretClipRect.
-          const r = (view && view.hasFocus
+          const r = (view && this.editorFocused(view)
             ? this.getPaneRect(view)
             : this.getCaretClipRect(this.canvas.ownerDocument)) ||
             // Never 100vw/100vh here: a full-viewport layer over the

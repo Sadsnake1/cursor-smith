@@ -1,6 +1,6 @@
 import { Plugin, View, addIcon } from "obsidian";
 import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
-import { applyReducedMotion } from "./motion";
+import { applyReducedMotion, isTextCaretHost } from "./motion";
 import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset } from "./presets";
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings";
 import { CursorSmithSettingTab } from "./settings-tab";
@@ -1348,6 +1348,12 @@ export default class CursorSmithPlugin extends Plugin {
   // polling it once per frame costs nothing measurable.
   windowFocused(): boolean {
     if (!this.settings.hideOnWindowBlur) return true;
+    return this._anyDocFocused();
+  }
+
+  // Whether any window of ours has OS focus - windowFocused's question
+  // without the setting, which editorFocused asks too.
+  _anyDocFocused(): boolean {
     try {
       // Not just the canvas's own document. Since Obsidian 1.13 the Settings
       // panel is a WINDOW of its own rather than a modal in the main
@@ -1385,6 +1391,35 @@ export default class CursorSmithPlugin extends Plugin {
       // Never let a focus probe kill a frame - assume focused.
       this._reportOnce("windowFocused", e);
       return true;
+    }
+  }
+
+  // Whether the note editor is the focused thing, for everything that draws.
+  // CodeMirror's hasFocus is false the moment its window loses OS focus (it
+  // asks document.hasFocus()) - to another app, or to Obsidian's own
+  // settings window, which is a window of its own since 1.13 - so with "Hide
+  // cursor when unfocused" OFF the loop kept running and the caret vanished
+  // anyway: there was no focused editor to measure. "It still hides it if
+  // off ... if I click in settings the cursor is not displaying"
+  // (2026-09-25), exactly when a look is being tuned. With the setting off,
+  // an editor that still holds its page's focus (activeElement outlives a
+  // window blur) counts - unless a text field in another window of ours has
+  // the focus: typing there is that field's caret (_focusedForeignDoc
+  // moves the canvas to it), not the note's.
+  editorFocused(view: EditorView | null | undefined): boolean {
+    if (!view) return false;
+    if (view.hasFocus) return true;
+    if (this.settings.hideOnWindowBlur) return false;
+    try {
+      const doc = view.dom.ownerDocument;
+      if (doc.hasFocus()) return false;
+      const a = doc.activeElement;
+      if (!a || !(a === view.contentDOM || view.contentDOM.contains(a))) return false;
+      const other = this._focusedForeignDoc(view);
+      return !(other && isTextCaretHost(other.activeElement));
+    } catch (e) {
+      this._reportOnce("editorFocused", e);
+      return false;
     }
   }
 

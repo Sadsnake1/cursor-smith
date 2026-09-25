@@ -3639,7 +3639,7 @@ var import_obsidian2 = require("obsidian");
 var measureMethods = {
   caretCoords() {
     const view = this.app.workspace.activeEditor?.editor?.cm;
-    if (view && view.hasFocus) {
+    if (view && this.editorFocused(view)) {
       return this.cmCaretCoords(view);
     }
     return this.genericCaretCoords();
@@ -3828,7 +3828,7 @@ var measureMethods = {
         // letter-spacing-padded cell, which would push it right by half the
         // spacing on any theme that sets letter-spacing.
         letterSpacing,
-        focused: view.hasFocus || inTable && activeIsEditable,
+        focused: this.editorFocused(view) || inTable && activeIsEditable,
         pos,
         // The document length, for resolveHoldChar: with pos, an insertion
         // at the caret (typing) is told from a click or an arrow.
@@ -3854,7 +3854,7 @@ var measureMethods = {
   // only one range or the view isn't focused.
   secondaryCaretCoords(view, states) {
     const out = [];
-    if (!view || !view.hasFocus) return out;
+    if (!view || !this.editorFocused(view)) return out;
     const gen = this._layoutGen | 0;
     const now = performance.now();
     const doc = view.state.doc;
@@ -4311,7 +4311,7 @@ var measureMethods = {
   noteEditorFocused() {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
-      return !!(view && view.hasFocus);
+      return !!(view && this.editorFocused(view));
     } catch (e) {
       this._reportOnce("noteEditorFocused", e);
       return false;
@@ -4749,7 +4749,7 @@ var effectsFireMethods = {
     const view = this.app.workspace.activeEditor?.editor?.cm;
     let el = null;
     const chain = this._clipChainFor && this._clipChain;
-    if (chain && chain.length && !(view && view.hasFocus)) {
+    if (chain && chain.length && !(view && this.editorFocused(view))) {
       for (const c of chain) {
         if (c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1) {
           el = c;
@@ -7600,7 +7600,7 @@ var paintTetherMethods = {
   // secondary passes its own head (and whether its range is empty), with its
   // bundle swapped in so the caches below are its own.
   bracketTetherCoords(view, head, empty) {
-    if (!view || !view.hasFocus) return null;
+    if (!view || !this.editorFocused(view)) return null;
     try {
       const state = view.state;
       const main = state.selection.main;
@@ -9410,14 +9410,14 @@ var engineMethods = {
   // sit above its stacking context.
   _wrapperHome(doc, view) {
     const app = doc.querySelector(".app-container") || doc.body;
-    if (!view || !view.hasFocus) return app;
+    if (!view || !this.editorFocused(view)) return app;
     if (!doc.body.classList.contains("is-mobile") && this.torchPossible()) return app;
     const sc = view.scrollDOM;
     if (!sc || !sc.isConnected || sc.ownerDocument !== doc) return app;
     return sc.closest(".canvas-node") ? app : sc;
   },
   ensureCanvasForView(view) {
-    const targetDoc = this._focusedForeignDoc(view) || view && view.dom.ownerDocument || this.canvasWrapper && this.canvasWrapper.ownerDocument || typeof activeDocument !== "undefined" && activeDocument || document;
+    const targetDoc = (this.editorFocused(view) ? null : this._focusedForeignDoc(view)) || view && view.dom.ownerDocument || this.canvasWrapper && this.canvasWrapper.ownerDocument || typeof activeDocument !== "undefined" && activeDocument || document;
     if (this.canvasWrapper && this.canvasWrapper.ownerDocument !== targetDoc) {
       this.canvasWrapper.remove();
       this.canvasWrapper = null;
@@ -9599,7 +9599,7 @@ var engineMethods = {
           }
           this._clipRect = { x: left, y: top, w: width, h: height };
         } else if (this.canvasWrapper && this.canvas) {
-          const r = (view && view.hasFocus ? this.getPaneRect(view) : this.getCaretClipRect(this.canvas.ownerDocument)) || // Never 100vw/100vh here: a full-viewport layer over the
+          const r = (view && this.editorFocused(view) ? this.getPaneRect(view) : this.getCaretClipRect(this.canvas.ownerDocument)) || // Never 100vw/100vh here: a full-viewport layer over the
           // titlebar kills Electron's window-drag hit-testing on
           // Linux/Windows (drag regions compose in DOM order; z-index
           // and pointer-events are irrelevant to them).
@@ -10525,7 +10525,7 @@ var caretsMethods = {
   // the new caret starts fresh, so nothing streaks across the page. Ranges
   // cannot cross without merging, so while the shape holds, index order does.
   rematchCaretStates(view) {
-    const sel = view && view.hasFocus ? view.state.selection : null;
+    const sel = view && this.editorFocused(view) ? view.state.selection : null;
     const count = sel ? sel.ranges.length : 1;
     const mainIndex = sel ? sel.mainIndex : 0;
     const prev = this._selShape;
@@ -11415,6 +11415,11 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   // polling it once per frame costs nothing measurable.
   windowFocused() {
     if (!this.settings.hideOnWindowBlur) return true;
+    return this._anyDocFocused();
+  }
+  // Whether any window of ours has OS focus - windowFocused's question
+  // without the setting, which editorFocused asks too.
+  _anyDocFocused() {
     try {
       const canvasDoc = this.canvas && this.canvas.ownerDocument;
       if (canvasDoc && canvasDoc.hasFocus()) return true;
@@ -11432,6 +11437,34 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     } catch (e) {
       this._reportOnce("windowFocused", e);
       return true;
+    }
+  }
+  // Whether the note editor is the focused thing, for everything that draws.
+  // CodeMirror's hasFocus is false the moment its window loses OS focus (it
+  // asks document.hasFocus()) - to another app, or to Obsidian's own
+  // settings window, which is a window of its own since 1.13 - so with "Hide
+  // cursor when unfocused" OFF the loop kept running and the caret vanished
+  // anyway: there was no focused editor to measure. "It still hides it if
+  // off ... if I click in settings the cursor is not displaying"
+  // (2026-09-25), exactly when a look is being tuned. With the setting off,
+  // an editor that still holds its page's focus (activeElement outlives a
+  // window blur) counts - unless a text field in another window of ours has
+  // the focus: typing there is that field's caret (_focusedForeignDoc
+  // moves the canvas to it), not the note's.
+  editorFocused(view) {
+    if (!view) return false;
+    if (view.hasFocus) return true;
+    if (this.settings.hideOnWindowBlur) return false;
+    try {
+      const doc = view.dom.ownerDocument;
+      if (doc.hasFocus()) return false;
+      const a = doc.activeElement;
+      if (!a || !(a === view.contentDOM || view.contentDOM.contains(a))) return false;
+      const other = this._focusedForeignDoc(view);
+      return !(other && isTextCaretHost(other.activeElement));
+    } catch (e) {
+      this._reportOnce("editorFocused", e);
+      return false;
     }
   }
   // Whether the native caret should currently be suppressed. Every site that

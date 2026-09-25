@@ -812,3 +812,36 @@ section("removed features leave no keys behind");
   ok("...and carries no ink keys",
      Object.keys(jello).filter((k) => /^ink/.test(k)).length === 0);
 }
+
+// ---------------------------------------------------------------------------
+section("Hide cursor when unfocused: off keeps the caret in a background window");
+
+// CodeMirror's hasFocus is false as soon as the window loses OS focus, so
+// with the setting off the loop ran on and the caret vanished anyway - there
+// was no focused editor to measure (2026-09-25). editorFocused counts an
+// editor that still holds its page's focus, while no window of ours has it.
+{
+  const content = { contains: (a) => a === content };
+  const docOf = (focused, active) => ({ hasFocus: () => focused, activeElement: active });
+  const mk = (hide, doc, extra = {}) => {
+    const e = Object.create(Plugin.prototype);
+    e.settings = Object.assign({}, T.DEFAULT_SETTINGS, { hideOnWindowBlur: hide });
+    e.canvas = { ownerDocument: doc };
+    e.registeredDocuments = new Set(extra.docs || []);
+    e._reportOnce = () => {};
+    return e;
+  };
+  const field = { tagName: "INPUT", type: "text" }, slider = { tagName: "INPUT", type: "range" };
+  const winOf = (active) => ({ body: {}, hasFocus: () => true, activeElement: active });
+  const viewIn = (doc, has = false) => ({ hasFocus: has, dom: { ownerDocument: doc }, contentDOM: content });
+  const bg = docOf(false, content);
+  ok("a focused editor is focused, whatever the setting", mk(true, bg).editorFocused(viewIn(bg, true)) && mk(false, bg).editorFocused(viewIn(bg, true)));
+  ok("the app in the background, the setting ON: not focused (the caret hides)", !mk(true, bg).editorFocused(viewIn(bg)));
+  ok("...the setting OFF: the editor still holding its page's focus counts", mk(false, bg).editorFocused(viewIn(bg)));
+  ok("...the settings window focused on a slider or a toggle: the note keeps its caret (\"if I click in settings the cursor is not displaying\")", mk(false, bg, { docs: [winOf(slider)] }).editorFocused(viewIn(bg)));
+  ok("...but typing in a settings text box, that box has the caret, not the note", !mk(false, bg, { docs: [winOf(field)] }).editorFocused(viewIn(bg)));
+  ok("...and with the setting ON the settings window takes it either way", !mk(true, bg, { docs: [winOf(slider)] }).editorFocused(viewIn(bg)));
+  const elsewhere = docOf(false, { tag: "input" });
+  ok("...nor when the page's focus had moved off the editor before the window lost it", !mk(false, elsewhere).editorFocused(viewIn(elsewhere)));
+  ok("...nor with no editor at all", !mk(false, bg).editorFocused(null));
+}

@@ -110,7 +110,7 @@ export const effectsFireMethods = {
     const view = this.app.workspace.activeEditor?.editor?.cm;
     let el: Element | null = null;
     const chain = this._clipChainFor && this._clipChain;
-    if (chain && chain.length && !(view && view.hasFocus)) {
+    if (chain && chain.length && !(view && this.editorFocused(view))) {
       for (const c of chain) { if (c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1) { el = c; break; } }
     }
     if (!el) el = (view && view.scrollDOM) || null;

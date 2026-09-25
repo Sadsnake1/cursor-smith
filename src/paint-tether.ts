@@ -276,7 +276,7 @@ export const paintTetherMethods = {
   // secondary passes its own head (and whether its range is empty), with its
   // bundle swapped in so the caches below are its own.
   bracketTetherCoords(this: CursorSmithPlugin, view: EditorView | null | undefined, head?: number, empty?: boolean): TetherSeg[] | null {
-    if (!view || !view.hasFocus) return null;
+    if (!view || !this.editorFocused(view)) return null;
     try {
       const state = view.state;
       const main = state.selection.main;

@@ -21,7 +21,7 @@ export const measureMethods = {
 
     // The note editor (CodeMirror) itself has focus - use the precise,
     // CodeMirror-aware caret info (real glyph metrics, table handling, etc).
-    if (view && view.hasFocus) {
+    if (view && this.editorFocused(view)) {
       return this.cmCaretCoords(view);
     }
 
@@ -309,7 +309,7 @@ export const measureMethods = {
         // letter-spacing-padded cell, which would push it right by half the
         // spacing on any theme that sets letter-spacing.
         letterSpacing,
-        focused: view.hasFocus || (inTable && activeIsEditable),
+        focused: this.editorFocused(view) || (inTable && activeIsEditable),
         pos,
         // The document length, for resolveHoldChar: with pos, an insertion
         // at the caret (typing) is told from a click or an arrow.
@@ -337,7 +337,7 @@ export const measureMethods = {
   // only one range or the view isn't focused.
   secondaryCaretCoords(this: CursorSmithPlugin, view: EditorView | null | undefined, states: CaretState[]): CaretCoords[] {
     const out: CaretCoords[] = [];
-    if (!view || !view.hasFocus) return out;
+    if (!view || !this.editorFocused(view)) return out;
     const gen = this._layoutGen | 0;
     const now = performance.now();
     const doc = view.state.doc;
@@ -975,7 +975,7 @@ export const measureMethods = {
   noteEditorFocused(this: CursorSmithPlugin) {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
-      return !!(view && view.hasFocus);
+      return !!(view && this.editorFocused(view));
     } catch (e) {
       this._reportOnce("noteEditorFocused", e);
       // Unreachable in practice, but this feeds the hide-native class, so the

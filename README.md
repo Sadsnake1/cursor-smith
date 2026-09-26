@@ -121,6 +121,7 @@ Cursor-Smith is MIT, and the engine has been carried to other editors and forked
 |---|---|---|
 | **Thymer** | [Cursor Tweaks](https://github.com/akaready/thymer-cursor-tweaks) | [akaready](https://github.com/akaready) |
 | **Obsidian** | [Terminal Workbench Cursor](https://github.com/Real-Fruit-Snacks/terminal-workbench-cursor) | [Real-Fruit-Snacks](https://github.com/Real-Fruit-Snacks) |
+| **Chrome, Edge, Brave** | [Cursor-Smith for Browsers (unofficial)](https://github.com/ooexiaoo/cursor-smith-extension) | [ooexiaoo](https://github.com/ooexiaoo) |
 
 ## Questions, ideas, bugs
 

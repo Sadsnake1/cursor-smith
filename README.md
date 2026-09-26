@@ -115,11 +115,12 @@ A TypeScript project: `src/` holds the modules, `npm run build` bundles them int
 
 ## Forged elsewhere
 
-Cursor-Smith is MIT, and the engine has been carried to other editors. Ported it somewhere? Open an issue and I'll add it here.
+Cursor-Smith is MIT, and the engine has been carried to other editors and forked into new plugins. Ported or forked it? Open an issue and I'll add it here.
 
 | Editor | Port | By |
 |---|---|---|
 | **Thymer** | [Cursor Tweaks](https://github.com/akaready/thymer-cursor-tweaks) | [akaready](https://github.com/akaready) |
+| **Obsidian** | [Terminal Workbench Cursor](https://github.com/Real-Fruit-Snacks/terminal-workbench-cursor) | [Real-Fruit-Snacks](https://github.com/Real-Fruit-Snacks) |
 
 ## Questions, ideas, bugs
 

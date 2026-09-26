@@ -928,7 +928,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
               plugin.settings.torchEffect = value;
               const saved = plugin.saveSettings();
               if (plugin.settings.enabled) {
-                value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
+                if (!plugin.torchPossible()) plugin.disableTorchOverlay();
+                else if (!plugin.torchEngineActive) plugin.enableTorchOverlay();
               }
               rerender();
               await saved;

@@ -253,6 +253,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare detectVimMode: VimMethods["detectVimMode"];
   declare isVimCommandContext: VimMethods["isVimCommandContext"];
   declare currentVimMode: VimMethods["currentVimMode"];
+  declare lookVimMode: VimMethods["lookVimMode"];
   declare onVimModeChanged: VimMethods["onVimModeChanged"];
   declare statusBarVimMode: VimMethods["statusBarVimMode"];
   declare syncVimStatusBar: VimMethods["syncVimStatusBar"];
@@ -472,6 +473,8 @@ export default class CursorSmithPlugin extends Plugin {
   _vimEditMode!: string;
   _vimModeCache!: string | null;
   _vimModeCacheT!: number;
+  _vimHeldCache!: string | null;
+  _vimHeldCacheT!: number;
   _vimNormalRetryT!: number;
   _vimStatusSig!: string | null;
   declare _volumeBuf: Quad | null;
@@ -1308,7 +1311,7 @@ export default class CursorSmithPlugin extends Plugin {
   // setting from a callback that fires mid-frame. Now there is nothing to
   // put back.
   get look(): CursorSmithSettings {
-    return this.effectiveSettings(this.currentVimMode());
+    return this.effectiveSettings(this.lookVimMode());
   }
 
   // Something changed what `look` answers: a save, a preset, the

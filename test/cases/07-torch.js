@@ -207,3 +207,86 @@ section("torch: the settings window and the sidebar");
   e.updateOverlayTarget();
   ok("with no overlay there is no window to be outside of", e.tx === 45, [e.tx, e.ty]);
 }
+
+// ---------------------------------------------------------------------------
+section("torch: a Vim mode's own torch (issue #34)");
+
+// The report, on an iPad and on Windows with Vim modes on: Insert's look
+// with the torch, Normal's a hollow box without. The torch lit in Insert
+// only while the non-Vim preset had it on too (Torch-Crt); after Escape a
+// warm bloom stayed where the caret had been, through scrolls and moves and
+// into Reading view - where, the editor unfocused, the non-Vim preset's
+// whole torch came back.
+{
+  const D = T.DEFAULT_SETTINGS;
+  const mk = (globalTorch, modes) => {
+    const e = Object.create(Plugin.prototype);
+    e.settings = Object.assign({}, D, { torchEffect: globalTorch, vimModeEnabled: true, vimModes: modes });
+    return e;
+  };
+  const doc = { body: {} };
+  const view = { dom: { ownerDocument: doc } };
+
+  // The tick builds the overlay whenever the look of the moment wants the
+  // torch; with the global torch off the old check tore the engine down.
+  let downs = 0;
+  const a = mk(false, { insert: { torchEffect: true } });
+  a.disableTorchOverlay = () => { downs++; };
+  a.overlay = { ownerDocument: doc };
+  a.ensureTorchOverlayForView(view);
+  ok("a torch only in Insert: the overlay stays with the global torch off", downs === 0 && a.overlay !== null);
+  const b = mk(false, { insert: { torchEffect: false } });
+  b.disableTorchOverlay = () => { downs++; };
+  b.overlay = { ownerDocument: doc };
+  b.ensureTorchOverlayForView(view);
+  ok("...and with no look that can light it, the engine is torn down", downs === 1);
+
+  // One frame of the torch tick in a mode without the torch.
+  const g = mk(true, { insert: { torchEffect: true }, normal: { torchEffect: false } });
+  g.lookVimMode = () => "normal";
+  g.reducedMotion = () => false;
+  g.presentationActive = () => false;
+  const cls = new Set();
+  g.overlay = { ownerDocument: doc, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle() {}, contains: (c) => cls.has(c) } };
+  let glowGone = false;
+  g.glowEl = { remove() { glowGone = true; } };
+  let tick = null;
+  const raf0 = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (fn) => { tick = fn; return 1; };
+  try {
+    g.enableTorchOverlay();
+    tick();
+    ok("Escape to a mode without the torch: the darkness hides", cls.has("cursor-smith-torch-hidden"));
+    ok("...and the glow goes with it: no bloom left where the caret was", glowGone && g.glowEl === null);
+  } finally {
+    globalThis.requestAnimationFrame = raf0;
+    if (g._torchIdleT) window.clearTimeout(g._torchIdleT);
+    g.torchEngineActive = false;
+  }
+
+  // The look with the editor unfocused: the mode the editor is still in,
+  // as the status bar reads it - not the non-Vim preset.
+  const h = Object.create(Plugin.prototype);
+  h.settings = Object.assign({}, D, { vimModeEnabled: true, vimModes: { normal: { cursorStyle: "Underline" } } });
+  h.currentVimMode = () => null;
+  h.isObsidianVimOn = () => true;
+  h.detectVimMode = () => "normal";
+  h.app = { workspace: { activeEditor: { editor: { cm: {} } } } };
+  h.reducedMotion = () => false;
+  h._vimModeCacheT = 1;
+  ok("the editor unfocused (Reading view, the sidebar): the look keeps the mode it is still in", h.lookVimMode() === "normal");
+  ok("...and draws with that mode's look", h.look.cursorStyle === "Underline");
+  h._vimModeCacheT = 2; h.detectVimMode = () => "insert";
+  ok("...read again on the next frame", h.lookVimMode() === "insert");
+  h.currentVimMode = () => "visual";
+  ok("a live mode wins", h.lookVimMode() === "visual");
+  h.currentVimMode = () => null; h._vimModeCacheT = 3; h.isObsidianVimOn = () => false;
+  ok("Obsidian's Vim key bindings off: no mode", h.lookVimMode() === null);
+  h.settings.vimModeEnabled = false; h._vimModeCacheT = 4;
+  ok("Vim modes off: no mode, the one look", h.lookVimMode() === null);
+
+  // The global torch switch in the panel: off keeps the engine a Vim mode
+  // still uses; on never starts a second loop beside a running one.
+  const tab = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  ok("the global torch switch leaves a Vim mode's torch alone", tab.includes("if (!plugin.torchPossible()) plugin.disableTorchOverlay();") && tab.includes("else if (!plugin.torchEngineActive) plugin.enableTorchOverlay();"));
+}

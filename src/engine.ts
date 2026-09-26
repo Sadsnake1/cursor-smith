@@ -491,7 +491,7 @@ export const engineMethods = {
         // caret/draw pipeline - every read of this.look below is the current
         // mode's full look/effect snapshot, with no per-key plumbing and
         // nothing to restore afterwards (see the look getter).
-        const _vimMode = this.currentVimMode();
+        const _vimMode = this.lookVimMode();
         if (_vimMode !== this._appliedVimMode) {
           this._appliedVimMode = _vimMode;
           this.onVimModeChanged();

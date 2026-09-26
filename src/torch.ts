@@ -46,7 +46,11 @@ export const torchMethods = {
   },
 
   ensureTorchOverlayForView(this: CursorSmithPlugin, view: EditorView | null | undefined) {
-    if (!this.settings.torchEffect) {
+    // Any look that can light it, not the global switch alone: the tick
+    // calls this when the look of the moment (a Vim mode's) wants the torch,
+    // and with the global torch off the old check tore the whole engine down
+    // on every frame - a torch only in Insert never lit (issue #34).
+    if (!this.torchPossible()) {
       this.disableTorchOverlay();
       return;
     }
@@ -251,14 +255,22 @@ export const torchMethods = {
         // without early returns so the frame is always rescheduled at the
         // bottom.
         {
+          // The glow is a layer of its own, beside the overlay: hiding the
+          // overlay leaves it lit. Every branch that puts the light out takes
+          // it down too; only the lit branch below builds it again. It stayed
+          // behind as a warm bloom where the caret last was - after Escape to
+          // a mode without the torch, through scrolls and moves, into Reading
+          // view (issue #34).
           if (this.presentationActive()) {
             // Same presentation-mode guard as the canvas engine.
             if (this.overlay) this.overlay.classList.add("cursor-smith-torch-hidden");
+            this._ensureGlowLayer(false);
           } else if (!this.look.torchEffect) {
             // This mode (or the global cursor) doesn't want the spotlight — just
             // hide it. Don't disable the engine: another mode may want it, and
             // switching back should be instant.
             if (this.overlay) this.overlay.classList.add("cursor-smith-torch-hidden");
+            this._ensureGlowLayer(false);
           } else if (
             !this.windowFocused() &&
             this.look.overlayBlinkSync && this.look.blinkingEnabled
@@ -296,6 +308,8 @@ export const torchMethods = {
             // the same way.
             const view = this.app.workspace.activeEditor?.editor?.cm;
             this.ensureTorchOverlayForView(view);
+            // The light is closing: the warm core goes with it.
+            this._ensureGlowLayer(false);
             if (this.overlay) {
               this.overlay.classList.remove("cursor-smith-torch-hidden");
               const from = this._lastTorchRadius > 0 ? this._lastTorchRadius : this.look.overlayRadius;

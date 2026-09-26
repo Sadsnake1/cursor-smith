@@ -354,22 +354,36 @@ export const vimMethods = {
   // Vim mode indicator in Obsidian's status bar
   // =========================================================================
 
-  // The mode the status bar should name. Falls back to reading the editor
-  // directly when currentVimMode() returns null (focus is on a button, the
-  // ribbon, empty space...): the editor is still in whatever mode it was, and
-  // blanking the item every time focus touches a non-text element would make
-  // it flicker constantly.
+  // The mode the look and the status bar follow. Falls back to reading the
+  // editor directly when currentVimMode() returns null (focus is on a button,
+  // the ribbon, the sidebar, Reading view, another window): the editor is
+  // still in whatever mode it was. Blanking the status bar item every time
+  // focus touched a non-text element made it flicker; handing the look back
+  // to the global cursor did worse - the non-Vim preset's torch lit up in
+  // Reading view after Escape to a mode without one (issue #34). Memoized
+  // with currentVimMode, as the look reads it many times a frame.
+  lookVimMode(this: CursorSmithPlugin): string | null {
+    const live = this.currentVimMode();
+    if (live || !this.settings.vimModeEnabled) return live;
+    if (this._vimHeldCacheT === this._vimModeCacheT) return this._vimHeldCache;
+    let held: string | null = null;
+    try {
+      if (this.isObsidianVimOn()) {
+        const view = this.app.workspace.activeEditor?.editor?.cm;
+        if (view) held = this.detectVimMode(view);
+      }
+    } catch {
+      held = null; /* no editor open */
+    }
+    this._vimHeldCache = held;
+    this._vimHeldCacheT = this._vimModeCacheT;
+    return held;
+  },
+
+  // The mode the status bar should name: the look's (lookVimMode).
   statusBarVimMode(this: CursorSmithPlugin) {
     if (!this.settings.vimModeEnabled || !this.isObsidianVimOn()) return null;
-    const live = this.currentVimMode();
-    if (live) return live;
-    try {
-      const view = this.app.workspace.activeEditor?.editor?.cm;
-      if (view) return this.detectVimMode(view);
-    } catch {
-      /* no editor open */
-    }
-    return null;
+    return this.lookVimMode();
   },
 
   // Create the status bar element on demand, remove it when it shouldn't be

@@ -3084,7 +3084,8 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
             plugin.settings.torchEffect = value;
             const saved = plugin.saveSettings();
             if (plugin.settings.enabled) {
-              value ? plugin.enableTorchOverlay() : plugin.disableTorchOverlay();
+              if (!plugin.torchPossible()) plugin.disableTorchOverlay();
+              else if (!plugin.torchEngineActive) plugin.enableTorchOverlay();
             }
             rerender();
             await saved;
@@ -8937,7 +8938,7 @@ var torchMethods = {
     this._torchGlowKey = "";
   },
   ensureTorchOverlayForView(view) {
-    if (!this.settings.torchEffect) {
+    if (!this.torchPossible()) {
       this.disableTorchOverlay();
       return;
     }
@@ -9096,11 +9097,14 @@ var torchMethods = {
         {
           if (this.presentationActive()) {
             if (this.overlay) this.overlay.classList.add("cursor-smith-torch-hidden");
+            this._ensureGlowLayer(false);
           } else if (!this.look.torchEffect) {
             if (this.overlay) this.overlay.classList.add("cursor-smith-torch-hidden");
+            this._ensureGlowLayer(false);
           } else if (!this.windowFocused() && this.look.overlayBlinkSync && this.look.blinkingEnabled) {
             const view = this.app.workspace.activeEditor?.editor?.cm;
             this.ensureTorchOverlayForView(view);
+            this._ensureGlowLayer(false);
             if (this.overlay) {
               this.overlay.classList.remove("cursor-smith-torch-hidden");
               const from = this._lastTorchRadius > 0 ? this._lastTorchRadius : this.look.overlayRadius;
@@ -9726,21 +9730,35 @@ var vimMethods = {
   // =========================================================================
   // Vim mode indicator in Obsidian's status bar
   // =========================================================================
-  // The mode the status bar should name. Falls back to reading the editor
-  // directly when currentVimMode() returns null (focus is on a button, the
-  // ribbon, empty space...): the editor is still in whatever mode it was, and
-  // blanking the item every time focus touches a non-text element would make
-  // it flicker constantly.
+  // The mode the look and the status bar follow. Falls back to reading the
+  // editor directly when currentVimMode() returns null (focus is on a button,
+  // the ribbon, the sidebar, Reading view, another window): the editor is
+  // still in whatever mode it was. Blanking the status bar item every time
+  // focus touched a non-text element made it flicker; handing the look back
+  // to the global cursor did worse - the non-Vim preset's torch lit up in
+  // Reading view after Escape to a mode without one (issue #34). Memoized
+  // with currentVimMode, as the look reads it many times a frame.
+  lookVimMode() {
+    const live = this.currentVimMode();
+    if (live || !this.settings.vimModeEnabled) return live;
+    if (this._vimHeldCacheT === this._vimModeCacheT) return this._vimHeldCache;
+    let held = null;
+    try {
+      if (this.isObsidianVimOn()) {
+        const view = this.app.workspace.activeEditor?.editor?.cm;
+        if (view) held = this.detectVimMode(view);
+      }
+    } catch {
+      held = null;
+    }
+    this._vimHeldCache = held;
+    this._vimHeldCacheT = this._vimModeCacheT;
+    return held;
+  },
+  // The mode the status bar should name: the look's (lookVimMode).
   statusBarVimMode() {
     if (!this.settings.vimModeEnabled || !this.isObsidianVimOn()) return null;
-    const live = this.currentVimMode();
-    if (live) return live;
-    try {
-      const view = this.app.workspace.activeEditor?.editor?.cm;
-      if (view) return this.detectVimMode(view);
-    } catch {
-    }
-    return null;
+    return this.lookVimMode();
   },
   // Create the status bar element on demand, remove it when it shouldn't be
   // there. Kept as add/remove rather than a permanently-present hidden element
@@ -10098,7 +10116,7 @@ var engineMethods = {
             this._canvasPlaced = false;
           }
         }
-        const _vimMode = this.currentVimMode();
+        const _vimMode = this.lookVimMode();
         if (_vimMode !== this._appliedVimMode) {
           this._appliedVimMode = _vimMode;
           this.onVimModeChanged();
@@ -11831,7 +11849,7 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
   // setting from a callback that fires mid-frame. Now there is nothing to
   // put back.
   get look() {
-    return this.effectiveSettings(this.currentVimMode());
+    return this.effectiveSettings(this.lookVimMode());
   }
   // Something changed what `look` answers: a save, a preset, the
   // reduced-motion query. Drops the memo and bumps the look generation the

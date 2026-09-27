@@ -2787,7 +2787,10 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
           const gradient = (dark ? [look.gradientDark1, look.gradientDark2, look.gradientDark3, look.gradientDark4] : [look.gradientLight1, look.gradientLight2, look.gradientLight3, look.gradientLight4]).slice(0, count).map((c) => c ?? "");
           demos.add(use, name, look, (dark ? look.colorDark : look.colorLight) ?? "", ramp, gradient, reduced, isActive);
           use.addEventListener("click", () => {
-            void (vim ? plugin.loadVimPreset(name) : plugin.loadUserPreset(name)).then(() => this.update());
+            void (async () => {
+              await (vim ? plugin.loadVimPreset(name) : plugin.loadUserPreset(name));
+              this.update();
+            })();
           });
           const actions = card.createSpan({ cls: "cursor-smith-pcard-actions" });
           const action = (icon, label, run) => {
@@ -2798,18 +2801,22 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
           };
           const copy = action("copy", "Copy its share code", () => {
             const code = vim ? vimPresetToCode(name, entry) : presetToCode(name, entry);
-            void navigator.clipboard.writeText(code).then(() => {
+            void (async () => {
+              await navigator.clipboard.writeText(code);
               (0, import_obsidian.setIcon)(copy, "check");
               window.setTimeout(() => {
                 (0, import_obsidian.setIcon)(copy, "copy");
               }, 1500);
-            });
+            })();
           });
           let armed = 0;
           const trash = action("trash", "Delete this preset", () => {
             if (trash.hasClass("is-armed")) {
               window.clearTimeout(armed);
-              void (vim ? plugin.deleteVimPreset(name) : plugin.deleteUserPreset(name)).then(() => this.update());
+              void (async () => {
+                await (vim ? plugin.deleteVimPreset(name) : plugin.deleteUserPreset(name));
+                this.update();
+              })();
               return;
             }
             trash.addClass("is-armed");
@@ -3316,11 +3323,11 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
       return refresh;
     };
     const resetCard = (title) => () => {
-      const writes = cardKeys[title].map((key) => Promise.resolve(set(key)(DEFAULT_SETTINGS[key])));
-      void Promise.all(writes).then(() => {
+      void (async () => {
+        await Promise.all(cardKeys[title].map((key) => Promise.resolve(set(key)(DEFAULT_SETTINGS[key]))));
         if (afterReset) afterReset();
         this.update();
-      });
+      })();
     };
     const on = (key) => () => !!get(key);
     const off = (key) => () => !get(key);
@@ -9379,12 +9386,13 @@ var libraryMethods = {
     const currentIdx = names.indexOf(current);
     const nextIdx = (currentIdx + direction + names.length) % names.length;
     const nextName = names[nextIdx];
-    void this.loadUserPreset(nextName).then(() => {
+    void (async () => {
+      await this.loadUserPreset(nextName);
       this._activePresetName = nextName;
       this._pendingPresetName = nextName;
       new import_obsidian3.Notice(`Cursor-Smith: ${nextName}`);
       this.refreshSettingTab();
-    });
+    })();
   },
   // Returns the name it was saved under, or null if the code was invalid.
   async importPreset(code) {
@@ -10836,14 +10844,16 @@ var engineMethods = {
       }
       doc.removeEventListener("keydown", onKey, true);
       const text = this.perfReportText(perf, seconds);
-      const clip = typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(text) : Promise.reject(new Error("no clipboard"));
-      clip.then(
-        () => new import_obsidian5.Notice("Cursor-Smith: report copied to the clipboard."),
-        () => {
+      void (async () => {
+        try {
+          if (typeof navigator === "undefined" || !navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard");
+          await navigator.clipboard.writeText(text);
+          new import_obsidian5.Notice("Cursor-Smith: report copied to the clipboard.");
+        } catch {
           console.warn(text);
           new import_obsidian5.Notice("Cursor-Smith: report is in the developer console (Ctrl+Shift+I).");
         }
-      );
+      })();
     }, seconds * 1e3);
   },
   _freshPerf() {

@@ -1316,16 +1316,18 @@ export const engineMethods = {
       if (po) { try { po.disconnect(); } catch { /* gone */ } }
       doc.removeEventListener("keydown", onKey, true);
       const text = this.perfReportText(perf, seconds);
-      const clip = (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText)
-        ? navigator.clipboard.writeText(text) : Promise.reject(new Error("no clipboard"));
-      clip.then(
-        () => new Notice("Cursor-Smith: report copied to the clipboard."),
-        () => {
+      void (async () => {
+        try {
+          if (typeof navigator === "undefined" || !navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard");
+          await navigator.clipboard.writeText(text);
+          new Notice("Cursor-Smith: report copied to the clipboard.");
+        } catch {
           // No clipboard: the console is the fallback delivery, so this is
           // the one log the plugin makes, and only on that path.
           console.warn(text);
           new Notice("Cursor-Smith: report is in the developer console (Ctrl+Shift+I).");
-        });
+        }
+      })();
     }, seconds * 1000);
   },
 

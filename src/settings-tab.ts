@@ -604,7 +604,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           // others sit still.
           demos.add(use, name, look, (dark ? look.colorDark : look.colorLight) ?? "", ramp, gradient, reduced, isActive);
           use.addEventListener("click", () => {
-            void (vim ? plugin.loadVimPreset(name) : plugin.loadUserPreset(name)).then(() => this.update());
+            void (async () => {
+              await (vim ? plugin.loadVimPreset(name) : plugin.loadUserPreset(name));
+              this.update();
+            })();
           });
           const actions = card.createSpan({ cls: "cursor-smith-pcard-actions" });
           const action = (icon: string, label: string, run: () => void) => {
@@ -615,10 +618,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           };
           const copy = action("copy", "Copy its share code", () => {
             const code = vim ? vimPresetToCode(name, entry as Record<string, Look>) : presetToCode(name, entry);
-            void navigator.clipboard.writeText(code).then(() => {
+            void (async () => {
+              await navigator.clipboard.writeText(code);
               setIcon(copy, "check");
               window.setTimeout(() => { setIcon(copy, "copy"); }, 1500);
-            });
+            })();
           });
           // Delete is two taps and no dialog: the first turns the trash
           // into a red "Delete?" for three seconds, the second deletes.
@@ -627,7 +631,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           const trash = action("trash", "Delete this preset", () => {
             if (trash.hasClass("is-armed")) {
               window.clearTimeout(armed);
-              void (vim ? plugin.deleteVimPreset(name) : plugin.deleteUserPreset(name)).then(() => this.update());
+              void (async () => {
+                await (vim ? plugin.deleteVimPreset(name) : plugin.deleteUserPreset(name));
+                this.update();
+              })();
               return;
             }
             trash.addClass("is-armed");
@@ -1192,11 +1199,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // A card's reset: its keys back to their defaults, then a rebuild (every
     // handle on the card moves) and the caller's own follow-up.
     const resetCard = (title: string) => () => {
-      const writes = cardKeys[title].map((key) => Promise.resolve(set(key)(DEFAULT_SETTINGS[key])));
-      void Promise.all(writes).then(() => {
+      void (async () => {
+        await Promise.all(cardKeys[title].map((key) => Promise.resolve(set(key)(DEFAULT_SETTINGS[key]))));
         if (afterReset) afterReset();
         this.update();
-      });
+      })();
     };
 
     // --- Predicates ------------------------------------------------------------

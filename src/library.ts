@@ -90,7 +90,8 @@ export const libraryMethods = {
     const nextIdx = (currentIdx + direction + names.length) % names.length;
     const nextName = names[nextIdx];
 
-    void this.loadUserPreset(nextName).then(() => {
+    void (async () => {
+      await this.loadUserPreset(nextName);
       this._activePresetName = nextName;
       // Persist the pending name so the settings tab reflects the active preset.
       this._pendingPresetName = nextName;
@@ -98,7 +99,7 @@ export const libraryMethods = {
       // The panel shows the loaded values and the pending name: hand it
       // new definitions (see refreshSettingTab).
       this.refreshSettingTab();
-    });
+    })();
   },
 
   // Returns the name it was saved under, or null if the code was invalid.

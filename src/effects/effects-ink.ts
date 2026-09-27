@@ -19,7 +19,8 @@
 // alone, flat - and a first stop near the text's colour hid the ink.
 // With "Keep text color" the ink is the text's own color instead - drawn
 // over the same letter it would not show, so it is drawn heavier: stroked
-// in the text's color, the stroke thinning as the letter dries.
+// in the text's color, the stroke thinning as the letter dries (0.5 px at
+// full strength: 1.1 read as bold, the user said too bold).
 import { easeInOutSine } from "../util/motion";
 import type { EditorView } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
@@ -35,7 +36,7 @@ const INK_SEARCH = 64;
 // The share of the drying time the ink stays fully wet before it fades.
 const INK_HOLD = 0.3;
 // "Keep text color": how thick the wet ink's spread is at full strength.
-export const INK_SPREAD_PX = 1.1;
+export const INK_SPREAD_PX = 0.5;
 // With Gradient on, the ramp loops once every this many letters.
 export const INK_RAMP_SPAN = 10;
 

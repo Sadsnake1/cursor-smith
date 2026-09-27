@@ -454,7 +454,7 @@ section("Fresh ink: keep the text's color");
   };
   const kept = ink({ typewriterFreshInkText: true });
   ok("with Keep text color the letters are filled in the text's color", kept.fills.length === 2 && kept.fills.every((c) => c.fill === "#cccccc"), kept.fills);
-  ok("...and stroked in it too, the wet spread", kept.strokes.length === 2 && kept.strokes.every((c) => c.stroke === "#cccccc" && c.w > 0.5), kept.strokes);
+  ok("...and stroked in it too, the wet spread", kept.strokes.length === 2 && kept.strokes.every((c) => c.stroke === "#cccccc" && c.w > 0.3 && c.w <= 0.5), kept.strokes);
   const grad = ink({ typewriterFreshInkText: true, gradientEnabled: true, gradientCount: 2, gradientDark1: "#ff0000", gradientDark2: "#0000ff" });
   ok("...whatever the gradient says", grad.fills.every((c) => c.fill === "#cccccc"));
   const plain = ink({ typewriterFreshInkText: false });

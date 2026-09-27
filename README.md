@@ -43,8 +43,8 @@ Eleven of them, from subtle to absurd. Each has its own switch and its own setti
 
 | Effect | What it does |
 |---|---|
-| **Pop effects** | Letters pop out as you type, or rise straight up and fade. Deletions burst, Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
-| **Typewriter** | The cursor strikes like a typewriter key: a springy dip, an ink stamp on each letter, a carriage return on Enter, a small push forward as you type. Mix any of them. |
+| **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
+| **Typewriter** | The cursor strikes like a typewriter key: a springy dip, an ink stamp on each letter, fresh ink that dries as you write, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
@@ -107,7 +107,7 @@ Four, all in the Command Palette, all take a hotkey. The Behavior page shows the
 
 ## Building from source
 
-A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (1,600 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
+A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (1,700 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
 
 ## Pairs with Word-Smith
 

@@ -1,5 +1,5 @@
-import { TORCH_CANVAS_SCALE } from "./constants";
-import type { Box, Pt } from "./types";
+import { TORCH_CANVAS_SCALE } from "../constants";
+import type { Box, Pt } from "../types";
 
 // The torch's two layers, painted. Both used to be DOM elements carrying a
 // CSS radial-gradient positioned by custom properties, which cost a

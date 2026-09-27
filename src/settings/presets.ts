@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, cloneVimModes, presetWithDefaults } from "./settings";
-import type { CursorSmithSettings, Look } from "./types";
+import type { CursorSmithSettings, Look } from "../types";
 
 // Starter per-mode looks seeded into new installs. Each lists only what it
 // changes from the global defaults; fullVimMode() fills in the rest. They

@@ -7,12 +7,12 @@
 // base colour, the theme, the gradient ramp and its sampling, the paint for
 // one fill, the heat ramps.
 
-import { hexToRgbTuple, hexToRgba } from "./color";
-import { GLOW_HEAT_GAIN, SPEED_RAMP_LIFTOFF } from "./constants";
-import { easeInOutSine } from "./motion";
-import { DEFAULT_SETTINGS } from "./settings";
-import type { CursorSmithSettings, SettingKey } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import { hexToRgbTuple, hexToRgba } from "../util/color";
+import { GLOW_HEAT_GAIN, SPEED_RAMP_LIFTOFF } from "../constants";
+import { easeInOutSine } from "../util/motion";
+import { DEFAULT_SETTINGS } from "../settings/settings";
+import type { CursorSmithSettings, SettingKey } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintColorMethods = {
   getActiveColor(this: CursorSmithPlugin): string {

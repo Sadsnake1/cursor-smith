@@ -14,11 +14,11 @@ import {
   JUMP_TRAIL_MIN_DIST,
   SECONDARY_FULL_MAX,
   SECONDARY_MATCH_WINDOW,
-} from "./constants";
-import { HOT_ENGULF_MS } from "./fire";
+} from "../constants";
+import { HOT_ENGULF_MS } from "../effects/fire";
 import type { EditorView } from "@codemirror/view";
-import type { CaretRecord, CaretState, CoordsLTB, KeyFlags, LineStyle, QuadKey } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import type { CaretRecord, CaretState, CoordsLTB, KeyFlags, LineStyle, QuadKey } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const caretsMethods = {
   // =========================================================================

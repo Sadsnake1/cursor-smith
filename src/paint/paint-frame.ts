@@ -6,9 +6,9 @@
 // The frame: the cursor's damage bounds, draw() in the order the layers
 // stack, and the wrapper's blend.
 
-import { DIRTY_RECT_CLEAR, SERIF_MAX_SPAN_RATIO, SERIF_MIN_SPAN_PX } from "./constants";
-import type { Bounds, QuadKey } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import { DIRTY_RECT_CLEAR, SERIF_MAX_SPAN_RATIO, SERIF_MIN_SPAN_PX } from "../constants";
+import type { Bounds, QuadKey } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintFrameMethods = {
   // The cursor's own damage bounds, in client coordinates: the interpolated

@@ -21,9 +21,9 @@ import {
   WATCHDOG_INTERVAL_MS,
   WATCHDOG_STALE_MS,
   SCROLL_LOCK_MS,
-} from "./constants";
-import { fitCanvasRegion, wrapperClipForStatusBar } from "./geometry";
-import { presetToCode } from "./share";
+} from "../constants";
+import { fitCanvasRegion, wrapperClipForStatusBar } from "../util/geometry";
+import { presetToCode } from "../settings/share";
 import type { EditorView } from "@codemirror/view";
 import type {
   Bounds,
@@ -37,8 +37,8 @@ import type {
   SelectionSig,
   SettingKey,
   TrailPointCallback,
-} from "./types";
-import type CursorSmithPlugin from "./plugin";
+} from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const engineMethods = {
   // The element the canvas wrapper hangs from: the focused editor's

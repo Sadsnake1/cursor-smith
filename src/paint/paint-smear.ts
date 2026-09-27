@@ -13,9 +13,9 @@ import {
   SMEAR_VOLUME_MIN_FACTOR,
   TAPER_FULL_LAG,
   TAPER_MIN_LAG,
-} from "./constants";
-import type { Pt, Quad, QuadKey, Rect, SmearQuad } from "./types";
-import type CursorSmithPlugin from "./plugin";
+} from "../constants";
+import type { Pt, Quad, QuadKey, Rect, SmearQuad } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintSmearMethods = {
   updateSmearQuad(this: CursorSmithPlugin) {

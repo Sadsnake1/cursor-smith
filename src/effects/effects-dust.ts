@@ -7,15 +7,15 @@
 // laid along a jump, and the stardust that drifts up or orbits while the
 // caret rests.
 
-import { hslToRgbTuple } from "./color";
+import { hslToRgbTuple } from "../util/color";
 import {
   JUMP_TRAIL_MAX_PUFFS,
   JUMP_TRAIL_MIN_DIST,
   JUMP_TRAIL_STEP,
   STARDUST_MAX_PER_CARET,
-} from "./constants";
-import type { CaretRecord, StardustMote } from "./types";
-import type CursorSmithPlugin from "./plugin";
+} from "../constants";
+import type { CaretRecord, StardustMote } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const effectsDustMethods = {
   // The colour for one trail pixel, as an "rgb(...)" string.

@@ -6,7 +6,7 @@ import {
   pickLook,
   vimModeSnapshot,
 } from "./settings";
-import type { Look } from "./types";
+import type { Look } from "../types";
 
 // ---------------------------------------------------------------------------
 // Preset share-code codec

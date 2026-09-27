@@ -6,8 +6,8 @@
 // The blink: its phase anchored to the caret's last move, the window the
 // frame governor sleeps and wakes by, the alpha and the breathing scale.
 
-import { blinkAlphaAt, blinkSegments } from "./motion";
-import type CursorSmithPlugin from "./plugin";
+import { blinkAlphaAt, blinkSegments } from "../util/motion";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintBlinkMethods = {
   // The raw blink cycle: 1 while the caret is "on", 0 while it's "off", eased

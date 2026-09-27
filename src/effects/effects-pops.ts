@@ -7,7 +7,7 @@
 // long jump, fireworks on Space and Enter, the thunderbolt on Enter, and
 // the rainbow that sweeps them all.
 
-import { hexToRgbTuple, hslToRgbString, hslToRgbTuple, lighten, thunderColorAt, thunderRamp } from "./color";
+import { hexToRgbTuple, hslToRgbString, hslToRgbTuple, lighten, thunderColorAt, thunderRamp } from "../util/color";
 import {
   FIREWORK_ALPHA,
   FIREWORK_CELL,
@@ -39,10 +39,10 @@ import {
   THUNDER_MAX_LIVE,
   THUNDER_MIN_REACH,
   THUNDER_PASSES,
-} from "./constants";
-import { easeInOutSine, glitchNoise } from "./motion";
-import type { CaretRecord, FireworkSpark, GlitchState, Pt, ThunderBand } from "./types";
-import type CursorSmithPlugin from "./plugin";
+} from "../constants";
+import { easeInOutSine, glitchNoise } from "../util/motion";
+import type { CaretRecord, FireworkSpark, GlitchState, Pt, ThunderBand } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const effectsPopsMethods = {
   spawnLetterParticle(this: CursorSmithPlugin, char: string, anchor: CaretRecord) {

@@ -10,10 +10,10 @@
 // status bar's -- NORMAL --.
 
 import { Notice } from "obsidian";
-import { isTextCaretHost } from "./motion";
-import { VIM_MODE_LABELS } from "./settings";
+import { isTextCaretHost } from "../util/motion";
+import { VIM_MODE_LABELS } from "../settings/settings";
 import type { EditorView } from "@codemirror/view";
-import type CursorSmithPlugin from "./plugin";
+import type CursorSmithPlugin from "../plugin";
 
 export const vimMethods = {
   // Whether the plugin is currently "in Vim mode" for command purposes.

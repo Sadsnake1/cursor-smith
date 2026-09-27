@@ -1,6 +1,6 @@
 // the hidden caret's colour, the stylesheet, the review's rules, note editor only, the status bar clip.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("the hidden caret keeps a usable colour");

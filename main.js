@@ -165,7 +165,7 @@ var CARET_STATE_FIELDS = [
 var STARDUST_MAX_PER_CARET = 60;
 var SERIF_TAPER = 0.3;
 
-// src/motion.ts
+// src/util/motion.ts
 function torchFlickerScale(nowMs, amount) {
   const a = Math.max(0, Math.min(1, amount));
   if (a === 0) return 1;
@@ -259,7 +259,7 @@ function blinkAlphaAt(nowMs, speed, onOffBalance = 0.5, fade = 0.15) {
   return easeInOutSine((phase - s.p3) / s.fade);
 }
 
-// src/settings.ts
+// src/settings/settings.ts
 var DEFAULT_SETTINGS = {
   enabled: true,
   cursorStyle: "Box",
@@ -963,7 +963,7 @@ function cloneVimModes(modes) {
   return out;
 }
 
-// src/presets.ts
+// src/settings/presets.ts
 var VIM_MODE_STARTERS = {
   normal: {
     cursorStyle: "Box",
@@ -1599,10 +1599,10 @@ var DEFAULT_VIM_PRESETS = {
   "Preset1": PRESET1_VIM_MODES
 };
 
-// src/settings-tab.ts
+// src/settings/settings-tab.ts
 var import_obsidian = require("obsidian");
 
-// src/share.ts
+// src/settings/share.ts
 var SHARE_VERSION = "1";
 function shareEncodeValue(v) {
   if (typeof v === "boolean") return "b" + (v ? "1" : "0");
@@ -1705,7 +1705,7 @@ function codeToVimPreset(code) {
   }
 }
 
-// src/color.ts
+// src/util/color.ts
 function hexToRgba(hex, alpha) {
   let h = (hex || "#39ff14").replace("#", "");
   if (h.length === 3) {
@@ -1921,7 +1921,7 @@ function readableGlyphColor(boxColorStr, mode = "contrast") {
   return rgb(best);
 }
 
-// src/demo.ts
+// src/settings/demo.ts
 var TRANSLUCENT_ALPHA2 = 0.95;
 var ROUNDED_THIN_PX2 = 6;
 var ROUNDED_BLOCK_FRACTION2 = 0.25;
@@ -2240,7 +2240,7 @@ var DemoStrip = class {
   }
 };
 
-// src/settings-tab.ts
+// src/settings/settings-tab.ts
 var RAIL_EFFECTS = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
@@ -3860,7 +3860,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
   }
 };
 
-// src/measure.ts
+// src/engine/measure.ts
 var import_obsidian2 = require("obsidian");
 var measureMethods = {
   caretCoords() {
@@ -4908,7 +4908,7 @@ var measureMethods = {
   }
 };
 
-// src/fire.ts
+// src/effects/fire.ts
 var HOT_STOP_POS = [0, 0.12, 0.42, 0.72, 1];
 var HOT_HSV = [
   [44, 1, 1],
@@ -5005,7 +5005,7 @@ var HOT_TRAIL_PATH_MAX = 24;
 var HOT_TRAIL_PATH_AGE = 0.35;
 var HOT_TRAIL_EMIT_MAX = 2.4;
 
-// src/effects-fire.ts
+// src/effects/effects-fire.ts
 function hotKick(mag) {
   const ang = -Math.PI / 2 + (Math.random() * 2 - 1) * HOT_START_CONE;
   return {
@@ -5581,7 +5581,7 @@ var effectsFireMethods = {
   }
 };
 
-// src/effects-pops.ts
+// src/effects/effects-pops.ts
 var effectsPopsMethods = {
   spawnLetterParticle(char, anchor) {
     if (!char.trim()) return;
@@ -6371,7 +6371,7 @@ var effectsPopsMethods = {
   }
 };
 
-// src/effects-dust.ts
+// src/effects/effects-dust.ts
 var effectsDustMethods = {
   // The colour for one trail pixel, as an "rgb(...)" string.
   //
@@ -6695,7 +6695,7 @@ var effectsDustMethods = {
   }
 };
 
-// src/effects-trail.ts
+// src/effects/effects-trail.ts
 var effectsTrailMethods = {
   // Record `point` (the position being left) as a CRT trail ghost. If `dest` is
   // given and the move from point→dest is a jump, also lay intermediate ghosts
@@ -6858,7 +6858,7 @@ var effectsTrailMethods = {
   }
 };
 
-// src/effects.ts
+// src/effects/effects.ts
 var effectsMethods = {
   ...effectsFireMethods,
   ...effectsPopsMethods,
@@ -6866,7 +6866,7 @@ var effectsMethods = {
   ...effectsTrailMethods
 };
 
-// src/paint-color.ts
+// src/paint/paint-color.ts
 var paintColorMethods = {
   getActiveColor() {
     const baseColor = this.getBaseColor();
@@ -7094,7 +7094,7 @@ var paintColorMethods = {
   }
 };
 
-// src/paint-blink.ts
+// src/paint/paint-blink.ts
 var paintBlinkMethods = {
   // The raw blink cycle: 1 while the caret is "on", 0 while it's "off", eased
   // through the two transitions, and pinned at 1 during the post-move hold.
@@ -7167,7 +7167,7 @@ var paintBlinkMethods = {
   }
 };
 
-// src/paint-shape.ts
+// src/paint/paint-shape.ts
 var paintShapeMethods = {
   // The corner radius for a shape whose narrow axis is `minor` px.
   //
@@ -7590,7 +7590,7 @@ var paintShapeMethods = {
   }
 };
 
-// src/paint-energy.ts
+// src/paint/paint-energy.ts
 var paintEnergyMethods = {
   // Chooses how the Energy Beam paints the cursor.
   //
@@ -7775,7 +7775,7 @@ var paintEnergyMethods = {
   }
 };
 
-// src/text.ts
+// src/util/text.ts
 var BRACKET_OPEN = { "(": ")", "[": "]", "{": "}", "<": ">" };
 var BRACKET_CLOSE = { ")": "(", "]": "[", "}": "{", ">": "<" };
 var BRACKET_SCAN_LIMIT = 2e4;
@@ -7818,7 +7818,7 @@ function isQuoteDelimiter(text, i) {
   return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
 }
 
-// src/paint-tether.ts
+// src/paint/paint-tether.ts
 var paintTetherMethods = {
   // ---- Bracket Tether ----------------------------------------------------
   // Find the position of the bracket matching the one at `at`, or -1.
@@ -8274,7 +8274,7 @@ var paintTetherMethods = {
   }
 };
 
-// src/paint-secondaries.ts
+// src/paint/paint-secondaries.ts
 var paintSecondariesMethods = {
   // The plain fallback: a solid 2px vertical line for every non-primary caret
   // PAST SECONDARY_FULL_MAX. The first SECONDARY_FULL_MAX get the primary's
@@ -8383,7 +8383,7 @@ var paintSecondariesMethods = {
   }
 };
 
-// src/paint-smear.ts
+// src/paint/paint-smear.ts
 var paintSmearMethods = {
   updateSmearQuad() {
     const now = performance.now();
@@ -8681,7 +8681,7 @@ var paintSmearMethods = {
   }
 };
 
-// src/paint-frame.ts
+// src/paint/paint-frame.ts
 var paintFrameMethods = {
   // The cursor's own damage bounds, in client coordinates: the interpolated
   // caret, the entire smear quad (which overshoots well past the caret on a
@@ -8849,7 +8849,7 @@ var paintFrameMethods = {
   }
 };
 
-// src/paint.ts
+// src/paint/paint.ts
 var paintMethods = {
   ...paintColorMethods,
   ...paintBlinkMethods,
@@ -8861,7 +8861,7 @@ var paintMethods = {
   ...paintFrameMethods
 };
 
-// src/torch-paint.ts
+// src/torch/torch-paint.ts
 function clipToRegions(ctx, regions) {
   if (!regions) return false;
   ctx.save();
@@ -8919,7 +8919,7 @@ function torchCanvasContext(el, w, h) {
   return ctx;
 }
 
-// src/torch.ts
+// src/torch/torch.ts
 var regionsKey = (regions) => regions ? regions.map((b) => Math.round(b.left) + "," + Math.round(b.top) + "," + Math.round(b.width) + "," + Math.round(b.height)).join(";") : "";
 var torchMethods = {
   // Whether the torch overlay engine might be needed: either the global cursor
@@ -9336,7 +9336,7 @@ var torchMethods = {
   }
 };
 
-// src/library.ts
+// src/settings/library.ts
 var import_obsidian3 = require("obsidian");
 var libraryMethods = {
   // ---- User preset CRUD ----
@@ -9457,7 +9457,7 @@ var libraryMethods = {
   }
 };
 
-// src/vim.ts
+// src/engine/vim.ts
 var import_obsidian4 = require("obsidian");
 var vimMethods = {
   // Whether the plugin is currently "in Vim mode" for command purposes.
@@ -9821,10 +9821,10 @@ var vimMethods = {
   }
 };
 
-// src/engine.ts
+// src/engine/engine.ts
 var import_obsidian5 = require("obsidian");
 
-// src/geometry.ts
+// src/util/geometry.ts
 function fitCanvasRegion(need, clip, current, opts = {}) {
   const marginX = opts.marginX ?? CANVAS_REGION_MARGIN_X;
   const marginY = opts.marginY ?? 32;
@@ -9873,7 +9873,7 @@ function wrapperClipForStatusBar(wrapper, bar) {
   return { height, clipPath };
 }
 
-// src/engine.ts
+// src/engine/engine.ts
 var engineMethods = {
   // The element the canvas wrapper hangs from: the focused editor's
   // scroller, where the wrapper rides with the scrolled content - the
@@ -10963,7 +10963,7 @@ var engineMethods = {
   }
 };
 
-// src/carets.ts
+// src/engine/carets.ts
 var caretsMethods = {
   // =========================================================================
   // Multi-cursor: full effects on secondary carets

@@ -1,5 +1,5 @@
-import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS } from "./constants";
-import type { CursorSmithSettings } from "./types";
+import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS } from "../constants";
+import type { CursorSmithSettings } from "../types";
 
 // Candle flicker, as a multiplier on the torch's base glow strength.
 //

@@ -80,4 +80,24 @@ function makePathCtx() {
   };
 }
 
-module.exports = { Plugin, T, ok, section, later, state, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx };
+// The plugin's source files by name, wherever they sit under src/ (grouped
+// into folders since 2026-09-27, every name kept and unique): a test reads
+// "engine.ts" without knowing its folder. srcFiles lists every one.
+const SRC_DIR = require("path").join(__dirname, "..", "src");
+function srcFiles(dir = SRC_DIR) {
+  const out = [];
+  for (const e of require("fs").readdirSync(dir, { withFileTypes: true })) {
+    const p = require("path").join(dir, e.name);
+    if (e.isDirectory()) out.push(...srcFiles(p));
+    else if (e.name.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+const SRC_INDEX = new Map(srcFiles().map((p) => [require("path").basename(p), p]));
+function srcPath(name) {
+  const p = SRC_INDEX.get(require("path").basename(name));
+  if (!p) throw new Error("no source file named " + name);
+  return p;
+}
+
+module.exports = { Plugin, T, ok, section, later, state, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles };

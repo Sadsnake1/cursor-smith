@@ -8,13 +8,13 @@
 // in torch-paint.ts), following the caret, the mouse, or whichever moved
 // last.
 
-import { hexToRgb } from "./color";
-import { torchFlickerScale } from "./motion";
-import { VIM_MODE_KEYS } from "./settings";
+import { hexToRgb } from "../util/color";
+import { torchFlickerScale } from "../util/motion";
+import { VIM_MODE_KEYS } from "../settings/settings";
 import { paintTorchDarkness, paintTorchGlow, torchCanvasContext } from "./torch-paint";
 import type { EditorView } from "@codemirror/view";
-import type { Box, Pt } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import type { Box, Pt } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 // The regions' part of a painter's dedupe key.
 const regionsKey = (regions: Box[] | null | undefined) =>

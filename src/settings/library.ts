@@ -17,8 +17,8 @@ import {
   vimModeSnapshot,
 } from "./settings";
 import { codeToPreset, codeToVimPreset } from "./share";
-import type { CursorSmithSettings } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import type { CursorSmithSettings } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const libraryMethods = {
   // ---- User preset CRUD ----

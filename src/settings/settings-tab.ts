@@ -1,11 +1,11 @@
 import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
-import type CursorSmithPlugin from "./plugin";
+import type CursorSmithPlugin from "../plugin";
 import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
-import { readableGlyphColor } from "./color";
+import { readableGlyphColor } from "../util/color";
 import { DemoStrip } from "./demo";
-import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "./types";
+import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "../types";
 
 // The effects, in the order the Effects page lists them: the master key,
 // the name and description of the entry, and its Lucide icon.

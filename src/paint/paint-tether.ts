@@ -7,7 +7,7 @@
 // block boundaries a span may not cross, the line boxes between the two
 // ends, and the guide that is painted along them.
 
-import { hexToRgbTuple, hexToRgba } from "./color";
+import { hexToRgbTuple, hexToRgba } from "../util/color";
 import {
   BLOCK_HEAD_MAX,
   BLOCK_LINE_LOOKBACK,
@@ -22,11 +22,11 @@ import {
   blockLineInfo,
   isBlockquoteMarker,
   isQuoteDelimiter,
-} from "./text";
+} from "../util/text";
 import type { Text } from "@codemirror/state";
 import type { Rect as CMRect, EditorView } from "@codemirror/view";
-import type { TetherSeg } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import type { TetherSeg } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintTetherMethods = {
   // ---- Bracket Tether ----------------------------------------------------

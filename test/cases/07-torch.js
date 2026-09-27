@@ -1,6 +1,6 @@
 // the torch's flicker, glow and tuning.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("torch: candle flicker");
@@ -83,7 +83,7 @@ section("torch: the settings window and the sidebar");
 // the sidebar: activeEditor null). The spared-sidebars area is now the
 // workspace's main area, every note tab, whichever leaf has focus.
 {
-  const src = (f) => require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", f), "utf8");
+  const src = (f) => require("fs").readFileSync(srcPath(f), "utf8");
   const torch = src("torch.ts");
   const chain = /ensureTorchOverlayForView\(this[^]*?const targetDoc =([^;]*);/.exec(torch);
   ok("the overlay's document is the editor's, the overlay's own, or the main window's - never activeDocument", !!chain && /view[^]*overlay[^]*document/.test(chain[1]) && !/activeDocument/.test(chain[1]), chain && chain[1]);
@@ -287,6 +287,6 @@ section("torch: a Vim mode's own torch (issue #34)");
 
   // The global torch switch in the panel: off keeps the engine a Vim mode
   // still uses; on never starts a second loop beside a running one.
-  const tab = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  const tab = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
   ok("the global torch switch leaves a Vim mode's torch alone", tab.includes("if (!plugin.torchPossible()) plugin.disableTorchOverlay();") && tab.includes("else if (!plugin.torchEngineActive) plugin.enableTorchOverlay();"));
 }

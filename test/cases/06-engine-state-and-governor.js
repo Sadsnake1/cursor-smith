@@ -1,6 +1,6 @@
 // the reset, the gears, frame caps, wake sources, the report, resting more, the derived signature and the watchdog.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("engine state: one reset site");
@@ -97,7 +97,7 @@ section("engine state: one reset site");
   } finally {
     global.document = realDoc;
   }
-  const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
+  const plug = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
   ok("unloading a document sweeps every layer there, referenced or not (the stylesheet goes with the plugin)", /querySelectorAll\("\.cursor-smith-wrapper, \.cursor-smith-canvas, \.cursor-smith-torch-overlay"\)\.forEach/.test(plug));
 }
 
@@ -366,7 +366,7 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     e.settings.enabled = false; started = 0;
     e.setDeviceEnabled(true);
     ok("...unless the synced switch is off", started === 0);
-    const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
+    const plug = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
     ok("read from local storage before anything starts, absent meaning on", /this\._deviceEnabled = this\.app\.loadLocalStorage\(DEVICE_ENABLED_KEY\) !== "off";/.test(plug) && /if \(this\.settings\.enabled && this\._deviceEnabled\) this\.enable\(\);/.test(plug));
     ok("the key names the plugin", T.DEVICE_ENABLED_KEY === "cursor-smith-enabled-on-this-device");
   }
@@ -401,7 +401,7 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("...a phone keeps its scroller with a torch, as since 1.6.2", torch._wrapperHome(phoneDoc, view) === sc);
     ok("an editor in a Canvas card (scaled by a transform): the app container, desktop and phone", e._wrapperHome(deskDoc, { hasFocus: true, scrollDOM: scOf(deskDoc, true) }) === app && e._wrapperHome(phoneDoc, { hasFocus: true, scrollDOM: scOf(phoneDoc, true) }) === app);
     ok("...and no app container: the body", e._wrapperHome({ body: { classList: { contains: () => false } }, querySelector: () => null }, null).classList !== undefined);
-    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    const src = require("fs").readFileSync(srcPath("engine.ts"), "utf8");
     // Sized to the content's own box, not the scroller's scroll size, which
     // includes the wrapper: that could only grow (1.6.6, a phone).
     ok("the scrolled wrapper is sized from the content's box and the scroller's client size, never its scroll size", /const cr = view\.contentDOM\.getBoundingClientRect\(\);\s*const width = Math\.max\(1, sc\.clientWidth, Math\.ceil\(cr\.right - left\)\);\s*const height = Math\.max\(1, sc\.clientHeight, Math\.ceil\(cr\.bottom - top\)\);/.test(src) && !/sc\.scrollWidth|sc\.scrollHeight/.test(src));
@@ -417,7 +417,7 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
   // every third (30 ms in low power) trails it by a scroll step - the wobble
   // the user saw, worse on a phone. Short, so the cap is back right after.
   {
-    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    const src = require("fs").readFileSync(srcPath("engine.ts"), "utf8");
     ok("the scroll lock is short: past the gap between a slow drag's scroll events, well under the input window", T.SCROLL_LOCK_MS >= 60 && T.SCROLL_LOCK_MS <= 200 && T.SCROLL_LOCK_MS < T.INPUT_HOT_MS, T.SCROLL_LOCK_MS);
     ok("the tick skips a capped frame only when the cap is not lifted", /if \(!this\._hotCapLifted\(n\) && n - \(this\._lastHotFrameT \|\| 0\) < this\._frameCaps\(\)\.hotMinMs\)/.test(src));
     const cap = (over, set = {}) => { const g = Object.create(Plugin.prototype); g.settings = Object.assign({}, T.DEFAULT_SETTINGS, set); Object.assign(g, { _lastScrollT: 0, _realKeyT: 0, _smoothMoving: false, _smearMoving: false }, over); return g._hotCapLifted(10000); };
@@ -431,7 +431,7 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     ok("...and a key this recent", cap({ _realKeyT: 10000 - T.SCROLL_LOCK_MS + 5 }) && !cap({ _realKeyT: 10000 - T.SCROLL_LOCK_MS - 5 }));
     ok("...but not in Low Power, which keeps its cap while typing", !cap({ _smoothMoving: true, _smearMoving: true, _realKeyT: 9990 }, { lowPowerMode: true }));
     ok("a caret at rest keeps the cap", !cap({}));
-    const plug = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "plugin.ts"), "utf8");
+    const plug = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
     ok("...stamped where the scroller's scroll and wheel events are read", /this\._lastScrollT = performance\.now\(\); this\._markActivity\(e\.type\);/.test(plug));
   }
 
@@ -578,7 +578,7 @@ section("frame governor: resting more (1.5.8)");
     return e;
   };
   const rec = (x, top, pos) => ({ x, top, bottom: top + 24, h: 24, w: 8, actualCharWidth: 8, char: "a", focused: true, pos, assoc: 1 });
-  const src = (f) => require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", f), "utf8");
+  const src = (f) => require("fs").readFileSync(srcPath(f), "utf8");
 
   // --- the trail is recorded only under CRT -----------------------------------
   {
@@ -816,7 +816,7 @@ section("the derived signature, the gear decision, the watchdog (1.5.8)");
     return e;
   };
   const rec = (x, top) => ({ x, top, bottom: top + 24, h: 24, w: 8, actualCharWidth: 8, char: "a", focused: true, pos: 1, assoc: 1 });
-  const src = (f) => require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", f), "utf8");
+  const src = (f) => require("fs").readFileSync(srcPath(f), "utf8");
 
   // --- the static-frame signature is derived, not enumerated ------------------
   {

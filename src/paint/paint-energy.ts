@@ -6,8 +6,8 @@
 // The energy beam: the travelling gradient inside the cursor body, and the
 // aurora, a raster pattern when the ramp is on and the waviness above zero.
 
-import { hexToRgbTuple, hexToRgba } from "./color";
-import type CursorSmithPlugin from "./plugin";
+import { hexToRgbTuple, hexToRgba } from "../util/color";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintEnergyMethods = {
   // Chooses how the Energy Beam paints the cursor.

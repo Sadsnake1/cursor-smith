@@ -3,7 +3,7 @@ import type { Text } from "@codemirror/state";
 import type { Setting, SettingDefinitionGroup } from "obsidian";
 import type CursorSmithPlugin from "./plugin";
 import type { CARET_STATE_FIELDS } from "./constants";
-import { DEFAULT_SETTINGS } from "./settings";
+import { DEFAULT_SETTINGS } from "./settings/settings";
 
 // The settings object: every key of DEFAULT_SETTINGS with its default's
 // type, plus whatever a saved data.json or a migration carries on top.

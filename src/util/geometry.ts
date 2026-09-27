@@ -2,8 +2,8 @@ import {
   CANVAS_REGION_GRID,
   CANVAS_REGION_MARGIN_X,
   CANVAS_REGION_SHRINK_RATIO,
-} from "./constants";
-import type { Bounds, Rect } from "./types";
+} from "../constants";
+import type { Bounds, Rect } from "../types";
 
 // ---------------------------------------------------------------------------
 // Canvas region fitting (issue #30)

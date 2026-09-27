@@ -1,6 +1,6 @@
 // secondary carets: gradient, full effects.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("multi-cursor carets follow the gradient");

@@ -1,9 +1,9 @@
 import { Plugin, View, addIcon } from "obsidian";
 import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
-import { applyReducedMotion, isTextCaretHost } from "./motion";
-import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset } from "./presets";
-import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings";
-import { CursorSmithSettingTab } from "./settings-tab";
+import { applyReducedMotion, isTextCaretHost } from "./util/motion";
+import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset } from "./settings/presets";
+import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings/settings";
+import { CursorSmithSettingTab } from "./settings/settings-tab";
 import type { EditorView } from "@codemirror/view";
 import type {
   Bounds,
@@ -42,14 +42,14 @@ import type {
   TypeReturn,
 } from "./types";
 
-import { measureMethods } from "./measure";
-import { effectsMethods } from "./effects";
-import { paintMethods } from "./paint";
-import { torchMethods } from "./torch";
-import type { MeasureMethods } from "./measure";
-import type { EffectsMethods } from "./effects";
-import type { PaintMethods } from "./paint";
-import type { TorchMethods } from "./torch";
+import { measureMethods } from "./engine/measure";
+import { effectsMethods } from "./effects/effects";
+import { paintMethods } from "./paint/paint";
+import { torchMethods } from "./torch/torch";
+import type { MeasureMethods } from "./engine/measure";
+import type { EffectsMethods } from "./effects/effects";
+import type { PaintMethods } from "./paint/paint";
+import type { TorchMethods } from "./torch/torch";
 
 // The class is in nine files. The eight modules above hold its methods by
 // responsibility - measuring, effects, painting, the torch (the first
@@ -74,14 +74,14 @@ const CANDLE_ICON = `<g transform="scale(4.1667)" fill="none" stroke="currentCol
 <path d="M17 17s-.7-1.4-1.1-2.4"/>
 </g>`;
 
-import { libraryMethods } from "./library";
-import { vimMethods } from "./vim";
-import { engineMethods } from "./engine";
-import { caretsMethods } from "./carets";
-import type { LibraryMethods } from "./library";
-import type { VimMethods } from "./vim";
-import type { EngineMethods } from "./engine";
-import type { CaretsMethods } from "./carets";
+import { libraryMethods } from "./settings/library";
+import { vimMethods } from "./engine/vim";
+import { engineMethods } from "./engine/engine";
+import { caretsMethods } from "./engine/carets";
+import type { LibraryMethods } from "./settings/library";
+import type { VimMethods } from "./engine/vim";
+import type { EngineMethods } from "./engine/engine";
+import type { CaretsMethods } from "./engine/carets";
 
 export default class CursorSmithPlugin extends Plugin {
   // measure.ts

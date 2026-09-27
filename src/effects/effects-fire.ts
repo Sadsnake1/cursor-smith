@@ -7,7 +7,7 @@
 // feeding window, the spawn (fire along the caret's column, the spread,
 // the trail it leaves), the fire's colors, and the draw.
 
-import { hexToRgbTuple, hsvToRgb, lerpHsv, rgbToHsv, rgbTupleToHex } from "./color";
+import { hexToRgbTuple, hsvToRgb, lerpHsv, rgbToHsv, rgbTupleToHex } from "../util/color";
 import {
   FLAME_BUOYANCY,
   FLAME_DAMPING,
@@ -64,9 +64,9 @@ import {
   hotQuant,
   hotShapeStage,
 } from "./fire";
-import { easeInOutSine } from "./motion";
-import type CursorSmithPlugin from "./plugin";
-import type { Ember } from "./types";
+import { easeInOutSine } from "../util/motion";
+import type CursorSmithPlugin from "../plugin";
+import type { Ember } from "../types";
 
 // A start kick of `mag`, up within HOT_START_CONE of straight up, and a sway
 // of its own (see drawHotHead). Nothing of the caret's velocity: fire rises

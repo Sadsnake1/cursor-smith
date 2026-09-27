@@ -1,6 +1,6 @@
 // fireworks, disintegration, letter pops, the rainbow.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("thunderRamp: rainbow override");
@@ -522,7 +522,7 @@ section("Popping letters: rise straight up (1.6.7)");
   t.particles = [];
   t.spawnLetterParticle("a", anchor);
   ok("with it off the letter still tumbles (a throw and a spin)", t.particles[0] && !t.particles[0].rise && t.particles[0].vy < 0 && t.particles[0].rotation !== undefined);
-  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  const src = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
   ok("the switch sits under Popping letters", /toggle\("Rise straight up", [^;]*"popLettersRise", \{ depth: 2, when: all\(pop, on\("popLetters"\)\) \}\)/.test(src));
 }
 
@@ -561,9 +561,9 @@ section("Typewriter (1.6.7)");
   k.lastActive = at(4, text.length - 1);
   k.resolveHoldChar(at(5, text.length));
   ok("a character typed strikes", k._typewriterT > 0);
-  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "paint-frame.ts"), "utf8");
+  const src = require("fs").readFileSync(srcPath("paint-frame.ts"), "utf8");
   ok("the whole caret is drawn in its pose, and the damage rect follows it", /ctx\.translate\(pose\.dx, pose\.dy\);/.test(src) && /cb\.y1 \+= Math\.max\(0, pose\.dy\);/.test(src));
-  const tab = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  const tab = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
   ok("an effect of its own: a top-level switch, opening its own sub-options", tab.includes(`"typewriter", { gate: true, when: showTw }`));
   ok("...on the rail with its own icon", tab.includes(`{ key: "typewriter", name: "Typewriter", icon: "keyboard",`));
 }
@@ -624,9 +624,9 @@ section("Typewriter's sub-options (1.6.7)");
   r.start = performance.now() - 5000; cr.drawCarriageReturns();
   ok("...and gone after it", cr.typeReturns.length === 0);
   ok("a return on a line with nothing to sweep is not spawned", (() => { const q = mk({ typewriterReturn: true }); q.spawnCarriageReturn({ x: 41, top: 0, h: 24, rowLeft: 40 }, { x: 40, top: 24, h: 24 }); return q.typeReturns.length === 0; })());
-  const tab2 = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  const tab2 = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
   ok("the four switches sit under Typewriter, each opening its sliders", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 1, gate: true, when: tw }`)));
-  const carets = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "carets.ts"), "utf8");
+  const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
   ok("Enter fires the carriage return from where the old line ended", carets.includes("typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);"));
 }
 
@@ -701,7 +701,7 @@ section("Typewriter's sliders (1.6.7)");
     const none = mk({});
     none._typewriterT = 10000;
     ok("...and Typewriter with no moving part is not", !none.typewriterMoving(10050));
-    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
+    const src = require("fs").readFileSync(srcPath("engine.ts"), "utf8");
     ok("_isAnimating asks it", src.includes("this.typewriterMoving(nowT) ||"));
   }
   ok("a value outside a slider's range is held in it", mk({ typewriterDepth: 999 }).twOpt("typewriterDepth", 0, 60) === 60 && mk({ typewriterDepth: "x" }).twOpt("typewriterDepth", 0, 60) === 18);

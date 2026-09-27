@@ -1,6 +1,6 @@
 // reduced motion, this.settings never swapped, silent catches, the tether's blocks.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("reduced motion");
@@ -123,10 +123,10 @@ section("the look: this.settings is never swapped");
     // effects.ts is an aggregate since the split by effect; the four files
     // behind it are what to sweep.
     for (const f of ["effects-fire.ts", "effects-pops.ts", "effects-dust.ts", "effects-trail.ts", "paint-color.ts", "paint-blink.ts", "paint-shape.ts", "paint-energy.ts", "paint-tether.ts", "paint-secondaries.ts", "paint-smear.ts", "paint-frame.ts", "torch.ts"]) {
-      const text = fs_.readFileSync(path_.join(__dirname, "..", "..", "src", f), "utf8");
+      const text = fs_.readFileSync(srcPath(f), "utf8");
       text.split("\n").forEach((l, i) => { if (/this\.settings\b/.test(l) && !isComment(l) && !(f === "torch.ts" && torchGlobal.test(l))) offenders.push(f + ":" + (i + 1)); });
     }
-    const measure = fs_.readFileSync(path_.join(__dirname, "..", "..", "src", "measure.ts"), "utf8");
+    const measure = fs_.readFileSync(srcPath("measure.ts"), "utf8");
     measure.split("\n").forEach((l, i) => { if (/this\.settings\b/.test(l) && !/this\.settings\.noteEditorOnly/.test(l) && !isComment(l)) offenders.push("measure.ts:" + (i + 1)); });
     ok("the painters, effects, torch and measurers read the look, never this.settings", offenders.length === 0, offenders);
   }

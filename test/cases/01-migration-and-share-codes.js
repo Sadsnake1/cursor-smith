@@ -1,6 +1,6 @@
 // migration, share codes, defaults, the starter preset, removed keys, disintegration's regrouping.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx } = require("../lib");
+const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
 // ---------------------------------------------------------------------------
 section("migrateLegacyKeys: popEffects synthesis");
@@ -238,11 +238,12 @@ section("no catch is silent");
 // bundle has no comments left to read) for a catch that is neither.
 {
   const fs_ = require("fs"), path_ = require("path");
-  const srcDir = path_.join(__dirname, "..", "..", "src");
+
   const bare = [], silent = [];
   let reporting = 0, commented = 0, total = 0;
-  for (const f of fs_.readdirSync(srcDir).filter((n) => n.endsWith(".ts"))) {
-    const text = fs_.readFileSync(path_.join(srcDir, f), "utf8");
+  for (const file of srcFiles()) {
+    const f = path_.basename(file);
+    const text = fs_.readFileSync(file, "utf8");
     const re = /\bcatch\b(?:\s*\([^)]*\))?\s*\{/g;
     let m;
     while ((m = re.exec(text))) {
@@ -285,8 +286,8 @@ section("no catch is silent");
   } finally {
     console.error = orig;
   }
-  const engineSrc = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "engine.ts"), "utf8");
-  const torchSrc = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "torch.ts"), "utf8");
+  const engineSrc = require("fs").readFileSync(srcPath("engine.ts"), "utf8");
+  const torchSrc = require("fs").readFileSync(srcPath("torch.ts"), "utf8");
   ok("the two ticks report through it too", /_reportOnce\("canvas tick/.test(engineSrc) && /_reportOnce\("torch tick/.test(torchSrc));
 }
 
@@ -496,7 +497,7 @@ section("the Line cursor: height and fine thickness (issues #32, #33)");
   const back = T.codeToPreset(code);
   const got = back && back.snap;
   ok("a share code carries a 1.25 px thickness and a 60% height", got && got.caretWidthPx === 1.25 && got.caretHeightPct === 60, got && [got.caretWidthPx, got.caretHeightPct]);
-  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "src", "settings-tab.ts"), "utf8");
+  const src = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
   ok("the thickness slider steps by 0.1 px from 0.5 up to 7", src.includes(`"caretWidthPx", [0.5, 7, 0.1]`));
   ok("...and the hollow Box's Outline width, from 0.5 to 6", src.includes(`"boxHollowWidth", [0.5, 6, 0.1]`));
   ok("...and the Underline's the same, from 0 (automatic)", src.includes(`"underlineWidthPx", [0, 7, 0.1]`));

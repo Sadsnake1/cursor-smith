@@ -7,9 +7,9 @@
 // full-effect secondaries painted with the primary's own painters, each
 // with its state swapped in.
 
-import { hexToRgbTuple, hexToRgba } from "./color";
-import type { Bounds } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import { hexToRgbTuple, hexToRgba } from "../util/color";
+import type { Bounds } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintSecondariesMethods = {
   // The plain fallback: a solid 2px vertical line for every non-primary caret

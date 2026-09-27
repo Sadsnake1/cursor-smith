@@ -9,12 +9,12 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN } from "./constants";
-import { isTextCaretHost, lastGrapheme } from "./motion";
-import { DEFAULT_SETTINGS } from "./settings";
+import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN } from "../constants";
+import { isTextCaretHost, lastGrapheme } from "../util/motion";
+import { DEFAULT_SETTINGS } from "../settings/settings";
 import type { EditorView } from "@codemirror/view";
-import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache, TypewriterPose, Look } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache, TypewriterPose, Look } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const measureMethods = {
   caretCoords(this: CursorSmithPlugin): CaretRecord | null {

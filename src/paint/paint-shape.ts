@@ -7,7 +7,7 @@
 // styles share, the rects, the I-beam's serifs, and the two painters (Line
 // and Underline through drawGenericCaret, Box through drawBoxCursor).
 
-import { readableGlyphColor } from "./color";
+import { readableGlyphColor } from "../util/color";
 import {
   ROUNDED_BLOCK_FRACTION,
   ROUNDED_THIN_PX,
@@ -17,9 +17,9 @@ import {
   SERIF_STEM_RATIO,
   SERIF_TAPER,
   TRANSLUCENT_ALPHA,
-} from "./constants";
-import type { CaretRecord, Pt, Quad } from "./types";
-import type CursorSmithPlugin from "./plugin";
+} from "../constants";
+import type { CaretRecord, Pt, Quad } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const paintShapeMethods = {
   // The corner radius for a shape whose narrow axis is `minor` px.

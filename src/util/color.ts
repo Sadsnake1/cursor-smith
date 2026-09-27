@@ -1,4 +1,4 @@
-import { THUNDER_PALETTE } from "./constants";
+import { THUNDER_PALETTE } from "../constants";
 
 export function hexToRgba(hex: string, alpha: number) {
   let h = (hex || "#39ff14").replace("#", "");

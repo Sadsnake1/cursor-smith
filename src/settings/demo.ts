@@ -40,9 +40,9 @@
 // or its element has left the document (a re-render of the strip needs
 // no teardown). No loop at all under reduced motion, or where there is
 // no requestAnimationFrame (the tests).
-import type { Look } from "./types";
-import { blinkAlphaAt } from "./motion";
-import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "./color";
+import type { Look } from "../types";
+import { blinkAlphaAt } from "../util/motion";
+import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block

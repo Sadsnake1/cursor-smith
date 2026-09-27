@@ -4,27 +4,48 @@ The plugin's source, as a TypeScript project.
 
 ```
 src/
-  main.ts           entry: exports the plugin class
-  plugin.ts         the plugin class: fields, lifecycle, settings, presets, Vim mode, the tick
-  measure.ts        where the caret is (part of the class, see plugin.ts)
-  effects.ts        the particle effects (part of the class)
-  paint.ts          painting the cursor, gathered from paint-color.ts, paint-blink.ts,
-                    paint-shape.ts, paint-energy.ts, paint-tether.ts,
-                    paint-secondaries.ts, paint-smear.ts, paint-frame.ts (part of the class)
-  torch.ts          the torch spotlight's overlay and loop (part of the class)
-  settings-tab.ts   the settings panel
-  settings.ts       defaults, migrations, look/preset helpers
-  presets.ts        the presets that ship
-  share.ts          share codes
-  constants.ts      tuning constants for the engine and its effects
-  fire.ts           tuning constants for Hot-head
-  geometry.ts       the caret-following canvas region, the status-bar clip
-  color.ts          colour maths, contrast, ramps
-  motion.ts         easing, flicker, blink, reduced motion
-  text.ts           bracket and quote scanning
-  torch-paint.ts    the torch's darkness and glow painters
-  types.ts          the settings type; Obsidian typing gaps
-  test-entry.ts     what the test suite reaches into
+  main.ts             entry: exports the plugin class
+  plugin.ts           the plugin class: fields, lifecycle, settings, presets, the tick
+  types.ts            the settings type; Obsidian typing gaps
+  constants.ts        tuning constants for the engine and its effects
+  test-entry.ts       what the test suite reaches into
+  engine/             the loop and the caret (part of the class, see plugin.ts)
+    engine.ts           the canvas, its home and region, the frame governor
+    carets.ts           the caret's moves, the smooth glide, the held letter
+    measure.ts          where the caret is
+    vim.ts              Vim modes: detection, the look per mode, the status bar
+  effects/            the particle effects (part of the class)
+    effects.ts          gathered from the four below
+    effects-pops.ts     letters, Typewriter's ink and carriage, lightning, fireworks
+    effects-fire.ts     Hot-head
+    effects-dust.ts     the pixel trail and stardust
+    effects-trail.ts    the CRT trail and Speed demon's sparks
+    fire.ts             tuning constants for Hot-head
+  paint/              painting the cursor (part of the class)
+    paint.ts            gathered from the eight below
+    paint-frame.ts      the frame: draw() and the layer order
+    paint-shape.ts      the caret's body
+    paint-color.ts      the colour, gradients, heat
+    paint-blink.ts      the blink
+    paint-smear.ts      the motion smear
+    paint-energy.ts     the energy beam and aurora
+    paint-tether.ts     the bracket tether
+    paint-secondaries.ts  the other carets
+  torch/
+    torch.ts            the torch spotlight's overlay and loop (part of the class)
+    torch-paint.ts      the torch's darkness and glow painters
+  settings/
+    settings-tab.ts     the settings panel
+    settings.ts         defaults, migrations, look/preset helpers
+    presets.ts          the presets that ship
+    library.ts          loading, saving and cycling presets (part of the class)
+    share.ts            share codes
+    demo.ts             the preset cards' live demos
+  util/               plain functions, no plugin state
+    color.ts            colour maths, contrast, ramps
+    motion.ts           easing, flicker, blink, reduced motion
+    text.ts             bracket and quote scanning
+    geometry.ts         the caret-following canvas region, the status-bar clip
 test/               the test suite (`npm test`): test.js the runner, cases/ the
                     fourteen files by area, lib.js what they share, and the Obsidian stub
 

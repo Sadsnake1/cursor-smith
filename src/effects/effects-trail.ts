@@ -6,10 +6,10 @@
 // The CRT trail's bookkeeping (the ghosts the caret leaves, pruned by age,
 // painted flat or as a neon tube) and Speed demon's sparks.
 
-import { hexToRgbTuple } from "./color";
-import { JUMP_TRAIL_MAX_PUFFS, JUMP_TRAIL_MIN_DIST, JUMP_TRAIL_STEP } from "./constants";
-import type { CaretRecord, Rect } from "./types";
-import type CursorSmithPlugin from "./plugin";
+import { hexToRgbTuple } from "../util/color";
+import { JUMP_TRAIL_MAX_PUFFS, JUMP_TRAIL_MIN_DIST, JUMP_TRAIL_STEP } from "../constants";
+import type { CaretRecord, Rect } from "../types";
+import type CursorSmithPlugin from "../plugin";
 
 export const effectsTrailMethods = {
   // Record `point` (the position being left) as a CRT trail ghost. If `dest` is

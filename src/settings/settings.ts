@@ -1,5 +1,5 @@
 import { VIM_MODE_STARTERS } from "./presets";
-import type { CursorSmithSettings, LegacySettings, Look, SettingKey } from "./types";
+import type { CursorSmithSettings, LegacySettings, Look, SettingKey } from "../types";
 
 export const DEFAULT_SETTINGS = {
   enabled: true,

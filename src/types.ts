@@ -337,6 +337,8 @@ export interface LetterParticle {
   // Typewriter's ink stamp: overprinted on the letter's own cell (x is its
   // left edge, y the line top), in its own font.
   stamp?: boolean; fontWeight?: string; fontStyle?: string;
+  // ...and the color behind the letter, to cover it while the stamp strikes.
+  bg?: string | null;
 }
 // Typewriter's carriage return: a streak from the old line's end (x0) back
 // to its start (xs) at height y, and the spark at x0.

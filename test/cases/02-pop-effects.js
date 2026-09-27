@@ -603,6 +603,7 @@ section("Typewriter's sub-options (1.6.7)");
   const drawn = [], scales = [];
   ink.ctx = { save() {}, restore() {}, translate() {}, scale(x) { scales.push(x); }, measureText: () => ({ width: 9, fontBoundingBoxAscent: 13, fontBoundingBoxDescent: 3 }),
     globalAlpha: 1, fillStyle: "", font: "", textAlign: "", textBaseline: "", fillText(ch, x, y) { drawn.push({ ch, x, y, a: this.globalAlpha, font: this.font }); } };
+  ink.app = { workspace: {} };
   ink.spawnInkStamp("k", { x: 100, top: 200, h: 24, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#ddd", actualCharWidth: 8 });
   const st = ink.particles[0];
   ok("Ink stamp overprints the letter on its own cell, in the text's colour", st && st.stamp && st.x === 100 && st.y === 200 && st.color === "#ddd", st);
@@ -669,6 +670,7 @@ section("Typewriter's sliders (1.6.7)");
     const out = {};
     e.ctx = { save() {}, restore() {}, translate() {}, scale(x) { if (out.s === undefined) out.s = x; }, measureText: () => ({ width: 9, fontBoundingBoxAscent: 13, fontBoundingBoxDescent: 3 }),
       globalAlpha: 1, fillStyle: "", font: "", textAlign: "", textBaseline: "", fillText() { out.a = this.globalAlpha; } };
+    e.app = { workspace: {} };
     e.spawnInkStamp("k", { x: 100, top: 200, h: 24, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#ddd" });
     e.particles[0].start = performance.now() - ms;
     e.drawLettersParticles();
@@ -722,6 +724,7 @@ section("Typewriter's Ink stamp: gone before it lands (1.7.1)");
   try {
     let t = 1000;
     performance.now = () => t;
+    e.app = { workspace: {} };
     e.spawnInkStamp("a", { x: 100, top: 50, h: 24, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", textColor: "#ccc" });
     for (const at of [0.1, 0.5, 0.86, 0.95]) { t = 1000 + 400 * at; e.drawLettersParticles(); }
   } finally { performance.now = real; }
@@ -729,4 +732,55 @@ section("Typewriter's Ink stamp: gone before it lands (1.7.1)");
   ok("...still bigger than the letter halfway through", seen[1].s > 1.01, seen[1]);
   ok("...and has faded out before it reaches the letter's size: never a bold copy on the letter",
      seen.filter((f) => f.s <= 1.005).every((f) => f.a < 0.01) && seen[2].a < 0.01, seen);
+}
+
+// ---------------------------------------------------------------------------
+section("Typewriter's Ink stamp: the stamp is the letter (1.7.1)");
+{
+  // "It still shows the dried letter under the popping stamped letter": the
+  // stamp was drawn over the real letter, both showing. Then it crossfaded to
+  // it: "too transparent, then switches back to normal". Now the real letter
+  // is covered with the background behind it for the stamp's whole life, and
+  // the stamp stays solid, shrinking and thinning until it is the letter.
+  const e = makeEngine({ typewriter: true, typewriterInk: true, typewriterInkMs: 400, typewriterInkSize: 1.3 });
+  const ops = [];
+  e.fontString = (size, fam, w, st) => [st, w, size + "px", fam].join(" ");
+  e.ctx = { globalAlpha: 1, font: "", fillStyle: "", strokeStyle: "", lineWidth: 1, lineJoin: "", textAlign: "", textBaseline: "", save() {}, restore() {}, translate() {}, rotate() {},
+    scale(sx) { this._s = sx; },
+    measureText: () => ({ width: 9, fontBoundingBoxAscent: 14, fontBoundingBoxDescent: 4 }),
+    fillRect(x, y, w, h) { ops.push({ op: "rect", a: this.globalAlpha, fill: this.fillStyle, x, w }); },
+    strokeText() { ops.push({ op: "stroke", w: this.lineWidth, s: this._s }); },
+    fillText() { ops.push({ op: "text", a: this.globalAlpha, font: this.font, s: this._s }); } };
+  e.particles = [];
+  e._cellBackground = () => "rgb(20, 20, 30)";
+  e.app = { workspace: { activeEditor: { editor: { cm: {} } } } };
+  const real = performance.now;
+  const frames = [];
+  try {
+    let t = 1000;
+    performance.now = () => t;
+    e.spawnInkStamp("a", { x: 100, top: 50, h: 24, pos: 3, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", textColor: "#ccc" });
+    for (const at of [0.05, 0.5, 0.95, 1.01]) { ops.length = 0; t = 1000 + 400 * at; e.drawLettersParticles(); frames.push(ops.slice()); }
+  } finally { performance.now = real; }
+  const rect = (f) => f.find((o) => o.op === "rect");
+  const text = (f) => f.find((o) => o.op === "text");
+  const stroke = (f) => f.find((o) => o.op === "stroke");
+  ok("the real letter's cell is covered, fully, in the background behind it", !!rect(frames[0]) && rect(frames[0]).a === 1 && rect(frames[0]).fill === "rgb(20, 20, 30)" && rect(frames[0]).x === 99 && rect(frames[0]).w === 11, frames[0]);
+  ok("...under the stamp: the cover first", frames[0][0].op === "rect");
+  ok("...for the stamp's whole life, never half", frames.slice(0, 3).every((f) => rect(f) && rect(f).a === 1), frames.map(rect));
+  ok("the stamp is solid all the way: never faint", frames.slice(0, 3).every((f) => text(f) && text(f).a === 1), frames.map(text));
+  ok("...in the letter's own weight, heavier by an outline that thins", stroke(frames[0]) && stroke(frames[1]) && stroke(frames[0]).w > stroke(frames[1]).w && /normal 16px/.test(text(frames[0]).font), [frames[0], frames[1]]);
+  ok("...big at first, the letter's own size and weight at the end: the hand-over changes nothing", text(frames[0]).s > 1.2 && text(frames[2]).s === 1 && !stroke(frames[2]), frames[2]);
+  ok("...and then gone, the cover with it", frames[3].length === 0, frames[3]);
+
+  // The background behind the text: see-through layers over the first solid.
+  const bgOf = (chain) => {
+    const els = chain.map((bg) => ({ bg, parentElement: null, nodeType: 1 }));
+    for (let i = 0; i < els.length - 1; i++) els[i].parentElement = els[i + 1];
+    const view = { dom: { ownerDocument: { defaultView: { getComputedStyle: (el) => ({ backgroundColor: el.bg }) } } }, domAtPos: () => ({ node: { nodeType: 3, parentElement: els[0] } }) };
+    return Plugin.prototype._cellBackground.call(e, view, 0);
+  };
+  ok("the background behind the text: the first solid one up the tree", bgOf(["rgba(0, 0, 0, 0)", "rgb(10, 20, 30)", "rgb(200, 0, 0)"]) === "rgb(10, 20, 30)");
+  ok("...with the see-through layers above it laid over it (the active line's tint)", bgOf(["rgba(255, 0, 0, 0.5)", "rgb(0, 0, 255)"]) === "rgb(128, 0, 128)", bgOf(["rgba(255, 0, 0, 0.5)", "rgb(0, 0, 255)"]));
+  ok("...and none when nothing is solid: no cover", bgOf(["rgba(0, 0, 0, 0)", "rgba(255, 255, 255, 0.2)"]) === null);
 }

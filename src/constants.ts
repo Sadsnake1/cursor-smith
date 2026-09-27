@@ -261,6 +261,9 @@ export const TW_INK_ALPHA = 0.9;
 // letter, and to fade out - gone (under 1% left) by the time it lands.
 export const TW_INK_LAND = 0.9;
 export const TW_INK_FADE = 0.85;
+// ...and how much heavier it strikes: an outline around the letter in its
+// own weight, this share of its size wide, thinning to nothing as it lands.
+export const TW_INK_WEIGHT = 0.1;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.

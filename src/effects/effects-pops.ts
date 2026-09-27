@@ -32,7 +32,7 @@ import {
   POP_RISE_ALPHA,
   POP_RISE_LINES,
   POP_RISE_MS,
-  TW_INK_ALPHA, TW_INK_LAND, TW_INK_FADE,
+  TW_INK_ALPHA, TW_INK_LAND, TW_INK_FADE, TW_INK_WEIGHT,
   THUNDER_BANDS,
   THUNDER_LIFE_MS,
   THUNDER_MAX_ANGLE,
@@ -41,6 +41,7 @@ import {
   THUNDER_PASSES,
 } from "../constants";
 import { easeInOutSine, glitchNoise } from "../util/motion";
+import type { EditorView } from "@codemirror/view";
 import type { CaretRecord, FireworkSpark, GlitchState, Pt, ThunderBand } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -90,12 +91,50 @@ export const effectsPopsMethods = {
     });
   },
 
-  // Typewriter's ink stamp: the letter just typed, overprinted on its own
-  // cell (anchor: the caret it was typed at) bigger and bolder, shrinking
-  // onto the real one and fading.
+  // The color behind the text at a document position, as it shows: the
+  // backgrounds from the text's element up to the first solid one (the
+  // editor's), the see-through ones laid over it - the active line's tint,
+  // a highlight, a callout. Null when none is solid.
+  _cellBackground(this: CursorSmithPlugin, view: EditorView, pos: number): string | null {
+    try {
+      const win = view.dom.ownerDocument.defaultView;
+      if (!win) return null;
+      const at = view.domAtPos(pos);
+      let el: Element | null = at.node.nodeType === 1 ? (at.node as Element) : at.node.parentElement;
+      const layers: number[][] = [];
+      while (el) {
+        const m = /rgba?\(([^)]+)\)/.exec(win.getComputedStyle(el).backgroundColor || "");
+        if (m) {
+          const v = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+          const a = v.length > 3 ? v[3] : 1;
+          if (a > 0) { layers.push([v[0], v[1], v[2], a]); if (a >= 1) break; }
+        }
+        el = el.parentElement;
+      }
+      const base = layers[layers.length - 1];
+      if (!base || base[3] < 1) return null;
+      let [r, g, b] = base;
+      for (let i = layers.length - 2; i >= 0; i--) {
+        const [lr, lg, lb, la] = layers[i];
+        r = lr * la + r * (1 - la); g = lg * la + g * (1 - la); b = lb * la + b * (1 - la);
+      }
+      return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+    } catch {
+      return null; /* a position outside the view */
+    }
+  },
+
+  // Typewriter's ink stamp: the letter just typed, struck on its own cell
+  // (anchor: the caret it was typed at) bigger and bolder, shrinking toward
+  // it and fading; the real letter under it covered with the background
+  // behind it (bg) until the stamp lets it through.
   spawnInkStamp(this: CursorSmithPlugin, char: string, anchor: CaretRecord) {
     if (!char.trim()) return;
+    let bg: string | null = null;
+    const view = this.app.workspace.activeEditor?.editor?.cm;
+    if (view && typeof anchor.pos === "number") bg = this._cellBackground(view, anchor.pos);
     this.particles.push({
+      bg,
       char, stamp: true,
       x: anchor.x, y: anchor.top,
       vx: 0, vy: 0, rotation: 0, alpha: TW_INK_ALPHA,
@@ -173,25 +212,39 @@ export const effectsPopsMethods = {
     
     this.particles = this.particles.filter(p => {
       if (p.stamp) {
-        // Overprinted on its cell, on the real glyph's baseline (the Box's
-        // own metrics), bigger and bolder at first and shrinking onto it.
+        // Struck on its cell, on the real glyph's baseline (the Box's own
+        // metrics), bigger and heavier at first and shrinking onto it.
         const t = (now - p.start) / this.twOpt("typewriterInkMs", 80, 3000);
         const inkScale = this.twOpt("typewriterInkSize", 1, 3);
         if (t >= 1) return false;
         const size = p.fontSize || 16;
         const lh = p.lh || size * 1.4;
+        const land = Math.min(1, t / TW_INK_LAND);
         ctx.save();
-        ctx.font = this.fontString(size, p.fontFamily, "bold", p.fontStyle || "normal");
+        ctx.font = this.fontString(size, p.fontFamily, p.bg ? p.fontWeight || "normal" : "bold", p.fontStyle || "normal");
         const m = ctx.measureText(p.char);
         const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
         const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
-        // It shrinks over nearly its whole life and has faded out before it
-        // reaches the letter's own size (TW_INK_LAND), so it is never a
-        // bold copy sitting on the letter. It landed at 45% and faded on it
-        // for the rest: "it shows the inky letter on top of the dried one".
-        const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t / TW_INK_LAND), 2);
-        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(Math.min(1, t / TW_INK_FADE)));
+        const grow = 1 + (inkScale - 1) * Math.pow(1 - land, 2);
+        if (p.bg) {
+          // The stamp IS the letter: the real one covered with the
+          // background behind it (its cell, in its own weight's width) for
+          // the stamp's whole life, the stamp solid, shrinking and thinning
+          // (an outline, TW_INK_WEIGHT) until it is the letter exactly at
+          // TW_INK_LAND - so the hand-over at the end changes nothing. It
+          // drew over the real letter, both showing, then crossfaded to it,
+          // both faint: "too transparent, then switches back" (2026-09-27).
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = p.bg;
+          ctx.fillRect(p.x - 1, p.y, m.width + 2, lh);
+          p.alpha = 1;
+        } else {
+          // Nothing solid behind the text to cover it with: a bold overprint
+          // that fades out before it reaches the letter's size, so it is
+          // never a bold copy sitting on the letter.
+          p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(Math.min(1, t / TW_INK_FADE)));
+        }
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.translate(cx, cy);
@@ -199,6 +252,13 @@ export const effectsPopsMethods = {
         ctx.translate(-cx, -cy);
         ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
+        const weight = p.bg ? size * TW_INK_WEIGHT * Math.pow(1 - land, 2) : 0;
+        if (weight > 0.05) {
+          ctx.strokeStyle = p.color;
+          ctx.lineJoin = "round";
+          ctx.lineWidth = weight;
+          ctx.strokeText(p.char, p.x, baseline);
+        }
         ctx.fillText(p.char, p.x, baseline);
         ctx.restore();
         const ext = Math.max(m.width, size) * inkScale;

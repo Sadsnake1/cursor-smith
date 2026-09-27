@@ -40,6 +40,7 @@ import type {
   Thunderbolt,
   TrailPoint,
   TypeReturn,
+  InkMark,
 } from "./types";
 
 import { measureMethods } from "./engine/measure";
@@ -119,6 +120,11 @@ export default class CursorSmithPlugin extends Plugin {
   declare spawnInkStamp: EffectsMethods["spawnInkStamp"];
   declare spawnCarriageReturn: EffectsMethods["spawnCarriageReturn"];
   declare drawCarriageReturns: EffectsMethods["drawCarriageReturns"];
+  declare spawnFreshInk: EffectsMethods["spawnFreshInk"];
+  declare _inkTrimFront: EffectsMethods["_inkTrimFront"];
+  declare _inkLocate: EffectsMethods["_inkLocate"];
+  declare inkWetness: EffectsMethods["inkWetness"];
+  declare drawFreshInk: EffectsMethods["drawFreshInk"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts
@@ -523,6 +529,9 @@ export default class CursorSmithPlugin extends Plugin {
   stardust!: StardustMote[];
   thunderbolts!: Thunderbolt[];
   typeReturns!: TypeReturn[];
+  // Fresh ink: the wet runs, and the editor they were typed in.
+  inkMarks!: InkMark[];
+  _inkView!: EditorView | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
   declare trail: TrailPoint[];
@@ -1585,6 +1594,8 @@ export default class CursorSmithPlugin extends Plugin {
     this._hotPrev = null;
     this.thunderbolts = [];
     this.typeReturns = [];
+    this.inkMarks = [];
+    this._inkView = null;
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then
     // burst) whose sparks don't exist yet when it launches, so it can't be

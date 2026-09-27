@@ -704,7 +704,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     ok("the Effects card opens with the rail", !!rail && sectionOf(rail) === "Effects" && rows.filter((r) => sectionOf(r) === "Effects")[0] === rail);
     const chips = rail.settingEl.querySelectorAll(".cursor-smith-chip");
     const chip = (name) => chips.find((c) => c.children.some((k) => k.text === name));
-    ok("one chip per effect, plus All", chips.length === 12, chips.length);
+    ok("one chip per effect, plus All", chips.length === 13, chips.length);
     ok("every effect's chip carries its Lucide icon (Hot-head a flame, Speed demon a gauge, Typewriter a keyboard, the torch the candle)",
        chips.slice(0, 11).every((c) => c.querySelector(".cursor-smith-chip-icon") && c.querySelector(".cursor-smith-chip-icon").icon)
        && chip("Hot-head").querySelector(".cursor-smith-chip-icon").icon === "flame" && chip("Speed demon").querySelector(".cursor-smith-chip-icon").icon === "gauge"

@@ -104,6 +104,8 @@ export const paintFrameMethods = {
     // already clean and needs no clear at all.
     this._dirty = null;
 
+    // On the text itself, under everything that flies off it.
+    this.drawFreshInk();
     this.drawLettersParticles();
     this.drawCarriageReturns();
     // Underneath everything else: it's a background guide, and the cursor and

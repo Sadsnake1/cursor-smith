@@ -14,6 +14,7 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
+  { key: "freshInk", name: "Fresh ink", icon: "droplet", desc: "The words you just typed stay wet in your cursor's colour, then dry into the text." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -1470,6 +1471,14 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
+
+    // Fresh ink (on trial, 2026-09-27): the characters just typed, wet in the
+    // cursor's colour, drying into the text.
+    const showInk = shown("freshInk");
+    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "freshInk", { gate: true, when: showInk }));
+    const ink = all(showInk, on("freshInk"));
+    effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "freshInkMs", [300, 4000, 100], { depth: 1, fallback: 1500, when: ink }));
+    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "freshInkStrength", [0.2, 1, 0.05], { depth: 1, fallback: 0.8, when: ink }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));

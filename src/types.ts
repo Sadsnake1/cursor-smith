@@ -132,6 +132,9 @@ export interface Look {
   typewriterReturnWidth: number;
   typewriterAdvanceCw: number;
   typewriterAdvanceMs: number;
+  freshInk: boolean;
+  freshInkMs: number;
+  freshInkStrength: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;
@@ -334,6 +337,12 @@ export interface LetterParticle {
 }
 // Typewriter's carriage return: a streak from the old line's end (x0) back
 // to its start (xs) at height y, and the spark at x0.
+// Fresh ink: one run of typing - where it starts, its text, when each
+// code unit went in - and the look it was typed in.
+export interface InkMark {
+  from: number; text: string; times: number[]; color: string;
+  fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
+}
 export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number }
 // Where Typewriter holds the caret at a moment: shifted by dx, dy and
 // squashed to sy of its height about its bottom edge.

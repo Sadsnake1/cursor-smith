@@ -406,6 +406,12 @@ var DEFAULT_SETTINGS = {
   // Carriage advance: how far past its spot, in characters
   typewriterAdvanceMs: 150,
   // ...the whole overshoot
+  freshInk: false,
+  // the characters just typed stay wet in the cursor's colour, then dry into the text
+  freshInkMs: 1500,
+  // ...how long the ink takes to dry
+  freshInkStrength: 0.8,
+  // ...how strong the wet ink is at first, 1 the full cursor colour
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -892,7 +898,10 @@ var LOOK_KEYS = [
   "typewriterReturnMs",
   "typewriterReturnWidth",
   "typewriterAdvanceCw",
-  "typewriterAdvanceMs"
+  "typewriterAdvanceMs",
+  "freshInk",
+  "freshInkMs",
+  "freshInkStrength"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -2244,6 +2253,7 @@ var DemoStrip = class {
 var RAIL_EFFECTS = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
+  { key: "freshInk", name: "Fresh ink", icon: "droplet", desc: "The words you just typed stay wet in your cursor's colour, then dry into the text." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -3576,6 +3586,11 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
+    const showInk = shown("freshInk");
+    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "freshInk", { gate: true, when: showInk }));
+    const ink = all(showInk, on("freshInk"));
+    effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "freshInkMs", [300, 4e3, 100], { depth: 1, fallback: 1500, when: ink }));
+    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "freshInkStrength", [0.2, 1, 0.05], { depth: 1, fallback: 0.8, when: ink }));
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
     const trail = all(showTrail, on("flameTrail"));
@@ -4481,6 +4496,7 @@ var measureMethods = {
             this._typewriterT = performance.now();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
           }
+          if (this.look.freshInk) this.spawnFreshInk(view, last, last.pos, newCaret.pos);
           return justTyped;
         }
       }
@@ -6858,12 +6874,156 @@ var effectsTrailMethods = {
   }
 };
 
+// src/effects/effects-ink.ts
+var INK_MAX_RUN = 12;
+var INK_MAX_CHARS = 80;
+var INK_SEARCH = 64;
+var INK_HOLD = 0.3;
+var effectsInkMethods = {
+  // From resolveHoldChar, where a keystroke's insertion is known: `last` is
+  // the caret it was typed at, [from, to) what it put in.
+  spawnFreshInk(view, last, from, to) {
+    if (!this.look.freshInk || to <= from || to - from > INK_MAX_RUN) return;
+    const text = view.state.doc.sliceString(from, to);
+    if (!text || text.includes("\n")) return;
+    if (this._inkView !== view) {
+      this.inkMarks = [];
+      this._inkView = view;
+    }
+    const now = performance.now();
+    const color = this.getActiveColor() || last.textColor || "#888888";
+    const prev = this.inkMarks[this.inkMarks.length - 1];
+    if (prev && from >= prev.from && to <= prev.from + prev.text.length) return;
+    const sameFont = prev && prev.fontSize === last.fontSize && prev.fontFamily === last.fontFamily && prev.fontWeight === last.fontWeight && prev.fontStyle === last.fontStyle;
+    if (prev && sameFont && prev.from + prev.text.length === from) {
+      prev.text += text;
+      for (let i = 0; i < text.length; i++) prev.times.push(now);
+      prev.color = color;
+    } else {
+      this.inkMarks.push({
+        from,
+        text,
+        times: new Array(text.length).fill(now),
+        color,
+        fontSize: last.fontSize,
+        fontFamily: last.fontFamily,
+        fontWeight: last.fontWeight,
+        fontStyle: last.fontStyle
+      });
+    }
+    let total = 0;
+    for (const m of this.inkMarks) total += m.text.length;
+    while (total > INK_MAX_CHARS && this.inkMarks.length) {
+      const m = this.inkMarks[0];
+      const cut = Math.min(m.text.length, total - INK_MAX_CHARS);
+      this._inkTrimFront(m, cut);
+      total -= cut;
+      if (!m.text.length) this.inkMarks.shift();
+    }
+  },
+  // Drop `n` code units from the front of a mark, never half a surrogate
+  // pair (the two halves of an emoji dry together anyway).
+  _inkTrimFront(m, n) {
+    if (n > 0 && n < m.text.length) {
+      const c = m.text.charCodeAt(n);
+      if (c >= 56320 && c <= 57343) n++;
+    }
+    m.from += n;
+    m.text = m.text.slice(n);
+    m.times = m.times.slice(n);
+  },
+  // Where a mark's text is now. True with m.from (and m.text, cut back)
+  // brought up to date; false when it is gone.
+  _inkLocate(doc, m, head) {
+    const len = m.text.length;
+    if (m.from + len <= doc.length && doc.sliceString(m.from, m.from + len) === m.text) return true;
+    const here = doc.sliceString(m.from, Math.min(doc.length, m.from + len));
+    let k = 0;
+    while (k < here.length && here.charCodeAt(k) === m.text.charCodeAt(k)) k++;
+    if (k > 0 && head === m.from + k) {
+      m.text = m.text.slice(0, k);
+      m.times = m.times.slice(0, k);
+      return true;
+    }
+    if (len < 2) return false;
+    const lo = Math.max(0, m.from - INK_SEARCH);
+    const win = doc.sliceString(lo, Math.min(doc.length, m.from + len + INK_SEARCH));
+    let best = -1;
+    for (let i = win.indexOf(m.text); i >= 0; i = win.indexOf(m.text, i + 1)) {
+      if (best < 0 || Math.abs(lo + i - m.from) < Math.abs(lo + best - m.from)) best = i;
+    }
+    if (best < 0) return false;
+    m.from = lo + best;
+    return true;
+  },
+  // How wet a character is at `age` ms: fully for the first part of the
+  // drying time, then easing to dry.
+  inkWetness(age, ms) {
+    const u = age / Math.max(1, ms);
+    if (u >= 1) return 0;
+    if (u <= INK_HOLD) return 1;
+    return 1 - easeInOutSine((u - INK_HOLD) / (1 - INK_HOLD));
+  },
+  drawFreshInk() {
+    const ctx = this.ctx;
+    if (!ctx || !this.inkMarks.length) return;
+    const view = this.app.workspace.activeEditor?.editor?.cm;
+    if (!this.look.freshInk || !view || view !== this._inkView) {
+      this.inkMarks = [];
+      return;
+    }
+    const doc = view.state.doc;
+    const head = view.state.selection.main.head;
+    const now = performance.now();
+    const ms = Math.max(100, Math.min(1e4, Number(this.look.freshInkMs) || 1500));
+    const strength = Math.max(0, Math.min(1, Number(this.look.freshInkStrength ?? 0.8)));
+    const dpr = this._canvasDpr || 1;
+    const region = this._canvasRect;
+    const ox = region ? region.x : 0, oy = region ? region.y : 0;
+    const snapX = (v) => Math.round((v - ox) * dpr) / dpr + ox;
+    const snapY = (v) => Math.round((v - oy) * dpr) / dpr + oy;
+    this.inkMarks = this.inkMarks.filter((m) => {
+      if (!this._inkLocate(doc, m, head)) return false;
+      let dry = 0;
+      while (dry < m.times.length && now - m.times[dry] >= ms) dry++;
+      if (dry) this._inkTrimFront(m, dry);
+      if (!m.text.length) return false;
+      ctx.save();
+      ctx.font = this.fontString(m.fontSize, m.fontFamily, m.fontWeight, m.fontStyle);
+      const metrics = ctx.measureText("M");
+      const ascent = metrics.fontBoundingBoxAscent ?? m.fontSize * 0.8;
+      const descent = metrics.fontBoundingBoxDescent ?? m.fontSize * 0.2;
+      ctx.fillStyle = m.color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      let i = 0;
+      for (const ch of m.text) {
+        const pos = m.from + i;
+        const a = strength * this.inkWetness(now - m.times[i], ms);
+        i += ch.length;
+        if (a <= 0 || !ch.trim()) continue;
+        const c = view.coordsAtPos(pos, 1);
+        if (!c) continue;
+        const h = c.bottom - c.top;
+        const baseline = c.top + ascent + (h - ascent - descent) / 2;
+        ctx.globalAlpha = a;
+        ctx.fillText(ch, snapX(c.left), snapY(baseline));
+        const w = ctx.measureText(ch).width;
+        this._markDirty(c.left - 2, c.top - 2, w + 4, h + 4);
+      }
+      ctx.restore();
+      return true;
+    });
+  }
+};
+
 // src/effects/effects.ts
 var effectsMethods = {
   ...effectsFireMethods,
   ...effectsPopsMethods,
   ...effectsDustMethods,
-  ...effectsTrailMethods
+  ...effectsTrailMethods,
+  ...effectsInkMethods
 };
 
 // src/paint/paint-color.ts
@@ -8740,6 +8900,7 @@ var paintFrameMethods = {
       ctx.clearRect(p.x, p.y, p.w, p.h);
     }
     this._dirty = null;
+    this.drawFreshInk();
     this.drawLettersParticles();
     this.drawCarriageReturns();
     this.drawBracketTether();
@@ -10481,7 +10642,7 @@ var engineMethods = {
     !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) || // Same reasoning: a bolt is aged and expired inside its draw call,
     // so a skipped frame would leave one frozen on screen.
     this.thunderbolts && this.thunderbolts.length > 0 || // A carriage return is aged inside its draw call too.
-    this.typeReturns && this.typeReturns.length > 0 || // A Typewriter stroke is a wall-clock animation of the caret itself.
+    this.typeReturns && this.typeReturns.length > 0 || this.inkMarks && this.inkMarks.length > 0 || // A Typewriter stroke is a wall-clock animation of the caret itself.
     this.typewriterMoving(nowT) || // And again for a firework. Note this covers a shell still sitting
     // out its stagger delay, which paints nothing yet but must not be
     // allowed to drop the loop into the idle heartbeat - the volley
@@ -10901,6 +11062,7 @@ var engineMethods = {
       "popEffects",
       "popLetters",
       "typewriter",
+      "freshInk",
       "flameTrail",
       "fireworks",
       "thunderstrike",
@@ -12089,6 +12251,8 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this._hotPrev = null;
     this.thunderbolts = [];
     this.typeReturns = [];
+    this.inkMarks = [];
+    this._inkView = null;
     this.fireworks = [];
     this._lastFireworkT = 0;
     this.glitch = null;

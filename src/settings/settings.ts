@@ -128,6 +128,9 @@ export const DEFAULT_SETTINGS = {
   typewriterReturnWidth: 1.5, // ...the streak's thickness, px
   typewriterAdvanceCw: 0.25,  // Carriage advance: how far past its spot, in characters
   typewriterAdvanceMs: 150,   // ...the whole overshoot
+  freshInk: false,            // the characters just typed stay wet in the cursor's colour, then dry into the text
+  freshInkMs: 1500,           // ...how long the ink takes to dry
+  freshInkStrength: 0.8,      // ...how strong the wet ink is at first, 1 the full cursor colour
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -497,6 +500,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "typewriterDepth", "typewriterBounce", "typewriterSquash", "typewriterStrikeMs",
   "typewriterInkMs", "typewriterInkSize",
   "typewriterReturnMs", "typewriterReturnWidth", "typewriterAdvanceCw", "typewriterAdvanceMs",
+  "freshInk", "freshInkMs", "freshInkStrength",
 ];
 
 // ---------------------------------------------------------------------------

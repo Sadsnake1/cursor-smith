@@ -663,8 +663,8 @@ button.cursor-smith-pcard-use:hover {
   position: fixed;
   overflow: hidden;
   pointer-events: none;
-  /* Above the torch's darkness (10010) and glow (10011); see there. */
-  z-index: 10012;
+  /* Above the torch's darkness (10000) and glow (10001); see there. */
+  z-index: 10002;
   top: 0;
   left: 0;
   width: 0;
@@ -675,7 +675,7 @@ button.cursor-smith-pcard-use:hover {
    at 150), so the compositor carries the caret with the text between
    frames; a fixed overlay trails a fling by a frame or more there. The
    scroller is a stacking context, so this z-index is local to it: the
-   torch's darkness (outside, 10010) covers the caret on a phone, and the
+   torch's darkness (outside, 10000) covers the caret on a phone, and the
    light it follows is what shows it. */
 .cursor-smith-wrapper.cursor-smith-wrapper-scrolled {
   position: absolute;
@@ -818,15 +818,18 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   left: 0;
   width: 0;
   height: 0;
-  /* 10010, the glow 10011 and the caret canvas 10012, in that order: above
-     all of Word-Smith's chrome while the editor is focused - its letterbox
-     masks (10003), status bar (10006), titlebar (10007) and Vim panel
-     (10008); 20-24 on blur - and below its overlays (10050 and up). At
-     9990 the bands read lit while typing and dark once focus left the
-     note; at 10004 its bar and the sidebars' headers stayed lit under a
-     full-window torch. Nothing of Obsidian's sits between (its own layers
-     stop at the tooltip's 70). */
-  z-index: 10010;
+  /* 10000, the glow 10001 and the caret canvas 10002, in that order: just
+     under Word-Smith's raised chrome - its letterbox masks (10003), status
+     bar (10006), titlebar (10007) and Vim panel (10008) while the editor is
+     focused - which darkens ITSELF under the torch (the contract's Way B,
+     the user's pick on 2026-09-20: Word-Smith keys on
+     body.cursor-smith-torch-active and washes that chrome at the torch's
+     own darkness). At rest (20-24) the chrome is under these and the torch
+     darkens it. At 10010 - above the raised chrome, 1.5.9 to 1.6.9 - the
+     chrome was darkened twice, by the torch and by its own wash: "the torch
+     makes the Word-Smith powerline black" (2026-09-27). Nothing of
+     Obsidian's sits in between (its own layers stop at the tooltip's 70). */
+  z-index: 10000;
   opacity: 1;
   transition: opacity 0.2s ease;
 }
@@ -852,7 +855,7 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   left: 0;
   width: 0;
   height: 0;
-  z-index: 10011;
+  z-index: 10001;
   mix-blend-mode: screen;
   opacity: var(--torch-glow, 0);
 }

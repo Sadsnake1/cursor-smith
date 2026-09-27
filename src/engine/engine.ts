@@ -55,7 +55,7 @@ export const engineMethods = {
   // scrolling" (a Reddit user, who blamed Smooth movement; it did the same
   // with it off). The torch keeps the fixed wrapper: inside the scroller the
   // caret would sit under its darkness and its glow, which is what the
-  // phone accepts and the desktop's layering (z 10010-10012) was built
+  // phone accepts and the desktop's layering (z 10000-10002) was built
   // against. Word-Smith's bands and bar need no clip in the scroller: they
   // sit above its stacking context.
   _wrapperHome(this: CursorSmithPlugin, doc: Document, view: EditorView | null | undefined): HTMLElement {

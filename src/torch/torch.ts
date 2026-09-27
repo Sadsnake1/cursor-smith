@@ -397,6 +397,8 @@ export const torchMethods = {
               // views beside them (Word-Smith's History, Export and
               // Organizer, a graph, an empty tab) stay lit. Null means the
               // whole overlay is dark (the window, sidebars not spared).
+              // The ribbon stays lit too: darkened with the notes (tried
+              // 2026-09-27), a dark strip beside a lit sidebar read wrong.
               const notes = usePane ? this.getNoteTabRects(this.overlay.ownerDocument) : null;
 
               const top = Math.round(rect.top);

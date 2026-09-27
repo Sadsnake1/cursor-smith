@@ -784,3 +784,33 @@ section("Typewriter's Ink stamp: the stamp is the letter (1.7.1)");
   ok("...with the see-through layers above it laid over it (the active line's tint)", bgOf(["rgba(255, 0, 0, 0.5)", "rgb(0, 0, 255)"]) === "rgb(128, 0, 128)", bgOf(["rgba(255, 0, 0, 0.5)", "rgb(0, 0, 255)"]));
   ok("...and none when nothing is solid: no cover", bgOf(["rgba(0, 0, 0, 0)", "rgba(255, 255, 255, 0.2)"]) === null);
 }
+
+// ---------------------------------------------------------------------------
+section("Typewriter's Ink stamp: it grows about the letter's own middle (1.7.1)");
+{
+  // "On some fonts the ink stamp floats the letters up and down into
+  // position": it scaled about the middle of the line box, and a lowercase
+  // letter below that point was pushed down as it grew and floated up.
+  const e = makeEngine({ typewriter: true, typewriterInk: true, typewriterInkMs: 400, typewriterInkSize: 2 });
+  const moves = [];
+  e.ctx = { globalAlpha: 1, font: "", fillStyle: "", strokeStyle: "", lineWidth: 1, lineJoin: "", textAlign: "", textBaseline: "", save() {}, restore() {}, rotate() {}, scale() {}, fillRect() {}, strokeText() {}, fillText() {},
+    translate(x, y) { moves.push([x, y]); },
+    // A lowercase letter in a font with a tall ascent: the box's middle
+    // (ascent 16, descent 4) sits 6 px above the baseline, the ink's
+    // (x-height 8) 4 px; the ink starts half a pixel right of the pen.
+    measureText: () => ({ width: 9, fontBoundingBoxAscent: 16, fontBoundingBoxDescent: 4, actualBoundingBoxLeft: -0.5, actualBoundingBoxRight: 8.5, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 0 }) };
+  e.particles = [];
+  e._cellBackground = () => "rgb(20, 20, 30)";
+  e.app = { workspace: { activeEditor: { editor: { cm: {} } } } };
+  const real = performance.now;
+  try {
+    let t = 1000;
+    performance.now = () => t;
+    e.spawnInkStamp("a", { x: 100, top: 50, h: 24, pos: 3, fontSize: 16, fontFamily: "Sans", fontWeight: "normal", fontStyle: "normal", textColor: "#ccc" });
+    t = 1040;
+    e.drawLettersParticles();
+  } finally { performance.now = real; }
+  // Baseline: 50 + 16 + (24 - 16 - 4) / 2 = 68; the ink's middle 4 px above.
+  ok("it scales about the ink's middle: the letter stays where it is as it shrinks", moves[0] && moves[0][0] === 104.5 && moves[0][1] === 64, moves[0]);
+  ok("...and back out of it", moves[1] && moves[1][0] === -104.5 && moves[1][1] === -64, moves[1]);
+}

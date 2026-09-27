@@ -225,7 +225,15 @@ export const effectsPopsMethods = {
         const m = ctx.measureText(p.char);
         const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
-        const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
+        // It grows and shrinks about the letter's own middle - its ink, not
+        // its line box. About the box's middle, a letter lower than that (a
+        // lowercase one, in a font with a tall ascent) was pushed down as it
+        // grew and floated up into place as it shrank: "on some fonts it
+        // floats the letters up and down into position" (2026-09-27).
+        const inkL = m.actualBoundingBoxLeft, inkR = m.actualBoundingBoxRight;
+        const inkA = m.actualBoundingBoxAscent, inkD = m.actualBoundingBoxDescent;
+        const cx = inkL !== undefined && inkR !== undefined ? p.x + (inkR - inkL) / 2 : p.x + m.width / 2;
+        const cy = inkA !== undefined && inkD !== undefined ? baseline - (inkA - inkD) / 2 : baseline - (ascent - descent) / 2;
         const grow = 1 + (inkScale - 1) * Math.pow(1 - land, 2);
         if (p.bg) {
           // The stamp IS the letter: the real one covered with the

@@ -158,6 +158,10 @@ export const paintSmearMethods = {
 
     const lead = this._smearLead;
     const trail = this._smearTrail;
+    // A keyboard step: the leading edge sits on the caret, and only the
+    // tail trails (KEY_STEP_CHARS). A spring, it settled 1.4 characters
+    // behind a held key.
+    if (this._keyStepping(now)) { lead.x = target.x; lead.y = target.y; lead.vx = 0; lead.vy = 0; }
     const k = freqLead * freqLead;
     const damp = 2 * dampingRatio * freqLead;
     for (let i = 0; i < steps; i++) {

@@ -315,6 +315,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare updateActivePoint: CaretsMethods["updateActivePoint"];
   declare updateSmoothCursor: CaretsMethods["updateSmoothCursor"];
   declare commitMove: CaretsMethods["commitMove"];
+  declare _isKeyStep: CaretsMethods["_isKeyStep"];
+  declare _keyStepping: CaretsMethods["_keyStepping"];
 
   // The engine keeps its working state as instance fields set where they
   // are first needed - a hundred and sixty of them, some swapped in and out
@@ -541,6 +543,8 @@ export default class CursorSmithPlugin extends Plugin {
   stardust!: StardustMote[];
   thunderbolts!: Thunderbolt[];
   typeReturns!: TypeReturn[];
+  // When the caret last took a keyboard step (see KEY_STEP_CHARS).
+  _keyStepT!: number;
   // Fresh ink: the wet runs, and the editor they were typed in.
   inkMarks!: InkMark[];
   _inkView!: EditorView | null;
@@ -1610,6 +1614,7 @@ export default class CursorSmithPlugin extends Plugin {
     this._hotPrev = null;
     this.thunderbolts = [];
     this.typeReturns = [];
+    this._keyStepT = 0;
     this.inkMarks = [];
     this._inkView = null;
     this.evaporateGlyphs = [];

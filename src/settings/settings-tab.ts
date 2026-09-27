@@ -1387,12 +1387,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     smooth.push(toggle("Smooth movement", "The cursor glides to its new spot instead of jumping.", "smoothEnabled", { gate: true }));
     const gliding = on("smoothEnabled");
     smooth.push(slider("Glide amount", "How much the cursor eases as it travels.", "smoothness", [0.05, 0.30, 0.05], { depth: 1, when: gliding }));
-    smooth.push(slider("Catch-up speed", "How quickly the cursor chases the real caret.", "catchUpSpeed", [0.30, 0.80, 0.05], { depth: 1, when: gliding }));
+    smooth.push(slider("Catch-up speed", "How fast the cursor glides to a new spot - a click, a jump. Low floats, high snaps.", "catchUpSpeed", [0.30, 0.80, 0.05], { depth: 1, when: gliding }));
     // Max catch-up speed is meaningless on its own - it is only ever read
     // inside the adaptive branch - so it hangs off that toggle rather than
     // sitting beside it as a live-looking slider that does nothing.
-    smooth.push(toggle("Speed up when typing fast", "Goes past Catch-up speed while you type, so it never falls behind.", "smoothAdaptive", { depth: 1, gate: true, when: gliding }));
-    smooth.push(slider("Max catch-up speed", "The fastest the speed-up is allowed to get.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
+    smooth.push(toggle("Speed up when typing fast", "While you type or delete, the cursor keeps up with every letter instead of gliding behind.", "smoothAdaptive", { depth: 1, gate: true, when: gliding }));
+    smooth.push(slider("Max catch-up speed", "How fast each typed letter's glide is. Low shows a little glide, the top is instant.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
       { depth: 2, when: all(gliding, on("smoothAdaptive")) }));
     smooth.push(slider("Movement delay", "Delay before the cursor sets off, in ms. 0 follows immediately.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
     // --- Effects -------------------------------------------------------------
@@ -1473,9 +1473,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
     // Fresh ink (1.7.0): the characters just typed, wet in the
     // cursor's colour, drying into the text. Beside the stamp: both ink.
-    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "typewriterFreshInk", { depth: 1, gate: true, when: tw }));
+    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's color, then dry into the text.", "typewriterFreshInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "typewriterFreshInkMs", [300, 4000, 100], { depth: 2, fallback: 1500, when: twOn("typewriterFreshInk") }));
-    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "typewriterFreshInkStrength", [0.2, 1, 0.05], { depth: 2, fallback: 0.8, when: twOn("typewriterFreshInk") }));
+    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor color.", "typewriterFreshInkStrength", [0.2, 1, 0.05], { depth: 2, fallback: 0.8, when: twOn("typewriterFreshInk") }));
     effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
     effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));

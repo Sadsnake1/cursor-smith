@@ -14,7 +14,10 @@ import {
   JUMP_TRAIL_MIN_DIST,
   SECONDARY_FULL_MAX,
   SECONDARY_MATCH_WINDOW,
+  KEY_STEP_CHARS,
+  KEY_STEP_HOLD_MS,
 } from "../constants";
+import { smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { HOT_ENGULF_MS } from "../effects/fire";
 import type { EditorView } from "@codemirror/view";
 import type { CaretRecord, CaretState, CoordsLTB, KeyFlags, LineStyle, QuadKey } from "../types";
@@ -521,9 +524,14 @@ export const caretsMethods = {
     let typingBoost = 1;
 
     if (this.look.smoothAdaptive) {
-      const timeSinceMove = now - this.lastMoveTime;
+      // Typing: keyboard steps (KEY_STEP_CHARS), not any recent move. It was
+      // any move in the last 150 ms - the jump itself too, so every click
+      // and search hit took the speed-up and the backlog drain (up to 4x),
+      // and Catch-up speed hardly showed: a 300 px jump took 58 ms at its
+      // slowest and 17 at its fastest ("they don't do much", 2026-09-27).
+      const typing = this._keyStepping(now);
       const maxMod = this.look.maxCatchUpSpeed / Math.max(0.01, this.look.catchUpSpeed);
-      if (timeSinceMove < 150) {
+      if (typing) {
         // Reach the cap after ~0.12 s of sustained input. Slower ramps feel
         // nice for a single keypress but let the cursor fall several glyphs
         // behind on key repeat before the speed-up ever kicks in.
@@ -536,10 +544,9 @@ export const caretsMethods = {
       // Backlog drain: during sustained input (key repeat, held arrows), if
       // the animated cursor has fallen more than ~one glyph behind the real
       // one, scale the rate up with the deficit so the lag stays around a
-      // character instead of accumulating. Gated on timeSinceMove so a
-      // single long jump (mouse click across the note) still animates at
-      // the user's configured speed.
-      if (timeSinceMove < 150) {
+      // character instead of accumulating. Typing only, so a single long
+      // jump (a click across the note) animates at Catch-up speed.
+      if (typing) {
         const cw = Math.max(4, this.lastActive.actualCharWidth || 8);
         const dist = Math.hypot(
           this.lastActive.x - this.animActive.x,
@@ -580,8 +587,14 @@ export const caretsMethods = {
     // times of roughly 100-360 ms to 95% of the way there for single moves;
     // the adaptive typingBoost can multiply that by up to 4x under sustained
     // typing so the cursor keeps pace with key repeat.
-    const RATE_SCALE = 40;
-    const rate = Math.max(0.5, targetSpeed * (1 - this.look.smoothness) * RATE_SCALE * typingBoost);
+    // Catch-up speed on its exponential scale (smoothCatchRate); Glide
+    // amount eases it a little, as it always did, 1 at the default.
+    let rate = Math.max(0.5, smoothCatchRate(targetSpeed) * (1 - this.look.smoothness) / 0.85 * typingBoost);
+    // Speed up when typing fast: a keyboard step glides at the typing rate
+    // Max catch-up speed sets (smoothTypingRate), so a held key never leaves
+    // the cursor a letter behind (KEY_STEP_CHARS). Off, a typed letter
+    // glides like any move, at Catch-up speed.
+    if (this.look.smoothAdaptive && this._keyStepping(now)) rate = Math.max(rate, smoothTypingRate(this.look.maxCatchUpSpeed));
     // How much faster than the configured Catch-Up Speed this frame is actually
     // running - the adaptive ramp and the backlog drain combined. Published
     // because Motion Smear's spring sits downstream of this lerp and has to be
@@ -651,6 +664,20 @@ export const caretsMethods = {
     this.animActive.rowRight = this.lastActive.rowRight;
   },
 
+  // A keyboard step from `a` to `b`: along the same row, by at most
+  // KEY_STEP_CHARS characters.
+  _isKeyStep(this: CursorSmithPlugin, a: CaretRecord, b: CaretRecord): boolean {
+    const cw = a.actualCharWidth || b.actualCharWidth || 8;
+    const dx = Math.abs(b.x - a.x);
+    return Math.abs(b.top - a.top) < 1 && dx > 0.5 && dx <= KEY_STEP_CHARS * cw;
+  },
+
+  // Whether the caret is being stepped by the keyboard now: a step within
+  // the last KEY_STEP_HOLD_MS.
+  _keyStepping(this: CursorSmithPlugin, now: number): boolean {
+    return !!this._keyStepT && now - this._keyStepT < KEY_STEP_HOLD_MS;
+  },
+
   commitMove(this: CursorSmithPlugin, caret: CaretRecord) {
     // A secondary caret (see _withCaret) gets everything here - trail,
     // disintegration, jump trail, glitch, strike and volley; the tick hands
@@ -674,6 +701,9 @@ export const caretsMethods = {
         this.heat = Math.min(1, this.heat + bump);
       }
     }
+    // A keyboard step: the smear and the glide keep up with the caret for a
+    // moment (KEY_STEP_CHARS). The primary's steps stand for all carets.
+    if (!secondary && this.lastActive && caret && this._isKeyStep(this.lastActive, caret)) this._keyStepT = performance.now();
     // A deletion's effects read what it took from the note as it was before
     // (effects-delete.ts), so they are spawned before that note is replaced.
     // The primary's alone: one note, one kept copy. `burstAlong`: the

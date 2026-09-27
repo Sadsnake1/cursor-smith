@@ -1,4 +1,4 @@
-import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS } from "../constants";
+import { TORCH_FLICKER_PHASES, TORCH_FLICKER_RATES, TORCH_FLICKER_WEIGHTS, SMOOTH_RATE_MIN, SMOOTH_RATE_MAX, TYPING_RATE_MIN, TYPING_RATE_MAX } from "../constants";
 import type { CursorSmithSettings } from "../types";
 
 // Candle flicker, as a multiplier on the torch's base glow strength.
@@ -148,4 +148,20 @@ export function blinkAlphaAt(nowMs: number, speed: number, onOffBalance = 0.5, f
   if (phase < s.p2) return 1 - easeInOutSine((phase - s.p1) / s.fade);
   if (phase < s.p3) return 0;
   return easeInOutSine((phase - s.p3) / s.fade);
+}
+
+// Catch-up speed (0.30 - 0.80 on its slider) as a glide rate per second, on
+// an exponential scale between SMOOTH_RATE_MIN and SMOOTH_RATE_MAX. Values
+// past the slider's ends (the typing speed-up raises it toward Max catch-up
+// speed) carry on along the same curve.
+export function smoothCatchRate(speed: number): number {
+  const u = (speed - 0.3) / 0.5;
+  return SMOOTH_RATE_MIN * Math.pow(SMOOTH_RATE_MAX / SMOOTH_RATE_MIN, u);
+}
+
+// Max catch-up speed (0.50 - 1.00) as the typing glide's rate per second,
+// between TYPING_RATE_MIN and TYPING_RATE_MAX.
+export function smoothTypingRate(speed: number): number {
+  const u = Math.max(0, Math.min(1, (speed - 0.5) / 0.5));
+  return TYPING_RATE_MIN * Math.pow(TYPING_RATE_MAX / TYPING_RATE_MIN, u);
 }

@@ -555,3 +555,29 @@ export const STARDUST_MAX_PER_CARET = 60;
 // about a third the shape stops reading as a serif and starts reading as an
 // arrowhead.
 export const SERIF_TAPER = 0.3;
+
+// A keyboard step: the caret moving along its own row by at most this many
+// characters - a letter typed or deleted, an arrow, a short word. For
+// KEY_STEP_HOLD_MS after one, the smear's leading edge sits on the caret, and
+// with Speed up when typing fast on the smooth glide runs at the typing rate
+// (smoothTypingRate). Both were springs and lags tuned for jumps, and with a
+// key held they settled behind the caret: the smear 1.4 characters, the
+// glide half of one ("a small space between the cursor and the letter",
+// 2026-09-27). Jumps, Enter and a whole deleted word keep the full motion.
+export const KEY_STEP_CHARS = 2.5;
+export const KEY_STEP_HOLD_MS = 200;
+
+// Smooth movement's rates, per second (the glide closes 1 - e^(-rate x dt)
+// of the gap each frame; 95% of a move takes about 3 / rate). Catch-up speed
+// runs its slider 0.30 - 0.80 over SMOOTH_RATE_MIN - SMOOTH_RATE_MAX on an
+// exponential scale: a jump glides ~0.3 s at the slow end, ~0.1 s at the
+// default 0.55 and ~35 ms at the fast end (it was a linear 10 - 27 per
+// second, drowned by the typing speed-up on every jump - "they don't do
+// much"; a jump then took ~33 ms whatever the slider said).
+// Max catch-up speed sets the typing glide, 0.50 - 1.00 over
+// TYPING_RATE_MIN - TYPING_RATE_MAX: a letter's glide visible at the low end,
+// instant at the top.
+export const SMOOTH_RATE_MIN = 10;
+export const SMOOTH_RATE_MAX = 90;
+export const TYPING_RATE_MIN = 30;
+export const TYPING_RATE_MAX = 200;

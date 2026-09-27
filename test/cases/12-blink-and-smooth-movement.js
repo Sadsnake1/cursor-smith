@@ -391,7 +391,9 @@ section("smooth movement: size counts as arrival");
     const out = drive({ x: 100, top: 100, w: 3, h: 24 }, { x: 100.2, top: 100.2, w: 3, h: 60 });
     let biggest = 0, prev = 24;
     for (const f of out) { biggest = Math.max(biggest, Math.abs(f.h - prev)); prev = f.h; }
-    ok("height is no longer snapped in a single frame", biggest < 36 * 0.35, biggest);
+    // Under half the change in one 60 Hz frame: the glide eases it (1.7.1 made
+    // the default glide faster, 39% of the gap a frame; it was 27%).
+    ok("height is no longer snapped in a single frame", biggest < 36 * 0.5, biggest);
     ok("...and it is reported as moving while it changes", out[0].moving === true);
 
     let frames = 0;
@@ -406,7 +408,7 @@ section("smooth movement: size counts as arrival");
     const out = drive({ x: 100, top: 100, w: 9, h: 24 }, { x: 100.2, top: 100, w: 30, h: 24 });
     let biggest = 0, prev = 9;
     for (const f of out) { biggest = Math.max(biggest, Math.abs(f.w - prev)); prev = f.w; }
-    ok("width eases too", biggest < 21 * 0.35, biggest);
+    ok("width eases too", biggest < 21 * 0.5, biggest);
   }
 
   // The ordinary case must be untouched: when everything moves together it
@@ -451,6 +453,7 @@ section("catch-up boost must not flicker (issue #19: stutter)");
         if (i % 2 === 0) {
           e.lastActive = { x: 100 + i * 4, top: 40, w: 3, h: 24, actualCharWidth: 9 };
           e.lastMoveTime = t;
+          e._keyStepT = t;
         }
         t += 16.7;
         e.updateSmoothCursor();
@@ -495,6 +498,7 @@ section("catch-up boost must not flicker (issue #19: stutter)");
       for (let i = 0; i < frames; i++) {
         e.lastActive = { x: 100 + i * (4 * frameMs / 16.7), top: 40, w: 3, h: 24, actualCharWidth: 9 };
         e.lastMoveTime = t;
+        e._keyStepT = t;
         t += frameMs;
         e.updateSmoothCursor();
       }
@@ -513,4 +517,97 @@ section("catch-up boost must not flicker (issue #19: stutter)");
     e.updateSmoothCursor();
     ok("with smooth movement off the boost is inert", e._catchUpBoost === 1);
   }
+}
+
+// ---------------------------------------------------------------------------
+section("keeping up with a held key, and what the smooth controls do (1.7.1)");
+
+// "A small space between the cursor and the letter while I hold a key or
+// Backspace", and "Catch-up speed and Speed up when typing fast don't do
+// much". Measured before: the smear's leading spring settled 1.4 letters
+// behind a held key, the glide half of one; every jump took the typing
+// speed-up (any move in the last 150 ms counted, the jump itself too), so a
+// 300 px jump took 58 ms at the slowest Catch-up speed and 17 at the
+// fastest. Now a keyboard step (a short move along the row) is what counts
+// as typing: the smear's lead sits on the caret, the glide runs at the
+// typing rate; a jump glides at Catch-up speed on its own scale.
+{
+  const FRAME = 1000 / 120;
+  const run = (settings, steps) => {
+    const e = makeEngine(Object.assign({ smoothEnabled: true, smear: false }, settings));
+    e._smoothLastT = 0; e.typingSpeedMod = 1; e._typingBoostSm = null; e.lastMoveTime = -1e9; e._keyStepT = 0;
+    e.lastActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+    e.animActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+    const real = performance.now;
+    let t = 1000;
+    try {
+      performance.now = () => t;
+      e._smoothLastT = t;
+      return steps(e, () => { t += FRAME; e.updateSmoothCursor(); return t; }, () => t);
+    } finally { performance.now = real; }
+  };
+  // A 300 px jump: ms until 95% of it is covered.
+  const jump = (catchUpSpeed) => run({ catchUpSpeed }, (e, frame, now) => {
+    const t0 = now();
+    e.lastActive = Object.assign({}, e.lastActive, { x: 400 }); e.lastMoveTime = t0;
+    for (let i = 0; i < 400; i++) { const t = frame(); if (400 - e.animActive.x <= 15) return t - t0; }
+    return Infinity;
+  });
+  // A held key, a letter every 33 ms: the median gap, in letters.
+  const hold = (settings) => run(settings, (e, frame, now) => {
+    const gaps = [];
+    let x = 100, next = now();
+    for (let i = 0; i < 180; i++) {
+      if (now() >= next) {
+        const prev = e.lastActive;
+        x += 9; e.lastActive = Object.assign({}, prev, { x }); e.lastMoveTime = now();
+        if (e._isKeyStep(prev, e.lastActive)) e._keyStepT = now();
+        next += 33;
+      }
+      frame();
+      if (i > 30) gaps.push(e.lastActive.x - e.animActive.x);
+    }
+    gaps.sort((a, b) => a - b);
+    return gaps[Math.floor(gaps.length / 2)] / 9;
+  });
+
+  ok("Catch-up speed is an exponential scale: 10 to 90 a second, the default 30", Math.abs(T.smoothCatchRate(0.3) - 10) < 1e-9 && Math.abs(T.smoothCatchRate(0.8) - 90) < 1e-9 && Math.abs(T.smoothCatchRate(0.55) - 30) < 1e-9);
+  ok("Max catch-up speed sets the typing rate: 30 to 200 a second", Math.abs(T.smoothTypingRate(0.5) - 30) < 1e-9 && Math.abs(T.smoothTypingRate(1) - 200) < 1e-9 && T.smoothTypingRate(2) === T.smoothTypingRate(1));
+  const slow = jump(0.3), mid = jump(0.55), fast = jump(0.8);
+  ok("a jump glides at Catch-up speed: ~0.3 s at the slow end, ~0.1 s at the default, ~35 ms at the fast end",
+     slow > 250 && slow < 350 && mid > 80 && mid < 125 && fast > 20 && fast < 50, { slow, mid, fast });
+  ok("...a spread you can feel: the slow end takes several times as long", slow > fast * 5, { slow, fast });
+  const on = hold({ smoothAdaptive: true, maxCatchUpSpeed: 1 }), onLow = hold({ smoothAdaptive: true, maxCatchUpSpeed: 0.5 });
+  ok("Speed up when typing fast, at the top of Max catch-up speed: a held key leaves no gap", on < 0.1, on);
+  ok("...at its low end a glide shows, about a letter", onLow > 0.6 && onLow < 1.4, onLow);
+  const off = hold({ smoothAdaptive: false, catchUpSpeed: 0.3 });
+  ok("off: typing glides at Catch-up speed like any move, and trails when fast", off > 2, off);
+
+  const e = Object.create(Plugin.prototype);
+  const at = (x, top = 40) => ({ x, top, actualCharWidth: 9 });
+  ok("a keyboard step: along the row by up to 2.5 letters", e._isKeyStep(at(100), at(109)) && e._isKeyStep(at(100), at(80)) && e._isKeyStep(at(100), at(122)));
+  ok("...not a jump, not a row change, not standing still", !e._isKeyStep(at(100), at(130)) && !e._isKeyStep(at(100), at(109, 64)) && !e._isKeyStep(at(100), at(100)));
+}
+
+// The smear's leading edge on a keyboard step.
+{
+  const smearAt = (stepping) => {
+    const e = makeEngine({ smear: true, smoothEnabled: false });
+    e.styleFor = (k) => e.settings[k]; e.renderWidth = (a) => a.w; e.underlineThickness = () => 3;
+    e._catchUpBoost = 1; e.smearQuad = null; e.smearShape = null; e.smearCenterPrev = null; e._smearDtT = 0; e._smearDir = null;
+    const real = performance.now;
+    let t = 1000;
+    try {
+      performance.now = () => t;
+      e.animActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+      e.updateSmearQuad();
+      t += 8.3;
+      e.animActive = { x: 109, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+      e._keyStepT = stepping ? t : 0;
+      e.updateSmearQuad();
+      return e._smearLead.x;
+    } finally { performance.now = real; }
+  };
+  ok("on a keyboard step the smear's leading edge sits on the caret", smearAt(true) === 109, smearAt(true));
+  ok("...on any other move it is still the spring, behind", smearAt(false) < 109, smearAt(false));
 }

@@ -10,9 +10,14 @@
 // and where, is read in effects-delete.ts, shared with Backspace
 // disintegration. Smoke on delete, then Evaporate on delete (a part of
 // Popping letters), before the user settled the name and the place.
+import { hslToRgbString } from "../util/color";
 import type { DeletedLetters, EvaporateGlyph } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
+// How long a letter takes to go, and how high it rises, in lines: baked in
+// (they were sliders for a day; the user: "bake those in").
+export const EVAPORATE_MS = 1100;
+export const EVAPORATE_RISE_LINES = 1.2;
 // Each letter lifts off this long after the one nearer the caret.
 const EVAPORATE_STAGGER_MS = 16;
 // How far it sways either side, and how much it spreads, at the end.
@@ -26,14 +31,18 @@ export const effectsEvaporateMethods = {
   },
 
   // The letters of one deletion, nearest the caret first, rising away. A
-  // space takes its room and raises nothing.
+  // space takes its room and raises nothing. In the text's own colour; with
+  // Pop effects' Rainbow each letter takes the sweep's next hue, shared with
+  // the popping letters, the bolts and the fireworks.
   spawnEvaporate(this: CursorSmithPlugin, deleted: DeletedLetters) {
     if (!this._evaporateOn()) return;
     const old = deleted.old;
     const t0 = performance.now();
-    const color = old.textColor || this.getActiveColor() || "#888888";
+    const rainbow = !!this.styleFor("popRainbow");
+    const textColor = old.textColor || this.getActiveColor() || "#888888";
     deleted.letters.forEach((l, k) => {
       if (!l.char.trim()) return;
+      const color = rainbow ? hslToRgbString(this.nextRainbowHue(), 0.85, 0.6) : textColor;
       this.evaporateGlyphs.push({
         char: l.char, x: l.x, top: old.top, h: old.h || 20,
         fontSize: old.fontSize, fontFamily: old.fontFamily, fontWeight: old.fontWeight, fontStyle: old.fontStyle,
@@ -59,8 +68,8 @@ export const effectsEvaporateMethods = {
     const ctx = this.ctx;
     if (!ctx || !this.evaporateGlyphs.length) return;
     const now = performance.now();
-    const ms = Math.max(100, Math.min(10000, Number(this.look.backspaceEvaporateMs) || 1100));
-    const rise = Math.max(0, Math.min(5, Number(this.look.backspaceEvaporateRise ?? 1.2)));
+    const ms = EVAPORATE_MS;
+    const rise = EVAPORATE_RISE_LINES;
     this.evaporateGlyphs = this.evaporateGlyphs.filter((g) => {
       const t = (now - g.start - g.delay) / ms;
       if (t >= 1) return false;

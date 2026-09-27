@@ -1440,10 +1440,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // Evaporate on delete under Popping letters, before the user settled
     // it here): the calm counterpart of the burst above it, with Backspace
     // or Delete - the letters rise and fade.
-    const evap = all(pop, on("backspaceEvaporate"));
     effects.push(toggle("Backspace evaporation", "Letters you delete, with Backspace or Delete, rise and fade away.", "backspaceEvaporate", { depth: 1, gate: true, when: pop }));
-    effects.push(slider("Evaporation time", "How long they take to go, in milliseconds.", "backspaceEvaporateMs", [400, 3000, 50], { depth: 2, fallback: 1100, when: evap }));
-    effects.push(slider("Evaporation height", "How high they rise, in lines.", "backspaceEvaporateRise", [0.3, 3, 0.1], { depth: 2, fallback: 1.2, when: evap }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],
@@ -1457,7 +1454,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // gate is on the four effects, NOT on popEffects. The group can be on
     // with every effect inside it off, and that is exactly the state where
     // a Rainbow toggle is a switch that visibly does nothing.
-    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("thunderstrike") || !!get("fireworks"));
+    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("backspaceEvaporate") || !!get("thunderstrike") || !!get("fireworks"));
     effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
 
     // Typewriter: an effect of its own since the day it was made (1.6.7) -

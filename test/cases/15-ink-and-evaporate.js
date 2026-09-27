@@ -234,7 +234,7 @@ section("Backspace evaporation: the rise");
   ok("...rises, spreads and fades", p5.dy < 0 && p5.scale > 1 && p5.alpha < 1 && p5.alpha > 0, p5);
   ok("...to its height, gone at the end", Math.abs(p1.dy + 24) < 1e-9 && p1.alpha === 0, p1);
 
-  const d = makeEngine({ backspaceEvaporate: true, backspaceEvaporateMs: 1000, backspaceEvaporateRise: 1 });
+  const d = makeEngine({ backspaceEvaporate: true });
   d.ctx = textCtx();
   const t0 = performance.now();
   const glyph = (char, x, start) => ({ char, x, top: 50, h: 24, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", color: "#cccccc", start, delay: 0, phase: 0, drift: 0 });
@@ -242,8 +242,9 @@ section("Backspace evaporation: the rise");
   d.drawEvaporate();
   ok("a drifting letter is drawn, a finished one dropped", d.ctx.calls.length === 1 && d.ctx.calls[0].t === "o" && d.evaporateGlyphs.length === 1, d.ctx.calls);
   ok("...starting on the real letter's baseline", Math.abs(d.ctx.calls[0].y - (50 + 14 + 3)) < 1, d.ctx.calls[0].y);
-  ok("the keys are in every look, appended; off by default; stilled by reduced motion with Pop effects",
-     ["backspaceEvaporate", "backspaceEvaporateMs", "backspaceEvaporateRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.backspaceEvaporate === false && T.REDUCED_MOTION_OFF_KEYS.includes("popEffects"));
+  ok("its key is in every look, appended; off by default; stilled by reduced motion with Pop effects",
+     T.LOOK_KEYS.includes("backspaceEvaporate") && T.DEFAULT_SETTINGS.backspaceEvaporate === false && T.REDUCED_MOTION_OFF_KEYS.includes("popEffects"));
+  ok("its time and height are baked in: no keys for them", !("backspaceEvaporateMs" in T.DEFAULT_SETTINGS) && !("backspaceEvaporateRise" in T.DEFAULT_SETTINGS) && !T.LOOK_KEYS.some((k) => /^backspaceEvaporate./.test(k)));
   ok("rising letters keep the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.evaporateGlyphs = [{}]; return f._isAnimating(performance.now()) === true; })());
 }
 
@@ -335,10 +336,13 @@ section("Backspace evaporation: in the panel");
   const at = (n) => names.indexOf(n);
   ok("a Pop effect of its own, right after Backspace disintegration",
      at("Backspace disintegration") >= 0 && at("Backspace evaporation") === at("Backspace disintegration") + 1 && at("Popping letters") < at("Backspace disintegration"), names);
-  ok("...with its time and height under it", at("Evaporation time") === at("Backspace evaporation") + 1 && at("Evaporation height") === at("Backspace evaporation") + 2, names);
+  ok("...with no sliders of its own: its time and height are baked in", !names.includes("Evaporation time") && !names.includes("Evaporation height"), names);
   const row = (n) => rows.find((r) => r.name === n);
-  ok("...at the burst's level, its sliders one in",
-     row("Backspace evaporation").settingEl.classes.includes("cursor-smith-sub-1") && row("Evaporation time").settingEl.classes.includes("cursor-smith-sub-2"));
+  ok("...at the burst's level", row("Backspace evaporation").settingEl.classes.includes("cursor-smith-sub-1"));
+  const rainbowOnly = renderPanel({ popEffects: true, popLetters: false, backspaceDisintegrate: false, thunderstrike: false, fireworks: false, backspaceEvaporate: true });
+  rainbowOnly.tab._effectsPick = "popEffects";
+  rainbowOnly.tab.refreshDomState();
+  ok("Rainbow is offered with evaporation the only pop effect on: it recolours it", rainbowOnly.some((r) => r.visible && r.name === "Rainbow"));
   const noLetters = renderPanel({ popEffects: true, popLetters: false, backspaceEvaporate: true });
   noLetters.tab._effectsPick = "popEffects";
   noLetters.tab.refreshDomState();
@@ -405,4 +409,27 @@ section("Backspace disintegration: along the letters, both ways");
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
   ok("a commit makes the one burst where the caret stood only when the letters did not get it",
      carets.includes("if (!(disintegrate && burstAlong)) this.spawnFlamePixels(this.lastActive, disintegrate);"));
+}
+
+// ---------------------------------------------------------------------------
+section("Backspace evaporation: Rainbow");
+{
+  // "The rainbow modifier doesn't work for evaporation": it rose in the
+  // text's colour whatever Rainbow said.
+  const mk = (settings) => {
+    const e = makeEngine(Object.assign({ backspaceEvaporate: true, backspaceDisintegrate: false }, settings));
+    e.evaporateGlyphs = []; e.flamePixels = [];
+    e.measureCharWidth = () => 10;
+    e._deletionDoc = docOf("say hello");
+    e.app = { workspace: { activeEditor: { editor: { cm: mkView("say ", 0) } } } };
+    return e;
+  };
+  const rec = (pos, docLen, x) => Object.assign({ pos, docLen, x, top: 50, h: 24, w: 10, rowLeft: 100, rowRight: 400, actualCharWidth: 10, letterSpacing: 0 }, last);
+  const on = mk({ popRainbow: true });
+  on._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
+  const colors = on.evaporateGlyphs.map((g) => g.color);
+  ok("with Rainbow on, each rising letter takes the sweep's next hue", colors.length === 5 && colors.every((c) => /^hsl|^rgb/.test(c) && c !== "#cccccc") && new Set(colors).size === 5, colors);
+  const off = mk({ popRainbow: false });
+  off._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
+  ok("...and with it off, the text's own colour", off.evaporateGlyphs.every((g) => g.color === "#cccccc"));
 }

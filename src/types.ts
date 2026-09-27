@@ -136,8 +136,6 @@ export interface Look {
   typewriterFreshInkMs: number;
   typewriterFreshInkStrength: number;
   backspaceEvaporate: boolean;
-  backspaceEvaporateMs: number;
-  backspaceEvaporateRise: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;

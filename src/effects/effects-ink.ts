@@ -17,6 +17,9 @@
 // looping every INK_RAMP_SPAN letters, so a word carries the whole gradient
 // and a letter keeps its colour while it dries. It was the ramp's first stop
 // alone, flat - and a first stop near the text's colour hid the ink.
+// With "Keep text color" the ink is the text's own color instead - drawn
+// over the same letter it would not show, so it is drawn heavier: stroked
+// in the text's color, the stroke thinning as the letter dries.
 import { easeInOutSine } from "../util/motion";
 import type { EditorView } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
@@ -31,6 +34,8 @@ export const INK_MAX_CHARS = 80;
 const INK_SEARCH = 64;
 // The share of the drying time the ink stays fully wet before it fades.
 const INK_HOLD = 0.3;
+// "Keep text color": how thick the wet ink's spread is at full strength.
+export const INK_SPREAD_PX = 1.1;
 // With Gradient on, the ramp loops once every this many letters.
 export const INK_RAMP_SPAN = 10;
 
@@ -44,6 +49,7 @@ export const effectsInkMethods = {
     if (this._inkView !== view) { this.inkMarks = []; this._inkView = view; }
     const now = performance.now();
     const color = this.getActiveColor() || last.textColor || "#888888";
+    const textColor = last.textColor || color;
     const prev = this.inkMarks[this.inkMarks.length - 1];
     // The same insertion seen twice (a pending move re-read): nothing new.
     if (prev && from >= prev.from && to <= prev.from + prev.text.length) return;
@@ -54,9 +60,10 @@ export const effectsInkMethods = {
       prev.text += text;
       for (let i = 0; i < text.length; i++) prev.times.push(now);
       prev.color = color;
+      prev.textColor = textColor;
     } else {
       this.inkMarks.push({
-        from, text, times: new Array<number>(text.length).fill(now), color,
+        from, text, times: new Array<number>(text.length).fill(now), color, textColor,
         fontSize: last.fontSize, fontFamily: last.fontFamily, fontWeight: last.fontWeight, fontStyle: last.fontStyle,
       });
     }
@@ -130,7 +137,8 @@ export const effectsInkMethods = {
     const now = performance.now();
     const ms = Math.max(100, Math.min(10000, Number(this.look.typewriterFreshInkMs) || 1500));
     const strength = Math.max(0, Math.min(1, Number(this.look.typewriterFreshInkStrength ?? 0.8)));
-    const ramp = !!this.look.gradientEnabled;
+    const keepText = !!this.look.typewriterFreshInkText;
+    const ramp = !keepText && !!this.look.gradientEnabled;
     const dpr = this._canvasDpr || 1;
     const region = this._canvasRect;
     const ox = region ? region.x : 0, oy = region ? region.y : 0;
@@ -149,7 +157,8 @@ export const effectsInkMethods = {
       const metrics = ctx.measureText("M");
       const ascent = metrics.fontBoundingBoxAscent ?? m.fontSize * 0.8;
       const descent = metrics.fontBoundingBoxDescent ?? m.fontSize * 0.2;
-      ctx.fillStyle = m.color;
+      ctx.fillStyle = keepText ? m.textColor : m.color;
+      if (keepText) { ctx.strokeStyle = m.textColor; ctx.lineJoin = "round"; }
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
       let i = 0;
@@ -167,6 +176,12 @@ export const effectsInkMethods = {
           ctx.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
         }
         ctx.globalAlpha = a;
+        if (keepText) {
+          // The ink spread: up to INK_SPREAD_PX of stroke around the letter,
+          // thinning as it dries.
+          ctx.lineWidth = INK_SPREAD_PX * a;
+          ctx.strokeText(ch, snapX(c.left), snapY(baseline));
+        }
         ctx.fillText(ch, snapX(c.left), snapY(baseline));
         const w = ctx.measureText(ch).width;
         this._markDirty(c.left - 2, c.top - 2, w + 4, h + 4);

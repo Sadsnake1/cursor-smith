@@ -433,3 +433,31 @@ section("Backspace evaporation: Rainbow");
   off._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
   ok("...and with it off, the text's own colour", off.evaporateGlyphs.every((g) => g.color === "#cccccc"));
 }
+
+// ---------------------------------------------------------------------------
+section("Fresh ink: keep the text's color");
+{
+  // "An option to keep the color of the text, so it doesn't colorize it with
+  // the cursor's": the text's own color, drawn heavier while wet.
+  const ink = (settings) => {
+    const d = makeEngine(Object.assign({ typewriter: true, typewriterFreshInk: true, typewriterFreshInkStrength: 1 }, settings));
+    const calls = [];
+    d.ctx = Object.assign(textCtx(), { lineWidth: 1, strokeStyle: "", lineJoin: "", strokeText(t, x, y) { calls.push({ t, x, y, w: this.lineWidth, stroke: this.strokeStyle }); } });
+    d._canvasDpr = 1; d._canvasRect = null;
+    const vw = mkView("ab", 2);
+    d.app = { workspace: { activeEditor: { editor: { cm: vw } } } };
+    d._inkView = vw;
+    const now = performance.now();
+    d.inkMarks = [{ from: 0, text: "ab", times: [now, now], color: "#ff0000", textColor: "#cccccc", fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal" }];
+    d.drawFreshInk();
+    return { fills: d.ctx.calls, strokes: calls };
+  };
+  const kept = ink({ typewriterFreshInkText: true });
+  ok("with Keep text color the letters are filled in the text's color", kept.fills.length === 2 && kept.fills.every((c) => c.fill === "#cccccc"), kept.fills);
+  ok("...and stroked in it too, the wet spread", kept.strokes.length === 2 && kept.strokes.every((c) => c.stroke === "#cccccc" && c.w > 0.5), kept.strokes);
+  const grad = ink({ typewriterFreshInkText: true, gradientEnabled: true, gradientCount: 2, gradientDark1: "#ff0000", gradientDark2: "#0000ff" });
+  ok("...whatever the gradient says", grad.fills.every((c) => c.fill === "#cccccc"));
+  const plain = ink({ typewriterFreshInkText: false });
+  ok("off: the cursor's color, no spread", plain.fills.every((c) => c.fill === "#ff0000") && plain.strokes.length === 0);
+  ok("its key is in every look, appended, off by default", T.LOOK_KEYS.includes("typewriterFreshInkText") && T.DEFAULT_SETTINGS.typewriterFreshInkText === false);
+}

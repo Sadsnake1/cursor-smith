@@ -1476,6 +1476,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's color, then dry into the text.", "typewriterFreshInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "typewriterFreshInkMs", [300, 4000, 100], { depth: 2, fallback: 1500, when: twOn("typewriterFreshInk") }));
     effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor color.", "typewriterFreshInkStrength", [0.2, 1, 0.05], { depth: 2, fallback: 0.8, when: twOn("typewriterFreshInk") }));
+    effects.push(toggle("Keep text color", "The ink stays the text's own color: fresh letters are bolder, then settle.", "typewriterFreshInkText", { depth: 2, when: twOn("typewriterFreshInk") }));
     effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
     effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));

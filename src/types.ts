@@ -135,6 +135,7 @@ export interface Look {
   typewriterFreshInk: boolean;
   typewriterFreshInkMs: number;
   typewriterFreshInkStrength: number;
+  typewriterFreshInkText: boolean;
   backspaceEvaporate: boolean;
   popLetters: boolean;
   popRainbow: boolean;
@@ -341,7 +342,7 @@ export interface LetterParticle {
 // Fresh ink: one run of typing - where it starts, its text, when each
 // code unit went in - and the look it was typed in.
 export interface InkMark {
-  from: number; text: string; times: number[]; color: string;
+  from: number; text: string; times: number[]; color: string; textColor: string;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
 }
 // A deletion's letters (effects-delete.ts): each letter, where it stood and

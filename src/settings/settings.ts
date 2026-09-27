@@ -131,6 +131,7 @@ export const DEFAULT_SETTINGS = {
   typewriterFreshInk: false,  // Fresh ink: the characters just typed stay wet in the cursor's colour, then dry into the text
   typewriterFreshInkMs: 1500, // ...how long the ink takes to dry
   typewriterFreshInkStrength: 0.8, // ...how strong the wet ink is at first, 1 the full cursor colour
+  typewriterFreshInkText: false, // ...in the text's own color, bolder while wet, instead of the cursor's
   backspaceEvaporate: false, // Pop effects' Backspace evaporation: deleted letters rise and fade (Backspace and Delete)
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
@@ -503,6 +504,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "typewriterReturnMs", "typewriterReturnWidth", "typewriterAdvanceCw", "typewriterAdvanceMs",
   "typewriterFreshInk", "typewriterFreshInkMs", "typewriterFreshInkStrength",
   "backspaceEvaporate",
+  "typewriterFreshInkText",
 ];
 
 // ---------------------------------------------------------------------------

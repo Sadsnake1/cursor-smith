@@ -92,17 +92,15 @@
 /* Sub-options nested under a parent toggle (or the style dropdown), so
    conditional groups - Torch spotlight's Follow/Light size/etc., or the Box
    style's Hollow -> Outline width - read as a visual hierarchy instead of a
-   flat list: 26px in per level, the step alone. There was a 2px guide line
-   per level, and a nested row drew its parents' too; the user asked for the
-   lines to go, the indent being enough (2026-09-27). The step is the old
+   flat list: 26px in per level, with a 1px guide line. The line was 2px,
+   and a nested row drew its parents' too (::after), so it showed two; the
+   user asked for them thinner and single (2026-09-27). The step is the old
    one, so the text sits where it did (and Word-Smith's .ws-settings-sub
    still lines up). */
 .cursor-smith-section .setting-item.cursor-smith-sub {
   margin-left: 12px;
-  /* No guide line (2026-09-27, the user: "just remove those lines, the
-     indenting is enough"); the 2px it took is in the padding, so the text
-     sits where it did. */
-  padding-left: 14px;
+  border-left: 1px solid var(--background-modifier-border);
+  padding-left: 13px;
 }
 .cursor-smith-section .setting-item.cursor-smith-sub-2 {
   margin-left: 38px;

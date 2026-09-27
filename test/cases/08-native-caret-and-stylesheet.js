@@ -402,11 +402,11 @@ section("Note Editor Only: the plugin stays out of the interface");
   }
 }
 
-// Nested rows: the indent alone, no guide line (2026-09-27: "just remove
-// those lines, the indenting is enough").
+// Nested rows: the indent and one thin guide line, their own - not their
+// parents' as well (2026-09-27: "thinner, and no double ones").
 {
   const css = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "styles.css"), "utf8");
   const rule = (sel) => { const i = css.indexOf(sel); if (i < 0) return ""; const o = css.indexOf("{", i); return css.slice(o, css.indexOf("}", o)); };
   const sub = rule(".cursor-smith-section .setting-item.cursor-smith-sub {");
-  ok("a nested row is indented and has no guide line", /margin-left:\s*12px/.test(sub) && !/border-left/.test(sub) && !css.includes("cursor-smith-sub-2::after"), sub);
+  ok("a nested row is indented, with one 1px guide line and no parent's line beside it", /margin-left:\s*12px/.test(sub) && /border-left:\s*1px solid/.test(sub) && /padding-left:\s*13px/.test(sub) && !css.includes("cursor-smith-sub-2::after"), sub);
 }

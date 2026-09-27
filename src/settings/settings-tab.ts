@@ -15,6 +15,7 @@ const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
   { key: "freshInk", name: "Fresh ink", icon: "droplet", desc: "The words you just typed stay wet in your cursor's colour, then dry into the text." },
+  { key: "smokeDelete", name: "Smoke on delete", icon: "cloud-fog", desc: "What you delete drifts up and fades like smoke." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -1479,6 +1480,14 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const ink = all(showInk, on("freshInk"));
     effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "freshInkMs", [300, 4000, 100], { depth: 1, fallback: 1500, when: ink }));
     effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "freshInkStrength", [0.2, 1, 0.05], { depth: 1, fallback: 0.8, when: ink }));
+
+    // Smoke on delete (on trial, 2026-09-27): the calm counterpart of the
+    // deletion burst.
+    const showSmoke = shown("smokeDelete");
+    effects.push(toggle("Smoke on delete", "What you delete drifts up and fades like smoke.", "smokeDelete", { gate: true, when: showSmoke }));
+    const smoke = all(showSmoke, on("smokeDelete"));
+    effects.push(slider("Drift time", "How long the smoke lasts, in milliseconds.", "smokeDeleteMs", [400, 3000, 50], { depth: 1, fallback: 1100, when: smoke }));
+    effects.push(slider("Drift height", "How high it rises, in lines.", "smokeDeleteRise", [0.3, 3, 0.1], { depth: 1, fallback: 1.2, when: smoke }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));

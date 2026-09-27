@@ -149,3 +149,90 @@ section("Fresh ink: where it hooks in");
   ok("off by default", T.DEFAULT_SETTINGS.freshInk === false);
   ok("wet ink keeps the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.inkMarks = [{}]; return f._isAnimating(performance.now()) === true; })());
 }
+
+// ---------------------------------------------------------------------------
+section("Smoke on delete: what it reads back");
+{
+  // The note kept at the last commit (before) and the note now (after).
+  const mk = (before, after, settings = {}) => {
+    const e = makeEngine(Object.assign({ smokeDelete: true }, settings));
+    e.smokeGlyphs = [];
+    e.measureCharWidth = () => 10;
+    e._smokeDoc = docOf(before);
+    e.app = { workspace: { activeEditor: { editor: { cm: mkView(after, 0) } } } };
+    return e;
+  };
+  const rec = (pos, docLen, x, extra = {}) => Object.assign({ pos, docLen, x, top: 50, h: 24, rowLeft: 100, actualCharWidth: 10, letterSpacing: 0 }, last, extra);
+
+  const e = mk("say hello", "say hell");
+  e.spawnSmoke(rec(9, 9, 190), rec(8, 8, 180));
+  ok("Backspace: the letter it took, where it stood",
+     e.smokeGlyphs.length === 1 && e.smokeGlyphs[0].char === "o" && e.smokeGlyphs[0].x === 180 && e.smokeGlyphs[0].top === 50, e.smokeGlyphs);
+  ok("...in the text's own colour", e.smokeGlyphs[0].color === "#cccccc");
+
+  const w = mk("say hello", "say ");
+  w.spawnSmoke(rec(9, 9, 190), rec(4, 4, 140));
+  ok("a whole word: every letter, laid out leftwards from the caret",
+     w.smokeGlyphs.map((g) => g.char).join("") === "olleh" && w.smokeGlyphs[4].x === 140, w.smokeGlyphs.map((g) => [g.char, g.x]));
+  ok("...lifting off right to left", w.smokeGlyphs[0].delay === 0 && w.smokeGlyphs[4].delay > w.smokeGlyphs[1].delay);
+
+  const sp = mk("say hello", "say");
+  sp.spawnSmoke(rec(9, 9, 190), rec(3, 3, 130));
+  ok("a space takes its room but makes no smoke", sp.smokeGlyphs.length === 5 && sp.smokeGlyphs[4].x === 140, sp.smokeGlyphs.map((g) => [g.char, g.x]));
+
+  const j = mk("ab\ncd", "abcd");
+  j.spawnSmoke(rec(3, 5, 100), rec(2, 4, 120));
+  ok("joining two lines smokes nothing", j.smokeGlyphs.length === 0);
+  const big = mk("x".repeat(60), "");
+  big.spawnSmoke(rec(60, 60, 700), rec(0, 0, 100));
+  ok("a wiped selection is not smoke", big.smokeGlyphs.length === 0);
+  const other = mk("say hello", "say hell");
+  other.spawnSmoke(rec(9, 10, 190), rec(8, 8, 180));
+  ok("a kept note that is not the one the caret stood in: nothing", other.smokeGlyphs.length === 0);
+  const notDel = mk("say hello!", "say hell?");
+  notDel.spawnSmoke(rec(9, 10, 190), rec(8, 9, 180));
+  ok("a change that is not exactly that deletion: nothing", notDel.smokeGlyphs.length === 0);
+  const off = mk("say hello", "say hell", { smokeDelete: false });
+  off.spawnSmoke(rec(9, 9, 190), rec(8, 8, 180));
+  ok("switched off, nothing", off.smokeGlyphs.length === 0);
+  const none = mk("say hello", "say hell");
+  none._smokeDoc = null;
+  none.spawnSmoke(rec(9, 9, 190), rec(8, 8, 180));
+  ok("with no note kept, nothing", none.smokeGlyphs.length === 0);
+  const row = mk("say hello", "say ");
+  row.spawnSmoke(rec(9, 9, 190, { rowLeft: 175 }), rec(4, 4, 140));
+  ok("letters that stood on the row above are not smoked on this one", row.smokeGlyphs.length === 1 && row.smokeGlyphs[0].char === "o");
+
+  const keep = mk("a", "b");
+  keep._smokeRemember();
+  ok("the note is kept at each commit", keep._smokeDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
+  const keepOff = mk("a", "b", { smokeDelete: false });
+  keepOff._smokeRemember();
+  ok("...and nothing is kept with the effect off", keepOff._smokeDoc === null);
+  const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
+  ok("a commit spawns the smoke before it keeps the new note, for the primary caret",
+     carets.includes("this.spawnSmoke(this.lastActive, caret);") && carets.indexOf("this.spawnSmoke(this.lastActive, caret);") < carets.indexOf("this._smokeRemember();"));
+}
+
+// ---------------------------------------------------------------------------
+section("Smoke on delete: the drift");
+{
+  const e = Object.create(Plugin.prototype);
+  const g = { h: 20, phase: 0, drift: 0 };
+  const p0 = e.smokePose(g, 0, 1.2), p5 = e.smokePose(g, 0.5, 1.2), p1 = e.smokePose(g, 1, 1.2);
+  ok("it lifts off where it stood, solid", p0.dx === 0 && p0.dy === 0 && p0.scale === 1 && p0.alpha === 1, p0);
+  ok("...rises, spreads and fades", p5.dy < 0 && p5.scale > 1 && p5.alpha < 1 && p5.alpha > 0, p5);
+  ok("...to its height, gone at the end", Math.abs(p1.dy + 24) < 1e-9 && p1.alpha === 0, p1);
+
+  const d = makeEngine({ smokeDelete: true, smokeDeleteMs: 1000, smokeDeleteRise: 1 });
+  d.ctx = textCtx();
+  const t0 = performance.now();
+  const glyph = (char, x, start) => ({ char, x, top: 50, h: 24, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", color: "#cccccc", start, delay: 0, phase: 0, drift: 0 });
+  d.smokeGlyphs = [glyph("o", 180, t0), glyph("x", 170, t0 - 5000)];
+  d.drawSmoke();
+  ok("a drifting letter is drawn, a finished one dropped", d.ctx.calls.length === 1 && d.ctx.calls[0].t === "o" && d.smokeGlyphs.length === 1, d.ctx.calls);
+  ok("...starting on the real letter's baseline", Math.abs(d.ctx.calls[0].y - (50 + 14 + 3)) < 1, d.ctx.calls[0].y);
+  ok("the keys are in every look, appended; off by default; stilled by reduced motion",
+     ["smokeDelete", "smokeDeleteMs", "smokeDeleteRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.smokeDelete === false && T.REDUCED_MOTION_OFF_KEYS.includes("smokeDelete"));
+  ok("drifting smoke keeps the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.smokeGlyphs = [{}]; return f._isAnimating(performance.now()) === true; })());
+}

@@ -135,6 +135,9 @@ export interface Look {
   freshInk: boolean;
   freshInkMs: number;
   freshInkStrength: number;
+  smokeDelete: boolean;
+  smokeDeleteMs: number;
+  smokeDeleteRise: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;
@@ -342,6 +345,12 @@ export interface LetterParticle {
 export interface InkMark {
   from: number; text: string; times: number[]; color: string;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
+}
+// Smoke on delete: one deleted letter, where it stood, drifting up.
+export interface SmokeGlyph {
+  char: string; x: number; top: number; h: number;
+  fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
+  color: string; start: number; delay: number; phase: number; drift: number;
 }
 export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number }
 // Where Typewriter holds the caret at a moment: shifted by dx, dy and

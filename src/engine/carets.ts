@@ -672,6 +672,14 @@ export const caretsMethods = {
     // Record the position being left, and - if this move is a jump - the ghosts
     // bridging it to the destination, so the CRT/neon trail is continuous across
     // the leap the same commit it happens rather than one move later.
+    // Smoke on delete reads what a deletion took from the note as it was at
+    // the last commit, so it is spawned before that note is replaced. The
+    // primary's alone: one note, one kept copy.
+    if (!secondary) {
+      if (this.look.smokeDelete && this.lastActive && caret && this._deletePending &&
+          performance.now() - this._deletePending < 250) this.spawnSmoke(this.lastActive, caret);
+      this._smokeRemember();
+    }
     this.pushTrail(this.lastActive, caret);
     if (this.lastActive) {
       // Consume a pending Backspace/Delete keystroke if it happened

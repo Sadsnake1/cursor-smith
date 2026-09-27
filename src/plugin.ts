@@ -5,6 +5,7 @@ import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarter
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings/settings";
 import { CursorSmithSettingTab } from "./settings/settings-tab";
 import type { EditorView } from "@codemirror/view";
+import type { Text as DocText } from "@codemirror/state";
 import type {
   Bounds,
   BurnMark,
@@ -41,6 +42,7 @@ import type {
   TrailPoint,
   TypeReturn,
   InkMark,
+  SmokeGlyph,
 } from "./types";
 
 import { measureMethods } from "./engine/measure";
@@ -125,6 +127,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare _inkLocate: EffectsMethods["_inkLocate"];
   declare inkWetness: EffectsMethods["inkWetness"];
   declare drawFreshInk: EffectsMethods["drawFreshInk"];
+  declare _smokeRemember: EffectsMethods["_smokeRemember"];
+  declare spawnSmoke: EffectsMethods["spawnSmoke"];
+  declare smokePose: EffectsMethods["smokePose"];
+  declare drawSmoke: EffectsMethods["drawSmoke"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts
@@ -532,6 +538,10 @@ export default class CursorSmithPlugin extends Plugin {
   // Fresh ink: the wet runs, and the editor they were typed in.
   inkMarks!: InkMark[];
   _inkView!: EditorView | null;
+  // Smoke on delete: the letters drifting up, and the note as it was at
+  // the last caret commit (what a deletion is read back from).
+  smokeGlyphs!: SmokeGlyph[];
+  _smokeDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
   declare trail: TrailPoint[];
@@ -1596,6 +1606,8 @@ export default class CursorSmithPlugin extends Plugin {
     this.typeReturns = [];
     this.inkMarks = [];
     this._inkView = null;
+    this.smokeGlyphs = [];
+    this._smokeDoc = null;
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then
     // burst) whose sparks don't exist yet when it launches, so it can't be

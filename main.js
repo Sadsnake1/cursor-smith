@@ -191,6 +191,8 @@ var REDUCED_MOTION_OFF_KEYS = [
   // continuous fire
   "typewriter",
   // the caret dipping, the carriage's streak
+  "smokeDelete",
+  // deleted letters drifting up
   "speedDemonSparks",
   // emission; the heat colour itself is not motion
   "crtGlitch",
@@ -412,6 +414,12 @@ var DEFAULT_SETTINGS = {
   // ...how long the ink takes to dry
   freshInkStrength: 0.8,
   // ...how strong the wet ink is at first, 1 the full cursor colour
+  smokeDelete: false,
+  // what a deletion takes drifts up and fades like smoke
+  smokeDeleteMs: 1100,
+  // ...how long it drifts
+  smokeDeleteRise: 1.2,
+  // ...how high, in lines
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -901,7 +909,10 @@ var LOOK_KEYS = [
   "typewriterAdvanceMs",
   "freshInk",
   "freshInkMs",
-  "freshInkStrength"
+  "freshInkStrength",
+  "smokeDelete",
+  "smokeDeleteMs",
+  "smokeDeleteRise"
 ];
 function migrateLegacyKeys(src) {
   if (!src || typeof src !== "object") return src;
@@ -2254,6 +2265,7 @@ var RAIL_EFFECTS = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
   { key: "freshInk", name: "Fresh ink", icon: "droplet", desc: "The words you just typed stay wet in your cursor's colour, then dry into the text." },
+  { key: "smokeDelete", name: "Smoke on delete", icon: "cloud-fog", desc: "What you delete drifts up and fades like smoke." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -3591,6 +3603,11 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     const ink = all(showInk, on("freshInk"));
     effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "freshInkMs", [300, 4e3, 100], { depth: 1, fallback: 1500, when: ink }));
     effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "freshInkStrength", [0.2, 1, 0.05], { depth: 1, fallback: 0.8, when: ink }));
+    const showSmoke = shown("smokeDelete");
+    effects.push(toggle("Smoke on delete", "What you delete drifts up and fades like smoke.", "smokeDelete", { gate: true, when: showSmoke }));
+    const smoke = all(showSmoke, on("smokeDelete"));
+    effects.push(slider("Drift time", "How long the smoke lasts, in milliseconds.", "smokeDeleteMs", [400, 3e3, 50], { depth: 1, fallback: 1100, when: smoke }));
+    effects.push(slider("Drift height", "How high it rises, in lines.", "smokeDeleteRise", [0.3, 3, 0.1], { depth: 1, fallback: 1.2, when: smoke }));
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
     const trail = all(showTrail, on("flameTrail"));
@@ -7017,13 +7034,123 @@ var effectsInkMethods = {
   }
 };
 
+// src/effects/effects-smoke.ts
+var SMOKE_MAX_CHARS = 40;
+var SMOKE_STAGGER_MS = 16;
+var SMOKE_SWAY = 0.16;
+var SMOKE_GROW = 0.35;
+var effectsSmokeMethods = {
+  // The note as it is now, for the next deletion to read from. Kept only
+  // while the effect is on.
+  _smokeRemember() {
+    let doc = null;
+    if (this.look.smokeDelete) {
+      try {
+        doc = this.app.workspace.activeEditor?.editor?.cm?.state.doc ?? null;
+      } catch {
+        doc = null;
+      }
+    }
+    this._smokeDoc = doc;
+  },
+  // `old` is the caret the deletion was made from, `now` where it landed.
+  spawnSmoke(old, now) {
+    if (!this.look.smokeDelete) return;
+    const prev = this._smokeDoc;
+    const view = this.app.workspace.activeEditor?.editor?.cm;
+    if (!prev || !view) return;
+    if (typeof old.pos !== "number" || typeof now.pos !== "number") return;
+    const n = old.pos - now.pos;
+    if (n <= 0 || n > SMOKE_MAX_CHARS) return;
+    const doc = view.state.doc;
+    if (typeof old.docLen === "number" && old.docLen !== prev.length) return;
+    if (prev.length - doc.length !== n) return;
+    if (prev.sliceString(old.pos, old.pos + 24) !== doc.sliceString(now.pos, now.pos + 24)) return;
+    if (prev.sliceString(Math.max(0, now.pos - 24), now.pos) !== doc.sliceString(Math.max(0, now.pos - 24), now.pos)) return;
+    let text = prev.sliceString(now.pos, old.pos);
+    const nl = text.lastIndexOf("\n");
+    if (nl >= 0) text = text.slice(nl + 1);
+    if (!text.trim()) return;
+    const chars = [...text];
+    const t0 = performance.now();
+    const color = old.textColor || this.getActiveColor() || "#888888";
+    const rowLeft = typeof old.rowLeft === "number" ? old.rowLeft : -Infinity;
+    let x = old.x;
+    for (let k = 0; k < chars.length; k++) {
+      const ch = chars[chars.length - 1 - k];
+      const w = (this.measureCharWidth(ch, old.fontFamily, old.fontSize, old.fontWeight, old.fontStyle) ?? old.actualCharWidth ?? 8) + (old.letterSpacing || 0);
+      x -= w;
+      if (x < rowLeft - 1) break;
+      if (!ch.trim()) continue;
+      this.smokeGlyphs.push({
+        char: ch,
+        x,
+        top: old.top,
+        h: old.h || 20,
+        fontSize: old.fontSize,
+        fontFamily: old.fontFamily,
+        fontWeight: old.fontWeight,
+        fontStyle: old.fontStyle,
+        color,
+        start: t0,
+        delay: k * SMOKE_STAGGER_MS,
+        phase: Math.random() * Math.PI * 2,
+        drift: (Math.random() - 0.5) * 0.5
+      });
+    }
+  },
+  // Where a glyph is at `t` (0 at lift-off, 1 gone): risen, swayed, spread.
+  smokePose(g, t, riseLines) {
+    const u = Math.max(0, Math.min(1, t));
+    const lift = 1 - (1 - u) * (1 - u);
+    return {
+      dx: (Math.sin(g.phase + u * 3.2) * SMOKE_SWAY + g.drift) * g.h * u,
+      dy: -riseLines * g.h * lift,
+      scale: 1 + SMOKE_GROW * u,
+      alpha: Math.pow(1 - u, 1.3)
+    };
+  },
+  drawSmoke() {
+    const ctx = this.ctx;
+    if (!ctx || !this.smokeGlyphs.length) return;
+    const now = performance.now();
+    const ms = Math.max(100, Math.min(1e4, Number(this.look.smokeDeleteMs) || 1100));
+    const rise = Math.max(0, Math.min(5, Number(this.look.smokeDeleteRise ?? 1.2)));
+    this.smokeGlyphs = this.smokeGlyphs.filter((g) => {
+      const t = (now - g.start - g.delay) / ms;
+      if (t >= 1) return false;
+      const p = this.smokePose(g, t, rise);
+      ctx.save();
+      ctx.font = this.fontString(g.fontSize, g.fontFamily, g.fontWeight, g.fontStyle);
+      const m = ctx.measureText(g.char);
+      const ascent = m.fontBoundingBoxAscent ?? g.fontSize * 0.8;
+      const descent = m.fontBoundingBoxDescent ?? g.fontSize * 0.2;
+      const baseline = g.top + ascent + (g.h - ascent - descent) / 2;
+      const cx = g.x + p.dx + m.width / 2, cy = g.top + p.dy + g.h / 2;
+      ctx.globalAlpha = Math.max(0, p.alpha);
+      ctx.fillStyle = g.color;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.translate(cx, cy);
+      ctx.scale(p.scale, p.scale);
+      ctx.translate(-cx, -cy);
+      ctx.fillText(g.char, g.x + p.dx, baseline + p.dy);
+      ctx.restore();
+      const ext = Math.max(m.width, g.h) * p.scale;
+      this._markDirty(cx - ext, cy - ext, ext * 2, ext * 2);
+      return true;
+    });
+  }
+};
+
 // src/effects/effects.ts
 var effectsMethods = {
   ...effectsFireMethods,
   ...effectsPopsMethods,
   ...effectsDustMethods,
   ...effectsTrailMethods,
-  ...effectsInkMethods
+  ...effectsInkMethods,
+  ...effectsSmokeMethods
 };
 
 // src/paint/paint-color.ts
@@ -8901,6 +9028,7 @@ var paintFrameMethods = {
     }
     this._dirty = null;
     this.drawFreshInk();
+    this.drawSmoke();
     this.drawLettersParticles();
     this.drawCarriageReturns();
     this.drawBracketTether();
@@ -10642,7 +10770,7 @@ var engineMethods = {
     !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) || // Same reasoning: a bolt is aged and expired inside its draw call,
     // so a skipped frame would leave one frozen on screen.
     this.thunderbolts && this.thunderbolts.length > 0 || // A carriage return is aged inside its draw call too.
-    this.typeReturns && this.typeReturns.length > 0 || this.inkMarks && this.inkMarks.length > 0 || // A Typewriter stroke is a wall-clock animation of the caret itself.
+    this.typeReturns && this.typeReturns.length > 0 || this.inkMarks && this.inkMarks.length > 0 || this.smokeGlyphs && this.smokeGlyphs.length > 0 || // A Typewriter stroke is a wall-clock animation of the caret itself.
     this.typewriterMoving(nowT) || // And again for a firework. Note this covers a shell still sitting
     // out its stagger delay, which paints nothing yet but must not be
     // allowed to drop the loop into the idle heartbeat - the volley
@@ -11063,6 +11191,7 @@ var engineMethods = {
       "popLetters",
       "typewriter",
       "freshInk",
+      "smokeDelete",
       "flameTrail",
       "fireworks",
       "thunderstrike",
@@ -11545,6 +11674,10 @@ var caretsMethods = {
         const bump = Math.min(0.12, dist / 900) * (this.look.speedDemonSensitivity ?? 1);
         this.heat = Math.min(1, this.heat + bump);
       }
+    }
+    if (!secondary) {
+      if (this.look.smokeDelete && this.lastActive && caret && this._deletePending && performance.now() - this._deletePending < 250) this.spawnSmoke(this.lastActive, caret);
+      this._smokeRemember();
     }
     this.pushTrail(this.lastActive, caret);
     if (this.lastActive) {
@@ -12253,6 +12386,8 @@ var CursorSmithPlugin = class extends import_obsidian6.Plugin {
     this.typeReturns = [];
     this.inkMarks = [];
     this._inkView = null;
+    this.smokeGlyphs = [];
+    this._smokeDoc = null;
     this.fireworks = [];
     this._lastFireworkT = 0;
     this.glitch = null;

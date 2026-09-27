@@ -927,6 +927,7 @@ export const engineMethods = {
       // A carriage return is aged inside its draw call too.
       (this.typeReturns && this.typeReturns.length > 0) ||
       (this.inkMarks && this.inkMarks.length > 0) ||
+      (this.smokeGlyphs && this.smokeGlyphs.length > 0) ||
       // A Typewriter stroke is a wall-clock animation of the caret itself.
       this.typewriterMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting
@@ -1354,7 +1355,7 @@ export const engineMethods = {
       .map(([w, n]) => `${w} ${Math.round(100 * n / whyTotal)}%`).join(", ") || "none";
     const on = [];
     for (const k of ["gradientEnabled", "crtEffect", "glow", "crtNeon", "crtGlitch", "cursorTranslucent", "cursorRounded",
-                     "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "typewriter", "freshInk", "flameTrail",
+                     "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "typewriter", "freshInk", "smokeDelete", "flameTrail",
                      "fireworks", "thunderstrike", "backspaceDisintegrate", "hotHead", "stardustEnabled", "speedDemon",
                      "bracketTether", "torchEffect", "vimModeEnabled"]) {
       if (s[k as SettingKey]) on.push(k);

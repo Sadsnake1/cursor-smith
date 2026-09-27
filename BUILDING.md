@@ -21,7 +21,7 @@ src/
     effects-dust.ts     the pixel trail and stardust
     effects-trail.ts    the CRT trail and Speed demon's sparks
     effects-ink.ts      Fresh ink (a part of Typewriter)
-    effects-evaporate.ts  Evaporate on delete (a part of Popping letters)
+    effects-evaporate.ts  Backspace evaporation (a part of Pop effects)
     fire.ts             tuning constants for Hot-head
   paint/              painting the cursor (part of the class)
     paint.ts            gathered from the eight below

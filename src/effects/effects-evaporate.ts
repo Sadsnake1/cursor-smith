@@ -3,7 +3,7 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Popping letters' Evaporate on delete (on trial, 2026-09-27): the letters a
+// Pop effects' Backspace evaporation (on trial, 2026-09-27): the letters a
 // deletion takes rise from where they stood and fade, swaying a little and
 // spreading as they go - with Backspace (the letters before the caret, right
 // to left) or Delete (the letters after it, left to right). By the time the
@@ -11,7 +11,8 @@
 // kept (_evaporateDoc) and the letters are read back from it - only when the
 // change is exactly that deletion at the caret. Anything else (a paste over
 // a selection, an undo, a change elsewhere) evaporates nothing rather than
-// the wrong letters. Named Smoke on delete until the user renamed it.
+// the wrong letters. Smoke on delete, then Evaporate on delete (a part of
+// Popping letters), before the user settled the name and the place.
 import type { CaretRecord, EvaporateGlyph } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -25,9 +26,9 @@ const EVAPORATE_SWAY = 0.16;
 const EVAPORATE_GROW = 0.35;
 
 export const effectsEvaporateMethods = {
-  // Whether the effect is on: the group, Popping letters, then its own.
+  // Whether the effect is on: the group, then its own.
   _evaporateOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && this.look.popLetters && this.look.popLettersEvaporate);
+    return !!(this.look.popEffects && this.look.backspaceEvaporate);
   },
 
   // The note as it is now, for the next deletion to read from. Kept only
@@ -126,8 +127,8 @@ export const effectsEvaporateMethods = {
     const ctx = this.ctx;
     if (!ctx || !this.evaporateGlyphs.length) return;
     const now = performance.now();
-    const ms = Math.max(100, Math.min(10000, Number(this.look.popLettersEvaporateMs) || 1100));
-    const rise = Math.max(0, Math.min(5, Number(this.look.popLettersEvaporateRise ?? 1.2)));
+    const ms = Math.max(100, Math.min(10000, Number(this.look.backspaceEvaporateMs) || 1100));
+    const rise = Math.max(0, Math.min(5, Number(this.look.backspaceEvaporateRise ?? 1.2)));
     this.evaporateGlyphs = this.evaporateGlyphs.filter((g) => {
       const t = (now - g.start - g.delay) / ms;
       if (t >= 1) return false;

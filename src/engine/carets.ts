@@ -674,7 +674,7 @@ export const caretsMethods = {
         this.heat = Math.min(1, this.heat + bump);
       }
     }
-    // Evaporate on delete reads what a deletion took from the note as it was
+    // Backspace evaporation reads what a deletion took from the note as it was
     // before, so it is spawned before that note is replaced. The primary's
     // alone: one note, one kept copy.
     if (!secondary) {

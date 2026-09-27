@@ -1,6 +1,6 @@
-// Fresh ink (a part of Typewriter) and Evaporate on delete (a part of
-// Popping letters, Smoke on delete until it was renamed): two effects on
-// trial (2026-09-27), each in its own source file.
+// Fresh ink (a part of Typewriter) and Backspace evaporation (a part of Pop
+// effects; Smoke on delete, then Evaporate on delete, before): two effects
+// on trial (2026-09-27), each in its own source file.
 // One of the files test/test.js runs in order; see test/lib.js.
 const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 
@@ -155,11 +155,11 @@ section("Fresh ink: where it hooks in");
 }
 
 // ---------------------------------------------------------------------------
-section("Evaporate on delete: what Backspace took");
+section("Backspace evaporation: what Backspace took");
 {
   // The note kept at the last commit (before) and the note now (after).
   const mk = (before, after, settings = {}) => {
-    const e = makeEngine(Object.assign({ popLettersEvaporate: true }, settings));
+    const e = makeEngine(Object.assign({ backspaceEvaporate: true }, settings));
     e.evaporateGlyphs = [];
     e.measureCharWidth = () => 10;
     e._evaporateDoc = docOf(before);
@@ -196,7 +196,7 @@ section("Evaporate on delete: what Backspace took");
   const notDel = mk("say hello!", "say hell?");
   notDel.spawnEvaporate(rec(9, 10, 190), rec(8, 9, 180));
   ok("a change that is not exactly that deletion: nothing", notDel.evaporateGlyphs.length === 0);
-  const off = mk("say hello", "say hell", { popLettersEvaporate: false });
+  const off = mk("say hello", "say hell", { backspaceEvaporate: false });
   off.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
   ok("switched off, nothing", off.evaporateGlyphs.length === 0);
   const noPop = mk("say hello", "say hell", { popEffects: false });
@@ -204,7 +204,7 @@ section("Evaporate on delete: what Backspace took");
   ok("a part of Pop effects: with the group off, nothing", noPop.evaporateGlyphs.length === 0);
   const noLetters = mk("say hello", "say hell", { popLetters: false });
   noLetters.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
-  ok("...and of Popping letters: with it off, nothing", noLetters.evaporateGlyphs.length === 0);
+  ok("...not of Popping letters: it works with them off", noLetters.evaporateGlyphs.length === 1);
   const none = mk("say hello", "say hell");
   none._evaporateDoc = null;
   none.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
@@ -216,7 +216,7 @@ section("Evaporate on delete: what Backspace took");
   const keep = mk("a", "b");
   keep._evaporateRemember();
   ok("the note is kept at each commit", keep._evaporateDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
-  const keepOff = mk("a", "b", { popLettersEvaporate: false });
+  const keepOff = mk("a", "b", { backspaceEvaporate: false });
   keepOff._evaporateRemember();
   ok("...and nothing is kept with the effect off", keepOff._evaporateDoc === null);
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
@@ -225,7 +225,7 @@ section("Evaporate on delete: what Backspace took");
 }
 
 // ---------------------------------------------------------------------------
-section("Evaporate on delete: the rise");
+section("Backspace evaporation: the rise");
 {
   const e = Object.create(Plugin.prototype);
   const g = { h: 20, phase: 0, drift: 0 };
@@ -234,7 +234,7 @@ section("Evaporate on delete: the rise");
   ok("...rises, spreads and fades", p5.dy < 0 && p5.scale > 1 && p5.alpha < 1 && p5.alpha > 0, p5);
   ok("...to its height, gone at the end", Math.abs(p1.dy + 24) < 1e-9 && p1.alpha === 0, p1);
 
-  const d = makeEngine({ popLettersEvaporate: true, popLettersEvaporateMs: 1000, popLettersEvaporateRise: 1 });
+  const d = makeEngine({ backspaceEvaporate: true, backspaceEvaporateMs: 1000, backspaceEvaporateRise: 1 });
   d.ctx = textCtx();
   const t0 = performance.now();
   const glyph = (char, x, start) => ({ char, x, top: 50, h: 24, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", color: "#cccccc", start, delay: 0, phase: 0, drift: 0 });
@@ -243,7 +243,7 @@ section("Evaporate on delete: the rise");
   ok("a drifting letter is drawn, a finished one dropped", d.ctx.calls.length === 1 && d.ctx.calls[0].t === "o" && d.evaporateGlyphs.length === 1, d.ctx.calls);
   ok("...starting on the real letter's baseline", Math.abs(d.ctx.calls[0].y - (50 + 14 + 3)) < 1, d.ctx.calls[0].y);
   ok("the keys are in every look, appended; off by default; stilled by reduced motion with Pop effects",
-     ["popLettersEvaporate", "popLettersEvaporateMs", "popLettersEvaporateRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.popLettersEvaporate === false && T.REDUCED_MOTION_OFF_KEYS.includes("popEffects"));
+     ["backspaceEvaporate", "backspaceEvaporateMs", "backspaceEvaporateRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.backspaceEvaporate === false && T.REDUCED_MOTION_OFF_KEYS.includes("popEffects"));
   ok("rising letters keep the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.evaporateGlyphs = [{}]; return f._isAnimating(performance.now()) === true; })());
 }
 
@@ -270,11 +270,11 @@ section("Fresh ink: a gradient cursor");
 }
 
 // ---------------------------------------------------------------------------
-section("Evaporate on delete: what Delete took");
+section("Backspace evaporation: what Delete took");
 {
   // Delete takes the text after the caret and leaves the caret where it was.
   const mk = (before, after, settings = {}) => {
-    const e = makeEngine(Object.assign({ popLettersEvaporate: true }, settings));
+    const e = makeEngine(Object.assign({ backspaceEvaporate: true }, settings));
     e.evaporateGlyphs = [];
     e.measureCharWidth = () => 10;
     e._evaporateDoc = docOf(before);
@@ -316,7 +316,7 @@ section("Evaporate on delete: what Delete took");
   same._deletePending = performance.now();
   same._evaporateStill(rec(1, 3, 110), rec(1, 3, 110));
   ok("the same note: nothing to read", same.evaporateGlyphs.length === 0);
-  const off = mk("abc", "ac", { popLettersEvaporate: false });
+  const off = mk("abc", "ac", { backspaceEvaporate: false });
   off._deletePending = performance.now();
   off._evaporateStill(rec(1, 3, 110), rec(1, 2, 110));
   ok("switched off: nothing, and no note kept", off.evaporateGlyphs.length === 0 && off._evaporateDoc === null);
@@ -326,21 +326,25 @@ section("Evaporate on delete: what Delete took");
 }
 
 // ---------------------------------------------------------------------------
-section("Evaporate on delete: in the panel");
+section("Backspace evaporation: in the panel");
 {
-  const rows = renderPanel({ popEffects: true, popLetters: true, popLettersEvaporate: true });
+  const rows = renderPanel({ popEffects: true, popLetters: true, backspaceEvaporate: true });
   rows.tab._effectsPick = "popEffects";
   rows.tab.refreshDomState();
   const names = rows.filter((r) => r.visible).map((r) => r.name);
   const at = (n) => names.indexOf(n);
-  ok("under Popping letters, after Rise straight up, before the burst",
-     at("Popping letters") >= 0 && at("Rise straight up") > at("Popping letters") && at("Evaporate on delete") > at("Rise straight up") && at("Backspace disintegration") > at("Evaporate on delete"), names);
-  ok("...with its time and height under it", at("Evaporate time") === at("Evaporate on delete") + 1 && at("Evaporate height") === at("Evaporate on delete") + 2, names);
+  ok("a Pop effect of its own, right after Backspace disintegration",
+     at("Backspace disintegration") >= 0 && at("Backspace evaporation") === at("Backspace disintegration") + 1 && at("Popping letters") < at("Backspace disintegration"), names);
+  ok("...with its time and height under it", at("Evaporation time") === at("Backspace evaporation") + 1 && at("Evaporation height") === at("Backspace evaporation") + 2, names);
   const row = (n) => rows.find((r) => r.name === n);
-  ok("...one level in from Popping letters, its sliders one more",
-     row("Evaporate on delete").settingEl.classes.includes("cursor-smith-sub-2") && row("Evaporate time").settingEl.classes.includes("cursor-smith-sub-3"));
-  const noLetters = renderPanel({ popEffects: true, popLetters: false, popLettersEvaporate: true });
+  ok("...at the burst's level, its sliders one in",
+     row("Backspace evaporation").settingEl.classes.includes("cursor-smith-sub-1") && row("Evaporation time").settingEl.classes.includes("cursor-smith-sub-2"));
+  const noLetters = renderPanel({ popEffects: true, popLetters: false, backspaceEvaporate: true });
   noLetters.tab._effectsPick = "popEffects";
   noLetters.tab.refreshDomState();
-  ok("hidden with Popping letters off", !noLetters.some((r) => r.visible && r.name === "Evaporate on delete"));
+  ok("shown with Popping letters off", noLetters.some((r) => r.visible && r.name === "Backspace evaporation"));
+  const noPop = renderPanel({ popEffects: false, backspaceEvaporate: true });
+  noPop.tab._effectsPick = "popEffects";
+  noPop.tab.refreshDomState();
+  ok("hidden with Pop effects off", !noPop.some((r) => r.visible && r.name === "Backspace evaporation"));
 }

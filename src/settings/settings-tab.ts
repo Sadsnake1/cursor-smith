@@ -1431,18 +1431,19 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Popping letters", "Each letter you type springs out of the cursor and tumbles away.", "popLetters", { depth: 1, gate: true, when: pop }));
     effects.push(toggle("Rise straight up", "The letter floats up from the top of the cursor and fades, like a phone keyboard.",
       "popLettersRise", { depth: 2, when: all(pop, on("popLetters")) }));
-    // Evaporate on delete (on trial, 2026-09-27; Smoke on delete before the
-    // user renamed it): the letters a deletion takes, with Backspace or
-    // Delete, rising away - the other half of Popping letters.
-    const evap = all(pop, on("popLetters"), on("popLettersEvaporate"));
-    effects.push(toggle("Evaporate on delete", "Letters you delete, with Backspace or Delete, rise and fade away.", "popLettersEvaporate", { depth: 2, gate: true, when: all(pop, on("popLetters")) }));
-    effects.push(slider("Evaporate time", "How long they take to go, in milliseconds.", "popLettersEvaporateMs", [400, 3000, 50], { depth: 3, fallback: 1100, when: evap }));
-    effects.push(slider("Evaporate height", "How high they rise, in lines.", "popLettersEvaporateRise", [0.3, 3, 0.1], { depth: 3, fallback: 1.2, when: evap }));
     // Sits next to Popping letters on purpose: they're the pair that fires
     // per character, one for adding and one for removing. The two below
     // are the bigger, rarer events.
     effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
+    // Backspace evaporation (on trial, 2026-09-27; Smoke on delete, then
+    // Evaporate on delete under Popping letters, before the user settled
+    // it here): the calm counterpart of the burst above it, with Backspace
+    // or Delete - the letters rise and fade.
+    const evap = all(pop, on("backspaceEvaporate"));
+    effects.push(toggle("Backspace evaporation", "Letters you delete, with Backspace or Delete, rise and fade away.", "backspaceEvaporate", { depth: 1, gate: true, when: pop }));
+    effects.push(slider("Evaporation time", "How long they take to go, in milliseconds.", "backspaceEvaporateMs", [400, 3000, 50], { depth: 2, fallback: 1100, when: evap }));
+    effects.push(slider("Evaporation height", "How high they rise, in lines.", "backspaceEvaporateRise", [0.3, 3, 0.1], { depth: 2, fallback: 1.2, when: evap }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],

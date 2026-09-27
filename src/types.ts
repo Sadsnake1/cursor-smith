@@ -135,9 +135,9 @@ export interface Look {
   typewriterFreshInk: boolean;
   typewriterFreshInkMs: number;
   typewriterFreshInkStrength: number;
-  popLettersEvaporate: boolean;
-  popLettersEvaporateMs: number;
-  popLettersEvaporateRise: number;
+  backspaceEvaporate: boolean;
+  backspaceEvaporateMs: number;
+  backspaceEvaporateRise: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;
@@ -346,7 +346,7 @@ export interface InkMark {
   from: number; text: string; times: number[]; color: string;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
 }
-// Evaporate on delete: one deleted letter, where it stood, rising away.
+// Backspace evaporation: one deleted letter, where it stood, rising away.
 export interface EvaporateGlyph {
   char: string; x: number; top: number; h: number;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;

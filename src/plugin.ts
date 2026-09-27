@@ -540,7 +540,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Fresh ink: the wet runs, and the editor they were typed in.
   inkMarks!: InkMark[];
   _inkView!: EditorView | null;
-  // Evaporate on delete: the letters rising away, and the note as it was
+  // Backspace evaporation: the letters rising away, and the note as it was
   // before the deletion (what the letters are read back from).
   evaporateGlyphs!: EvaporateGlyph[];
   _evaporateDoc!: DocText | null;

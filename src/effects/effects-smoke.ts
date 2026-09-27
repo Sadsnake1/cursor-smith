@@ -3,7 +3,7 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Smoke on delete (on trial, 2026-09-27): what a deletion takes drifts up
+// Pop effects' Smoke on delete (on trial, 2026-09-27): what a deletion takes drifts up
 // from where it stood and fades, swaying a little and spreading as it goes -
 // the calm counterpart of Pop effects' burst. By the time the deletion is
 // seen the text is gone from the note, so the note as it was at the last
@@ -28,7 +28,7 @@ export const effectsSmokeMethods = {
   // while the effect is on.
   _smokeRemember(this: CursorSmithPlugin) {
     let doc = null;
-    if (this.look.smokeDelete) {
+    if (this.look.popEffects && this.look.backspaceSmoke) {
       try { doc = this.app.workspace.activeEditor?.editor?.cm?.state.doc ?? null; } catch { doc = null; /* an editor mid-teardown */ }
     }
     this._smokeDoc = doc;
@@ -36,7 +36,7 @@ export const effectsSmokeMethods = {
 
   // `old` is the caret the deletion was made from, `now` where it landed.
   spawnSmoke(this: CursorSmithPlugin, old: CaretRecord, now: CaretRecord) {
-    if (!this.look.smokeDelete) return;
+    if (!this.look.popEffects || !this.look.backspaceSmoke) return;
     const prev = this._smokeDoc;
     const view = this.app.workspace.activeEditor?.editor?.cm;
     if (!prev || !view) return;
@@ -94,8 +94,8 @@ export const effectsSmokeMethods = {
     const ctx = this.ctx;
     if (!ctx || !this.smokeGlyphs.length) return;
     const now = performance.now();
-    const ms = Math.max(100, Math.min(10000, Number(this.look.smokeDeleteMs) || 1100));
-    const rise = Math.max(0, Math.min(5, Number(this.look.smokeDeleteRise ?? 1.2)));
+    const ms = Math.max(100, Math.min(10000, Number(this.look.backspaceSmokeMs) || 1100));
+    const rise = Math.max(0, Math.min(5, Number(this.look.backspaceSmokeRise ?? 1.2)));
     this.smokeGlyphs = this.smokeGlyphs.filter((g) => {
       const t = (now - g.start - g.delay) / ms;
       if (t >= 1) return false;

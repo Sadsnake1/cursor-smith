@@ -1355,7 +1355,7 @@ export const engineMethods = {
       .map(([w, n]) => `${w} ${Math.round(100 * n / whyTotal)}%`).join(", ") || "none";
     const on = [];
     for (const k of ["gradientEnabled", "crtEffect", "glow", "crtNeon", "crtGlitch", "cursorTranslucent", "cursorRounded",
-                     "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "typewriter", "typewriterFreshInk", "smokeDelete", "flameTrail",
+                     "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "typewriter", "typewriterFreshInk", "backspaceSmoke", "flameTrail",
                      "fireworks", "thunderstrike", "backspaceDisintegrate", "hotHead", "stardustEnabled", "speedDemon",
                      "bracketTether", "torchEffect", "vimModeEnabled"]) {
       if (s[k as SettingKey]) on.push(k);

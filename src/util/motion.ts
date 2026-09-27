@@ -52,7 +52,6 @@ export const REDUCED_MOTION_OFF_KEYS = [
   "stardustEnabled",     // ambient drift
   "hotHead",             // continuous fire
   "typewriter",          // the caret dipping, the carriage's streak
-  "smokeDelete",         // deleted letters drifting up
   "speedDemonSparks",    // emission; the heat colour itself is not motion
   "crtGlitch",           // whole-cursor displacement bursts
   "energyEffect",        // wall-clock shimmer inside the cursor body

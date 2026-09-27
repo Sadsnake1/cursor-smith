@@ -158,7 +158,7 @@ section("Smoke on delete: what it reads back");
 {
   // The note kept at the last commit (before) and the note now (after).
   const mk = (before, after, settings = {}) => {
-    const e = makeEngine(Object.assign({ smokeDelete: true }, settings));
+    const e = makeEngine(Object.assign({ backspaceSmoke: true }, settings));
     e.smokeGlyphs = [];
     e.measureCharWidth = () => 10;
     e._smokeDoc = docOf(before);
@@ -195,9 +195,12 @@ section("Smoke on delete: what it reads back");
   const notDel = mk("say hello!", "say hell?");
   notDel.spawnSmoke(rec(9, 10, 190), rec(8, 9, 180));
   ok("a change that is not exactly that deletion: nothing", notDel.smokeGlyphs.length === 0);
-  const off = mk("say hello", "say hell", { smokeDelete: false });
+  const off = mk("say hello", "say hell", { backspaceSmoke: false });
   off.spawnSmoke(rec(9, 9, 190), rec(8, 8, 180));
   ok("switched off, nothing", off.smokeGlyphs.length === 0);
+  const noPop = mk("say hello", "say hell", { popEffects: false });
+  noPop.spawnSmoke(rec(9, 9, 190), rec(8, 8, 180));
+  ok("a part of Pop effects: with the group off, nothing", noPop.smokeGlyphs.length === 0);
   const none = mk("say hello", "say hell");
   none._smokeDoc = null;
   none.spawnSmoke(rec(9, 9, 190), rec(8, 8, 180));
@@ -209,7 +212,7 @@ section("Smoke on delete: what it reads back");
   const keep = mk("a", "b");
   keep._smokeRemember();
   ok("the note is kept at each commit", keep._smokeDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
-  const keepOff = mk("a", "b", { smokeDelete: false });
+  const keepOff = mk("a", "b", { backspaceSmoke: false });
   keepOff._smokeRemember();
   ok("...and nothing is kept with the effect off", keepOff._smokeDoc === null);
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
@@ -227,7 +230,7 @@ section("Smoke on delete: the drift");
   ok("...rises, spreads and fades", p5.dy < 0 && p5.scale > 1 && p5.alpha < 1 && p5.alpha > 0, p5);
   ok("...to its height, gone at the end", Math.abs(p1.dy + 24) < 1e-9 && p1.alpha === 0, p1);
 
-  const d = makeEngine({ smokeDelete: true, smokeDeleteMs: 1000, smokeDeleteRise: 1 });
+  const d = makeEngine({ backspaceSmoke: true, backspaceSmokeMs: 1000, backspaceSmokeRise: 1 });
   d.ctx = textCtx();
   const t0 = performance.now();
   const glyph = (char, x, start) => ({ char, x, top: 50, h: 24, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", color: "#cccccc", start, delay: 0, phase: 0, drift: 0 });
@@ -235,7 +238,7 @@ section("Smoke on delete: the drift");
   d.drawSmoke();
   ok("a drifting letter is drawn, a finished one dropped", d.ctx.calls.length === 1 && d.ctx.calls[0].t === "o" && d.smokeGlyphs.length === 1, d.ctx.calls);
   ok("...starting on the real letter's baseline", Math.abs(d.ctx.calls[0].y - (50 + 14 + 3)) < 1, d.ctx.calls[0].y);
-  ok("the keys are in every look, appended; off by default; stilled by reduced motion",
-     ["smokeDelete", "smokeDeleteMs", "smokeDeleteRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.smokeDelete === false && T.REDUCED_MOTION_OFF_KEYS.includes("smokeDelete"));
+  ok("the keys are in every look, appended; off by default; stilled by reduced motion with Pop effects",
+     ["backspaceSmoke", "backspaceSmokeMs", "backspaceSmokeRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.backspaceSmoke === false && T.REDUCED_MOTION_OFF_KEYS.includes("popEffects"));
   ok("drifting smoke keeps the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.smokeGlyphs = [{}]; return f._isAnimating(performance.now()) === true; })());
 }

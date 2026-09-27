@@ -676,7 +676,7 @@ export const caretsMethods = {
     // the last commit, so it is spawned before that note is replaced. The
     // primary's alone: one note, one kept copy.
     if (!secondary) {
-      if (this.look.smokeDelete && this.lastActive && caret && this._deletePending &&
+      if (this.look.popEffects && this.look.backspaceSmoke && this.lastActive && caret && this._deletePending &&
           performance.now() - this._deletePending < 250) this.spawnSmoke(this.lastActive, caret);
       this._smokeRemember();
     }

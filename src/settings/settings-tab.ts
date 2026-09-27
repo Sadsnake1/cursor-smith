@@ -14,7 +14,6 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
-  { key: "smokeDelete", name: "Smoke on delete", icon: "cloud-fog", desc: "What you delete drifts up and fades like smoke." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -1435,6 +1434,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // are the bigger, rarer events.
     effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
+    // Smoke on delete (on trial, 2026-09-27): the calm counterpart of the
+    // burst, beside it - both are what deleting does.
+    effects.push(toggle("Smoke on delete", "What you delete drifts up and fades like smoke.", "backspaceSmoke", { depth: 1, gate: true, when: pop }));
+    effects.push(slider("Drift time", "How long the smoke lasts, in milliseconds.", "backspaceSmokeMs", [400, 3000, 50], { depth: 2, fallback: 1100, when: all(pop, on("backspaceSmoke")) }));
+    effects.push(slider("Drift height", "How high it rises, in lines.", "backspaceSmokeRise", [0.3, 3, 0.1], { depth: 2, fallback: 1.2, when: all(pop, on("backspaceSmoke")) }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],
@@ -1476,14 +1480,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
-
-    // Smoke on delete (on trial, 2026-09-27): the calm counterpart of the
-    // deletion burst.
-    const showSmoke = shown("smokeDelete");
-    effects.push(toggle("Smoke on delete", "What you delete drifts up and fades like smoke.", "smokeDelete", { gate: true, when: showSmoke }));
-    const smoke = all(showSmoke, on("smokeDelete"));
-    effects.push(slider("Drift time", "How long the smoke lasts, in milliseconds.", "smokeDeleteMs", [400, 3000, 50], { depth: 1, fallback: 1100, when: smoke }));
-    effects.push(slider("Drift height", "How high it rises, in lines.", "smokeDeleteRise", [0.3, 3, 0.1], { depth: 1, fallback: 1.2, when: smoke }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));

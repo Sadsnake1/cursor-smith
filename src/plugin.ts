@@ -332,6 +332,7 @@ export default class CursorSmithPlugin extends Plugin {
   _clipChain!: Element[] | null;
   _clipChainFor!: Element | null;
   _clipRect!: Rect | null;
+  _viewClip!: Rect | null;
   _clipTop!: number;
   _deletePending!: number;
   _dirty!: Bounds | null;

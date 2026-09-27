@@ -199,6 +199,31 @@ section("the canvas follows the caret (issue #30)");
     f.fireworks.push({});
     f._fitCanvasRegion();
     ok("a live firework shell claims the whole clip window too", f._canvasRect.w === f._clipRect.w && f._canvasRect.h === f._clipRect.h);
+
+    // In the scroller the clip window is the whole note's content box. A
+    // bolt claimed all of it: a canvas the height of a 2,500-word note on
+    // every Enter with Lightning on, the lag on Enter in long notes (a Mac
+    // M1, 2026-09-27). It claims the part on screen.
+    const g = makeRegionEngine();
+    g._clipRect = { x: 100, y: -4000, w: 1000, h: 9000 };
+    g._viewClip = { x: 100, y: 50, w: 1000, h: 700 };
+    g._wrapperPos = { left: 100, top: -4000 };
+    g.setCaret(400, 300);
+    g._fitCanvasRegion();
+    g.thunderbolts.push({});
+    g._fitCanvasRegion();
+    const r = g._canvasRect;
+    ok("in the scroller a live bolt claims the part of the note on screen, not the whole note",
+       r.h < 1000 && r.y + r.h > 50 + 600 && r.y <= 50 && r.w <= 1000, r);
+    g.thunderbolts.length = 0;
+    g.fireworks.push({});
+    g._fitCanvasRegion();
+    ok("...and a firework the same", g._canvasRect.h < 1000, g._canvasRect);
+    const need = g._frameNeed(g._clipRect);
+    ok("...the need is the visible window itself", need.y0 === 50 && need.y1 === 750 && need.x0 === 100 && need.x1 === 1100, need);
+    g._viewClip = { x: 100, y: 20000, w: 1000, h: 700 };
+    const off = g._frameNeed(g._clipRect);
+    ok("...a visible window outside the clip falls back to the clip", off.y0 === -4000 && off.y1 === 5000, off);
   }
 
   // The need is the union of everything known before the draw.

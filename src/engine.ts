@@ -224,6 +224,7 @@ export const engineMethods = {
     this.ctx = null;
     this._canvasRect = null;
     this._clipRect = null;
+    this._viewClip = null;
     this._wrapperPos = null;
     this._dirtyRaw = null;
     // Single reset site (see _resetEngineState). This used to be a hand-copied
@@ -407,6 +408,18 @@ export const engineMethods = {
             this._canvasPlaced = false;
           }
           this._clipRect = { x: left, y: top, w: width, h: height };
+          // The clip window here is the whole content box - a long note's is
+          // thousands of pixels tall - so what a bolt or a firework may
+          // claim (_frameNeed) is the part of it the scroller shows. Claiming
+          // the box sized the canvas to the whole note on every Enter with
+          // Lightning on: 8 megapixels in a 2,500-word note, some 28 at a
+          // Retina DPR, allocated, cleared and composited - "the cursor lags
+          // on Enter in long notes", gone with Lightning off (a Mac M1,
+          // 2026-09-27).
+          const vx0 = Math.max(left, sr.left), vy0 = Math.max(top, sr.top);
+          const vx1 = Math.min(left + width, sr.left + sc.clientWidth);
+          const vy1 = Math.min(top + height, sr.top + sc.clientHeight);
+          this._viewClip = vx1 > vx0 && vy1 > vy0 ? { x: vx0, y: vy0, w: vx1 - vx0, h: vy1 - vy0 } : null;
         } else if (this.canvasWrapper && this.canvas) {
           // Only clip to the editor pane while the note editor is the thing
           // actually focused. The moment focus moves anywhere else - file
@@ -483,6 +496,8 @@ export const engineMethods = {
             // and also drops a region that no longer lies inside the clip).
             this._wrapperPos = { left, top };
             this._clipRect = { x: left, y: top, w: width, h: height };
+            // The fixed wrapper's clip window is already what shows.
+            this._viewClip = null;
             this._canvasPlaced = false;
           }
         }
@@ -685,13 +700,21 @@ export const engineMethods = {
   // showed the pixels, which is what lets anything that outruns the pad
   // reappear one frame later instead of staying lost.
   //
-  // Two effects are exempt from all that and claim the whole clip window for
-  // as long as they are live: a thunderbolt starts above the pane on purpose
-  // (see spawnThunderbolt) and a firework shell climbs out of any region
-  // fitted round the caret. Both are rare and short.
+  // Two effects are exempt from all that and claim the whole visible window
+  // for as long as they are live: a thunderbolt starts above the pane on
+  // purpose (see spawnThunderbolt) and a firework shell climbs out of any
+  // region fitted round the caret. Both are rare and short. Visible: in the
+  // scroller the clip window is the whole note, and _viewClip is the part
+  // of it on screen.
   _frameNeed(this: CursorSmithPlugin, clip: Rect): Bounds | null {
     if ((this.thunderbolts && this.thunderbolts.length) ||
         (this.fireworks && this.fireworks.length)) {
+      const v = this._viewClip;
+      if (v) {
+        const x0 = Math.max(clip.x, v.x), y0 = Math.max(clip.y, v.y);
+        const x1 = Math.min(clip.x + clip.w, v.x + v.w), y1 = Math.min(clip.y + clip.h, v.y + v.h);
+        if (x1 > x0 && y1 > y0) return { x0, y0, x1, y1 };
+      }
       return { x0: clip.x, y0: clip.y, x1: clip.x + clip.w, y1: clip.y + clip.h };
     }
     let b: Bounds | null = null;

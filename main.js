@@ -9972,6 +9972,7 @@ var engineMethods = {
     this.ctx = null;
     this._canvasRect = null;
     this._clipRect = null;
+    this._viewClip = null;
     this._wrapperPos = null;
     this._dirtyRaw = null;
     this._resetEngineState();
@@ -10074,6 +10075,10 @@ var engineMethods = {
             this._canvasPlaced = false;
           }
           this._clipRect = { x: left, y: top, w: width, h: height };
+          const vx0 = Math.max(left, sr.left), vy0 = Math.max(top, sr.top);
+          const vx1 = Math.min(left + width, sr.left + sc.clientWidth);
+          const vy1 = Math.min(top + height, sr.top + sc.clientHeight);
+          this._viewClip = vx1 > vx0 && vy1 > vy0 ? { x: vx0, y: vy0, w: vx1 - vx0, h: vy1 - vy0 } : null;
         } else if (this.canvasWrapper && this.canvas) {
           const r = (view && this.editorFocused(view) ? this.getPaneRect(view) : this.getCaretClipRect(this.canvas.ownerDocument)) || // Never 100vw/100vh here: a full-viewport layer over the
           // titlebar kills Electron's window-drag hit-testing on
@@ -10113,6 +10118,7 @@ var engineMethods = {
             this.canvasWrapper.style.clipPath = clipPath;
             this._wrapperPos = { left, top };
             this._clipRect = { x: left, y: top, w: width, h: height };
+            this._viewClip = null;
             this._canvasPlaced = false;
           }
         }
@@ -10259,12 +10265,20 @@ var engineMethods = {
   // showed the pixels, which is what lets anything that outruns the pad
   // reappear one frame later instead of staying lost.
   //
-  // Two effects are exempt from all that and claim the whole clip window for
-  // as long as they are live: a thunderbolt starts above the pane on purpose
-  // (see spawnThunderbolt) and a firework shell climbs out of any region
-  // fitted round the caret. Both are rare and short.
+  // Two effects are exempt from all that and claim the whole visible window
+  // for as long as they are live: a thunderbolt starts above the pane on
+  // purpose (see spawnThunderbolt) and a firework shell climbs out of any
+  // region fitted round the caret. Both are rare and short. Visible: in the
+  // scroller the clip window is the whole note, and _viewClip is the part
+  // of it on screen.
   _frameNeed(clip) {
     if (this.thunderbolts && this.thunderbolts.length || this.fireworks && this.fireworks.length) {
+      const v = this._viewClip;
+      if (v) {
+        const x0 = Math.max(clip.x, v.x), y0 = Math.max(clip.y, v.y);
+        const x1 = Math.min(clip.x + clip.w, v.x + v.w), y1 = Math.min(clip.y + clip.h, v.y + v.h);
+        if (x1 > x0 && y1 > y0) return { x0, y0, x1, y1 };
+      }
       return { x0: clip.x, y0: clip.y, x1: clip.x + clip.w, y1: clip.y + clip.h };
     }
     let b = null;

@@ -704,17 +704,17 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     ok("the Effects card opens with the rail", !!rail && sectionOf(rail) === "Effects" && rows.filter((r) => sectionOf(r) === "Effects")[0] === rail);
     const chips = rail.settingEl.querySelectorAll(".cursor-smith-chip");
     const chip = (name) => chips.find((c) => c.children.some((k) => k.text === name));
-    ok("one chip per effect, plus All", chips.length === 12, chips.length);
+    ok("one chip per effect, and no All (2026-09-27)", chips.length === 11 && !chip("All"), chips.length);
     ok("every effect's chip carries its Lucide icon (Hot-head a flame, Speed demon a gauge, Typewriter a keyboard, the torch the candle)",
        chips.slice(0, 11).every((c) => c.querySelector(".cursor-smith-chip-icon") && c.querySelector(".cursor-smith-chip-icon").icon)
        && chip("Hot-head").querySelector(".cursor-smith-chip-icon").icon === "flame" && chip("Speed demon").querySelector(".cursor-smith-chip-icon").icon === "gauge"
        && chip("Typewriter").querySelector(".cursor-smith-chip-icon").icon === "keyboard"
        && chip("Torch spotlight").querySelector(".cursor-smith-chip-icon").icon === "cursor-smith-candle");
-    ok("the picked chip is the rail's one Tab stop, and arrows move it", chips.filter((c) => c.attrs.tabindex === "0").length === 1 && chips.find((c) => c.attrs.tabindex === "0") === chips.find((c) => c.classes.includes("is-picked")) && (() => { const i = chips.findIndex((c) => c.attrs.tabindex === "0"); rail.settingEl.querySelector(".cursor-smith-rail").listeners.keydown({ key: "ArrowRight", target: chips[i], preventDefault() {} }); return chips[(i + 1) % chips.length].focused === true && chips[(i + 1) % chips.length].attrs.tabindex === "0"; })(), chips.map((c) => c.attrs.tabindex));
+    ok("the picked chip - with none picked, the first - is the rail's one Tab stop, and arrows move it", chips.filter((c) => c.attrs.tabindex === "0").length === 1 && chips.find((c) => c.attrs.tabindex === "0") === (chips.find((c) => c.classes.includes("is-picked")) || chips[0]) && (() => { const i = chips.findIndex((c) => c.attrs.tabindex === "0"); rail.settingEl.querySelector(".cursor-smith-rail").listeners.keydown({ key: "ArrowRight", target: chips[i], preventDefault() {} }); return chips[(i + 1) % chips.length].focused === true && chips[(i + 1) % chips.length].attrs.tabindex === "0"; })(), chips.map((c) => c.attrs.tabindex));
     ok("a chip marks the effects that are on", chip("Pop effects").classes.includes("is-on") && chip("Motion smear").classes.includes("is-on") && !chip("CRT effects").classes.includes("is-on"));
-    ok("the harness sees every effect (its pick is All)", chip("All").classes.includes("is-picked") && named(rows, "Stiffness") && !named(rows, "Trail length"));
+    ok("the harness sees every effect (its pick is \"all\", which has no chip)", rows.tab._effectsPick === "all" && !chips.some((c) => c.classes.includes("is-picked")) && named(rows, "Stiffness") && !named(rows, "Trail length"));
     chip("CRT effects").click();
-    ok("clicking a chip picks it", rows.tab._effectsPick === "crtEffect" && rows.tab.refreshes === 1 && chip("CRT effects").classes.includes("is-picked") && !chip("All").classes.includes("is-picked"));
+    ok("clicking a chip picks it", rows.tab._effectsPick === "crtEffect" && rows.tab.refreshes === 1 && chip("CRT effects").classes.includes("is-picked"));
     ok("...shows the picked effect's own toggle", named(rows, "CRT effects"));
     ok("...hides the other effects' rows", !named(rows, "Stiffness") && !named(rows, "Pop effects") && !named(rows, "Pixel density"));
     ok("...and its sub-options follow its own gate", !named(rows, "Trail length"));

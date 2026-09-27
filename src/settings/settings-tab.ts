@@ -73,9 +73,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // Rows register these while they render; the list is emptied whenever the
   // tree is built again, because the rows are then rendered again.
   _refreshers: (() => void)[] = [];
-  // Which effect the Effects page's rail shows, by its master key, or "all";
-  // null until the user picks one (then the first effect that is on). Panel
-  // state for the session, never in the settings.
+  // Which effect the Effects page's rail shows, by its master key; null
+  // until the user picks one (then the first effect that is on). Panel state
+  // for the session, never in the settings. "all" shows every effect's rows
+  // and has no chip since 2026-09-27 ("nobody goes through all that"): only
+  // the panel harness sets it, to see every row at once.
   _effectsPick: string | null = null;
   // The effects that are on in the look the pages show (set with the
   // pages), for the Effects entry's icons; and the observer that puts
@@ -1397,7 +1399,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // The Effects page: a RAIL of chips at the top, one per effect with its
     // icon and a dot for "on", and the picked effect's rows under it - one
     // effect on screen at a time, one back to the list of pages (an effect
-    // per sub-page was one back too many). "All" shows every effect's rows.
+    // per sub-page was one back too many).
     // The pick is panel state, kept for the session, never in the settings.
     //
     // Every effect's rows carry the pick in their predicate, on top of their
@@ -1670,7 +1672,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
 
 
   // --- The Effects rail ------------------------------------------------------
-  // One row of chips, one per effect plus "All": a tick while the effect
+  // One row of chips, one per effect: a tick while the effect
   // is on, the effect's icon, its name; the picked chip filled with the
   // accent. Repainted on every
   // refresh - an effect's toggle row changes its dot - and a click on one
@@ -1687,7 +1689,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         const chips: { key: string; el: HTMLElement }[] = [];
         // Tick, icon, name: the tick - the preset cards' - shows while the
         // effect is on (the stylesheet hides it otherwise, so a flip is a
-        // class change and no rebuild). "All" has none.
+        // class change and no rebuild).
         const chip = (key: string, name: string, icon: string | null) => {
           const el = rail.createEl("button", { cls: "cursor-smith-chip", attr: { type: "button" } });
           if (icon) setIcon(el.createSpan({ cls: "cursor-smith-tick" }), "check");
@@ -1697,13 +1699,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           chips.push({ key, el });
         };
         for (const e of RAIL_EFFECTS) chip(e.key, e.name, e.icon);
-        chip("all", "All", null);
         const roving = this.rovingRow(rail, chips.map((c) => c.el));
         const paint = () => {
           const p = pick();
           for (const c of chips) {
             c.el.toggleClass("is-picked", c.key === p);
-            c.el.toggleClass("is-on", c.key !== "all" && !!get(c.key as keyof Look));
+            c.el.toggleClass("is-on", !!get(c.key as keyof Look));
             c.el.setAttribute("aria-pressed", c.key === p ? "true" : "false");
           }
           roving.picked(Math.max(0, chips.findIndex((c) => c.key === p)));

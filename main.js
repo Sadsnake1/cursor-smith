@@ -2318,9 +2318,11 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     // Rows register these while they render; the list is emptied whenever the
     // tree is built again, because the rows are then rendered again.
     this._refreshers = [];
-    // Which effect the Effects page's rail shows, by its master key, or "all";
-    // null until the user picks one (then the first effect that is on). Panel
-    // state for the session, never in the settings.
+    // Which effect the Effects page's rail shows, by its master key; null
+    // until the user picks one (then the first effect that is on). Panel state
+    // for the session, never in the settings. "all" shows every effect's rows
+    // and has no chip since 2026-09-27 ("nobody goes through all that"): only
+    // the panel harness sets it, to see every row at once.
     this._effectsPick = null;
     // The effects that are on in the look the pages show (set with the
     // pages), for the Effects entry's icons; and the observer that puts
@@ -3805,7 +3807,7 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     };
   }
   // --- The Effects rail ------------------------------------------------------
-  // One row of chips, one per effect plus "All": a tick while the effect
+  // One row of chips, one per effect: a tick while the effect
   // is on, the effect's icon, its name; the picked chip filled with the
   // accent. Repainted on every
   // refresh - an effect's toggle row changes its dot - and a click on one
@@ -3829,13 +3831,12 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
           chips.push({ key, el });
         };
         for (const e of RAIL_EFFECTS) chip(e.key, e.name, e.icon);
-        chip("all", "All", null);
         const roving = this.rovingRow(rail, chips.map((c) => c.el));
         const paint = () => {
           const p = pick();
           for (const c of chips) {
             c.el.toggleClass("is-picked", c.key === p);
-            c.el.toggleClass("is-on", c.key !== "all" && !!get(c.key));
+            c.el.toggleClass("is-on", !!get(c.key));
             c.el.setAttribute("aria-pressed", c.key === p ? "true" : "false");
           }
           roving.picked(Math.max(0, chips.findIndex((c) => c.key === p)));

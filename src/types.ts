@@ -346,6 +346,14 @@ export interface InkMark {
   from: number; text: string; times: number[]; color: string;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
 }
+// A deletion's letters (effects-delete.ts): each letter, where it stood and
+// its width, nearest the caret first; which way it went; the caret it was
+// made from (its row, font and colour).
+export interface DeletedLetters {
+  letters: { char: string; x: number; w: number }[];
+  forward: boolean;
+  old: CaretRecord;
+}
 // Backspace evaporation: one deleted letter, where it stood, rising away.
 export interface EvaporateGlyph {
   char: string; x: number; top: number; h: number;

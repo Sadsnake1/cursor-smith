@@ -6,19 +6,13 @@
 // Pop effects' Backspace evaporation (on trial, 2026-09-27): the letters a
 // deletion takes rise from where they stood and fade, swaying a little and
 // spreading as they go - with Backspace (the letters before the caret, right
-// to left) or Delete (the letters after it, left to right). By the time the
-// deletion is seen the text is gone from the note, so the note as it was is
-// kept (_evaporateDoc) and the letters are read back from it - only when the
-// change is exactly that deletion at the caret. Anything else (a paste over
-// a selection, an undo, a change elsewhere) evaporates nothing rather than
-// the wrong letters. Smoke on delete, then Evaporate on delete (a part of
+// to left) or Delete (the letters after it, left to right). What was taken,
+// and where, is read in effects-delete.ts, shared with Backspace
+// disintegration. Smoke on delete, then Evaporate on delete (a part of
 // Popping letters), before the user settled the name and the place.
-import type { CaretRecord, EvaporateGlyph } from "../types";
+import type { DeletedLetters, EvaporateGlyph } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
-// A deletion longer than this is a selection wiped, not writing undone: it
-// would be a wall of text.
-export const EVAPORATE_MAX_CHARS = 40;
 // Each letter lifts off this long after the one nearer the caret.
 const EVAPORATE_STAGGER_MS = 16;
 // How far it sways either side, and how much it spreads, at the end.
@@ -31,84 +25,22 @@ export const effectsEvaporateMethods = {
     return !!(this.look.popEffects && this.look.backspaceEvaporate);
   },
 
-  // The note as it is now, for the next deletion to read from. Kept only
-  // while the effect is on.
-  _evaporateRemember(this: CursorSmithPlugin) {
-    let doc = null;
-    if (this._evaporateOn()) {
-      try { doc = this.app.workspace.activeEditor?.editor?.cm?.state.doc ?? null; } catch { doc = null; /* an editor mid-teardown */ }
-    }
-    this._evaporateDoc = doc;
-  },
-
-  // A frame the caret sat still (updateActivePoint, no move to commit): the
-  // Delete key takes the text after the caret and leaves it where it is, so
-  // this is where that deletion is seen. The note is kept current either way.
-  _evaporateStill(this: CursorSmithPlugin, old: CaretRecord, now: CaretRecord) {
-    if (!this._evaporateOn()) { this._evaporateDoc = null; return; }
-    const doc = this.app.workspace.activeEditor?.editor?.cm?.state.doc ?? null;
-    if (!doc || doc === this._evaporateDoc) return;
-    if (this._deletePending && performance.now() - this._deletePending < 250) this.spawnEvaporate(old, now);
-    this._evaporateDoc = doc;
-  },
-
-  // `old` is the caret the deletion was made from, `now` where it is after:
-  // before it (Backspace) or at the same place (Delete).
-  spawnEvaporate(this: CursorSmithPlugin, old: CaretRecord, now: CaretRecord) {
+  // The letters of one deletion, nearest the caret first, rising away. A
+  // space takes its room and raises nothing.
+  spawnEvaporate(this: CursorSmithPlugin, deleted: DeletedLetters) {
     if (!this._evaporateOn()) return;
-    const prev = this._evaporateDoc;
-    const view = this.app.workspace.activeEditor?.editor?.cm;
-    if (!prev || !view) return;
-    if (typeof old.pos !== "number" || typeof now.pos !== "number") return;
-    const doc = view.state.doc;
-    // The kept note must be the one `old` was measured in.
-    if (typeof old.docLen === "number" && old.docLen !== prev.length) return;
-    const n = prev.length - doc.length;
-    if (n <= 0 || n > EVAPORATE_MAX_CHARS) return;
-    // Backspace takes [now.pos, old.pos); Delete takes n after the caret.
-    const forward = now.pos === old.pos;
-    if (!forward && old.pos - now.pos !== n) return;
-    const from = forward ? old.pos : now.pos, to = from + n;
-    // ...and the note around it must be untouched: exactly that deletion.
-    if (prev.sliceString(to, to + 24) !== doc.sliceString(from, from + 24)) return;
-    if (prev.sliceString(Math.max(0, from - 24), from) !== doc.sliceString(Math.max(0, from - 24), from)) return;
-    let text = prev.sliceString(from, to);
-    // Only the row the caret stands on: a line joined by the deletion
-    // evaporates nothing of the line break or the line past it.
-    if (forward) { const nl = text.indexOf("\n"); if (nl >= 0) text = text.slice(0, nl); }
-    else { const nl = text.lastIndexOf("\n"); if (nl >= 0) text = text.slice(nl + 1); }
-    if (!text.trim()) return;
-    const chars = [...text];
+    const old = deleted.old;
     const t0 = performance.now();
     const color = old.textColor || this.getActiveColor() || "#888888";
-    const width = (ch: string) => (this.measureCharWidth(ch, old.fontFamily, old.fontSize, old.fontWeight, old.fontStyle) ?? old.actualCharWidth ?? 8) + (old.letterSpacing || 0);
-    const glyph = (ch: string, x: number, k: number): EvaporateGlyph => ({
-      char: ch, x, top: old.top, h: old.h || 20,
-      fontSize: old.fontSize, fontFamily: old.fontFamily, fontWeight: old.fontWeight, fontStyle: old.fontStyle,
-      color, start: t0, delay: k * EVAPORATE_STAGGER_MS,
-      phase: Math.random() * Math.PI * 2, drift: (Math.random() - 0.5) * 0.5,
+    deleted.letters.forEach((l, k) => {
+      if (!l.char.trim()) return;
+      this.evaporateGlyphs.push({
+        char: l.char, x: l.x, top: old.top, h: old.h || 20,
+        fontSize: old.fontSize, fontFamily: old.fontFamily, fontWeight: old.fontWeight, fontStyle: old.fontStyle,
+        color, start: t0, delay: k * EVAPORATE_STAGGER_MS,
+        phase: Math.random() * Math.PI * 2, drift: (Math.random() - 0.5) * 0.5,
+      });
     });
-    if (forward) {
-      // Laid out rightwards from the caret, the nearest letter first.
-      const rowRight = typeof old.rowRight === "number" ? old.rowRight : Infinity;
-      let x = old.x;
-      for (let k = 0; k < chars.length; k++) {
-        const w = width(chars[k]);
-        if (x + w > rowRight + 1) break;
-        if (chars[k].trim()) this.evaporateGlyphs.push(glyph(chars[k], x, k));
-        x += w;
-      }
-    } else {
-      // Laid out leftwards from where the caret stood, the nearest first.
-      const rowLeft = typeof old.rowLeft === "number" ? old.rowLeft : -Infinity;
-      let x = old.x;
-      for (let k = 0; k < chars.length; k++) {
-        const ch = chars[chars.length - 1 - k];
-        x -= width(ch);
-        if (x < rowLeft - 1) break;
-        if (ch.trim()) this.evaporateGlyphs.push(glyph(ch, x, k));
-      }
-    }
   },
 
   // Where a glyph is at `t` (0 at lift-off, 1 gone): risen, swayed, spread.

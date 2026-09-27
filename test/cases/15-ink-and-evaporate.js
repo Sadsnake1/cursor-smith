@@ -162,66 +162,66 @@ section("Backspace evaporation: what Backspace took");
     const e = makeEngine(Object.assign({ backspaceEvaporate: true }, settings));
     e.evaporateGlyphs = [];
     e.measureCharWidth = () => 10;
-    e._evaporateDoc = docOf(before);
+    e._deletionDoc = docOf(before);
     e.app = { workspace: { activeEditor: { editor: { cm: mkView(after, 0) } } } };
     return e;
   };
   const rec = (pos, docLen, x, extra = {}) => Object.assign({ pos, docLen, x, top: 50, h: 24, rowLeft: 100, actualCharWidth: 10, letterSpacing: 0 }, last, extra);
 
   const e = mk("say hello", "say hell");
-  e.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
+  e._deletionFx(rec(9, 9, 190), rec(8, 8, 180));
   ok("Backspace: the letter it took, where it stood",
      e.evaporateGlyphs.length === 1 && e.evaporateGlyphs[0].char === "o" && e.evaporateGlyphs[0].x === 180 && e.evaporateGlyphs[0].top === 50, e.evaporateGlyphs);
   ok("...in the text's own colour", e.evaporateGlyphs[0].color === "#cccccc");
 
   const w = mk("say hello", "say ");
-  w.spawnEvaporate(rec(9, 9, 190), rec(4, 4, 140));
+  w._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
   ok("a whole word: every letter, laid out leftwards from the caret",
      w.evaporateGlyphs.map((g) => g.char).join("") === "olleh" && w.evaporateGlyphs[4].x === 140, w.evaporateGlyphs.map((g) => [g.char, g.x]));
   ok("...lifting off right to left", w.evaporateGlyphs[0].delay === 0 && w.evaporateGlyphs[4].delay > w.evaporateGlyphs[1].delay);
 
   const sp = mk("say hello", "say");
-  sp.spawnEvaporate(rec(9, 9, 190), rec(3, 3, 130));
+  sp._deletionFx(rec(9, 9, 190), rec(3, 3, 130));
   ok("a space takes its room but nothing rises from it", sp.evaporateGlyphs.length === 5 && sp.evaporateGlyphs[4].x === 140, sp.evaporateGlyphs.map((g) => [g.char, g.x]));
 
   const j = mk("ab\ncd", "abcd");
-  j.spawnEvaporate(rec(3, 5, 100), rec(2, 4, 120));
+  j._deletionFx(rec(3, 5, 100), rec(2, 4, 120));
   ok("joining two lines evaporates nothing", j.evaporateGlyphs.length === 0);
   const big = mk("x".repeat(60), "");
-  big.spawnEvaporate(rec(60, 60, 700), rec(0, 0, 100));
+  big._deletionFx(rec(60, 60, 700), rec(0, 0, 100));
   ok("a wiped selection does not evaporate", big.evaporateGlyphs.length === 0);
   const other = mk("say hello", "say hell");
-  other.spawnEvaporate(rec(9, 10, 190), rec(8, 8, 180));
+  other._deletionFx(rec(9, 10, 190), rec(8, 8, 180));
   ok("a kept note that is not the one the caret stood in: nothing", other.evaporateGlyphs.length === 0);
   const notDel = mk("say hello!", "say hell?");
-  notDel.spawnEvaporate(rec(9, 10, 190), rec(8, 9, 180));
+  notDel._deletionFx(rec(9, 10, 190), rec(8, 9, 180));
   ok("a change that is not exactly that deletion: nothing", notDel.evaporateGlyphs.length === 0);
   const off = mk("say hello", "say hell", { backspaceEvaporate: false });
-  off.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
+  off._deletionFx(rec(9, 9, 190), rec(8, 8, 180));
   ok("switched off, nothing", off.evaporateGlyphs.length === 0);
   const noPop = mk("say hello", "say hell", { popEffects: false });
-  noPop.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
+  noPop._deletionFx(rec(9, 9, 190), rec(8, 8, 180));
   ok("a part of Pop effects: with the group off, nothing", noPop.evaporateGlyphs.length === 0);
   const noLetters = mk("say hello", "say hell", { popLetters: false });
-  noLetters.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
+  noLetters._deletionFx(rec(9, 9, 190), rec(8, 8, 180));
   ok("...not of Popping letters: it works with them off", noLetters.evaporateGlyphs.length === 1);
   const none = mk("say hello", "say hell");
-  none._evaporateDoc = null;
-  none.spawnEvaporate(rec(9, 9, 190), rec(8, 8, 180));
+  none._deletionDoc = null;
+  none._deletionFx(rec(9, 9, 190), rec(8, 8, 180));
   ok("with no note kept, nothing", none.evaporateGlyphs.length === 0);
   const row = mk("say hello", "say ");
-  row.spawnEvaporate(rec(9, 9, 190, { rowLeft: 175 }), rec(4, 4, 140));
+  row._deletionFx(rec(9, 9, 190, { rowLeft: 175 }), rec(4, 4, 140));
   ok("letters that stood on the row above do not rise from this one", row.evaporateGlyphs.length === 1 && row.evaporateGlyphs[0].char === "o");
 
   const keep = mk("a", "b");
-  keep._evaporateRemember();
-  ok("the note is kept at each commit", keep._evaporateDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
+  keep._deletionRemember();
+  ok("the note is kept at each commit", keep._deletionDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
   const keepOff = mk("a", "b", { backspaceEvaporate: false });
-  keepOff._evaporateRemember();
-  ok("...and nothing is kept with the effect off", keepOff._evaporateDoc === null);
+  keepOff._deletionRemember();
+  ok("...and nothing is kept with the effect off", keepOff._deletionDoc === null);
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
   ok("a commit spawns it before it keeps the new note, for the primary caret",
-     carets.includes("this.spawnEvaporate(this.lastActive, caret);") && carets.indexOf("this.spawnEvaporate(this.lastActive, caret);") < carets.indexOf("this._evaporateRemember();"));
+     carets.includes("this._deletionFx(this.lastActive, caret)") && carets.indexOf("this._deletionFx(this.lastActive, caret)") < carets.indexOf("this._deletionRemember();"));
 }
 
 // ---------------------------------------------------------------------------
@@ -277,52 +277,52 @@ section("Backspace evaporation: what Delete took");
     const e = makeEngine(Object.assign({ backspaceEvaporate: true }, settings));
     e.evaporateGlyphs = [];
     e.measureCharWidth = () => 10;
-    e._evaporateDoc = docOf(before);
+    e._deletionDoc = docOf(before);
     e.app = { workspace: { activeEditor: { editor: { cm: mkView(after, 0) } } } };
     return e;
   };
   const rec = (pos, docLen, x, extra = {}) => Object.assign({ pos, docLen, x, top: 50, h: 24, rowLeft: 100, rowRight: 400, actualCharWidth: 10, letterSpacing: 0 }, last, extra);
 
   const one = mk("abc", "ac");
-  one.spawnEvaporate(rec(1, 3, 110), rec(1, 2, 110));
+  one._deletionFx(rec(1, 3, 110), rec(1, 2, 110));
   ok("Delete: the letter after the caret, where it stood", one.evaporateGlyphs.length === 1 && one.evaporateGlyphs[0].char === "b" && one.evaporateGlyphs[0].x === 110, one.evaporateGlyphs);
   const word = mk("say hello world", "say  world");
-  word.spawnEvaporate(rec(4, 15, 140), rec(4, 10, 140));
+  word._deletionFx(rec(4, 15, 140), rec(4, 10, 140));
   ok("Ctrl+Delete: the word, laid out rightwards from the caret",
      word.evaporateGlyphs.map((g) => g.char).join("") === "hello" && word.evaporateGlyphs[0].x === 140 && word.evaporateGlyphs[4].x === 180, word.evaporateGlyphs.map((g) => [g.char, g.x]));
   ok("...lifting off left to right, the nearest first", word.evaporateGlyphs[0].delay === 0 && word.evaporateGlyphs[4].delay > word.evaporateGlyphs[1].delay);
   const join = mk("ab\ncd", "abcd");
-  join.spawnEvaporate(rec(2, 5, 120), rec(2, 4, 120));
+  join._deletionFx(rec(2, 5, 120), rec(2, 4, 120));
   ok("Delete at a line's end joins the lines: nothing rises", join.evaporateGlyphs.length === 0);
   const edge = mk("say hello", "say ");
-  edge.spawnEvaporate(rec(4, 9, 140, { rowRight: 165 }), rec(4, 4, 140));
+  edge._deletionFx(rec(4, 9, 140, { rowRight: 165 }), rec(4, 4, 140));
   ok("letters past the row's end are not raised on this row", edge.evaporateGlyphs.map((g) => g.char).join("") === "he", edge.evaporateGlyphs.map((g) => g.char));
   const elsewhere = mk("say hello", "sy hello");
-  elsewhere.spawnEvaporate(rec(4, 9, 140), rec(4, 8, 140));
+  elsewhere._deletionFx(rec(4, 9, 140), rec(4, 8, 140));
   ok("a letter gone from somewhere else, the caret still: nothing", elsewhere.evaporateGlyphs.length === 0);
 
   // The frames the caret sits still (updateActivePoint): where Delete is seen.
   const still = mk("abc", "ac");
   still._deletePending = performance.now();
-  still._evaporateStill(rec(1, 3, 110), rec(1, 2, 110));
+  still._deletionStill(rec(1, 3, 110), rec(1, 2, 110));
   ok("a still frame after Delete raises the letter", still.evaporateGlyphs.length === 1 && still.evaporateGlyphs[0].char === "b");
-  ok("...and keeps the note it now is", still._evaporateDoc === still.app.workspace.activeEditor.editor.cm.state.doc);
+  ok("...and keeps the note it now is", still._deletionDoc === still.app.workspace.activeEditor.editor.cm.state.doc);
   const quiet = mk("abc", "ac");
   quiet._deletePending = 0;
-  quiet._evaporateStill(rec(1, 3, 110), rec(1, 2, 110));
-  ok("with no Delete pressed, nothing rises - the note is kept all the same", quiet.evaporateGlyphs.length === 0 && quiet._evaporateDoc === quiet.app.workspace.activeEditor.editor.cm.state.doc);
+  quiet._deletionStill(rec(1, 3, 110), rec(1, 2, 110));
+  ok("with no Delete pressed, nothing rises - the note is kept all the same", quiet.evaporateGlyphs.length === 0 && quiet._deletionDoc === quiet.app.workspace.activeEditor.editor.cm.state.doc);
   const same = mk("abc", "abc");
-  same._evaporateDoc = same.app.workspace.activeEditor.editor.cm.state.doc;
+  same._deletionDoc = same.app.workspace.activeEditor.editor.cm.state.doc;
   same._deletePending = performance.now();
-  same._evaporateStill(rec(1, 3, 110), rec(1, 3, 110));
+  same._deletionStill(rec(1, 3, 110), rec(1, 3, 110));
   ok("the same note: nothing to read", same.evaporateGlyphs.length === 0);
   const off = mk("abc", "ac", { backspaceEvaporate: false });
   off._deletePending = performance.now();
-  off._evaporateStill(rec(1, 3, 110), rec(1, 2, 110));
-  ok("switched off: nothing, and no note kept", off.evaporateGlyphs.length === 0 && off._evaporateDoc === null);
+  off._deletionStill(rec(1, 3, 110), rec(1, 2, 110));
+  ok("switched off: nothing, and no note kept", off.evaporateGlyphs.length === 0 && off._deletionDoc === null);
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
   ok("the still frames hand it the caret before it is replaced, both of them",
-     carets.split("this._evaporateStill(this.lastActive, caret);").length === 3);
+     carets.split("this._deletionStill(this.lastActive, caret);").length === 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,4 +347,62 @@ section("Backspace evaporation: in the panel");
   noPop.tab._effectsPick = "popEffects";
   noPop.tab.refreshDomState();
   ok("hidden with Pop effects off", !noPop.some((r) => r.visible && r.name === "Backspace evaporation"));
+}
+
+// ---------------------------------------------------------------------------
+section("Backspace disintegration: along the letters, both ways");
+{
+  // "Make it work for Delete and Ctrl+Backspace and all that": the burst goes
+  // into each deleted letter's cell, not only where the caret stood, and
+  // Delete - which never moved the caret, so never committed - bursts too.
+  const mk = (before, after, settings = {}) => {
+    const e = makeEngine(Object.assign({ backspaceDisintegrate: true, backspaceEvaporate: false }, settings));
+    e.evaporateGlyphs = []; e.flamePixels = [];
+    e.measureCharWidth = () => 10;
+    e._deletionDoc = docOf(before);
+    e.app = { workspace: { activeEditor: { editor: { cm: mkView(after, 0) } } } };
+    return e;
+  };
+  const rec = (pos, docLen, x, extra = {}) => Object.assign({ pos, docLen, x, top: 50, h: 24, w: 10, rowLeft: 100, rowRight: 400, actualCharWidth: 10, letterSpacing: 0 }, last, extra);
+  const xs = (e) => e.flamePixels.map((p) => p.x);
+  const inCell = (e, x0, x1) => e.flamePixels.some((p) => p.x >= x0 && p.x < x1);
+
+  const one = mk("say hello", "say hell");
+  ok("Backspace: the burst in the letter's cell", one._deletionFx(rec(9, 9, 190), rec(8, 8, 180)) === true && one.flamePixels.length >= 10 && xs(one).every((x) => x >= 180 && x <= 190), xs(one));
+  const word = mk("say hello", "say ");
+  word._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
+  ok("Ctrl+Backspace: along the whole word, first letter to last", inCell(word, 140, 150) && inCell(word, 180, 190) && xs(word).every((x) => x >= 140 && x <= 190), xs(word));
+  ok("...thinner in each letter than a single burst", word.flamePixels.length < 5 * 18 && word.flamePixels.length >= 5 * 3, word.flamePixels.length);
+
+  const del = mk("say hello world", "say  world");
+  del._deletePending = performance.now();
+  del._deletionStill(rec(4, 15, 140), rec(4, 10, 140));
+  ok("Ctrl+Delete: the word after the caret bursts, though the caret never moved", inCell(del, 140, 150) && inCell(del, 180, 190) && xs(del).every((x) => x >= 140 && x <= 190), xs(del));
+  const single = mk("abc", "ac");
+  single._deletePending = performance.now();
+  single._deletionStill(rec(1, 3, 110), rec(1, 2, 110));
+  ok("Delete: one letter, one burst in its cell", single.flamePixels.length >= 10 && xs(single).every((x) => x >= 110 && x <= 120), xs(single));
+
+  const blind = mk("x".repeat(60), "");
+  blind._deletePending = performance.now();
+  blind._deletionStill(rec(0, 60, 100), rec(0, 0, 100));
+  ok("a deletion too long to lay out still bursts, where the caret is", blind.flamePixels.length >= 10 && xs(blind).every((x) => x >= 100 && x <= 110), xs(blind));
+  const none = mk("say hello", "say hell");
+  none._deletionDoc = null;
+  ok("with no note kept, the letters are unknown: the caller makes the one burst", none._deletionFx(rec(9, 9, 190), rec(8, 8, 180)) === false && none.flamePixels.length === 0);
+  const space = mk("say ", "say");
+  ok("a space alone has no cell to burst in: the one burst where the caret stood", space._deletionFx(rec(4, 4, 140), rec(3, 3, 130)) === false);
+  const offd = mk("say hello", "say hell", { backspaceDisintegrate: false });
+  ok("switched off: no burst", offd._deletionFx(rec(9, 9, 190), rec(8, 8, 180)) === false && offd.flamePixels.length === 0);
+  const noPop = mk("say hello", "say hell", { popEffects: false });
+  ok("...nor with Pop effects off", noPop._deletionFx(rec(9, 9, 190), rec(8, 8, 180)) === false && noPop.flamePixels.length === 0);
+  const both = mk("say hello", "say ", { backspaceEvaporate: true });
+  both._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
+  ok("with Backspace evaporation on too, the letters burst and rise", both.flamePixels.length > 0 && both.evaporateGlyphs.map((g) => g.char).join("") === "olleh");
+  const keep = mk("a", "b", { backspaceEvaporate: false });
+  keep._deletionRemember();
+  ok("the note is kept for the burst alone", keep._deletionDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
+  const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
+  ok("a commit makes the one burst where the caret stood only when the letters did not get it",
+     carets.includes("if (!(disintegrate && burstAlong)) this.spawnFlamePixels(this.lastActive, disintegrate);"));
 }

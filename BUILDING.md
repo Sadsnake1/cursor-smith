@@ -22,6 +22,7 @@ src/
     effects-trail.ts    the CRT trail and Speed demon's sparks
     effects-ink.ts      Fresh ink (a part of Typewriter)
     effects-evaporate.ts  Backspace evaporation (a part of Pop effects)
+    effects-delete.ts   what a deletion took, letter by letter (evaporation, disintegration)
     fire.ts             tuning constants for Hot-head
   paint/              painting the cursor (part of the class)
     paint.ts            gathered from the eight below

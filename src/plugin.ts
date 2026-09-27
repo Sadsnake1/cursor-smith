@@ -128,8 +128,12 @@ export default class CursorSmithPlugin extends Plugin {
   declare inkWetness: EffectsMethods["inkWetness"];
   declare drawFreshInk: EffectsMethods["drawFreshInk"];
   declare _evaporateOn: EffectsMethods["_evaporateOn"];
-  declare _evaporateRemember: EffectsMethods["_evaporateRemember"];
-  declare _evaporateStill: EffectsMethods["_evaporateStill"];
+  declare _deletionFxOn: EffectsMethods["_deletionFxOn"];
+  declare _deletionRemember: EffectsMethods["_deletionRemember"];
+  declare _deletionStill: EffectsMethods["_deletionStill"];
+  declare _deletionFx: EffectsMethods["_deletionFx"];
+  declare deletedLetters: EffectsMethods["deletedLetters"];
+  declare spawnDisintegration: EffectsMethods["spawnDisintegration"];
   declare spawnEvaporate: EffectsMethods["spawnEvaporate"];
   declare evaporatePose: EffectsMethods["evaporatePose"];
   declare drawEvaporate: EffectsMethods["drawEvaporate"];
@@ -543,7 +547,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Backspace evaporation: the letters rising away, and the note as it was
   // before the deletion (what the letters are read back from).
   evaporateGlyphs!: EvaporateGlyph[];
-  _evaporateDoc!: DocText | null;
+  _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
   declare trail: TrailPoint[];
@@ -1609,7 +1613,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.inkMarks = [];
     this._inkView = null;
     this.evaporateGlyphs = [];
-    this._evaporateDoc = null;
+    this._deletionDoc = null;
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then
     // burst) whose sparks don't exist yet when it launches, so it can't be

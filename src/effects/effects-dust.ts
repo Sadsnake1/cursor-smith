@@ -14,7 +14,7 @@ import {
   JUMP_TRAIL_STEP,
   STARDUST_MAX_PER_CARET,
 } from "../constants";
-import type { CaretRecord, StardustMote } from "../types";
+import type { CaretRecord, StardustMote, DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
 export const effectsDustMethods = {
@@ -50,7 +50,20 @@ export const effectsDustMethods = {
     return `rgb(${varR}, ${varG}, ${varB})`;
   },
 
-  spawnFlamePixels(this: CursorSmithPlugin, anchor: CaretRecord, disintegrate: boolean = false) {
+  // A deletion's burst along the letters it took (effects-delete.ts): one
+  // in each letter's cell, thinner the more letters there are, so a word
+  // bursts where the word was - with Backspace, Ctrl+Backspace, Delete or
+  // Ctrl+Delete - and not only where the caret stood. False when there are
+  // no letters to burst from (the caller falls back to the one burst).
+  spawnDisintegration(this: CursorSmithPlugin, deleted: DeletedLetters | null): boolean {
+    const cells = deleted ? deleted.letters.filter((l) => l.char.trim()) : [];
+    if (!deleted || !cells.length) return false;
+    const scale = Math.min(1, 2.2 / Math.sqrt(cells.length));
+    for (const l of cells) this.spawnFlamePixels(Object.assign({}, deleted.old, { x: l.x, w: l.w, actualCharWidth: l.w }), true, scale);
+    return true;
+  },
+
+  spawnFlamePixels(this: CursorSmithPlugin, anchor: CaretRecord, disintegrate: boolean = false, scale = 1) {
     // Pixel Trail gates the AMBIENT trail only. Backspace Disintegration is a
     // Pop Effects option now, with its own gate checked by the caller, so a
     // deletion burst still fires with the trail switched off. The two share
@@ -77,8 +90,9 @@ export const effectsDustMethods = {
     const baseCount = disintegrate
       ? Math.floor(10 + Math.random() * 8)
       : Math.floor(6 + Math.random() * 6);
-    // Disintegration keeps its own weight; only the ambient trail is scaled.
-    const count = disintegrate ? baseCount : Math.round(baseCount * density);
+    // Disintegration keeps its own weight - thinned only when one deletion
+    // bursts in many letters' cells (scale); the ambient trail by density.
+    const count = disintegrate ? Math.max(3, Math.round(baseCount * scale)) : Math.round(baseCount * density);
     if (count <= 0) return;
 
     // Lifetime in seconds, read once for the whole burst. drawFlamePixels ages

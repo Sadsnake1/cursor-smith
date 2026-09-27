@@ -390,7 +390,7 @@ export const caretsMethods = {
     if (!moved) {
       if (!this.pending) {
         // The Delete key: text gone after the caret, the caret still.
-        this._evaporateStill(this.lastActive, caret);
+        this._deletionStill(this.lastActive, caret);
         this.lastActive = caret;
       }
       return;
@@ -405,7 +405,7 @@ export const caretsMethods = {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
       // The Delete key again, when what it took reflowed the row.
-      this._evaporateStill(this.lastActive, caret);
+      this._deletionStill(this.lastActive, caret);
       this.lastActive = caret;
       
       // If the coordinate changed but the document position didn't, it was a scroll/layout shift.
@@ -674,13 +674,16 @@ export const caretsMethods = {
         this.heat = Math.min(1, this.heat + bump);
       }
     }
-    // Backspace evaporation reads what a deletion took from the note as it was
-    // before, so it is spawned before that note is replaced. The primary's
-    // alone: one note, one kept copy.
+    // A deletion's effects read what it took from the note as it was before
+    // (effects-delete.ts), so they are spawned before that note is replaced.
+    // The primary's alone: one note, one kept copy. `burstAlong`: the
+    // disintegration burst went into the deleted letters' cells, and the
+    // one where the caret stood (below) is not made as well.
+    let burstAlong = false;
     if (!secondary) {
       if (this.lastActive && caret && this._deletePending &&
-          performance.now() - this._deletePending < 250) this.spawnEvaporate(this.lastActive, caret);
-      this._evaporateRemember();
+          performance.now() - this._deletePending < 250) burstAlong = this._deletionFx(this.lastActive, caret);
+      this._deletionRemember();
     }
     // Record the position being left, and - if this move is a jump - the ghosts
     // bridging it to the destination, so the CRT/neon trail is continuous across
@@ -700,7 +703,10 @@ export const caretsMethods = {
         this.look.backspaceDisintegrate &&
         this._deletePending &&
         now - this._deletePending < 250);
-      this.spawnFlamePixels(this.lastActive, disintegrate);
+      // Along the deleted letters when they could be read; where the caret
+      // stood otherwise - a secondary caret, a text box, a selection too
+      // long to lay out.
+      if (!(disintegrate && burstAlong)) this.spawnFlamePixels(this.lastActive, disintegrate);
       // Trail On Jump: if this move was a genuine leap (not typing/arrowing) and
       // wasn't a deletion burst, lay puffs along the path the caret skipped so a
       // jump leaves a streak rather than a lone puff at the origin. Uses `caret`

@@ -11,7 +11,7 @@ import { effectsPopsMethods } from "./effects-pops";
 import { effectsDustMethods } from "./effects-dust";
 import { effectsTrailMethods } from "./effects-trail";
 import { effectsInkMethods } from "./effects-ink";
-import { effectsSmokeMethods } from "./effects-smoke";
+import { effectsEvaporateMethods } from "./effects-evaporate";
 
 export const effectsMethods = {
   ...effectsFireMethods,
@@ -19,6 +19,6 @@ export const effectsMethods = {
   ...effectsDustMethods,
   ...effectsTrailMethods,
   ...effectsInkMethods,
-  ...effectsSmokeMethods,
+  ...effectsEvaporateMethods,
 };
 export type EffectsMethods = typeof effectsMethods;

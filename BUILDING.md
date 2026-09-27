@@ -20,8 +20,8 @@ src/
     effects-fire.ts     Hot-head
     effects-dust.ts     the pixel trail and stardust
     effects-trail.ts    the CRT trail and Speed demon's sparks
-    effects-ink.ts      Fresh ink
-    effects-smoke.ts    Smoke on delete
+    effects-ink.ts      Fresh ink (a part of Typewriter)
+    effects-evaporate.ts  Evaporate on delete (a part of Popping letters)
     fire.ts             tuning constants for Hot-head
   paint/              painting the cursor (part of the class)
     paint.ts            gathered from the eight below

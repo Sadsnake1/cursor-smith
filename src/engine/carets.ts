@@ -388,7 +388,11 @@ export const caretsMethods = {
       Math.abs(this.lastActive.x - caret.x) > 0.5 || Math.abs(this.lastActive.top - caret.top) > 0.5;
 
     if (!moved) {
-      if (!this.pending) this.lastActive = caret;
+      if (!this.pending) {
+        // The Delete key: text gone after the caret, the caret still.
+        this._evaporateStill(this.lastActive, caret);
+        this.lastActive = caret;
+      }
       return;
     }
 
@@ -400,7 +404,8 @@ export const caretsMethods = {
     if (caret.pos !== null && caret.pos === this.lastActive.pos && caret.assoc === this.lastActive.assoc) {
       const dx = caret.x - this.lastActive.x;
       const dy = caret.top - this.lastActive.top;
-      
+      // The Delete key again, when what it took reflowed the row.
+      this._evaporateStill(this.lastActive, caret);
       this.lastActive = caret;
       
       // If the coordinate changed but the document position didn't, it was a scroll/layout shift.
@@ -669,17 +674,17 @@ export const caretsMethods = {
         this.heat = Math.min(1, this.heat + bump);
       }
     }
+    // Evaporate on delete reads what a deletion took from the note as it was
+    // before, so it is spawned before that note is replaced. The primary's
+    // alone: one note, one kept copy.
+    if (!secondary) {
+      if (this.lastActive && caret && this._deletePending &&
+          performance.now() - this._deletePending < 250) this.spawnEvaporate(this.lastActive, caret);
+      this._evaporateRemember();
+    }
     // Record the position being left, and - if this move is a jump - the ghosts
     // bridging it to the destination, so the CRT/neon trail is continuous across
     // the leap the same commit it happens rather than one move later.
-    // Smoke on delete reads what a deletion took from the note as it was at
-    // the last commit, so it is spawned before that note is replaced. The
-    // primary's alone: one note, one kept copy.
-    if (!secondary) {
-      if (this.look.popEffects && this.look.backspaceSmoke && this.lastActive && caret && this._deletePending &&
-          performance.now() - this._deletePending < 250) this.spawnSmoke(this.lastActive, caret);
-      this._smokeRemember();
-    }
     this.pushTrail(this.lastActive, caret);
     if (this.lastActive) {
       // Consume a pending Backspace/Delete keystroke if it happened

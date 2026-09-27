@@ -131,9 +131,9 @@ export const DEFAULT_SETTINGS = {
   typewriterFreshInk: false,  // Fresh ink: the characters just typed stay wet in the cursor's colour, then dry into the text
   typewriterFreshInkMs: 1500, // ...how long the ink takes to dry
   typewriterFreshInkStrength: 0.8, // ...how strong the wet ink is at first, 1 the full cursor colour
-  backspaceSmoke: false,      // Pop effects' Smoke on delete: what a deletion takes drifts up and fades like smoke
-  backspaceSmokeMs: 1100,     // ...how long it drifts
-  backspaceSmokeRise: 1.2,    // ...how high, in lines
+  popLettersEvaporate: false, // Popping letters' Evaporate on delete: deleted letters rise and fade (Backspace and Delete)
+  popLettersEvaporateMs: 1100, // ...how long they take to go
+  popLettersEvaporateRise: 1.2, // ...how high they rise, in lines
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
   // the whole group around the wheel together instead of each effect keeping
@@ -504,7 +504,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "typewriterInkMs", "typewriterInkSize",
   "typewriterReturnMs", "typewriterReturnWidth", "typewriterAdvanceCw", "typewriterAdvanceMs",
   "typewriterFreshInk", "typewriterFreshInkMs", "typewriterFreshInkStrength",
-  "backspaceSmoke", "backspaceSmokeMs", "backspaceSmokeRise",
+  "popLettersEvaporate", "popLettersEvaporateMs", "popLettersEvaporateRise",
 ];
 
 // ---------------------------------------------------------------------------

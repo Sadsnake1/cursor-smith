@@ -135,9 +135,9 @@ export interface Look {
   typewriterFreshInk: boolean;
   typewriterFreshInkMs: number;
   typewriterFreshInkStrength: number;
-  backspaceSmoke: boolean;
-  backspaceSmokeMs: number;
-  backspaceSmokeRise: number;
+  popLettersEvaporate: boolean;
+  popLettersEvaporateMs: number;
+  popLettersEvaporateRise: number;
   popLetters: boolean;
   popRainbow: boolean;
   flameTrail: boolean;
@@ -346,8 +346,8 @@ export interface InkMark {
   from: number; text: string; times: number[]; color: string;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
 }
-// Smoke on delete: one deleted letter, where it stood, drifting up.
-export interface SmokeGlyph {
+// Evaporate on delete: one deleted letter, where it stood, rising away.
+export interface EvaporateGlyph {
   char: string; x: number; top: number; h: number;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
   color: string; start: number; delay: number; phase: number; drift: number;

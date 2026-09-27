@@ -106,7 +106,7 @@ export const paintFrameMethods = {
 
     // On the text itself, under everything that flies off it.
     this.drawFreshInk();
-    this.drawSmoke();
+    this.drawEvaporate();
     this.drawLettersParticles();
     this.drawCarriageReturns();
     // Underneath everything else: it's a background guide, and the cursor and

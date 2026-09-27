@@ -18,6 +18,7 @@ import {
   KEY_STEP_HOLD_MS,
   GLIDE_SPRING_FREQ,
   GLIDE_SPRINGY_DAMPING,
+  GLIDE_LINEAR_SPAN,
 } from "../constants";
 import { smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { HOT_ENGULF_MS } from "../effects/fire";
@@ -614,11 +615,23 @@ export const caretsMethods = {
     // (a soft start, no overshoot) or at a damping of 0.55 (a ~12%
     // overshoot that settles) - tuned to land in the same time as Ease out
     // at this rate (95% at about 3 / rate; the spring's frequency 1.58x the
-    // rate). Typing that keeps up always takes the chase: a letter should
-    // not bounce.
+    // rate). Linear: a straight run at one speed and a dead stop, every move
+    // the same time whatever its length (GLIDE_LINEAR_SPAN / rate); a new
+    // target mid-run starts a new run from where the cursor is. Typing that
+    // keeps up always takes the chase: a letter should not bounce.
     const style = this.look.smoothStyle;
     const typingNow = !!this.look.smoothAdaptive && this._keyStepping(now);
-    if ((style === "smooth" || style === "springy") && !typingNow) {
+    if (style !== "linear" || typingNow) this._glideRun = null;
+    if (style === "linear" && !typingNow) {
+      if (this._glideV) { this._glideV.x = 0; this._glideV.y = 0; }
+      let run = this._glideRun;
+      if (!run || run.tx !== this.lastActive.x || run.ty !== this.lastActive.top) {
+        run = this._glideRun = { fx: this.animActive.x, fy: this.animActive.top, tx: this.lastActive.x, ty: this.lastActive.top, u: 0 };
+      }
+      run.u = Math.min(1, run.u + dt * rate / GLIDE_LINEAR_SPAN);
+      this.animActive.x = run.fx + (run.tx - run.fx) * run.u;
+      this.animActive.top = run.fy + (run.ty - run.fy) * run.u;
+    } else if ((style === "smooth" || style === "springy") && !typingNow) {
       const v = this._glideV || (this._glideV = { x: 0, y: 0 });
       const w = GLIDE_SPRING_FREQ * rate;
       const zeta = style === "springy" ? GLIDE_SPRINGY_DAMPING : 1;

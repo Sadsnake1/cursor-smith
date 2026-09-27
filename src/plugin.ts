@@ -493,6 +493,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare _typingBoostSm: number | null;
   // Glide style's springs: the glide's velocity, px/s (null for Ease out).
   declare _glideV: { x: number; y: number } | null;
+  // Linear's run: from, to, and how far along (0 - 1); null between moves.
+  declare _glideRun: { fx: number; fy: number; tx: number; ty: number; u: number } | null;
   _uiModeSwitching!: boolean;
   _vimEditMode!: string;
   _vimModeCache!: string | null;
@@ -1688,6 +1690,7 @@ export default class CursorSmithPlugin extends Plugin {
     this._smoothLastT = 0;
     this._typingBoostSm = null;
     this._glideV = null;
+    this._glideRun = null;
     this._hotEmitFrom = null;
     this._hotActiveT = 0;
     this._lastHotT = 0;

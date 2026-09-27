@@ -546,7 +546,7 @@ export const CARET_STATE_FIELDS = [
   "_smearLead", "_smearTrail",
   "_smearMoving", "_smearDtT", "smearQuadLastMoveT",
   "trail", "glitch",
-  "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod", "_glideV",
+  "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod", "_glideV", "_glideRun",
   "_hotPrev", "_hotEmitFrom", "_hotActiveT", "_lastHotT", "hotBurns", "_hotShiftTick",
   "_hotEngulfUntil",
   "_lastStardustT", "_lastSparkT", "_lastFireworkT",
@@ -594,3 +594,7 @@ export const TYPING_RATE_MAX = 200;
 // ratio, a ~12% overshoot.
 export const GLIDE_SPRING_FREQ = 1.58;
 export const GLIDE_SPRINGY_DAMPING = 0.55;
+// Linear's run: every move takes this many time constants of the chase's
+// rate, whatever its length - 83 ms at the default Glide speed, about when
+// Ease out looks there.
+export const GLIDE_LINEAR_SPAN = 2.5;

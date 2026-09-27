@@ -647,6 +647,34 @@ section("Glide style: Ease out, Smooth, Springy (1.7.1)");
   for (const [name, g] of [["Ease out", ease], ["Smooth", smooth], ["Springy", springy]]) {
     ok(name + " lands exactly and stops", g.xs[g.xs.length - 1] === g.to && g.moving === false && (!g.v || (g.v.x === 0 && g.v.y === 0)), [g.xs[g.xs.length - 1], g.moving, g.v]);
   }
+  // Linear (1.7.1, "add linear too"): one speed, a dead stop.
+  const linear = glide({ smoothStyle: "linear" });
+  const steps = linear.xs.map((x, i) => x - (i ? linear.xs[i - 1] : 100)).filter((d) => d > 0);
+  ok("Linear runs at one speed: every frame's step the same", steps.length > 3 && steps.slice(0, -1).every((d) => Math.abs(d - steps[0]) < 1e-6), steps);
+  ok("Linear lands exactly and stops", linear.xs[linear.xs.length - 1] === linear.to && linear.moving === false, [linear.xs[linear.xs.length - 1], linear.moving]);
+  ok("...never overshoots and stops dead on the spot", over(linear) <= 1e-9 && linear.xs[linear.xs.indexOf(linear.to) + 1] === linear.to, over(linear));
+  const landsAt = linear.xs.indexOf(linear.to) * FRAME;
+  ok("...in GLIDE_LINEAR_SPAN / rate - about when Ease out looks there", Math.abs(landsAt - 1000 * T.GLIDE_LINEAR_SPAN / 30) <= FRAME + 1, landsAt);
+  {
+    // A new target mid-run: a new run from where the cursor is, no jump.
+    const e = makeEngine({ smoothEnabled: true, smear: false, catchUpSpeed: 0.55, smoothStyle: "linear" });
+    e._smoothLastT = 0; e.typingSpeedMod = 1; e._typingBoostSm = null; e.lastMoveTime = -1e9; e._keyStepT = 0; e._glideV = null; e._glideRun = null;
+    e.lastActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+    e.animActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+    const real = performance.now;
+    let t = 1000;
+    const xs = [];
+    try {
+      performance.now = () => t;
+      e._smoothLastT = t;
+      e.lastActive = Object.assign({}, e.lastActive, { x: 400 }); e.lastMoveTime = t;
+      for (let i = 0; i < 4; i++) { t += FRAME; e.updateSmoothCursor(); xs.push(e.animActive.x); }
+      e.lastActive = Object.assign({}, e.lastActive, { x: 200, top: 80 }); e.lastMoveTime = t;
+      for (let i = 0; i < 40; i++) { t += FRAME; e.updateSmoothCursor(); xs.push(e.animActive.x); }
+    } finally { performance.now = real; }
+    const jumps = xs.map((x, i) => (i ? Math.abs(x - xs[i - 1]) : 0));
+    ok("...a new target mid-run turns it from where it is, no jump", Math.max(...jumps) < 60 && xs[xs.length - 1] === 200 && e.animActive.top === 80, [Math.max(...jumps), xs[xs.length - 1]]);
+  }
   const typed = glide({ smoothStyle: "springy", smoothAdaptive: true }, true);
   ok("a typed letter never bounces, whatever the style: typing takes the chase", over(typed) <= 1e-9, over(typed));
   ok("Glide style is a look key, appended, Ease out by default", T.LOOK_KEYS.includes("smoothStyle") && T.DEFAULT_SETTINGS.smoothStyle === "ease");

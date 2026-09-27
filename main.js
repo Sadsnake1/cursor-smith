@@ -6888,6 +6888,7 @@ var INK_MAX_RUN = 12;
 var INK_MAX_CHARS = 80;
 var INK_SEARCH = 64;
 var INK_HOLD = 0.3;
+var INK_RAMP_SPAN = 10;
 var effectsInkMethods = {
   // From resolveHoldChar, where a keystroke's insertion is known: `last` is
   // the caret it was typed at, [from, to) what it put in.
@@ -6986,6 +6987,7 @@ var effectsInkMethods = {
     const now = performance.now();
     const ms = Math.max(100, Math.min(1e4, Number(this.look.typewriterFreshInkMs) || 1500));
     const strength = Math.max(0, Math.min(1, Number(this.look.typewriterFreshInkStrength ?? 0.8)));
+    const ramp = !!this.look.gradientEnabled;
     const dpr = this._canvasDpr || 1;
     const region = this._canvasRect;
     const ox = region ? region.x : 0, oy = region ? region.y : 0;
@@ -7015,6 +7017,10 @@ var effectsInkMethods = {
         if (!c) continue;
         const h = c.bottom - c.top;
         const baseline = c.top + ascent + (h - ascent - descent) / 2;
+        if (ramp) {
+          const [r, g, b] = this.sampleRamp(pos / INK_RAMP_SPAN, true);
+          ctx.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+        }
         ctx.globalAlpha = a;
         ctx.fillText(ch, snapX(c.left), snapY(baseline));
         const w = ctx.measureText(ch).width;

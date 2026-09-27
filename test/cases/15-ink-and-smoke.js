@@ -242,3 +242,25 @@ section("Smoke on delete: the drift");
      ["backspaceSmoke", "backspaceSmokeMs", "backspaceSmokeRise"].every((k) => T.LOOK_KEYS.includes(k)) && T.DEFAULT_SETTINGS.backspaceSmoke === false && T.REDUCED_MOTION_OFF_KEYS.includes("popEffects"));
   ok("drifting smoke keeps the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.smokeGlyphs = [{}]; return f._isAnimating(performance.now()) === true; })());
 }
+
+// ---------------------------------------------------------------------------
+section("Fresh ink: a gradient cursor");
+{
+  // It was the ramp's first stop alone, flat: "Fresh ink doesn't work for
+  // a gradient cursor" - a first stop near the text's colour hid it.
+  const d = makeEngine({ typewriter: true, typewriterFreshInk: true, typewriterFreshInkMs: 1500, typewriterFreshInkStrength: 1,
+    gradientEnabled: true, gradientCount: 2, gradientDark1: "#ff0000", gradientDark2: "#0000ff" });
+  d.ctx = textCtx(); d._canvasDpr = 1; d._canvasRect = null;
+  const text = "abcdef";
+  const vw = mkView(text, text.length);
+  d.app = { workspace: { activeEditor: { editor: { cm: vw } } } };
+  d._inkView = vw;
+  const now = performance.now();
+  d.inkMarks = [{ from: 0, text, times: [...text].map(() => now), color: "#ff0000", fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal" }];
+  d.drawFreshInk();
+  const fills = d.ctx.calls.map((c) => c.fill);
+  const want = (pos) => { const [r, g, b] = d.sampleRamp(pos / 10, true); return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`; };
+  ok("with Gradient on, each letter takes the ramp's colour at its place", fills.length === 6 && fills.every((f, i) => f === want(i)), fills);
+  ok("...so a word carries more than one colour", new Set(fills).size > 3, fills);
+  ok("...starting from the first stop", fills[0] === "rgb(255, 0, 0)", fills[0]);
+}

@@ -12,7 +12,11 @@
 // longer where it was is cut back to what is left of it (Backspace), looked
 // for nearby (an edit before it), or dropped. The letters are drawn over
 // the real ones the way the Box draws its letter: the same font, centred in
-// the line box, on whole device pixels.
+// the line box, on whole device pixels. With Gradient on, the ink is the
+// ramp: each letter takes the colour at its place in the text, the ramp
+// looping every INK_RAMP_SPAN letters, so a word carries the whole gradient
+// and a letter keeps its colour while it dries. It was the ramp's first stop
+// alone, flat - and a first stop near the text's colour hid the ink.
 import { easeInOutSine } from "../util/motion";
 import type { EditorView } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
@@ -27,6 +31,8 @@ export const INK_MAX_CHARS = 80;
 const INK_SEARCH = 64;
 // The share of the drying time the ink stays fully wet before it fades.
 const INK_HOLD = 0.3;
+// With Gradient on, the ramp loops once every this many letters.
+export const INK_RAMP_SPAN = 10;
 
 export const effectsInkMethods = {
   // From resolveHoldChar, where a keystroke's insertion is known: `last` is
@@ -124,6 +130,7 @@ export const effectsInkMethods = {
     const now = performance.now();
     const ms = Math.max(100, Math.min(10000, Number(this.look.typewriterFreshInkMs) || 1500));
     const strength = Math.max(0, Math.min(1, Number(this.look.typewriterFreshInkStrength ?? 0.8)));
+    const ramp = !!this.look.gradientEnabled;
     const dpr = this._canvasDpr || 1;
     const region = this._canvasRect;
     const ox = region ? region.x : 0, oy = region ? region.y : 0;
@@ -155,6 +162,10 @@ export const effectsInkMethods = {
         if (!c) continue;
         const h = c.bottom - c.top;
         const baseline = c.top + ascent + (h - ascent - descent) / 2;
+        if (ramp) {
+          const [r, g, b] = this.sampleRamp(pos / INK_RAMP_SPAN, true);
+          ctx.fillStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+        }
         ctx.globalAlpha = a;
         ctx.fillText(ch, snapX(c.left), snapY(baseline));
         const w = ctx.measureText(ch).width;

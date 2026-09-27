@@ -132,9 +132,9 @@ export interface Look {
   typewriterReturnWidth: number;
   typewriterAdvanceCw: number;
   typewriterAdvanceMs: number;
-  freshInk: boolean;
-  freshInkMs: number;
-  freshInkStrength: number;
+  typewriterFreshInk: boolean;
+  typewriterFreshInkMs: number;
+  typewriterFreshInkStrength: number;
   smokeDelete: boolean;
   smokeDeleteMs: number;
   smokeDeleteRise: number;

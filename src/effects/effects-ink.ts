@@ -3,7 +3,7 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Fresh ink (on trial, 2026-09-27): the characters just typed stay wet in
+// Typewriter's Fresh ink (on trial, 2026-09-27): the characters just typed stay wet in
 // the cursor's colour and dry into the text over a second or two. Each run
 // of typing is one mark - where it starts in the document, its text, and
 // when each character went in - and the draw finds every character's own
@@ -32,7 +32,7 @@ export const effectsInkMethods = {
   // From resolveHoldChar, where a keystroke's insertion is known: `last` is
   // the caret it was typed at, [from, to) what it put in.
   spawnFreshInk(this: CursorSmithPlugin, view: EditorView, last: CaretRecord, from: number, to: number) {
-    if (!this.look.freshInk || to <= from || to - from > INK_MAX_RUN) return;
+    if (!this.look.typewriter || !this.look.typewriterFreshInk || to <= from || to - from > INK_MAX_RUN) return;
     const text = view.state.doc.sliceString(from, to);
     if (!text || text.includes("\n")) return;
     if (this._inkView !== view) { this.inkMarks = []; this._inkView = view; }
@@ -118,12 +118,12 @@ export const effectsInkMethods = {
     const ctx = this.ctx;
     if (!ctx || !this.inkMarks.length) return;
     const view = this.app.workspace.activeEditor?.editor?.cm;
-    if (!this.look.freshInk || !view || view !== this._inkView) { this.inkMarks = []; return; }
+    if (!this.look.typewriter || !this.look.typewriterFreshInk || !view || view !== this._inkView) { this.inkMarks = []; return; }
     const doc = view.state.doc;
     const head = view.state.selection.main.head;
     const now = performance.now();
-    const ms = Math.max(100, Math.min(10000, Number(this.look.freshInkMs) || 1500));
-    const strength = Math.max(0, Math.min(1, Number(this.look.freshInkStrength ?? 0.8)));
+    const ms = Math.max(100, Math.min(10000, Number(this.look.typewriterFreshInkMs) || 1500));
+    const strength = Math.max(0, Math.min(1, Number(this.look.typewriterFreshInkStrength ?? 0.8)));
     const dpr = this._canvasDpr || 1;
     const region = this._canvasRect;
     const ox = region ? region.x : 0, oy = region ? region.y : 0;

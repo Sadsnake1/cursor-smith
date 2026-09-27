@@ -408,11 +408,11 @@ var DEFAULT_SETTINGS = {
   // Carriage advance: how far past its spot, in characters
   typewriterAdvanceMs: 150,
   // ...the whole overshoot
-  freshInk: false,
-  // the characters just typed stay wet in the cursor's colour, then dry into the text
-  freshInkMs: 1500,
+  typewriterFreshInk: false,
+  // Fresh ink: the characters just typed stay wet in the cursor's colour, then dry into the text
+  typewriterFreshInkMs: 1500,
   // ...how long the ink takes to dry
-  freshInkStrength: 0.8,
+  typewriterFreshInkStrength: 0.8,
   // ...how strong the wet ink is at first, 1 the full cursor colour
   smokeDelete: false,
   // what a deletion takes drifts up and fades like smoke
@@ -907,9 +907,9 @@ var LOOK_KEYS = [
   "typewriterReturnWidth",
   "typewriterAdvanceCw",
   "typewriterAdvanceMs",
-  "freshInk",
-  "freshInkMs",
-  "freshInkStrength",
+  "typewriterFreshInk",
+  "typewriterFreshInkMs",
+  "typewriterFreshInkStrength",
   "smokeDelete",
   "smokeDeleteMs",
   "smokeDeleteRise"
@@ -2264,7 +2264,6 @@ var DemoStrip = class {
 var RAIL_EFFECTS = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
-  { key: "freshInk", name: "Fresh ink", icon: "droplet", desc: "The words you just typed stay wet in your cursor's colour, then dry into the text." },
   { key: "smokeDelete", name: "Smoke on delete", icon: "cloud-fog", desc: "What you delete drifts up and fades like smoke." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
@@ -3592,17 +3591,15 @@ var CursorSmithSettingTab = class extends import_obsidian.PluginSettingTab {
     effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Stamp duration", "How long the stamp lasts, in milliseconds.", "typewriterInkMs", [150, 1e3, 10], { depth: 2, fallback: 400, when: twOn("typewriterInk") }));
     effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
+    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "typewriterFreshInk", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "typewriterFreshInkMs", [300, 4e3, 100], { depth: 2, fallback: 1500, when: twOn("typewriterFreshInk") }));
+    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "typewriterFreshInkStrength", [0.2, 1, 0.05], { depth: 2, fallback: 0.8, when: twOn("typewriterFreshInk") }));
     effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
     effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
-    const showInk = shown("freshInk");
-    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "freshInk", { gate: true, when: showInk }));
-    const ink = all(showInk, on("freshInk"));
-    effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "freshInkMs", [300, 4e3, 100], { depth: 1, fallback: 1500, when: ink }));
-    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "freshInkStrength", [0.2, 1, 0.05], { depth: 1, fallback: 0.8, when: ink }));
     const showSmoke = shown("smokeDelete");
     effects.push(toggle("Smoke on delete", "What you delete drifts up and fades like smoke.", "smokeDelete", { gate: true, when: showSmoke }));
     const smoke = all(showSmoke, on("smokeDelete"));
@@ -4512,8 +4509,8 @@ var measureMethods = {
           if (this.look.typewriter) {
             this._typewriterT = performance.now();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
+            if (this.look.typewriterFreshInk) this.spawnFreshInk(view, last, last.pos, newCaret.pos);
           }
-          if (this.look.freshInk) this.spawnFreshInk(view, last, last.pos, newCaret.pos);
           return justTyped;
         }
       }
@@ -6900,7 +6897,7 @@ var effectsInkMethods = {
   // From resolveHoldChar, where a keystroke's insertion is known: `last` is
   // the caret it was typed at, [from, to) what it put in.
   spawnFreshInk(view, last, from, to) {
-    if (!this.look.freshInk || to <= from || to - from > INK_MAX_RUN) return;
+    if (!this.look.typewriter || !this.look.typewriterFreshInk || to <= from || to - from > INK_MAX_RUN) return;
     const text = view.state.doc.sliceString(from, to);
     if (!text || text.includes("\n")) return;
     if (this._inkView !== view) {
@@ -6985,15 +6982,15 @@ var effectsInkMethods = {
     const ctx = this.ctx;
     if (!ctx || !this.inkMarks.length) return;
     const view = this.app.workspace.activeEditor?.editor?.cm;
-    if (!this.look.freshInk || !view || view !== this._inkView) {
+    if (!this.look.typewriter || !this.look.typewriterFreshInk || !view || view !== this._inkView) {
       this.inkMarks = [];
       return;
     }
     const doc = view.state.doc;
     const head = view.state.selection.main.head;
     const now = performance.now();
-    const ms = Math.max(100, Math.min(1e4, Number(this.look.freshInkMs) || 1500));
-    const strength = Math.max(0, Math.min(1, Number(this.look.freshInkStrength ?? 0.8)));
+    const ms = Math.max(100, Math.min(1e4, Number(this.look.typewriterFreshInkMs) || 1500));
+    const strength = Math.max(0, Math.min(1, Number(this.look.typewriterFreshInkStrength ?? 0.8)));
     const dpr = this._canvasDpr || 1;
     const region = this._canvasRect;
     const ox = region ? region.x : 0, oy = region ? region.y : 0;
@@ -11190,7 +11187,7 @@ var engineMethods = {
       "popEffects",
       "popLetters",
       "typewriter",
-      "freshInk",
+      "typewriterFreshInk",
       "smokeDelete",
       "flameTrail",
       "fireworks",

@@ -128,9 +128,9 @@ export const DEFAULT_SETTINGS = {
   typewriterReturnWidth: 1.5, // ...the streak's thickness, px
   typewriterAdvanceCw: 0.25,  // Carriage advance: how far past its spot, in characters
   typewriterAdvanceMs: 150,   // ...the whole overshoot
-  freshInk: false,            // the characters just typed stay wet in the cursor's colour, then dry into the text
-  freshInkMs: 1500,           // ...how long the ink takes to dry
-  freshInkStrength: 0.8,      // ...how strong the wet ink is at first, 1 the full cursor colour
+  typewriterFreshInk: false,  // Fresh ink: the characters just typed stay wet in the cursor's colour, then dry into the text
+  typewriterFreshInkMs: 1500, // ...how long the ink takes to dry
+  typewriterFreshInkStrength: 0.8, // ...how strong the wet ink is at first, 1 the full cursor colour
   smokeDelete: false,         // what a deletion takes drifts up and fades like smoke
   smokeDeleteMs: 1100,        // ...how long it drifts
   smokeDeleteRise: 1.2,       // ...how high, in lines
@@ -503,7 +503,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "typewriterDepth", "typewriterBounce", "typewriterSquash", "typewriterStrikeMs",
   "typewriterInkMs", "typewriterInkSize",
   "typewriterReturnMs", "typewriterReturnWidth", "typewriterAdvanceCw", "typewriterAdvanceMs",
-  "freshInk", "freshInkMs", "freshInkStrength",
+  "typewriterFreshInk", "typewriterFreshInkMs", "typewriterFreshInkStrength",
   "smokeDelete", "smokeDeleteMs", "smokeDeleteRise",
 ];
 

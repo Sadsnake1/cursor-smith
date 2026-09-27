@@ -883,9 +883,9 @@ export const measureMethods = {
           if (this.look.typewriter) {
             this._typewriterT = performance.now();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
+            // Fresh ink: everything this keystroke put in, wet.
+            if (this.look.typewriterFreshInk) this.spawnFreshInk(view, last, last.pos, newCaret.pos);
           }
-          // Fresh ink: everything this keystroke put in, wet.
-          if (this.look.freshInk) this.spawnFreshInk(view, last, last.pos, newCaret.pos);
           return justTyped;
         }
       }

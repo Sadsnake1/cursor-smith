@@ -14,7 +14,6 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
-  { key: "freshInk", name: "Fresh ink", icon: "droplet", desc: "The words you just typed stay wet in your cursor's colour, then dry into the text." },
   { key: "smokeDelete", name: "Smoke on delete", icon: "cloud-fog", desc: "What you delete drifts up and fades like smoke." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
@@ -1466,20 +1465,17 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Stamp duration", "How long the stamp lasts, in milliseconds.", "typewriterInkMs", [150, 1000, 10], { depth: 2, fallback: 400, when: twOn("typewriterInk") }));
     effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
+    // Fresh ink (on trial, 2026-09-27): the characters just typed, wet in the
+    // cursor's colour, drying into the text. Beside the stamp: both ink.
+    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "typewriterFreshInk", { depth: 1, gate: true, when: tw }));
+    effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "typewriterFreshInkMs", [300, 4000, 100], { depth: 2, fallback: 1500, when: twOn("typewriterFreshInk") }));
+    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "typewriterFreshInkStrength", [0.2, 1, 0.05], { depth: 2, fallback: 0.8, when: twOn("typewriterFreshInk") }));
     effects.push(toggle("Carriage return", "Enter sweeps a streak back along the line, with a ding at its end.", "typewriterReturn", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Sweep duration", "How long the sweep takes, in milliseconds.", "typewriterReturnMs", [150, 900, 10], { depth: 2, fallback: 300, when: twOn("typewriterReturn") }));
     effects.push(slider("Streak thickness", "How thick the streak is, in pixels.", "typewriterReturnWidth", [0.5, 4, 0.1], { depth: 2, fallback: 1.5, when: twOn("typewriterReturn") }));
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
-
-    // Fresh ink (on trial, 2026-09-27): the characters just typed, wet in the
-    // cursor's colour, drying into the text.
-    const showInk = shown("freshInk");
-    effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "freshInk", { gate: true, when: showInk }));
-    const ink = all(showInk, on("freshInk"));
-    effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "freshInkMs", [300, 4000, 100], { depth: 1, fallback: 1500, when: ink }));
-    effects.push(slider("Ink strength", "How strong the wet ink is at first. 1 is the full cursor colour.", "freshInkStrength", [0.2, 1, 0.05], { depth: 1, fallback: 0.8, when: ink }));
 
     // Smoke on delete (on trial, 2026-09-27): the calm counterpart of the
     // deletion burst.

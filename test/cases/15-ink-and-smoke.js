@@ -26,7 +26,7 @@ const last = { fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle
 section("Fresh ink: the runs it keeps");
 {
   const mk = (settings = {}) => {
-    const e = makeEngine(Object.assign({ freshInk: true }, settings));
+    const e = makeEngine(Object.assign({ typewriter: true, typewriterFreshInk: true }, settings));
     e.inkMarks = []; e._inkView = null; e.ctx = textCtx(); e._canvasDpr = 1; e._canvasRect = null;
     return e;
   };
@@ -50,9 +50,12 @@ section("Fresh ink: the runs it keeps");
   ok("a paste is not typing: no ink", p.inkMarks.length === 0);
   p.spawnFreshInk(mkView("a\nb", 2), last, 1, 2);
   ok("...nor a new line", p.inkMarks.length === 0);
-  const off = mk({ freshInk: false });
+  const off = mk({ typewriterFreshInk: false });
   off.spawnFreshInk(v, last, 4, 5);
   ok("switched off, no ink", off.inkMarks.length === 0);
+  const noTw = mk({ typewriter: false });
+  noTw.spawnFreshInk(v, last, 4, 5);
+  ok("a part of Typewriter: with Typewriter off, no ink", noTw.inkMarks.length === 0);
 
   const cap = mk();
   const long = "x".repeat(200);
@@ -95,7 +98,7 @@ section("Fresh ink: drying and drawing");
   ok("...and dry at the end", e.inkWetness(1000, 1000) === 0 && e.inkWetness(5000, 1000) === 0);
 
   const draw = (text, times, settings = {}, view) => {
-    const d = makeEngine(Object.assign({ freshInk: true, freshInkMs: 1500, freshInkStrength: 0.8 }, settings));
+    const d = makeEngine(Object.assign({ typewriter: true, typewriterFreshInk: true, typewriterFreshInkMs: 1500, typewriterFreshInkStrength: 0.8 }, settings));
     d.ctx = textCtx(); d._canvasDpr = 1; d._canvasRect = null;
     const vw = view || mkView(text, text.length);
     d.app = { workspace: { activeEditor: { editor: { cm: vw } } } };
@@ -130,7 +133,7 @@ section("Fresh ink: drying and drawing");
   other.ctx.calls.length = 0;
   other.drawFreshInk();
   ok("another note in front: the ink is dropped", other.inkMarks.length === 0 && other.ctx.calls.length === 0);
-  const offd = draw("hi", [now, now], { freshInk: false });
+  const offd = draw("hi", [now, now], { typewriterFreshInk: false });
   ok("switched off mid-stroke: dropped", offd.inkMarks.length === 0 && offd.ctx.calls.length === 0);
 }
 
@@ -138,15 +141,15 @@ section("Fresh ink: drying and drawing");
 section("Fresh ink: where it hooks in");
 {
   // A keystroke goes through resolveHoldChar, where the pops are spawned.
-  const e = makeEngine({ freshInk: true, popEffects: false, typewriter: false });
+  const e = makeEngine({ typewriter: true, typewriterFreshInk: true, popEffects: false });
   e.inkMarks = []; e._inkView = null; e.particles = [];
   const v = mkView("abcde", 5);
   e.app = { workspace: { activeEditor: { editor: { cm: v } } } };
   e.lastActive = Object.assign({ pos: 4, docLen: 4, x: 140, top: 50, h: 24 }, last);
   const got = e.resolveHoldChar(Object.assign({ pos: 5, docLen: 5 }, last));
   ok("a typed letter is inked", got === "e" && e.inkMarks.length === 1 && e.inkMarks[0].text === "e", e.inkMarks);
-  ok("the keys are in every look, appended", ["freshInk", "freshInkMs", "freshInkStrength"].every((k) => T.LOOK_KEYS.includes(k)));
-  ok("off by default", T.DEFAULT_SETTINGS.freshInk === false);
+  ok("the keys are in every look, appended", ["typewriterFreshInk", "typewriterFreshInkMs", "typewriterFreshInkStrength"].every((k) => T.LOOK_KEYS.includes(k)));
+  ok("off by default", T.DEFAULT_SETTINGS.typewriterFreshInk === false);
   ok("wet ink keeps the frames coming", (() => { const f = Object.create(Plugin.prototype); f.settings = Object.assign({}, T.DEFAULT_SETTINGS); f.inkMarks = [{}]; return f._isAnimating(performance.now()) === true; })());
 }
 

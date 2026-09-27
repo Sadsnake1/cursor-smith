@@ -611,3 +611,43 @@ section("keeping up with a held key, and what the smooth controls do (1.7.1)");
   ok("on a keyboard step the smear's leading edge sits on the caret", smearAt(true) === 109, smearAt(true));
   ok("...on any other move it is still the spring, behind", smearAt(false) < 109, smearAt(false));
 }
+
+// ---------------------------------------------------------------------------
+section("Glide style: Ease out, Smooth, Springy (1.7.1)");
+{
+  // Glide amount scaled the speed by 0.7 - 0.95, a second weaker Glide
+  // speed; Glide style replaced it: the shape of the move.
+  const FRAME = 1000 / 120;
+  const glide = (settings, typing = false) => {
+    const e = makeEngine(Object.assign({ smoothEnabled: true, smear: false, catchUpSpeed: 0.55 }, settings));
+    e._smoothLastT = 0; e.typingSpeedMod = 1; e._typingBoostSm = null; e.lastMoveTime = -1e9; e._keyStepT = 0; e._glideV = null;
+    e.lastActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+    e.animActive = { x: 100, top: 40, w: 3, h: 24, actualCharWidth: 9 };
+    const real = performance.now;
+    let t = 1000;
+    const xs = [];
+    try {
+      performance.now = () => t;
+      e._smoothLastT = t;
+      const to = typing ? 109 : 400;
+      e.lastActive = Object.assign({}, e.lastActive, { x: to }); e.lastMoveTime = t;
+      if (typing) e._keyStepT = t;
+      for (let i = 0; i < 240; i++) { t += FRAME; e.updateSmoothCursor(); xs.push(e.animActive.x); }
+      return { xs, to, moving: e._smoothMoving, v: e._glideV };
+    } finally { performance.now = real; }
+  };
+  const ease = glide({ smoothStyle: "ease" }), smooth = glide({ smoothStyle: "smooth" }), springy = glide({ smoothStyle: "springy" });
+  const over = (g) => Math.max(...g.xs) - g.to;
+  const t95 = (g) => g.xs.findIndex((x) => Math.abs(g.to - x) <= 15) * FRAME;
+  ok("Ease out never overshoots", over(ease) <= 1e-9, over(ease));
+  ok("Smooth never overshoots either", over(smooth) <= 0.5, over(smooth));
+  ok("...and starts softer: after 25 ms it has gone less far than Ease out", smooth.xs[2] < ease.xs[2], [smooth.xs[2], ease.xs[2]]);
+  ok("...landing in about the same time", Math.abs(t95(smooth) - t95(ease)) < 60, [t95(smooth), t95(ease)]);
+  ok("Springy overshoots a little - under a fifth of the way - and settles", over(springy) > 0.05 * 300 && over(springy) < 0.2 * 300, over(springy));
+  for (const [name, g] of [["Ease out", ease], ["Smooth", smooth], ["Springy", springy]]) {
+    ok(name + " lands exactly and stops", g.xs[g.xs.length - 1] === g.to && g.moving === false && (!g.v || (g.v.x === 0 && g.v.y === 0)), [g.xs[g.xs.length - 1], g.moving, g.v]);
+  }
+  const typed = glide({ smoothStyle: "springy", smoothAdaptive: true }, true);
+  ok("a typed letter never bounces, whatever the style: typing takes the chase", over(typed) <= 1e-9, over(typed));
+  ok("Glide style is a look key, appended, Ease out by default", T.LOOK_KEYS.includes("smoothStyle") && T.DEFAULT_SETTINGS.smoothStyle === "ease");
+}

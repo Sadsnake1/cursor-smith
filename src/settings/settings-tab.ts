@@ -1386,15 +1386,21 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const smooth = [];
     smooth.push(toggle("Smooth movement", "The cursor glides to its new spot instead of jumping.", "smoothEnabled", { gate: true }));
     const gliding = on("smoothEnabled");
-    smooth.push(slider("Glide amount", "How much the cursor eases as it travels.", "smoothness", [0.05, 0.30, 0.05], { depth: 1, when: gliding }));
-    smooth.push(slider("Catch-up speed", "How fast the cursor glides to a new spot - a click, a jump. Low floats, high snaps.", "catchUpSpeed", [0.30, 0.80, 0.05], { depth: 1, when: gliding }));
+    // Glide speed and Glide style: how a move to a new spot (a click, a jump,
+    // Enter) goes. Glide style took Glide amount's place in 1.7.1 - that was
+    // a second, weaker speed; its key stays in the settings, unread, and the
+    // card still owns it, so Reset puts it back like the rest.
+    owns("smoothness");
+    smooth.push(slider("Glide speed", "How fast the cursor glides to a new spot - a click, a jump, Enter. Low floats, high snaps.", "catchUpSpeed", [0.30, 0.80, 0.05], { depth: 1, when: gliding }));
+    smooth.push(dropdown("Glide style", "Ease out starts fast and lands softly. Smooth starts softly too. Springy overshoots a little and settles.", "smoothStyle",
+      { ease: "Ease out", smooth: "Smooth", springy: "Springy" }, { depth: 1, when: gliding }));
     // Max catch-up speed is meaningless on its own - it is only ever read
     // inside the adaptive branch - so it hangs off that toggle rather than
     // sitting beside it as a live-looking slider that does nothing.
-    smooth.push(toggle("Speed up when typing fast", "While you type or delete, the cursor keeps up with every letter instead of gliding behind.", "smoothAdaptive", { depth: 1, gate: true, when: gliding }));
-    smooth.push(slider("Max catch-up speed", "How fast each typed letter's glide is. Low shows a little glide, the top is instant.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
+    smooth.push(toggle("Keep up with typing", "While you type or delete, the cursor keeps up with every letter instead of gliding behind.", "smoothAdaptive", { depth: 1, gate: true, when: gliding }));
+    smooth.push(slider("Typing glide", "How quickly each typed letter's glide finishes. Low shows a little glide, the top is instant.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
       { depth: 2, when: all(gliding, on("smoothAdaptive")) }));
-    smooth.push(slider("Movement delay", "Delay before the cursor sets off, in ms. 0 follows immediately.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
+    smooth.push(slider("Movement delay", "Wait before gliding off after a click or jump, in ms. 0 follows immediately; typing never waits.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
     // --- Effects -------------------------------------------------------------
     // The Effects page: a RAIL of chips at the top, one per effect with its
     // icon and a dot for "on", and the picked effect's rows under it - one

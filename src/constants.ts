@@ -257,6 +257,10 @@ export const TW_SPRING_DOWN = 0.18;
 // Typewriter's Ink stamp starts this solid - fixed: its slider went at the
 // user's word, "keep it always at 0.9".
 export const TW_INK_ALPHA = 0.9;
+// Typewriter's Ink stamp: the share of its life it takes to shrink onto the
+// letter, and to fade out - gone (under 1% left) by the time it lands.
+export const TW_INK_LAND = 0.9;
+export const TW_INK_FADE = 0.85;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.
@@ -539,7 +543,7 @@ export const CARET_STATE_FIELDS = [
   "_smearLead", "_smearTrail",
   "_smearMoving", "_smearDtT", "smearQuadLastMoveT",
   "trail", "glitch",
-  "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod",
+  "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod", "_glideV",
   "_hotPrev", "_hotEmitFrom", "_hotActiveT", "_lastHotT", "hotBurns", "_hotShiftTick",
   "_hotEngulfUntil",
   "_lastStardustT", "_lastSparkT", "_lastFireworkT",
@@ -581,3 +585,9 @@ export const SMOOTH_RATE_MIN = 10;
 export const SMOOTH_RATE_MAX = 90;
 export const TYPING_RATE_MIN = 30;
 export const TYPING_RATE_MAX = 200;
+// Glide style's springs (Smooth, Springy): the spring's frequency as a
+// multiple of the chase's rate - 1.58x lands a critically damped spring 95%
+// of the way in the same 3 / rate the chase takes - and Springy's damping
+// ratio, a ~12% overshoot.
+export const GLIDE_SPRING_FREQ = 1.58;
+export const GLIDE_SPRINGY_DAMPING = 0.55;

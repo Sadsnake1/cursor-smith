@@ -372,6 +372,7 @@ export const DEFAULT_SETTINGS = {
   catchUpSpeed: 0.55,        // 30-80% range (0.30 - 0.80)
   maxCatchUpSpeed: 0.85,     // 50-100% range (0.50 - 1.00)
   smoothAdaptive: true,      // Adaptive speed toggle
+  smoothStyle: "ease",       // Glide style: "ease" (ease out), "smooth" (a spring, no overshoot), "springy" (a spring that overshoots a little)
 
   // --- Vim-aware cursors ---------------------------------------------------
   // When vimModeEnabled is on AND Obsidian's own Vim keybindings are active,
@@ -505,6 +506,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "typewriterFreshInk", "typewriterFreshInkMs", "typewriterFreshInkStrength",
   "backspaceEvaporate",
   "typewriterFreshInkText",
+  "smoothStyle",
 ];
 
 // ---------------------------------------------------------------------------

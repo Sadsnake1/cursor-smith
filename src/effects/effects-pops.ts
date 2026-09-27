@@ -32,7 +32,7 @@ import {
   POP_RISE_ALPHA,
   POP_RISE_LINES,
   POP_RISE_MS,
-  TW_INK_ALPHA,
+  TW_INK_ALPHA, TW_INK_LAND, TW_INK_FADE,
   THUNDER_BANDS,
   THUNDER_LIFE_MS,
   THUNDER_MAX_ANGLE,
@@ -186,8 +186,12 @@ export const effectsPopsMethods = {
         const ascent = m.fontBoundingBoxAscent ?? size * 0.8, descent = m.fontBoundingBoxDescent ?? size * 0.2;
         const baseline = p.y + ascent + (lh - ascent - descent) / 2;
         const cx = p.x + m.width / 2, cy = baseline - (ascent - descent) / 2;
-        const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t / 0.45), 2);
-        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(t));
+        // It shrinks over nearly its whole life and has faded out before it
+        // reaches the letter's own size (TW_INK_LAND), so it is never a
+        // bold copy sitting on the letter. It landed at 45% and faded on it
+        // for the rest: "it shows the inky letter on top of the dried one".
+        const grow = 1 + (inkScale - 1) * Math.pow(1 - Math.min(1, t / TW_INK_LAND), 2);
+        p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(Math.min(1, t / TW_INK_FADE)));
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.translate(cx, cy);

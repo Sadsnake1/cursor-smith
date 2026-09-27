@@ -205,6 +205,7 @@ export interface Look {
   catchUpSpeed: number;
   maxCatchUpSpeed: number;
   smoothAdaptive: boolean;
+  smoothStyle: string;
   crtGlitch: boolean;
   crtGlitchStrength: number;
   crtGlitchAberration: number;

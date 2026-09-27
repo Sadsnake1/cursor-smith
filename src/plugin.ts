@@ -490,6 +490,8 @@ export default class CursorSmithPlugin extends Plugin {
   _torchIdleWakeMs!: number;
   _torchTick!: FrameRequestCallback | null;
   declare _typingBoostSm: number | null;
+  // Glide style's springs: the glide's velocity, px/s (null for Ease out).
+  declare _glideV: { x: number; y: number } | null;
   _uiModeSwitching!: boolean;
   _vimEditMode!: string;
   _vimModeCache!: string | null;
@@ -1688,6 +1690,7 @@ export default class CursorSmithPlugin extends Plugin {
     this._smoothMoving = false;
     this._smoothLastT = 0;
     this._typingBoostSm = null;
+    this._glideV = null;
     this._hotEmitFrom = null;
     this._hotActiveT = 0;
     this._lastHotT = 0;

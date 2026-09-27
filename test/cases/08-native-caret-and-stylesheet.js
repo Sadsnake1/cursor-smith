@@ -401,3 +401,12 @@ section("Note Editor Only: the plugin stays out of the interface");
        { hideNativeCaret: rows.settings.hideNativeCaret, noteEditorOnly: rows.settings.noteEditorOnly });
   }
 }
+
+// Nested rows: the indent alone, no guide line (2026-09-27: "just remove
+// those lines, the indenting is enough").
+{
+  const css = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "styles.css"), "utf8");
+  const rule = (sel) => { const i = css.indexOf(sel); if (i < 0) return ""; const o = css.indexOf("{", i); return css.slice(o, css.indexOf("}", o)); };
+  const sub = rule(".cursor-smith-section .setting-item.cursor-smith-sub {");
+  ok("a nested row is indented and has no guide line", /margin-left:\s*12px/.test(sub) && !/border-left/.test(sub) && !css.includes("cursor-smith-sub-2::after"), sub);
+}

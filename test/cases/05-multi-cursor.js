@@ -618,7 +618,9 @@ section("multi-cursor: full effects on secondary carets");
     d.lastActive = at(4, text.length - 1, " ");
     d.pending = null;
     d.updateActivePoint(at(5, text.length, "a"));
-    ok("...and a keystroke's letter while the move waits", !!d.pending && d.pending.holdChar === "t", d.pending && d.pending.holdChar);
+    // A keystroke is a keyboard step: it never waits for Movement delay
+    // (1.7.1), so it commits at once, showing the character under the caret.
+    ok("...but a keystroke does not wait: it commits at once", !d.pending && d.lastActive.pos === 5 && d.lastActive.char === "a", d.pending, d.lastActive);
   }
 
   // A jump flares the fire where the caret lands: decided on the committed

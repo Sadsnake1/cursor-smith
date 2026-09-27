@@ -41,7 +41,7 @@
 // no teardown). No loop at all under reduced motion, or where there is
 // no requestAnimationFrame (the tests).
 import type { Look } from "../types";
-import { blinkAlphaAt } from "../util/motion";
+import { blinkAlphaAt, smoothCatchRate } from "../util/motion";
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
@@ -147,7 +147,7 @@ export function step(s: DemoState, look: Partial<Look>, n: number, dt: number, n
 
   // The leading edge: the engine's glide, or a snap.
   if (look.smoothEnabled) {
-    const rate = Math.max(0.5, (look.catchUpSpeed ?? 0.5) * (1 - (look.smoothness ?? 0.15)) * 40);
+    const rate = Math.max(0.5, smoothCatchRate(look.catchUpSpeed ?? 0.55));
     s.lead += (s.target - s.lead) * (1 - Math.exp(-rate * dtS));
   } else if (look.smear) {
     // The smear's own leading spring, so a stretch shows even on a snap.

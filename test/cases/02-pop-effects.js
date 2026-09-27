@@ -706,3 +706,27 @@ section("Typewriter's sliders (1.6.7)");
   }
   ok("a value outside a slider's range is held in it", mk({ typewriterDepth: 999 }).twOpt("typewriterDepth", 0, 60) === 60 && mk({ typewriterDepth: "x" }).twOpt("typewriterDepth", 0, 60) === 18);
 }
+
+// ---------------------------------------------------------------------------
+section("Typewriter's Ink stamp: gone before it lands (1.7.1)");
+{
+  // "If it's too thick it shows the inky letter on top of the dried one": it
+  // shrank onto the letter at 45% of its life and faded ON it for the rest.
+  const e = makeEngine({ typewriter: true, typewriterInk: true, typewriterInkMs: 400, typewriterInkSize: 1.6 });
+  const seen = [];
+  e.ctx = { globalAlpha: 1, font: "", fillStyle: "", textAlign: "", textBaseline: "", save() {}, restore() {}, translate() {}, rotate() {},
+    scale(sx) { this._s = sx; }, measureText: () => ({ width: 9, fontBoundingBoxAscent: 14, fontBoundingBoxDescent: 4 }),
+    fillText() { seen.push({ a: this.globalAlpha, s: this._s }); } };
+  e.particles = [];
+  const real = performance.now;
+  try {
+    let t = 1000;
+    performance.now = () => t;
+    e.spawnInkStamp("a", { x: 100, top: 50, h: 24, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", textColor: "#ccc" });
+    for (const at of [0.1, 0.5, 0.86, 0.95]) { t = 1000 + 400 * at; e.drawLettersParticles(); }
+  } finally { performance.now = real; }
+  ok("it starts big and strong", seen[0].s > 1.3 && seen[0].a > 0.8, seen[0]);
+  ok("...still bigger than the letter halfway through", seen[1].s > 1.01, seen[1]);
+  ok("...and has faded out before it reaches the letter's size: never a bold copy on the letter",
+     seen.filter((f) => f.s <= 1.005).every((f) => f.a < 0.01) && seen[2].a < 0.01, seen);
+}

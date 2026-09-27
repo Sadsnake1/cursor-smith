@@ -16,6 +16,8 @@ import {
   SECONDARY_MATCH_WINDOW,
   KEY_STEP_CHARS,
   KEY_STEP_HOLD_MS,
+  GLIDE_SPRING_FREQ,
+  GLIDE_SPRINGY_DAMPING,
 } from "../constants";
 import { smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { HOT_ENGULF_MS } from "../effects/fire";
@@ -462,7 +464,10 @@ export const caretsMethods = {
     }
 
     const delay = Math.max(0, Math.round(this.look.moveDelayMs));
-    if (delay <= 0) {
+    // Typing never waits: Movement delay is for clicks and jumps, and a
+    // keyboard step (KEY_STEP_CHARS) goes at once, as with no delay (1.7.1;
+    // it held every typed letter back by the delay).
+    if (delay <= 0 || (!this.pending && this._isKeyStep(this.lastActive, caret))) {
       // For the letter pop only. The box moves at once, so it already sits
       // past the letter just typed and shows the character under it -
       // nothing at the end of a line. 1.6.0 to 1.6.3 kept the typed letter
@@ -587,9 +592,11 @@ export const caretsMethods = {
     // times of roughly 100-360 ms to 95% of the way there for single moves;
     // the adaptive typingBoost can multiply that by up to 4x under sustained
     // typing so the cursor keeps pace with key repeat.
-    // Catch-up speed on its exponential scale (smoothCatchRate); Glide
-    // amount eases it a little, as it always did, 1 at the default.
-    let rate = Math.max(0.5, smoothCatchRate(targetSpeed) * (1 - this.look.smoothness) / 0.85 * typingBoost);
+    // Glide speed (the catchUpSpeed key) on its exponential scale
+    // (smoothCatchRate). Glide amount (smoothness) scaled this by 0.7 - 0.95,
+    // a second weaker speed; Glide style took its place in 1.7.1 and the key
+    // is kept for old share codes, unread.
+    let rate = Math.max(0.5, smoothCatchRate(targetSpeed) * typingBoost);
     // Speed up when typing fast: a keyboard step glides at the typing rate
     // Max catch-up speed sets (smoothTypingRate), so a held key never leaves
     // the cursor a letter behind (KEY_STEP_CHARS). Off, a typed letter
@@ -602,8 +609,32 @@ export const caretsMethods = {
     this._catchUpBoost = (targetSpeed / Math.max(0.01, this.look.catchUpSpeed)) * typingBoost;
     const lerpFactor = 1 - Math.exp(-rate * dt);
 
-    this.animActive.x += (this.lastActive.x - this.animActive.x) * lerpFactor;
-    this.animActive.top += (this.lastActive.top - this.animActive.top) * lerpFactor;
+    // Glide style. Ease out: the exponential chase, quickest at the start.
+    // Smooth and Springy: a spring on the position - critically damped
+    // (a soft start, no overshoot) or at a damping of 0.55 (a ~12%
+    // overshoot that settles) - tuned to land in the same time as Ease out
+    // at this rate (95% at about 3 / rate; the spring's frequency 1.58x the
+    // rate). Typing that keeps up always takes the chase: a letter should
+    // not bounce.
+    const style = this.look.smoothStyle;
+    const typingNow = !!this.look.smoothAdaptive && this._keyStepping(now);
+    if ((style === "smooth" || style === "springy") && !typingNow) {
+      const v = this._glideV || (this._glideV = { x: 0, y: 0 });
+      const w = GLIDE_SPRING_FREQ * rate;
+      const zeta = style === "springy" ? GLIDE_SPRINGY_DAMPING : 1;
+      const steps = Math.max(1, Math.min(16, Math.ceil(dt * 240)));
+      const h = dt / steps;
+      for (let i = 0; i < steps; i++) {
+        v.x += (w * w * (this.lastActive.x - this.animActive.x) - 2 * zeta * w * v.x) * h;
+        v.y += (w * w * (this.lastActive.top - this.animActive.top) - 2 * zeta * w * v.y) * h;
+        this.animActive.x += v.x * h;
+        this.animActive.top += v.y * h;
+      }
+    } else {
+      if (this._glideV) { this._glideV.x = 0; this._glideV.y = 0; }
+      this.animActive.x += (this.lastActive.x - this.animActive.x) * lerpFactor;
+      this.animActive.top += (this.lastActive.top - this.animActive.top) * lerpFactor;
+    }
     this.animActive.w += (this.lastActive.w - this.animActive.w) * lerpFactor;
     this.animActive.h += (this.lastActive.h - this.animActive.h) * lerpFactor;
 
@@ -627,12 +658,16 @@ export const caretsMethods = {
     // in one go. Measured, a 24 -> 60 change popped 36px in a single frame,
     // with _smoothMoving already false so the frame governor never even
     // counted it as motion.
+    const gv = this._glideV;
     const arrived =
       Math.abs(this.lastActive.x - this.animActive.x) < 0.25 &&
       Math.abs(this.lastActive.top - this.animActive.top) < 0.25 &&
       Math.abs(this.lastActive.w - this.animActive.w) < 0.25 &&
-      Math.abs(this.lastActive.h - this.animActive.h) < 0.25;
+      Math.abs(this.lastActive.h - this.animActive.h) < 0.25 &&
+      // A spring passing through the target is not there yet.
+      (!gv || Math.hypot(gv.x, gv.y) < 6);
     if (arrived) {
+      if (gv) { gv.x = 0; gv.y = 0; }
       this.animActive.x = this.lastActive.x;
       this.animActive.top = this.lastActive.top;
       this.animActive.w = this.lastActive.w;

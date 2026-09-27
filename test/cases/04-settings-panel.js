@@ -805,7 +805,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
       ok("...and flipping it calls setDeviceEnabled", calls.length === 1 && calls[0] === true, calls);
       rows.plugin._deviceEnabled = true;
     }
-    ok("the look rows are on their pages", rows.find((r) => r.name === "Cursor style").page === "Appearance" && rows.find((r) => r.name === "Blink speed").page === "Blinking" && rows.find((r) => r.name === "Glide amount").page === "Smooth movement" && rows.find((r) => r.name === "Stiffness").page === "Effects");
+    ok("the look rows are on their pages", rows.find((r) => r.name === "Cursor style").page === "Appearance" && rows.find((r) => r.name === "Blink speed").page === "Blinking" && rows.find((r) => r.name === "Glide speed").page === "Smooth movement" && rows.find((r) => r.name === "Stiffness").page === "Effects");
     const value = (name) => rows.pages.find((p) => p.name === name).displayValue;
     ok("Appearance's entry says the style and the extras", value("Appearance") === "Box · translucent · letter inside", value("Appearance"));
     ok("Blinking's says On, the speed, breathing", value("Blinking") === "On · 1.0× · breathing", value("Blinking"));

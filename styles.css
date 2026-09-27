@@ -92,36 +92,23 @@
 /* Sub-options nested under a parent toggle (or the style dropdown), so
    conditional groups - Torch spotlight's Follow/Light size/etc., or the Box
    style's Hollow -> Outline width - read as a visual hierarchy instead of a
-   flat list. 12px in, a 2px guide line, 12px more to the text - 26px per
-   level, the geometry of the old wrapper (and of Word-Smith's
-   .ws-settings-sub, so the two panels line up). One class per depth on the
-   row itself: consecutive rows at one depth join into one line because
-   there is no vertical margin between them, and a deeper row draws the
-   outer lines too (::after, one strip per level out), so a parent's line
-   runs past its children instead of stopping where they start. */
+   flat list: 26px in per level, the step alone. There was a 2px guide line
+   per level, and a nested row drew its parents' too; the user asked for the
+   lines to go, the indent being enough (2026-09-27). The step is the old
+   one, so the text sits where it did (and Word-Smith's .ws-settings-sub
+   still lines up). */
 .cursor-smith-section .setting-item.cursor-smith-sub {
   margin-left: 12px;
-  border-left: 2px solid var(--background-modifier-border);
-  padding-left: 12px;
+  /* No guide line (2026-09-27, the user: "just remove those lines, the
+     indenting is enough"); the 2px it took is in the padding, so the text
+     sits where it did. */
+  padding-left: 14px;
 }
 .cursor-smith-section .setting-item.cursor-smith-sub-2 {
   margin-left: 38px;
 }
 .cursor-smith-section .setting-item.cursor-smith-sub-3 {
   margin-left: 64px;
-}
-.cursor-smith-section .setting-item.cursor-smith-sub-2::after,
-.cursor-smith-section .setting-item.cursor-smith-sub-3::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -28px;
-  width: 2px;
-  background: var(--background-modifier-border);
-}
-.cursor-smith-section .setting-item.cursor-smith-sub-3::after {
-  box-shadow: -26px 0 0 var(--background-modifier-border);
 }
 /* The hairline above a row starts after the guide line, and the first row
    of a sub-group has none: the line and the step already mark the break. */

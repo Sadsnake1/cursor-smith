@@ -15,11 +15,13 @@ src/
     measure.ts          where the caret is
     vim.ts              Vim modes: detection, the look per mode, the status bar
   effects/            the particle effects (part of the class)
-    effects.ts          gathered from the four below
+    effects.ts          gathered from the six below
     effects-pops.ts     letters, Typewriter's ink and carriage, lightning, fireworks
     effects-fire.ts     Hot-head
     effects-dust.ts     the pixel trail and stardust
     effects-trail.ts    the CRT trail and Speed demon's sparks
+    effects-ink.ts      Fresh ink
+    effects-smoke.ts    Smoke on delete
     fire.ts             tuning constants for Hot-head
   paint/              painting the cursor (part of the class)
     paint.ts            gathered from the eight below
@@ -47,7 +49,7 @@ src/
     text.ts             bracket and quote scanning
     geometry.ts         the caret-following canvas region, the status-bar clip
 test/               the test suite (`npm test`): test.js the runner, cases/ the
-                    fourteen files by area, lib.js what they share, and the Obsidian stub
+                    fifteen files by area, lib.js what they share, and the Obsidian stub
 
 `test/goldens/` holds the paint goldens: what a frame draws for each shipped
 preset, recorded by `test/goldens.js` and compared on every run. A paint

@@ -1,7 +1,7 @@
 import { Plugin, View, addIcon } from "obsidian";
 import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
 import { applyReducedMotion, isTextCaretHost } from "./util/motion";
-import { DEFAULT_PRESETS, DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset } from "./settings/presets";
+import { DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset, seedPresets } from "./settings/presets";
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings/settings";
 import { CursorSmithSettingTab } from "./settings/settings-tab";
 import type { EditorView } from "@codemirror/view";
@@ -123,6 +123,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare spawnCarriageReturn: EffectsMethods["spawnCarriageReturn"];
   declare drawCarriageReturns: EffectsMethods["drawCarriageReturns"];
   declare spawnFreshInk: EffectsMethods["spawnFreshInk"];
+  declare _cellBackground: EffectsMethods["_cellBackground"];
   declare _inkTrimFront: EffectsMethods["_inkTrimFront"];
   declare _inkLocate: EffectsMethods["_inkLocate"];
   declare inkWetness: EffectsMethods["inkWetness"];
@@ -596,14 +597,10 @@ export default class CursorSmithPlugin extends Plugin {
     // it also disappears from data.json on the next save.
     delete this.settings.vimPrevObsidianVim;
 
-    // Seed default presets for first-time users (or any install missing them).
-    // Only adds keys that don't already exist — never overwrites user presets.
+    // Seed default presets for first-time users (or any install missing
+    // them), and bring an untouched retuned one up to date (seedPresets).
     if (!this.settings.userPresets) this.settings.userPresets = {};
-    for (const [name, snap] of Object.entries(DEFAULT_PRESETS)) {
-      if (!(name in this.settings.userPresets)) {
-        this.settings.userPresets[name] = snap;
-      }
-    }
+    seedPresets(this.settings.userPresets);
 
     // A new install opens on a look somebody actually designed, rather than on
     // the raw DEFAULT_SETTINGS - which are a neon-green blinking box matching

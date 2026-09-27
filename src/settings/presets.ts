@@ -259,10 +259,13 @@ export const DEFAULT_PRESETS = {
     "catchUpSpeed": 0.6, "maxCatchUpSpeed": 0.9, "smoothAdaptive": true
   },
   // Typer (1.6.7): the user's own look, from their share code - a Line in
-  // a gray gradient with Typewriter and all four of its parts on (its
-  // sliders at their defaults). Encodes back to exactly that code; a test
-  // holds it:
-  // 1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~127b1~128b1~129b1
+  // a gray gradient with Typewriter and all four of its parts on. Retuned in
+  // 1.7.1 from their new code: a shallower, softer Box strike (depth 14,
+  // bounce 0.7, squash 10, 170 ms), Fresh ink at full strength in the
+  // text's own color in place of the Ink stamp (off, its sliders set to 500
+  // ms and 1.15x as the user left them). Encodes back to exactly that code;
+  // a test holds it:
+  // 1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~128b1~129b1~130n14~131n0.7~132n10~133n170~134n500~135n1.15~140b1~142n1~144b1
   "Typer": {
     "cursorStyle": "Line", "colorDark": "#31edae", "colorLight": "#147133",
     "gradientEnabled": true, "gradientDark1": "#ededed",
@@ -276,10 +279,42 @@ export const DEFAULT_PRESETS = {
     "smearDamping": 0.4, "smoothEnabled": true, "catchUpSpeed": 0.6,
     "maxCatchUpSpeed": 0.9, "popEffects": false, "blinkStopAfter": 3,
     "popLettersRise": true, "typewriter": true, "typewriterSpring": true,
-    "typewriterInk": true, "typewriterReturn": true,
-    "typewriterAdvance": true
+    "typewriterReturn": true, "typewriterAdvance": true,
+    "typewriterDepth": 14, "typewriterBounce": 0.7, "typewriterSquash": 10,
+    "typewriterStrikeMs": 170, "typewriterInkMs": 500, "typewriterInkSize": 1.15,
+    "typewriterFreshInk": true, "typewriterFreshInkStrength": 1,
+    "typewriterFreshInkText": true
   }
 };
+
+// Built-in presets as they shipped before a retune, by name. An install
+// holding one of these exactly - seeded, never edited - is given the preset
+// as it is now; an edited one is the user's and stays. Seeding alone only
+// fills in a missing name, so a retune never reached anyone who had it.
+const without = (snap: Partial<Look>, keys: string[]): Partial<Look> =>
+  Object.fromEntries(Object.entries(snap).filter(([k]) => !keys.includes(k)));
+export const SUPERSEDED_PRESETS: Record<string, Partial<Look>[]> = {
+  // Typer as 1.6.7 - 1.7.0 shipped it: the Ink stamp on, Fresh ink off and
+  // the Typewriter sliders at their defaults (unset). A test holds it to
+  // that release's share code.
+  "Typer": [Object.assign(without(DEFAULT_PRESETS.Typer, ["typewriterDepth", "typewriterBounce", "typewriterSquash", "typewriterStrikeMs",
+    "typewriterInkMs", "typewriterInkSize", "typewriterFreshInk", "typewriterFreshInkStrength", "typewriterFreshInkText"]), { typewriterInk: true })],
+};
+
+// Seed the built-in presets into an install's saved ones: a missing name is
+// added; one held exactly as it shipped before a retune (SUPERSEDED_PRESETS)
+// is replaced with it as it is now; anything else is the user's and stays.
+export function seedPresets(userPresets: Record<string, Partial<Look>>) {
+  const same = (a: Partial<Look>, b: Partial<Look>) => {
+    const ka = Object.keys(a) as (keyof Look)[];
+    return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+  };
+  for (const [name, snap] of Object.entries(DEFAULT_PRESETS)) {
+    const had = userPresets[name];
+    if (!had) userPresets[name] = snap;
+    else if ((SUPERSEDED_PRESETS[name] || []).some((was) => same(had, was))) userPresets[name] = Object.assign({}, snap);
+  }
+}
 
 // Which of the above a brand-new install opens on.
 //

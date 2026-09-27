@@ -512,10 +512,32 @@ section("the Typer preset (1.6.7)");
 // Shipped from the user's own share code, and it has to stay that look:
 // filled out with the defaults, it encodes back to exactly the code.
 {
-  const code = "1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~127b1~128b1~129b1";
+  const code = "1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~128b1~129b1~130n14~131n0.7~132n10~133n170~134n500~135n1.15~140b1~142n1~144b1";
   const typer = T.DEFAULT_PRESETS.Typer;
   ok("Typer ships with the built-in presets, last", !!typer && Object.keys(T.DEFAULT_PRESETS).pop() === "Typer", Object.keys(T.DEFAULT_PRESETS));
   const full = Object.assign({}, T.pickLook(T.DEFAULT_SETTINGS), typer);
   ok("...and encodes back to exactly the user's share code", T.presetToCode("Typer", full) === code, T.presetToCode("Typer", full));
-  ok("...a Line with Typewriter and all four of its parts on", typer.cursorStyle === "Line" && typer.typewriter && typer.typewriterSpring && typer.typewriterInk && typer.typewriterReturn && typer.typewriterAdvance);
+  ok("...a Line with Typewriter on: the Box, Carriage return and advance", typer.cursorStyle === "Line" && typer.typewriter && typer.typewriterSpring && typer.typewriterReturn && typer.typewriterAdvance);
+  // Retuned in 1.7.1 from the user's new code (2026-09-27: "this is the new
+  // Typer", then "change Typer again to this"): the Box, and Fresh ink in
+  // the text's color in place of the Ink stamp.
+  ok("...with the Box tuned (1.7.1)", typer.typewriterDepth === 14 && typer.typewriterBounce === 0.7 && typer.typewriterSquash === 10 && typer.typewriterStrikeMs === 170);
+  ok("...and Fresh ink at full strength in the text's color, the Ink stamp off", typer.typewriterFreshInk === true && typer.typewriterFreshInkStrength === 1 && typer.typewriterFreshInkText === true && !typer.typewriterInk);
+  const was = T.SUPERSEDED_PRESETS.Typer[0];
+  const wasFull = Object.assign({}, T.pickLook(T.DEFAULT_SETTINGS), was);
+  ok("...and the Typer 1.6.7 - 1.7.0 shipped is on record as it was: exactly the old code",
+     T.presetToCode("Typer", wasFull) === "1|Typer|0sLine~1c31edae~2c147133~3b1~5cededed~6cc2c2c2~9c949494~10c000000~21n0.7~22n0.1~24b0~28n2.7~29b0~31b0~41n4~72n1.4~77n0.8~78n0.55~79n550~80n0.35~85b0~86n0.65~87n0.15~88n0.4~91b1~94n0.6~95n0.9~103b0~119n3~124b1~125b1~126b1~127b1~128b1~129b1", T.presetToCode("Typer", wasFull));
+  // An install seeded with the old Typer gets the new one; an edited Typer,
+  // or a preset of the user's own, is theirs and stays.
+  const fresh = {};
+  T.seedPresets(fresh);
+  ok("seeding: a new install gets every built-in preset", Object.keys(T.DEFAULT_PRESETS).every((n) => n in fresh));
+  const had = { Typer: Object.assign({}, was), Mine: { cursorStyle: "Block" } };
+  T.seedPresets(had);
+  ok("...an untouched 1.6.7 Typer is brought up to the new one", JSON.stringify(had.Typer) === JSON.stringify(T.DEFAULT_PRESETS.Typer) && had.Typer !== T.DEFAULT_PRESETS.Typer, had.Typer);
+  const edited = { Typer: Object.assign({}, was, { caretWidthPx: 3 }), Mine: { cursorStyle: "Block" } };
+  T.seedPresets(edited);
+  ok("...an edited Typer stays as the user left it", edited.Typer.caretWidthPx === 3 && edited.Typer.typewriterInkMs === undefined, edited.Typer);
+  ok("...and a preset of their own is never touched", JSON.stringify(edited.Mine) === JSON.stringify({ cursorStyle: "Block" }));
 }
+

@@ -1,6 +1,6 @@
 // Fresh ink (a part of Typewriter) and Backspace evaporation (a part of Pop
 // effects; Smoke on delete, then Evaporate on delete, before): two effects
-// on trial (2026-09-27), each in its own source file.
+// added in 1.7.0, each in its own source file.
 // One of the files test/test.js runs in order; see test/lib.js.
 const { Plugin, T, ok, section, later, makeEngine, makeCtx, caret, SPEED_LIFTOFF, D, renderPanel, makePathCtx, srcPath, srcFiles } = require("../lib");
 

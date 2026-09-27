@@ -1436,7 +1436,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // are the bigger, rarer events.
     effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
       "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
-    // Backspace evaporation (on trial, 2026-09-27; Smoke on delete, then
+    // Backspace evaporation (1.7.0; Smoke on delete, then
     // Evaporate on delete under Popping letters, before the user settled
     // it here): the calm counterpart of the burst above it, with Backspace
     // or Delete - the letters rise and fade.
@@ -1471,7 +1471,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Ink stamp", "The letter you type is struck bigger and bolder, then settles.", "typewriterInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Stamp duration", "How long the stamp lasts, in milliseconds.", "typewriterInkMs", [150, 1000, 10], { depth: 2, fallback: 400, when: twOn("typewriterInk") }));
     effects.push(slider("Stamp size", "How big the stamp starts, times the letter.", "typewriterInkSize", [1, 2, 0.05], { depth: 2, fallback: 1.3, when: twOn("typewriterInk") }));
-    // Fresh ink (on trial, 2026-09-27): the characters just typed, wet in the
+    // Fresh ink (1.7.0): the characters just typed, wet in the
     // cursor's colour, drying into the text. Beside the stamp: both ink.
     effects.push(toggle("Fresh ink", "The words you just typed stay wet in your cursor's colour, then dry into the text.", "typewriterFreshInk", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Drying time", "How long the ink takes to dry, in milliseconds.", "typewriterFreshInkMs", [300, 4000, 100], { depth: 2, fallback: 1500, when: twOn("typewriterFreshInk") }));

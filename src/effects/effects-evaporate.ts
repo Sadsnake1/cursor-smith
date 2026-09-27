@@ -3,7 +3,7 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Pop effects' Backspace evaporation (on trial, 2026-09-27): the letters a
+// Pop effects' Backspace evaporation (since 1.7.0): the letters a
 // deletion takes rise from where they stood and fade, swaying a little and
 // spreading as they go - with Backspace (the letters before the caret, right
 // to left) or Delete (the letters after it, left to right). What was taken,

@@ -3,7 +3,7 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Typewriter's Fresh ink (on trial, 2026-09-27): the characters just typed stay wet in
+// Typewriter's Fresh ink (since 1.7.0): the characters just typed stay wet in
 // the cursor's colour and dry into the text over a second or two. Each run
 // of typing is one mark - where it starts in the document, its text, and
 // when each character went in - and the draw finds every character's own

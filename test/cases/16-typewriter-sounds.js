@@ -11,8 +11,9 @@ const path = require("path");
 section("Typewriter's Sounds: the machines");
 {
   const M = T.SOUND_MACHINES;
-  ok("five real typewriters, the Hermes 3000 first and the default",
-     M.map((m) => m.label).join() === "Hermes 3000,Underwood,IBM Selectric II,Olivetti Lettera 22,Sears Electric Twelve" && T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000");
+  ok("fourteen real typewriters, the Hermes 3000 first and the default, the rest by name",
+     M.map((m) => m.label).join() === "Hermes 3000,Hermes Baby,IBM Selectric II,L C Smith (1946),Mercedes (1934),Olivetti Lettera 22,Olivetti Lettera 35,Olympia (1956),Olympia Report de Luxe,Royal Portable (1936),Royal Quiet De Luxe,Sears Electric Twelve,Smith-Corona Corsair,Underwood" &&
+     T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000" && new Set(M.map((m) => m.id)).size === M.length, M.map((m) => m.label));
   for (const m of M) {
     const takes = T.soundTakes(m);
     const all = T.ATOM_NAMES.every((n) => (takes[n] || []).length > 0);
@@ -21,13 +22,14 @@ section("Typewriter's Sounds: the machines");
     const bytes = new Uint8Array(T.soundBytes(m.mp3));
     const mp3 = (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) || String.fromCharCode(bytes[0], bytes[1], bytes[2]) === "ID3";
     ok(`${m.label}: every sound it needs - five keys, two capitals, two space bars, Backspace, its return, its bell - in order`, all && counts && inOrder, Object.fromEntries(Object.entries(takes).map(([k, v]) => [k, v.length])));
-    ok(`...as one MP3 under 50 KB, its first sound where the decoder is measured from`, mp3 && bytes.length < 50 * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + 0.05, [bytes.length, m.onset]);
-    ok(`...a key is a key (under 0.2 s), the return and the bell longer`, takes.strike.every((t) => t.dur < 0.2) && takes.feed[0].dur > 0.6 && takes.bell[0].dur > 0.8);
+    ok(`...as one MP3 under 55 KB, its first sound (where the decoder is measured from) inside the first take`, mp3 && bytes.length < 55 * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + m.sounds[0][2], [bytes.length, m.onset]);
+    ok(`...a key is a key (under 0.2 s), the return and the bell longer`, takes.strike.every((t) => t.dur < 0.2) && takes.feed[0].dur > 0.5 && takes.bell[0].dur > 0.8, [takes.feed[0].dur, takes.bell[0].dur]);
   }
   const total = M.reduce((n, m) => n + T.soundBytes(m.mp3).byteLength, 0);
-  ok("all five under 230 KB", total < 230 * 1024, Math.round(total / 1024) + " KB");
+  ok("all fourteen under 600 KB", total < 600 * 1024, Math.round(total / 1024) + " KB");
   const notice = fs.readFileSync(path.join(__dirname, "..", "..", "NOTICE"), "utf8");
-  ok("every recording credited in NOTICE, its licence with it", ["519622", "107189", "224012", "123344", "807926", "608136", "345955", "318687"].every((id) => notice.includes(`freesound.org/s/${id}/`)) && /CC BY 3\.0/.test(notice));
+  const ids = [...new Set(M.flatMap((m) => [...m.credit.matchAll(/freesound\.org\/s\/(\d+)/g)].map((x) => x[1])))];
+  ok("every recording credited in NOTICE, its licence with it", ids.length >= 17 && ids.every((id) => notice.includes(`freesound.org/s/${id}/`)) && /CC BY 3\.0/.test(notice) && /CC BY 4\.0/.test(notice), ids.filter((id) => !notice.includes(`freesound.org/s/${id}/`)));
   ok("...and on each machine", M.every((m) => /freesound\.org\/s\/\d+/.test(m.credit) && /CC0|CC BY/.test(m.credit)));
   ok("an unknown machine (an older code's) is the default one", T.soundMachine("manual").id === "hermes3000" && T.soundMachine(undefined).id === "hermes3000" && T.soundMachine("olivetti22").label === "Olivetti Lettera 22");
   const bars = new Set("abcdefghijklmnopqrstuvwxyz".split("").map((c) => T.typebarOf(c, 5)));

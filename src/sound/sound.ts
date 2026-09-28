@@ -119,10 +119,13 @@ export function soundTakes(m: SoundMachine): Partial<Record<AtomName, SoundTake[
 }
 
 // Where the first sound starts: the first sample over a fifth of the loudest
-// in the first 0.6 s - the rule samples.ts's `onset` was measured by, so the
-// difference is the decoder's delay.
-export function soundOnset(x: Float32Array, rate: number): number {
-  const n = Math.min(x.length, Math.round(0.6 * rate));
+// up to `until` s - the end of the first sound, so a louder sound after it
+// is never taken for it - the rule samples.ts's `onset` was measured by
+// (up to 20 ms after the sound there; here 70, a decoder's delay allowed,
+// still short of the next sound 80 ms on), so the difference is the
+// decoder's delay.
+export function soundOnset(x: Float32Array, rate: number, until = 0.6): number {
+  const n = Math.min(x.length, Math.round(until * rate));
   let m = 0;
   for (let i = 0; i < n; i++) m = Math.max(m, Math.abs(x[i]));
   for (let i = 0; i < n; i++) if (Math.abs(x[i]) > m * 0.2) return i / rate;
@@ -297,7 +300,8 @@ export const soundMethods = {
     const job = (async () => {
       const buf = await ctx.decodeAudioData(soundBytes(m.mp3));
       if (s.voice !== id) return;
-      const delay = soundOnset(buf.getChannelData(0), buf.sampleRate) - m.onset;
+      const first = m.sounds[0];
+      const delay = soundOnset(buf.getChannelData(0), buf.sampleRate, first[1] + first[2] + 0.07) - m.onset;
       s.delay = Math.max(-0.02, Math.min(0.2, delay));
       s.buffer = buf;
       s.takes = soundTakes(m);

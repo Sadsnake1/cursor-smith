@@ -461,3 +461,67 @@ section("Fresh ink: keep the text's color");
   ok("off: the cursor's color, no spread", plain.fills.every((c) => c.fill === "#ff0000") && plain.strokes.length === 0);
   ok("its key is in every look, appended, off by default", T.LOOK_KEYS.includes("typewriterFreshInkText") && T.DEFAULT_SETTINGS.typewriterFreshInkText === false);
 }
+
+// ---------------------------------------------------------------------------
+section("An input method's commit is typing (issue #38)");
+{
+  // Chinese typed with pinyin: "nihao" appears as it is typed, then the
+  // characters chosen replace it. Fresh ink, the stamp and the popped letter
+  // reached only the pinyin; the characters written got nothing.
+  const before = "ok a", pinyin = "nihao", hanzi = "\u4f60\u597d";
+  const mk = (text) => {
+    const view = { state: { doc: { length: text.length, sliceString: (a, b) => text.slice(a, b === undefined ? text.length : b) }, selection: { main: { head: text.length } } },
+      coordsAtPos: (pos) => ({ left: 100 + pos * 10, right: 110 + pos * 10, top: 50, bottom: 74 }) };
+    return view;
+  };
+  const rec = (pos, docLen, x) => ({ x, top: 50, h: 24, pos, docLen, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#ddd", actualCharWidth: 16 });
+  const e = makeEngine({ typewriter: true, typewriterFreshInk: true, typewriterInk: true, popEffects: true, popLetters: true });
+  const got = { ink: [], stamp: [], pop: [] };
+  e.spawnInkStamp = (ch, a) => got.stamp.push([ch, a.pos, a.x]);
+  e.spawnLetterParticle = (ch, a) => got.pop.push([ch, a.pos, a.x]);
+  const realInk = e.spawnFreshInk;
+  e.spawnFreshInk = (view, last, from, to) => got.ink.push(view.state.doc.sliceString(from, to));
+  // The pinyin, letter by letter: typing as ever.
+  let text = before;
+  for (const ch of pinyin) {
+    const view = mk(text + ch);
+    e.app = { workspace: { activeEditor: { editor: { cm: view } } } };
+    e.lastActive = rec(text.length, text.length, 100 + text.length * 10);
+    e.resolveHoldChar(rec(text.length + 1, text.length + 1, 110 + text.length * 10));
+    text += ch;
+  }
+  ok("the pinyin as it is typed: each letter heard, as before", got.ink.join("") === pinyin && got.stamp.length === pinyin.length);
+  got.ink.length = 0; got.stamp.length = 0; got.pop.length = 0;
+  // The commit: "nihao" becomes the two characters; the caret moves back.
+  const done = before + hanzi;
+  const view = mk(done);
+  e.app = { workspace: { activeEditor: { editor: { cm: view } } } };
+  e.lastActive = rec(text.length, text.length, 100 + text.length * 10);
+  e._imeCommit = { data: hanzi, t: performance.now() };
+  const held = e.resolveHoldChar(rec(done.length, done.length, 100 + done.length * 16));
+  ok("the characters committed are typing: held, wet, stamped, popped", held === "\u597d" && got.ink[0] === hanzi && got.stamp.length === 1 && got.pop.length === 1, got);
+  ok("...the stamp and the letter on the last character, in its own place", got.stamp[0][0] === "\u597d" && got.stamp[0][1] === done.length - 1 && got.stamp[0][2] === 100 + (done.length - 1) * 10, got.stamp[0]);
+  ok("...once: the commit is used up", e._imeCommit === null && e.resolveHoldChar(rec(done.length, done.length, 100 + done.length * 16)) === null);
+  // Not a commit: an older one, or text that is not what it wrote.
+  e._imeCommit = { data: hanzi, t: performance.now() - 5000 };
+  ok("a commit long past is not typing", e.resolveHoldChar(rec(done.length, done.length, 100 + done.length * 16)) === null);
+  e._imeCommit = { data: "\u8c22", t: performance.now() };
+  ok("...nor one whose text is not before the caret", e.resolveHoldChar(rec(done.length, done.length, 100 + done.length * 16)) === null);
+  e._imeCommit = { data: hanzi, t: performance.now() };
+  e.lastActive = rec(done.length, done.length, 0);
+  e.app = { workspace: { activeEditor: { editor: { cm: mk(done + "x") } } } };
+  e.resolveHoldChar(rec(done.length + 1, done.length + 1, 0));
+  ok("...and a key typed after it uses it up (a later move is not the commit)", e._imeCommit === null);
+
+  // Fresh ink: the pinyin's run cut back to what still stands, the
+  // characters wet after it.
+  const ink = makeEngine({ typewriter: true, typewriterFreshInk: true });
+  ink.getActiveColor = () => "#ff0000";
+  const pv = mk(before + pinyin);
+  ink._inkView = pv;
+  ink.inkMarks = [{ from: 3, text: "a" + pinyin, times: new Array(6).fill(1), color: "#f00", textColor: "#ddd", fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal" }];
+  // The same view object, its document now the committed text.
+  pv.state.doc = mk(done).state.doc;
+  realInk.call(ink, pv, rec(done.length, done.length, 0), before.length, done.length);
+  ok("Fresh ink: the letter typed before the pinyin stays wet, the characters join it", ink.inkMarks.length === 1 && ink.inkMarks[0].text === "a" + hanzi && ink.inkMarks[0].from === 3 && ink.inkMarks[0].times.length === 3, ink.inkMarks.map((m) => [m.from, m.text]));
+}

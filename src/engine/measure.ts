@@ -16,6 +16,10 @@ import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache, TypewriterPose, Look } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
+// How long an input method's commit waits for the caret's move that shows
+// it (a frame or two in practice).
+const IME_COMMIT_MS = 600;
+
 export const measureMethods = {
   caretCoords(this: CursorSmithPlugin): CaretRecord | null {
     const view = this.app.workspace.activeEditor?.editor?.cm;
@@ -857,6 +861,11 @@ export const measureMethods = {
   // and popped a letter particle for it) and, for every other move, the
   // previous position's character - so a click from a word onto an empty
   // line showed the word's letter in the empty box.
+  //
+  // An input method's commit counts too (issue #38): the pinyin typed so far
+  // replaced by the characters chosen - the caret moves back, or not at all,
+  // and the document shrinks - so no insertion rule sees it, and Fresh ink,
+  // the stamp and the letter popped only ever reached the pinyin.
   resolveHoldChar(this: CursorSmithPlugin, newCaret: CaretRecord): string | null {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
@@ -864,27 +873,40 @@ export const measureMethods = {
       if (
         view && last &&
         typeof newCaret.pos === "number" && typeof last.pos === "number" &&
-        typeof newCaret.docLen === "number" && typeof last.docLen === "number" &&
-        newCaret.pos > last.pos &&
-        newCaret.docLen - last.docLen === newCaret.pos - last.pos
+        typeof newCaret.docLen === "number" && typeof last.docLen === "number"
       ) {
+        const inserted = newCaret.pos > last.pos && newCaret.docLen - last.docLen === newCaret.pos - last.pos;
+        // Typing after a commit means the commit is behind us.
+        if (inserted) this._imeCommit = null;
+        const commit = inserted ? null : this._imeCommitRange(view, newCaret);
+        if (!inserted && !commit) return null;
+        const from = commit ? commit.from : last.pos, to = commit ? commit.to : newCaret.pos;
         // The last CHARACTER inserted, not the last code unit: an emoji is
         // two units or more, and the single unit before the caret was half
         // of one - it popped as a broken glyph (1.6.7).
-        const justTyped = lastGrapheme(view.state.doc.sliceString(last.pos, newCaret.pos));
+        const justTyped = lastGrapheme(view.state.doc.sliceString(from, to));
         if (justTyped && justTyped !== "\n") {
+          // Where the letter was typed: the caret before it - for a commit,
+          // the last character's own place (the caret before was after the
+          // pinyin).
+          let anchor = last;
+          if (commit) {
+            const at = to - justTyped.length;
+            const c = view.coordsAtPos(at, 1);
+            anchor = Object.assign({}, newCaret, { pos: at, x: c ? c.left : newCaret.x - (newCaret.actualCharWidth || 0) });
+          }
           // Both gates, in the same shape Thunderstrike and Fireworks use:
           // the group's master toggle, then the effect's own.
           if (this.look.popEffects && this.look.popLetters) {
-            this.spawnLetterParticle(justTyped, last);
+            this.spawnLetterParticle(justTyped, anchor);
           }
           // Typewriter: the stroke starts now (typewriterPose), and the ink
           // stamp on the letter just typed, in its own cell.
           if (this.look.typewriter) {
             this._typewriterT = performance.now();
-            if (this.look.typewriterInk) this.spawnInkStamp(justTyped, last);
-            // Fresh ink: everything this keystroke put in, wet.
-            if (this.look.typewriterFreshInk) this.spawnFreshInk(view, last, last.pos, newCaret.pos);
+            if (this.look.typewriterInk) this.spawnInkStamp(justTyped, anchor);
+            // Fresh ink: everything this keystroke (or commit) put in, wet.
+            if (this.look.typewriterFreshInk) this.spawnFreshInk(view, commit ? newCaret : last, from, to);
           }
           return justTyped;
         }
@@ -893,6 +915,19 @@ export const measureMethods = {
       /* fall through */
     }
     return null;
+  },
+
+  // The characters an input method just committed, if the caret now sits
+  // right after them: [from, to), once (the commit is used up). Within a
+  // moment of the commit only - a later move that happens to follow the
+  // same text is not typing.
+  _imeCommitRange(this: CursorSmithPlugin, view: EditorView, newCaret: CaretRecord): { from: number; to: number } | null {
+    const c = this._imeCommit;
+    if (!c || !c.data || typeof newCaret.pos !== "number" || performance.now() - c.t > IME_COMMIT_MS) return null;
+    const to = newCaret.pos, from = to - c.data.length;
+    if (from < 0 || c.data.includes("\n") || view.state.doc.sliceString(from, to) !== c.data) return null;
+    this._imeCommit = null;
+    return { from, to };
   },
 
   // True when `el` is Excalidraw's own text editor.

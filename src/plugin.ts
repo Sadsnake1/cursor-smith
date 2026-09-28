@@ -103,6 +103,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare measureCharWidth: MeasureMethods["measureCharWidth"];
   declare genericCaretChar: MeasureMethods["genericCaretChar"];
   declare resolveHoldChar: MeasureMethods["resolveHoldChar"];
+  declare _imeCommitRange: MeasureMethods["_imeCommitRange"];
   declare isExcalidrawCaretHost: MeasureMethods["isExcalidrawCaretHost"];
   declare noteEditorFocused: MeasureMethods["noteEditorFocused"];
   declare _isVisiblyRendered: MeasureMethods["_isVisiblyRendered"];
@@ -371,6 +372,9 @@ export default class CursorSmithPlugin extends Plugin {
   _viewClip!: Rect | null;
   _clipTop!: number;
   _deletePending!: number;
+  // An input method's last commit (compositionend): what it wrote, when -
+  // the caret's next move reads it as typing (issue #38; _imeCommitRange).
+  _imeCommit: { data: string; t: number } | null = null;
   _dirty!: Bounds | null;
   _dirtyFull!: boolean;
   _dirtyPrev!: Rect | null;
@@ -1122,6 +1126,10 @@ export default class CursorSmithPlugin extends Plugin {
     // may stop it, and an effect that vanishes inside the editor but works in
     // a search box would be worse than one that never worked at all.
     doc.addEventListener("beforeinput", onBeforeInput, true);
+    // An input method committing (Chinese, Japanese): the characters chosen
+    // replace the pinyin typed, which no insertion rule sees (issue #38).
+    const onCompositionEnd = (e: CompositionEvent) => { this._imeCommit = { data: e.data || "", t: performance.now() }; };
+    doc.addEventListener("compositionend", onCompositionEnd, true);
     // Wake sources beyond typing: caret moves from clicks and selection
     // changes, viewport shifts from scroll/wheel, and focus hops between
     // fields. All capture-phase (or document-level) so nothing that
@@ -1187,6 +1195,7 @@ export default class CursorSmithPlugin extends Plugin {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
       doc.removeEventListener("beforeinput", onBeforeInput, true);
+      doc.removeEventListener("compositionend", onCompositionEnd, true);
       doc.removeEventListener("selectionchange", onSelectionChange);
       doc.removeEventListener("mousedown", onActivity, true);
       doc.removeEventListener("focusin", onActivity, true);

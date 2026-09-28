@@ -48,6 +48,18 @@ export const effectsInkMethods = {
     const text = view.state.doc.sliceString(from, to);
     if (!text || text.includes("\n")) return;
     if (this._inkView !== view) { this.inkMarks = []; this._inkView = view; }
+    // A run the typing just rewrote - an input method's pinyin replaced by
+    // the characters chosen (issue #38): what of it still stands before
+    // this insertion stays (the letters typed before it), the rest goes.
+    const tail = this.inkMarks[this.inkMarks.length - 1];
+    if (tail && view.state.doc.sliceString(tail.from, tail.from + tail.text.length) !== tail.text) {
+      const here = view.state.doc.sliceString(tail.from, Math.min(view.state.doc.length, tail.from + tail.text.length));
+      let k = 0;
+      while (k < here.length && here.charCodeAt(k) === tail.text.charCodeAt(k)) k++;
+      k = Math.min(k, Math.max(0, from - tail.from));
+      if (k > 0) { tail.text = tail.text.slice(0, k); tail.times = tail.times.slice(0, k); }
+      else this.inkMarks.pop();
+    }
     const now = performance.now();
     const color = this.getActiveColor() || last.textColor || "#888888";
     const textColor = last.textColor || color;

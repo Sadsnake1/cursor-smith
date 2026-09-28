@@ -1,8 +1,14 @@
 Cursor-Smith
 Copyright (c) 2026 Sadsnake1. Licensed under the MIT License (see LICENSE).
 
-Typewriter sounds (src/sound/samples.ts) are cut from these recordings on
-freesound.org, edited (cut, levelled, encoded to MP3):
+Typewriter sounds (src/sound/samples.ts) are cut from these recordings,
+edited (cut, levelled, encoded to MP3). The machines' names are their
+makers' trademarks, used to say what was recorded; the makers have no
+connection to this plugin.
+
+- Erika 5 (Seidel & Naumann, 1940) - "WWS Typewriter.ogg" by Konrad
+  Gutkowski / Work With Sounds, https://commons.wikimedia.org/wiki/File:WWS_Typewriter.ogg
+  - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
 
 - Hermes 3000 - "supersuper_Typewriter.wav" by supersupernator
   https://freesound.org/s/519622/ - CC0 1.0
@@ -22,9 +28,6 @@ freesound.org, edited (cut, levelled, encoded to MP3):
   (https://creativecommons.org/licenses/by/4.0/)
 - Olympia (1956) - "Schreibmaschine Olympia 1956" by AchimEngels
   https://freesound.org/s/650986/ - CC0 1.0
-- Olympia Report de Luxe Electric - "Olympia Electric Typewriter - May 17
-  2008" by lonemonk, https://freesound.org/s/53753/ - CC BY 4.0
-  (https://creativecommons.org/licenses/by/4.0/)
 - Royal Portable Standard (1936) - "Royal_A5.WAV" and "Royal_ping.WAV" by
   fastson, https://freesound.org/s/99694/ and https://freesound.org/s/99695/
   - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/)

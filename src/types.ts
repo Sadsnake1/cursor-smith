@@ -136,6 +136,10 @@ export interface Look {
   typewriterFreshInkMs: number;
   typewriterFreshInkStrength: number;
   typewriterFreshInkText: boolean;
+  typewriterSound: boolean;
+  typewriterSoundVoice: string;
+  typewriterSoundVolume: number;
+  typewriterSoundBell: boolean;
   backspaceEvaporate: boolean;
   popLetters: boolean;
   popRainbow: boolean;

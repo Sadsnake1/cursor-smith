@@ -2,6 +2,8 @@ import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
 import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
+import { SOUND_MACHINES } from "../sound/samples";
+import { soundMachine } from "../sound/sound";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
 import { readableGlyphColor } from "../util/color";
 import { DemoStrip } from "./demo";
@@ -13,7 +15,7 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 // is registered by the plugin at load (CANDLE_ICON in plugin.ts).
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
-  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
+  { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage, its sounds." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -1489,6 +1491,19 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
+    // Sounds (1.7.2, src/sound): real typewriters, recorded - a machine to
+    // choose and a play button to hear it with before typing.
+    effects.push(toggle("Sounds", "A real typewriter as you type, with its own sound for Space, Backspace and Enter.", "typewriterSound", { depth: 1, gate: true, when: tw }));
+    const sounding = twOn("typewriterSound");
+    owns("typewriterSoundVoice");
+    effects.push(row("Machine", "Which machine you hear. Press play to listen.", (s) => {
+      s.addDropdown((d) => d.addOptions(Object.fromEntries(SOUND_MACHINES.map((m) => [m.id, m.label])))
+        .setValue(soundMachine(get("typewriterSoundVoice")).id)
+        .onChange(redraw("typewriterSoundVoice")));
+      s.addExtraButton((b) => b.setIcon("play").setTooltip("Play a few words").onClick(() => { void this.plugin.soundPreview(); }));
+    }, { depth: 2, when: sounding }));
+    effects.push(slider("Volume", "How loud the sounds are, as a percentage.", "typewriterSoundVolume", [0, 100, 5], { depth: 2, fallback: 50, when: sounding }));
+    effects.push(toggle("Bell", "Enter at the end of a line rings the machine's margin bell.", "typewriterSoundBell", { depth: 2, when: sounding }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));

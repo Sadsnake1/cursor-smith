@@ -1,0 +1,24 @@
+Cursor-Smith
+Copyright (c) 2026 Sadsnake1. Licensed under the MIT License (see LICENSE).
+
+Typewriter sounds (src/sound/samples.ts) are cut from these recordings on
+freesound.org, edited (cut, levelled, encoded to MP3):
+
+- Hermes 3000 - "supersuper_Typewriter.wav" by supersupernator
+  https://freesound.org/s/519622/ - CC0 1.0
+- Underwood - "oldtyper_underwood.aiff" by whatsanickname4u
+  https://freesound.org/s/107189/ - CC BY 3.0
+  (https://creativecommons.org/licenses/by/3.0/)
+- IBM Selectric II - "Typewriter, IBM Selectric II" by secretmojo
+  https://freesound.org/s/224012/ - CC0 1.0
+- Olivetti Lettera 22 - "typewriter-olivetti-lettera-22.wav" by keithpeter
+  https://freesound.org/s/123344/ - CC0 1.0
+- Sears Electric Twelve - "COMType_Sears Electric Twelve, Repetitive
+  Pattern" by ShangusBurger
+  https://freesound.org/s/807926/ - CC0 1.0
+- A carriage return and a margin bell - "old typewriter sounds" by
+  Garuda1982, https://freesound.org/s/608136/ - CC0 1.0
+- A margin bell - "Typewriter bell & carriage reset" by knufds,
+  https://freesound.org/s/345955/ - CC0 1.0
+- A margin bell - "Typewriter Bell.wav" by ramsamba,
+  https://freesound.org/s/318687/ - CC0 1.0

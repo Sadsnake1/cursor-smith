@@ -81,10 +81,12 @@ import { libraryMethods } from "./settings/library";
 import { vimMethods } from "./engine/vim";
 import { engineMethods } from "./engine/engine";
 import { caretsMethods } from "./engine/carets";
+import { soundMethods } from "./sound/sound";
 import type { LibraryMethods } from "./settings/library";
 import type { VimMethods } from "./engine/vim";
 import type { EngineMethods } from "./engine/engine";
 import type { CaretsMethods } from "./engine/carets";
+import type { SoundMethods, SoundState } from "./sound/sound";
 
 export default class CursorSmithPlugin extends Plugin {
   // measure.ts
@@ -275,6 +277,19 @@ export default class CursorSmithPlugin extends Plugin {
   declare lookVimMode: VimMethods["lookVimMode"];
   declare onVimModeChanged: VimMethods["onVimModeChanged"];
   declare statusBarVimMode: VimMethods["statusBarVimMode"];
+  // --- sound/sound.ts (Typewriter's Sounds)
+  declare _soundSetup: SoundMethods["_soundSetup"];
+  declare _soundOn: SoundMethods["_soundOn"];
+  declare _soundVoice: SoundMethods["_soundVoice"];
+  declare _soundWake: SoundMethods["_soundWake"];
+  declare _soundCtx: SoundMethods["_soundCtx"];
+  declare _soundPrepare: SoundMethods["_soundPrepare"];
+  declare _soundAtom: SoundMethods["_soundAtom"];
+  declare _soundRand: SoundMethods["_soundRand"];
+  declare _soundOnUpdate: SoundMethods["_soundOnUpdate"];
+  declare _soundPlay: SoundMethods["_soundPlay"];
+  declare soundPreview: SoundMethods["soundPreview"];
+  declare _soundClose: SoundMethods["_soundClose"];
   declare syncVimStatusBar: VimMethods["syncVimStatusBar"];
   declare updateVimStatusBar: VimMethods["updateVimStatusBar"];
   // --- engine.ts
@@ -495,6 +510,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare _glideV: { x: number; y: number } | null;
   // Linear's run: from, to, and how far along (0 - 1); null between moves.
   declare _glideRun: { fx: number; fy: number; tx: number; ty: number; u: number } | null;
+  // Typewriter's Sounds: the audio, the machine's sounds, the last key.
+  _sound: SoundState | null = null;
   _uiModeSwitching!: boolean;
   _vimEditMode!: string;
   _vimModeCache!: string | null;
@@ -852,6 +869,10 @@ export default class CursorSmithPlugin extends Plugin {
         if (doc) this.unregisterDocument(doc);
       })
     );
+
+    // Typewriter's Sounds (src/sound): heard as the text changes, not on
+    // the frame loop, so they are set up once here, whatever the look.
+    this._soundSetup();
 
     this.app.workspace.onLayoutReady(() => {
       // Honor the auto-control setting on startup: if Vim cursors are on and
@@ -1750,7 +1771,7 @@ export default class CursorSmithPlugin extends Plugin {
   }
 
 }
-Object.assign(CursorSmithPlugin.prototype, measureMethods, effectsMethods, paintMethods, torchMethods, libraryMethods, vimMethods, engineMethods, caretsMethods);
+Object.assign(CursorSmithPlugin.prototype, measureMethods, effectsMethods, paintMethods, torchMethods, libraryMethods, vimMethods, engineMethods, caretsMethods, soundMethods);
 
 // The per-caret fields (CARET_STATE_FIELDS) live on the current caret's
 // state object, this._caret - the primary's, or a secondary's bundle while

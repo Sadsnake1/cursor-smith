@@ -13,7 +13,10 @@ await esbuild.build({
   platform: test ? "node" : "browser",
   target: "es2020",
   outfile: test ? "build/test-bundle.js" : "main.js",
-  external: test ? [] : ["obsidian", "electron", "@codemirror/*", "@lezer/*"],
+  // CodeMirror is Obsidian's, never bundled; the tests load it from
+  // node_modules (Typewriter's Sounds use its update listener), so the
+  // bundle the suite scans is still only the plugin's own code.
+  external: test ? ["@codemirror/*", "@lezer/*"] : ["obsidian", "electron", "@codemirror/*", "@lezer/*"],
   alias: test ? { obsidian: "./test/obsidian-stub.ts" } : {},
   logLevel: "info",
   legalComments: "none",

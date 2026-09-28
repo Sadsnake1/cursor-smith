@@ -132,6 +132,10 @@ export const DEFAULT_SETTINGS = {
   typewriterFreshInkMs: 1500, // ...how long the ink takes to dry
   typewriterFreshInkStrength: 0.8, // ...how strong the wet ink is at first, 1 the full cursor colour
   typewriterFreshInkText: false, // ...in the text's own color, bolder while wet, instead of the cursor's
+  typewriterSound: false,         // Sounds (1.7.2): a real typewriter as you type (src/sound)
+  typewriterSoundVoice: "hermes3000", // ...the machine: an id in samples.ts (hermes3000, underwood, selectric2, olivetti22, sears12)
+  typewriterSoundVolume: 50,      // ...0 - 100
+  typewriterSoundBell: true,      // ...Enter at the end of a line rings the machine's margin bell
   backspaceEvaporate: false, // Pop effects' Backspace evaporation: deleted letters rise and fade (Backspace and Delete)
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
@@ -507,6 +511,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "backspaceEvaporate",
   "typewriterFreshInkText",
   "smoothStyle",
+  // Typewriter's Sounds (1.7.2). Appended, off by default.
+  "typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell",
 ];
 
 // ---------------------------------------------------------------------------

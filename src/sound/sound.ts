@@ -145,9 +145,10 @@ export function soundBytes(b64: string): ArrayBuffer {
 export function typebarOf(char: string, takes: number): number {
   const c = (char || "a").toLowerCase().codePointAt(0) || 97;
   // Picked so the 40 commonest English letter pairs mostly land on different
-  // keys (2 of 40 share one) and the keys share the alphabet evenly; c * 5 %
-  // 5 had put every letter on one key.
-  return (Math.imul(c, 153) >>> 7) % Math.max(1, takes);
+  // keys (2 or 3 of 40 share one) with 5, 6 or 8 takes alike, and every take
+  // gets letters; c * 5 % 5 had put every letter on one key, * 153 left one
+  // of six keys unused.
+  return (Math.imul(c, 3021) >>> 7) % Math.max(1, takes);
 }
 
 // What an edit was, from the transaction and the key just pressed - or null

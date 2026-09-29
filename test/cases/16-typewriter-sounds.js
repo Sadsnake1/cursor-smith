@@ -17,26 +17,29 @@ section("Typewriter's Sounds: the machines");
   for (const m of M) {
     const takes = T.soundTakes(m);
     const all = T.ATOM_NAMES.every((n) => (takes[n] || []).length > 0);
-    const counts = takes.strike.length === 5 && takes.capital.length === 2 && takes.space.length === 2 && takes.feed.length === 1 && takes.bell.length === 1;
+    const counts = [5, 6, 8].includes(takes.strike.length) && takes.capital.length >= 2 && takes.space.length === 2 && takes.feed.length === 1 && takes.bell.length === 1;
     const inOrder = m.sounds.every(([, start, dur], i) => dur > 0 && (i === 0 || start >= m.sounds[i - 1][1] + m.sounds[i - 1][2]));
     const bytes = new Uint8Array(T.soundBytes(m.mp3));
     const mp3 = (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) || String.fromCharCode(bytes[0], bytes[1], bytes[2]) === "ID3";
-    ok(`${m.label}: every sound it needs - five keys, two capitals, two space bars, Backspace, its return, its bell - in order`, all && counts && inOrder, Object.fromEntries(Object.entries(takes).map(([k, v]) => [k, v.length])));
-    ok(`...as one MP3 under 55 KB, its first sound (where the decoder is measured from) inside the first take`, mp3 && bytes.length < 55 * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + m.sounds[0][2], [bytes.length, m.onset]);
+    ok(`${m.label}: every sound it needs - 5 to 8 keys, capitals, two space bars, Backspace, its return, its bell - in order`, all && counts && inOrder, Object.fromEntries(Object.entries(takes).map(([k, v]) => [k, v.length])));
+    ok(`...as one MP3 under 64 KB, its first sound (where the decoder is measured from) inside the first take`, mp3 && bytes.length < 64 * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + m.sounds[0][2], [bytes.length, m.onset]);
     ok(`...a key is a key (under 0.2 s), the return and the bell longer`, takes.strike.every((t) => t.dur < 0.2) && takes.feed[0].dur > 0.35 && takes.bell[0].dur > 0.8, [takes.feed[0].dur, takes.bell[0].dur]);
   }
   const total = M.reduce((n, m) => n + T.soundBytes(m.mp3).byteLength, 0);
-  ok("all fourteen under 600 KB", total < 600 * 1024, Math.round(total / 1024) + " KB");
+  ok("all fourteen under 650 KB", total < 650 * 1024, Math.round(total / 1024) + " KB");
+  ok("the big recordings give 8 keys: fast typing repeats less", M.filter((m) => T.soundTakes(m).strike.length === 8).length >= 4, M.map((m) => T.soundTakes(m).strike.length));
   const notice = fs.readFileSync(path.join(__dirname, "..", "..", "NOTICE"), "utf8");
   const ids = [...new Set(M.flatMap((m) => [...m.credit.matchAll(/freesound\.org\/s\/(\d+)/g)].map((x) => x[1])))];
   ok("every recording credited in NOTICE, its licence with it", ids.length >= 14 && ids.every((id) => notice.includes(`freesound.org/s/${id}/`)) && notice.includes("File:WWS_Typewriter.ogg") && /CC BY 3\.0/.test(notice) && /CC BY 4\.0/.test(notice), ids.filter((id) => !notice.includes(`freesound.org/s/${id}/`)));
   ok("...and on each machine: its recording and licence, or a video recording NOTICE speaks for", M.every((m) => (/freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(m.credit) && /CC0|CC BY/.test(m.credit)) || (/video recording/.test(m.credit) && notice.includes(m.label + " is cut from video recordings"))), M.map((m) => m.credit));
   ok("an unknown machine (an older code's) is the default one", T.soundMachine("manual").id === "hermes3000" && T.soundMachine(undefined).id === "hermes3000" && T.soundMachine("olivetti22").label === "Olivetti Lettera 22");
-  const bars = new Set("abcdefghijklmnopqrstuvwxyz".split("").map((c) => T.typebarOf(c, 5)));
-  ok("every letter has its typebar: the same for a and A, spread over the keys", T.typebarOf("a", 5) === T.typebarOf("A", 5) && bars.size === 5);
   const pairs = "th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co me de hi ri ro ic ne ea ra ce".split(" ");
-  const same = pairs.filter((p) => T.typebarOf(p[0], 5) === T.typebarOf(p[1], 5));
-  ok("...the commonest letter pairs on different keys (all but a couple)", same.length <= 2, same);
+  for (const n of [5, 6, 8]) {
+    const bars = new Set("abcdefghijklmnopqrstuvwxyz".split("").map((c) => T.typebarOf(c, n)));
+    ok(`${n} keys: every letter has its typebar, the same for a and A, every key used`, T.typebarOf("a", n) === T.typebarOf("A", n) && bars.size === n, [...bars]);
+    const same = pairs.filter((p) => T.typebarOf(p[0], n) === T.typebarOf(p[1], n));
+    ok(`...the commonest letter pairs on different keys (all but 3)`, same.length <= 3, same);
+  }
   const x = new Float32Array(48000);
   x[1300] = 0.05; x[2000] = 0.9;
   ok("a first sound is found where it rises past a fifth of the loudest", Math.abs(T.soundOnset(x, 48000) - 2000 / 48000) < 1e-9);

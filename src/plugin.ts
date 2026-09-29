@@ -322,6 +322,11 @@ export default class CursorSmithPlugin extends Plugin {
   declare _selectionMoved: EngineMethods["_selectionMoved"];
   declare _wakeLoop: EngineMethods["_wakeLoop"];
   declare _watchdog: EngineMethods["_watchdog"];
+  declare _loopWin: EngineMethods["_loopWin"];
+  declare _loopDocs: EngineMethods["_loopDocs"];
+  declare _rehomeLoops: EngineMethods["_rehomeLoops"];
+  declare _canvasFrame: EngineMethods["_canvasFrame"];
+  declare _torchFrame: TorchMethods["_torchFrame"];
   declare _decideGear: EngineMethods["_decideGear"];
   declare _frameSignature: EngineMethods["_frameSignature"];
   declare performanceReport: EngineMethods["performanceReport"];
@@ -358,6 +363,12 @@ export default class CursorSmithPlugin extends Plugin {
   _canvasDpr!: number;
   _canvasGear!: string;
   _canvasIdleT!: number;
+  // The windows the loops' pending frame and timeout were asked of
+  // (_loopWin): cancelled there.
+  _canvasRafWin: Window | null = null;
+  _canvasIdleWin: Window | null = null;
+  _torchRafWin: Window | null = null;
+  _torchIdleWin: Window | null = null;
   _canvasPlaced!: boolean;
   _canvasRect!: Rect | null;
   _canvasTick!: FrameRequestCallback | null;
@@ -953,6 +964,18 @@ export default class CursorSmithPlugin extends Plugin {
       this._docCleanups.delete(doc);
     }
     this.registeredDocuments.delete(doc);
+    // A loop whose frame or timeout was asked of this window would never
+    // hear back once it closes: put it on a live window now (_loopWin skips
+    // the unregistered document).
+    const win = doc.defaultView;
+    if (win && this.canvasEngineActive && this._canvasTick && (this._canvasRafWin === win || this._canvasIdleWin === win)) {
+      this._canvasIdleT = 0;
+      this._canvasFrame(this._canvasTick);
+    }
+    if (win && this.torchEngineActive && this._torchTick && (this._torchRafWin === win || this._torchIdleWin === win)) {
+      this._torchIdleT = 0;
+      this._torchFrame(this._torchTick);
+    }
     // If the canvas currently lives in this document - which is now routine:
     // it migrates into the 1.13 settings window while you type there, and
     // that window can simply be closed - drop our references along with it.
@@ -1176,7 +1199,11 @@ export default class CursorSmithPlugin extends Plugin {
     // Registered on the window, not the document: that's where Chromium fires
     // an OS-level focus change. These only wake - windowFocused() re-reads the
     // real state each frame, so a missed event can't desync anything.
-    const onWindowFocusChange = () => this._markActivity("window focus");
+    // ...and a window coming back moves a loop left waiting on a hidden one
+    // (_rehomeLoops, issue #39) - on focus, and on becoming visible.
+    const onWindowFocusChange = () => { this._rehomeLoops(); this._markActivity("window focus"); };
+    const onVisibility = () => { if (doc.visibilityState === "visible") this._rehomeLoops(); };
+    doc.addEventListener("visibilitychange", onVisibility);
     const win = doc.defaultView;
     if (win) {
       win.addEventListener("resize", onResize);
@@ -1210,6 +1237,7 @@ export default class CursorSmithPlugin extends Plugin {
       doc.removeEventListener("selectionchange", onSelectionChange);
       doc.removeEventListener("mousedown", onActivity, true);
       doc.removeEventListener("focusin", onActivity, true);
+      doc.removeEventListener("visibilitychange", onVisibility);
       // onScrollLike, not onActivity: until 1.5.8 these two named the wrong
       // function and so removed nothing, leaving a closed pop-out's scroll
       // and wheel listeners attached to a document nothing else held.

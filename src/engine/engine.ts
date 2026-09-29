@@ -190,15 +190,77 @@ export const engineMethods = {
     }
   },
 
+  // The window a render loop runs on: the first VISIBLE one of the active
+  // editor's, the canvas's, Obsidian's activeDocument's, any of ours, else
+  // the main window. Chromium pauses animation frames (and slows timers) in
+  // a window that is hidden - minimised, or covered by another app - and the
+  // loops always ran on the main one: with a note open in a pop-out and the
+  // main window covered by a browser, the loop stopped as the pop-out came
+  // back, the canvas never moved into it, and there was no cursor until the
+  // main window was clicked (issue #39). The window is kept with the handle
+  // (_canvasRafWin, _canvasIdleWin; the torch's too) so it is cancelled
+  // where it was asked.
+  _loopWin(this: CursorSmithPlugin): Window {
+    for (const d of this._loopDocs()) {
+      if (d && d.defaultView && d.visibilityState === "visible") return d.defaultView;
+    }
+    return window;
+  },
+  // A window of ours came back (focus, visible again): a loop whose next
+  // frame or timeout waits on a window that is still hidden would wait
+  // there for good - the one it was asked of when every window was hidden,
+  // the main window still covered - so it is asked again of the visible one
+  // (issue #39: the pop-out back in front, the loop parked on the covered
+  // main window, no cursor until the main window was clicked).
+  _rehomeLoops(this: CursorSmithPlugin) {
+    const w = this._loopWin();
+    if (this.canvasEngineActive && this._canvasTick) {
+      if (this._canvasIdleT && this._canvasIdleWin && this._canvasIdleWin !== w) {
+        this._canvasIdleWin.clearTimeout(this._canvasIdleT);
+        this._canvasIdleT = 0;
+        this._canvasFrame(this._canvasTick);
+      } else if (!this._canvasIdleT && this._canvasRafWin && this._canvasRafWin !== w) {
+        this._canvasRafWin.cancelAnimationFrame(this.canvasRaf);
+        this._canvasFrame(this._canvasTick);
+      }
+    }
+    if (this.torchEngineActive && this._torchTick) {
+      if (this._torchIdleT && this._torchIdleWin && this._torchIdleWin !== w) {
+        this._torchIdleWin.clearTimeout(this._torchIdleT);
+        this._torchIdleT = 0;
+        this._torchFrame(this._torchTick);
+      } else if (!this._torchIdleT && this._torchRafWin && this._torchRafWin !== w) {
+        this._torchRafWin.cancelAnimationFrame(this.torchRaf);
+        this._torchFrame(this._torchTick);
+      }
+    }
+  },
+  // The documents a loop may run in, in that order.
+  _loopDocs(this: CursorSmithPlugin): (Document | null | undefined)[] {
+    const docs: (Document | null | undefined)[] = [];
+    const app = this.app;
+    if (app && app.workspace) docs.push(app.workspace.activeEditor?.editor?.cm?.dom.ownerDocument);
+    docs.push(this.canvas ? this.canvas.ownerDocument : null);
+    if (typeof activeDocument !== "undefined") docs.push(activeDocument);
+    if (this.registeredDocuments) docs.push(...Array.from(this.registeredDocuments));
+    if (typeof document !== "undefined") docs.push(document);
+    return docs;
+  },
+  _canvasFrame(this: CursorSmithPlugin, fn: FrameRequestCallback) {
+    const w = this._loopWin();
+    this._canvasRafWin = w;
+    this.canvasRaf = w.requestAnimationFrame(fn);
+  },
+
   disableCanvasEngine(this: CursorSmithPlugin) {
     this.canvasEngineActive = false;
     if (this.canvasRaf) {
-      window.cancelAnimationFrame(this.canvasRaf);
+      (this._canvasRafWin || window).cancelAnimationFrame(this.canvasRaf);
       this.canvasRaf = 0;
     }
     // The governor may be dozing on a timeout rather than an rAF.
     if (this._canvasIdleT) {
-      window.clearTimeout(this._canvasIdleT);
+      (this._canvasIdleWin || window).clearTimeout(this._canvasIdleT);
       this._canvasIdleT = 0;
     }
     this._canvasTick = null;
@@ -262,15 +324,17 @@ export const engineMethods = {
       const gear = this._canvasGear || "hot";
       const caps = this._frameCaps();
       if (gear === "hot") {
-        this.canvasRaf = window.requestAnimationFrame(tick);
+        this._canvasFrame(tick);
         return;
       }
       // The idle gear sleeps until the heartbeat or the blink's next fade,
       // whichever is sooner: a fade caught on the heartbeat started late.
       const idleMs = Math.min(caps.idleMs, Math.max(1, Math.ceil(this._idleWakeMs || caps.idleMs)));
-      this._canvasIdleT = window.setTimeout(() => {
+      const w = this._loopWin();
+      this._canvasIdleWin = w;
+      this._canvasIdleT = w.setTimeout(() => {
         this._canvasIdleT = 0;
-        if (this.canvasEngineActive) this.canvasRaf = window.requestAnimationFrame(tick);
+        if (this.canvasEngineActive) this._canvasFrame(tick);
       }, gear === "warm" ? caps.warmMs : gear === "energy" ? caps.energyMs : idleMs);
     };
 
@@ -304,7 +368,7 @@ export const engineMethods = {
         // Not while the caret moves with the text (_hotCapLifted): then
         // every frame, whatever the cap.
         if (!this._hotCapLifted(n) && n - (this._lastHotFrameT || 0) < this._frameCaps().hotMinMs) {
-          this.canvasRaf = window.requestAnimationFrame(tick);
+          this._canvasFrame(tick);
           return;
         }
         this._lastHotFrameT = n;
@@ -625,7 +689,7 @@ export const engineMethods = {
     this._canvasGear = "hot";
     this._idleWakeMs = 0;
     this._lastTickT = performance.now();
-    this.canvasRaf = window.requestAnimationFrame(tick);
+    this._canvasFrame(tick);
   },
 
   // (Re)allocate the backing store for the current canvas region. This used
@@ -1146,11 +1210,9 @@ export const engineMethods = {
   // nothing, and a tick in progress has no timeout to cancel.
   _wakeLoop(this: CursorSmithPlugin) {
     if (this._canvasIdleT) {
-      window.clearTimeout(this._canvasIdleT);
+      (this._canvasIdleWin || window).clearTimeout(this._canvasIdleT);
       this._canvasIdleT = 0;
-      if (this.canvasEngineActive && this._canvasTick) {
-        this.canvasRaf = window.requestAnimationFrame(this._canvasTick);
-      }
+      if (this.canvasEngineActive && this._canvasTick) this._canvasFrame(this._canvasTick);
     }
   },
 
@@ -1170,8 +1232,12 @@ export const engineMethods = {
     const lastRun = this._watchdogLastT || now;
     this._watchdogLastT = now;
     if (!this.canvasEngineActive) return;
-    const doc = (this.canvas && this.canvas.ownerDocument) || document;
-    if (doc.visibilityState === "hidden" || now - lastRun > WATCHDOG_INTERVAL_MS * 1.5) {
+    // Not stalled while no window of ours is visible (_loopWin found none):
+    // animation frames stop there by design. It asked the canvas's document
+    // alone, so a canvas left in a covered main window counted as "hidden"
+    // while the pop-out in front had no cursor (issue #39).
+    const visible = this._loopDocs().some((d) => d && d.visibilityState === "visible");
+    if (!visible || now - lastRun > WATCHDOG_INTERVAL_MS * 1.5) {
       this._lastTickT = now;
       return;
     }

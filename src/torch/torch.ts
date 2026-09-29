@@ -183,7 +183,7 @@ export const torchMethods = {
   disableTorchOverlay(this: CursorSmithPlugin) {
     this.torchEngineActive = false;
     if (this._torchIdleT) {
-      window.clearTimeout(this._torchIdleT);
+      (this._torchIdleWin || window).clearTimeout(this._torchIdleT);
       this._torchIdleT = 0;
     }
     this._torchTick = null;
@@ -194,7 +194,7 @@ export const torchMethods = {
     this._lastGlowAlpha = "";
     this._torchGlowKey = "";
     if (this.torchRaf) {
-      window.cancelAnimationFrame(this.torchRaf);
+      (this._torchRafWin || window).cancelAnimationFrame(this.torchRaf);
       this.torchRaf = 0;
     }
     const docs = [document, ...Array.from(this.registeredDocuments)];
@@ -227,7 +227,7 @@ export const torchMethods = {
     const schedule = () => {
       if (!this.torchEngineActive) return;
       if (this._torchGear === "hot") {
-        this.torchRaf = window.requestAnimationFrame(tick);
+        this._torchFrame(tick);
         return;
       }
       // Parked or hidden: a heartbeat is plenty to notice the effect being
@@ -239,9 +239,11 @@ export const torchMethods = {
       // (the tick sets _torchIdleWakeMs from blinkWindow while Blink Sync is on).
       const idleMs = Math.min(caps.torchIdleMs, Math.max(1, Math.ceil(this._torchIdleWakeMs || caps.torchIdleMs)));
       const delay = this._torchGear === "pulse" ? caps.torchPulseMs : idleMs;
-      this._torchIdleT = window.setTimeout(() => {
+      const w = this._loopWin();
+      this._torchIdleWin = w;
+      this._torchIdleT = w.setTimeout(() => {
         this._torchIdleT = 0;
-        if (this.torchEngineActive) this.torchRaf = window.requestAnimationFrame(tick);
+        if (this.torchEngineActive) this._torchFrame(tick);
       }, delay);
     };
 
@@ -550,7 +552,13 @@ export const torchMethods = {
     };
     this._torchTick = tick;
     this._torchGear = "hot";
-    this.torchRaf = window.requestAnimationFrame(tick);
+    this._torchFrame(tick);
+  },
+  // The torch's frame, on a visible window of ours (_loopWin, issue #39).
+  _torchFrame(this: CursorSmithPlugin, fn: FrameRequestCallback) {
+    const w = this._loopWin();
+    this._torchRafWin = w;
+    this.torchRaf = w.requestAnimationFrame(fn);
   },
 
   // Sets this.tx/ty, the primary spotlight's target. Returns true when the
@@ -654,11 +662,9 @@ export const torchMethods = {
   // spin the cursor canvas up to full rate.
   _wakeTorch(this: CursorSmithPlugin) {
     if (this._torchIdleT) {
-      window.clearTimeout(this._torchIdleT);
+      (this._torchIdleWin || window).clearTimeout(this._torchIdleT);
       this._torchIdleT = 0;
-      if (this.torchEngineActive && this._torchTick) {
-        this.torchRaf = window.requestAnimationFrame(this._torchTick);
-      }
+      if (this.torchEngineActive && this._torchTick) this._torchFrame(this._torchTick);
     }
   },
 };

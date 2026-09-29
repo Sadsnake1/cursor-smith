@@ -946,3 +946,67 @@ section("the derived signature, the gear decision, the watchdog (1.5.8)");
     ok("blinkPhase reads the same clock for blink-to-solid", /stopAfter \* blinkSegments\(speed\)\.period/.test(src("paint-blink.ts")));
   }
 }
+
+// ---------------------------------------------------------------------------
+section("The render loops run on a visible window (issue #39)");
+{
+  // A pop-out in front, the main window covered by another app: Chromium
+  // pauses a hidden window's animation frames, and the loops ran on the
+  // main window's - no cursor in the pop-out until the main was clicked.
+  const win = (name, visible) => {
+    const w = { name, frames: [], timers: [], cancelled: [], cleared: [], n: 0,
+      requestAnimationFrame(fn) { this.frames.push(fn); return ++this.n; }, cancelAnimationFrame(id) { this.cancelled.push(id); },
+      setTimeout(fn) { this.timers.push(fn); return ++this.n; }, clearTimeout(id) { this.cleared.push(id); } };
+    w.document = { defaultView: w, visibilityState: visible ? "visible" : "hidden" };
+    return w;
+  };
+  const main = win("main", false), pop = win("pop", true);
+  const e = makeEngine({});
+  e.registeredDocuments = new Set([main.document, pop.document]);
+  e.canvas = { ownerDocument: main.document };
+  e.app = { workspace: { activeEditor: { editor: { cm: { dom: { ownerDocument: pop.document } } } } } };
+  ok("the loop's window: the active editor's when it is visible", e._loopWin() === pop);
+  e.app = { workspace: { activeEditor: null } };
+  ok("...else the first visible one of ours, not the covered main", e._loopWin() === pop);
+  pop.document.visibilityState = "hidden";
+  ok("...and the main window when none is visible", e._loopWin() === globalThis);
+  pop.document.visibilityState = "visible";
+
+  // The loop parked on a timeout in the covered main window: the pop-out
+  // coming back moves it.
+  e.canvasEngineActive = true;
+  e._canvasTick = () => {};
+  e._canvasIdleT = 7; e._canvasIdleWin = main;
+  e._rehomeLoops();
+  ok("a loop left waiting on a hidden window is moved to the visible one", main.cleared.includes(7) && e._canvasIdleT === 0 && pop.frames.length === 1 && e._canvasRafWin === pop);
+  e._rehomeLoops();
+  ok("...and left alone once it is there", pop.frames.length === 1 && pop.cancelled.length === 0);
+  // Its pending frame on the hidden window, likewise.
+  e._canvasRafWin = main; e.canvasRaf = 9;
+  e._rehomeLoops();
+  ok("...a pending frame too", main.cancelled.includes(9) && pop.frames.length === 2);
+  // The torch's loop the same way.
+  e.torchEngineActive = true; e._torchTick = () => {};
+  e._torchIdleT = 11; e._torchIdleWin = main;
+  e._rehomeLoops();
+  ok("...and the torch's", main.cleared.includes(11) && e._torchIdleT === 0 && e._torchRafWin === pop);
+
+  // The watchdog: a stall counts only while a window of ours is visible.
+  const w = makeEngine({});
+  w.canvasEngineActive = true;
+  w.registeredDocuments = new Set([main.document, pop.document]);
+  w.canvas = { ownerDocument: main.document };
+  let restarts = 0;
+  w.enable = () => { restarts++; };
+  w._reportOnce = () => {};
+  w._lastTickT = 1; w._watchdogLastT = 98000; w._watchdog(100000);
+  ok("the watchdog: the canvas's window covered but the pop-out visible - a silent loop IS a stall", restarts === 1);
+  pop.document.visibilityState = "hidden";
+  const h = makeEngine({});
+  h.canvasEngineActive = true; h.registeredDocuments = new Set([main.document, pop.document]); h.canvas = { ownerDocument: main.document };
+  h.enable = () => { throw new Error("must not restart"); };
+  h._lastTickT = 1; h._watchdogLastT = 98000; h._watchdog(100000);
+  ok("...with every window hidden, it is not", !h._watchdogTrips);
+  ok("the loops ask frames and timers of that window, never of the main one alone",
+     ["engine.ts", "torch.ts"].every((f) => !/window\.requestAnimationFrame\(/.test(require("fs").readFileSync(srcPath(f), "utf8"))));
+}

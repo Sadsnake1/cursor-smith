@@ -278,9 +278,10 @@ section("blink-to-solid: blink N times, then stay lit");
   }
 
   // The Blink Delay hold sits in front of the count, not inside it: the
-  // caret holds lit, THEN blinks N times.
+  // caret holds lit, THEN blinks N times. (The delay is "Don't blink while
+  // typing"'s hold, so that is on here.)
   {
-    const held = mk({ blinkStopAfter: 1, blinkDelayMs: 1000 });
+    const held = mk({ blinkStopAfter: 1, blinkDelayMs: 1000, smoothStopBlinking: true });
     ok("still lit during the hold", held.blinkPhase(500) > 0.99);
     ok("...dark inside the one blink that follows", held.blinkPhase(1000 + 0.5 * PERIOD) < 0.02);
     ok("...and solid after it", held.blinkPhase(1000 + 1.2 * PERIOD) > 0.99);
@@ -739,9 +740,17 @@ section("Don't blink while typing, on and off (1.7.3, issue #7)");
     ok("a key after it starts the blink again, from lit", off._blinkAnchor === again && off.blinkPhase(again + 1) === 1 && off.blinkPhase(again + fade + 10) < 1);
   }
   {
-    // Off with a Blink delay: the delay holds after every move, as before.
-    const off = mk({ smoothStopBlinking: false, blinkDelayMs: 600 });
-    move(off, 5000);
-    ok("off with a Blink delay: lit for the delay after a move", off.blinkPhase(5000 + 590) === 1 && off.blinkPhase(5000 + 600 + fade + 10) < 1);
+    // The Blink delay is the toggle's hold: on, the caret stays lit for it
+    // (at least 450 ms); off, it holds nothing - Typer's 550 ms kept the
+    // caret lit while typing with the toggle off.
+    const off = mk({ smoothStopBlinking: false, blinkDelayMs: 550 });
+    const seen = typeOver(off);
+    ok("off with a Blink delay set: still blinks on through the typing", seen.some(([, a]) => a < 0.02) && seen.every(([t, a]) => a === free.blinkPhase(t)));
+    const on = mk({ smoothStopBlinking: true, blinkDelayMs: 1200 });
+    move(on, 5000);
+    ok("on with a Blink delay: lit for the delay after a move", on.blinkPhase(5000 + 1190) === 1 && on.blinkPhase(5000 + 1200 + fade + 10) < 1);
+    const short = mk({ smoothStopBlinking: true, blinkDelayMs: 100 });
+    move(short, 5000);
+    ok("...never under 450 ms", short.blinkPhase(5000 + 440) === 1 && short.blinkPhase(5000 + 450 + fade + 10) < 1);
   }
 }

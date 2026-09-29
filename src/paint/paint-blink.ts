@@ -95,27 +95,25 @@ export const paintBlinkMethods = {
   // The blink's clock: where its cycle starts, and when Blink-to-solid
   // stops it (Infinity when it never does).
   //
-  // The hold comes from two independent sources, the larger winning so
-  // neither silently overrides the other:
-  //   • smoothStopBlinking ("Don't blink while typing"): 450 ms. It held only
-  //     with Smooth movement on as well, though its toggle sits on the
-  //     Blinking page by itself - with Smooth off it did nothing (1.7.3).
-  //   • blinkDelayMs: explicit user-controlled delay.
-  // With a hold every move restarts the cycle, lit, after it. With none -
-  // "Don't blink while typing" off, no delay - the blink runs on through
-  // typing and moves: its cycle started at _blinkAnchor, which a move resets
-  // only once the caret has gone solid (_blinkRestart). Off, every key used
-  // to restart the cycle all the same, so the caret sat lit while typing
-  // either way and the toggle looked dead (issue #7, 1.7.3); the settings'
-  // preview already blinked on.
+  // The hold is "Don't blink while typing" (smoothStopBlinking): on, the
+  // caret stays lit for the Blink delay after a move, at least 450 ms; off,
+  // no hold at all. (1.7.3, issue #7: on, it held only with Smooth movement
+  // on as well, though its toggle sits on the Blinking page by itself. Off,
+  // the Blink delay still held after every key, and with none every key
+  // restarted the cycle from lit all the same - the caret sat lit while
+  // typing either way and the toggle looked dead. The delay's slider sits
+  // under the toggle now.)
+  // With a hold every move restarts the cycle, lit, after it. Without one
+  // the blink runs on through typing and moves: its cycle started at
+  // _blinkAnchor, which a move resets only once the caret has gone solid
+  // (_blinkRestart), as the settings' preview always blinked.
   //
   // Blink-to-solid counts from the last move in both - typing keeps the
   // blink going - and stops on a whole cycle of the clock, where the caret
   // is lit: with a hold that is N cycles after it, without one the first
   // cycle's end of the running clock past N periods from the move.
   _blinkClock(this: CursorSmithPlugin, period: number): { start: number; stopAt: number } {
-    const delayMs = Math.max(0, this.look.blinkDelayMs ?? 0);
-    const holdMs = Math.max(this.look.smoothStopBlinking ? BLINK_TYPING_HOLD_MS : 0, delayMs);
+    const holdMs = this.look.smoothStopBlinking ? Math.max(BLINK_TYPING_HOLD_MS, this.look.blinkDelayMs ?? 0) : 0;
     const moved = this.lastMoveTime + holdMs;
     const start = holdMs > 0 ? moved : (this._blinkAnchor || 0);
     const stopAfter = Math.max(0, Math.round(this.look.blinkStopAfter ?? 0));

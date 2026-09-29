@@ -1377,8 +1377,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     blinking.push(slider("Blink speed", "How fast the cursor blinks.", "blinkSpeed", [0.1, 3, 0.1], { depth: 1, when: blink }));
     blinking.push(slider("Blink balance", "How the blink cycle is split between lit and dark.", "blinkOnOffBalance", [0.1, 0.9, 0.05], { depth: 1, when: blink }));
     blinking.push(slider("Fade smoothness", "How gradually the cursor fades in and out.", "blinkFade", [0.05, 0.5, 0.05], { depth: 1, fallback: 0.15, when: blink }));
-    blinking.push(toggle("Don't blink while typing", "Keeps the cursor fully lit while you type or move it.", "smoothStopBlinking", { depth: 1, when: blink }));
-    blinking.push(slider("Blink delay", "How long the cursor stays lit after a keystroke, in ms.", "blinkDelayMs", [0, 2000, 50], { depth: 1, fallback: 0, when: blink }));
+    // The delay is how long "Don't blink while typing" holds, so it sits
+    // under it: off, the cursor blinks on through typing (1.7.3, #7). The
+    // hold is never under 450 ms, so the slider starts there.
+    blinking.push(toggle("Don't blink while typing", "Keeps the cursor fully lit while you type or move it. Off, it keeps blinking.", "smoothStopBlinking", { depth: 1, gate: true, when: blink }));
+    blinking.push(slider("Blink delay", "How long the cursor stays lit after a keystroke, in ms.", "blinkDelayMs", [450, 2000, 50], { depth: 2, fallback: 450, when: all(blink, on("smoothStopBlinking")) }));
     blinking.push(slider("Stop after", "Blink this many times after each move, then stay lit. 0 blinks forever.", "blinkStopAfter", [0, 20, 1], { depth: 1, fallback: 0, when: blink }));
     blinking.push(toggle("Breathing", "The cursor swells and shrinks instead of fading out.", "blinkBreathing", { depth: 1, gate: true, when: blink }));
     blinking.push(slider("Breath depth", "How far the cursor shrinks at the bottom of the breath.", "blinkBreathDepth", [0.05, 0.5, 0.05],

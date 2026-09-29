@@ -245,6 +245,10 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
   ok("...and the row after it does too", named(on, "Breathing"));
   const off = panelRows({ blinkingEnabled: false });
   ok("...and the blink gate hides it", !named(off, "Stop after"));
+  // The Blink delay is "Don't blink while typing"'s hold (1.7.3, #7).
+  const typing = panelRows({ blinkingEnabled: true, smoothStopBlinking: false });
+  ok("Blink delay hides with Don't blink while typing off", !named(typing, "Blink delay") && named(typing, "Don't blink while typing"));
+  ok("...and the rows after it still render", named(typing, "Stop after") && named(typing, "Breathing"));
 }
 
 // Speed demon's custom ramp rows, including the Keep cursor color interaction.

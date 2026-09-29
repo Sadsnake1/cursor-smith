@@ -19,6 +19,9 @@ import type CursorSmithPlugin from "../plugin";
 // How long an input method's commit waits for the caret's move that shows
 // it (a frame or two in practice).
 const IME_COMMIT_MS = 600;
+// How far before the caret a commit's text may end: the next pinyin's
+// letters typed after it by the time the caret is read.
+const IME_COMMIT_SLACK = 8;
 // How long an edit's insertions wait for the carets' moves that show them.
 const EDIT_RANGE_MS = 600;
 
@@ -971,8 +974,18 @@ export const measureMethods = {
   _imeCommitRange(this: CursorSmithPlugin, view: EditorView, newCaret: CaretRecord): { from: number; to: number } | null {
     const c = this._imeCommit;
     if (!c || !c.data || typeof newCaret.pos !== "number" || performance.now() - c.t > IME_COMMIT_MS) return null;
-    const to = newCaret.pos, from = to - c.data.length;
-    if (from < 0 || c.data.includes("\n") || view.state.doc.sliceString(from, to) !== c.data) return null;
+    if (c.data.includes("\n")) return null;
+    // It ends at the caret - or a few characters before it: the next pinyin
+    // started in the same frame as the commit, and the caret was already
+    // past its first letters. Only at the caret, such a commit was not
+    // typing, the pinyin stayed in Fresh ink's run, and the whole run -
+    // everything typed before it - dried at once ("sometimes it works,
+    // other times it dries up", issue #41). The nearest copy before the
+    // caret, within IME_COMMIT_SLACK.
+    const lo = Math.max(0, newCaret.pos - c.data.length - IME_COMMIT_SLACK);
+    const i = view.state.doc.sliceString(lo, newCaret.pos).lastIndexOf(c.data);
+    if (i < 0) return null;
+    const from = lo + i, to = from + c.data.length;
     this._imeCommit = null;
     return { from, to };
   },

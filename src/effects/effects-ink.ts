@@ -119,15 +119,27 @@ export const effectsInkMethods = {
     }
     // An edit before it moved it: the nearest copy of its text, if it is long
     // enough to be itself rather than any letter nearby.
-    if (len < 2) return false;
-    const lo = Math.max(0, m.from - INK_SEARCH);
-    const win = doc.sliceString(lo, Math.min(doc.length, m.from + len + INK_SEARCH));
-    let best = -1;
-    for (let i = win.indexOf(m.text); i >= 0; i = win.indexOf(m.text, i + 1)) {
-      if (best < 0 || Math.abs(lo + i - m.from) < Math.abs(lo + best - m.from)) best = i;
+    if (len >= 2) {
+      const lo = Math.max(0, m.from - INK_SEARCH);
+      const win = doc.sliceString(lo, Math.min(doc.length, m.from + len + INK_SEARCH));
+      let best = -1;
+      for (let i = win.indexOf(m.text); i >= 0; i = win.indexOf(m.text, i + 1)) {
+        if (best < 0 || Math.abs(lo + i - m.from) < Math.abs(lo + best - m.from)) best = i;
+      }
+      if (best >= 0) { m.from = lo + best; return true; }
     }
-    if (best < 0) return false;
-    m.from = lo + best;
+    // Its end rewritten under it - an input method's pinyin replaced by the
+    // characters chosen, the commit not read as typing: what still stands at
+    // its start stays wet and dries on its own time. The whole run went, and
+    // everything typed before the pinyin dried at once (issue #41). Never
+    // half an emoji.
+    if (k > 0 && k < len) {
+      const hi = m.text.charCodeAt(k - 1);
+      if (hi >= 0xd800 && hi <= 0xdbff) k--;
+    }
+    if (k <= 0) return false;
+    m.text = m.text.slice(0, k);
+    m.times = m.times.slice(0, k);
     return true;
   },
 

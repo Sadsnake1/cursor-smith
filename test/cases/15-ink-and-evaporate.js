@@ -87,6 +87,12 @@ section("Fresh ink: finding a run after an edit");
   ok("gone: dropped", e._inkLocate(docOf("zzzzzz"), gone, 2) === false);
   const one = m(3, "a");
   ok("a single letter is not chased: any letter nearby could be taken for it", e._inkLocate(docOf("1234a"), one, 5) === false);
+  // Issue #41: a run whose end an input method rewrote - the pinyin
+  // replaced by the characters chosen - and the commit not seen as typing.
+  const py = m(3, "\u4f60\u597dshijie");
+  ok("its end rewritten: what stands at its start stays wet, with its own times", e._inkLocate(docOf("xyz\u4f60\u597d\u4e16\u754cs"), py, 8) === true && py.text === "\u4f60\u597d" && py.times.length === 2, py);
+  const emo = m(3, "\ud83d\ude00b");
+  ok("...never half an emoji", e._inkLocate(docOf("xyz\ud83d\ude01"), emo, 5) === false, emo);
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +518,14 @@ section("An input method's commit is typing (issue #38)");
   e.app = { workspace: { activeEditor: { editor: { cm: mk(done + "x") } } } };
   e.resolveHoldChar(rec(done.length + 1, done.length + 1, 0));
   ok("...and a key typed after it uses it up (a later move is not the commit)", e._imeCommit === null);
+  // Issue #41: the next pinyin started in the same frame as the commit - the
+  // caret is already past its first letter when the move is read.
+  got.ink.length = 0; got.stamp.length = 0; got.pop.length = 0;
+  e.app = { workspace: { activeEditor: { editor: { cm: mk(done + "s") } } } };
+  e.lastActive = rec(text.length, text.length, 100 + text.length * 10);
+  e._imeCommit = { data: hanzi, t: performance.now() };
+  const early = e.resolveHoldChar(rec(done.length + 1, done.length + 1, 100 + (done.length + 1) * 10));
+  ok("the next pinyin already begun: the commit still found, just before the caret", early === "\u597d" && got.ink[0] === hanzi && got.stamp.length === 1 && e._imeCommit === null, got);
 
   // Fresh ink: the pinyin's run cut back to what still stands, the
   // characters wet after it.

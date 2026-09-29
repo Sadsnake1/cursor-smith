@@ -816,15 +816,14 @@ section("Typewriter's Ink stamp: it grows about the letter's own middle (1.7.1)"
 }
 
 // ---------------------------------------------------------------------------
-section("Typewriter (1.7.2): capitals strike deeper, the return timed to its sound, the correction tape");
-const TAPE_HOLD = 1500;
+section("Typewriter (1.7.2): capitals strike deeper, the return timed to its sound, the correction");
 {
   const mk = (over) => {
     const e = makeEngine(Object.assign({ typewriter: true }, over));
     e.styleFor = (k) => e.settings[k];
     e.look = e.settings;
     e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
-    e.particles = []; e.typeReturns = []; e.typeTapes = [];
+    e.particles = []; e.typeReturns = []; e.xouts = [];
     e._markDirty = () => {};
     return e;
   };
@@ -871,100 +870,97 @@ const TAPE_HOLD = 1500;
     } finally { performance.now = real; }
   }
 
-  // The correction tape (rolled along the line, 1.7.3).
+  // The X-out (1.7.3): the deleted letters overtyped with x, then the line
+  // closes up over them.
+  const xsrc = require("fs").readFileSync(srcPath("effects-xout.ts"), "utf8");
+  const XC = (n) => +xsrc.match(new RegExp("export const " + n + " = (\\d+)"))[1];
+  const STAGGER = XC("XOUT_STAGGER_MS"), HOLD = XC("XOUT_HOLD_MS"), CLOSE = XC("XOUT_CLOSE_MS");
   const deleted = { forward: false, from: 40, old: { x: 118, top: 50, h: 24, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#222" },
     letters: [{ char: "a", x: 109, w: 9 }, { char: " ", x: 100, w: 9 }, { char: "b", x: 91, w: 9 }] };
-  // A note: "xxxx..." with the strip's left end at 40, each character 9 px
-  // from x 91 on its row.
-  const fakeView = (text = "0123456789012345678901234567890123456789rest of the line") => {
+  // A note of one line, the run's left end at 40, each character 9 px from
+  // x 91 on its row. Ending at 40: the deletion was at the line's end.
+  const fakeView = (text = "0123456789012345678901234567890123456789") => {
     const doc = { length: text.length, sliceString: (f, t) => text.slice(f, t), lineAt: () => ({ from: 0, to: text.length }) };
-    return { state: { doc }, coordsAtPos: (pos) => ({ left: 91 + (pos - 40) * 9, top: 50, bottom: 74 }) };
+    return { state: { doc }, coordsAtPos: (pos) => ({ left: 91 + (pos - 40) * 9, top: 50, bottom: 74 }), contentDOM: { getBoundingClientRect: () => ({ right: 1000 }) } };
   };
-  const withView = (e, view) => { e.app = { workspace: { activeEditor: { editor: { cm: view } } } }; e.reducedMotion = () => false; return e; };
-  const view = fakeView();
-  const tp = withView(mk({ typewriterTape: true }), view);
-  tp.spawnTape(deleted);
-  const st = tp.typeTapes[0];
-  ok("Correction tape: one strip for the whole deletion, spaces and all", tp.typeTapes.length === 1 && st.w === 27 && st.x0 === 91 && st.ghosts.length === 3 && st.anchor === 40 && st.cover === 0, st);
-  ok("...each deleted letter kept where it stood, from the strip's left end", st.ghosts.map((g) => g.char + g.dx).join() === "a18, 9,b0");
-  // The next Backspace, at the strip's left end: the same strip, longer to
-  // the left, its right end where it was.
-  const more = { forward: false, from: 39, old: Object.assign({}, deleted.old, { x: 91 }), letters: [{ char: "c", x: 82, w: 9 }] };
-  st.anchor = 39;
-  tp.spawnTape(more);
-  ok("a run of Backspaces is one strip, growing to the left", tp.typeTapes.length === 1 && st.w === 36 && st.x0 === 82 && st.ghosts.map((g) => g.char + g.dx).join() === "a27, 18,b9,c0", st);
-  // Delete, forward: the next letter was right of the last one.
-  {
-    const f = withView(mk({ typewriterTape: true }), view);
-    const d1 = { forward: true, from: 40, old: Object.assign({}, deleted.old, { x: 91 }), letters: [{ char: "x", x: 91, w: 9 }] };
-    f.spawnTape(d1);
-    f.spawnTape(Object.assign({}, d1, { letters: [{ char: "y", x: 91, w: 9 }] }));
-    ok("a run of Deletes grows to the right", f.typeTapes.length === 1 && f.typeTapes[0].w === 18 && f.typeTapes[0].ghosts.map((g) => g.char + g.dx).join() === "x0,y9");
-  }
-  // Somewhere else: a strip of its own.
-  {
-    const e = withView(mk({ typewriterTape: true }), view);
-    e.spawnTape(deleted);
-    e.spawnTape({ forward: false, from: 12, old: Object.assign({}, deleted.old, { x: 300 }), letters: [{ char: "q", x: 291, w: 9 }] });
-    ok("...a deletion somewhere else is a strip of its own", e.typeTapes.length === 2);
-  }
-  // Pinned to the note: the left end rides every edit, before text typed
-  // at it.
-  {
-    const e = withView(mk({ typewriterTape: true }), view);
-    e.spawnTape(deleted);
-    const strip = e.typeTapes[0];
-    const edit = (map) => e._recordEdit({ docChanged: true, view, state: { doc: { length: 99 } }, changes: { iterChanges() {}, mapPos: map } });
-    let assoc = null;
-    edit((pos, side) => { assoc = side; return pos; });
-    ok("its left end rides an edit, sticking before text typed there", assoc === -1);
-    edit((pos) => pos + 5);
-    ok("...moved with the text before it", strip.anchor === 45);
-    e._recordEdit({ docChanged: true, view: {}, state: { doc: { length: 99 } }, changes: { iterChanges() {}, mapPos: (pos) => pos + 100 } });
-    ok("...and not by another note's edit", strip.anchor === 45);
-  }
-  // Drawing: laid from where the caret stood, the way it went; the deleted
-  // letters until the tape is over them; the note's text on it; held, then
-  // fading, then gone.
+  const withView = (e, view) => { e.app = { workspace: { activeEditor: { editor: { cm: view } } } }; e._cellBackground = () => "rgb(250, 250, 250)"; e.fontString = () => "16px serif"; return e; };
+  const recorder = (ops) => ({ save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, translate() {}, scale() {}, globalAlpha: 1, fillStyle: "", font: "", textAlign: "", textBaseline: "",
+    measureText: () => ({ width: 9, fontBoundingBoxAscent: 14, fontBoundingBoxDescent: 4 }),
+    fillRect(x, y, w) { ops.push("cover:" + Math.round(x) + "-" + Math.round(x + w)); },
+    fillText(ch, x) { ops.push(ch + "@" + Math.round(x) + ":" + Math.round(this.globalAlpha * 100) / 100); } });
   {
     const real = performance.now;
     try {
-      let now = 70000;
+      let now = 50000;
       performance.now = () => now;
-      const d = withView(mk({ typewriterTape: true }), fakeView("0123456789012345678901234567890123456789ok"));
-      const ops = [];
-      d.fontString = () => "16px serif";
-      d.isDarkTheme = () => false;
-      d.ctx = { save() {}, restore() {}, beginPath() {}, rect() {}, clip() {}, globalAlpha: 1, fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textAlign: "", textBaseline: "",
-        measureText: () => ({ width: 9, fontBoundingBoxAscent: 14, fontBoundingBoxDescent: 4 }),
-        fillRect(x, y, w) { if (this.fillStyle === "#fdfdfb") ops.push("tape:" + Math.round(x) + "-" + Math.round(x + w)); }, fillText(ch) { ops.push(ch); } };
-      d.spawnTape(deleted);
-      const strip = d.typeTapes[0];
-      now += 16; ops.length = 0; d.drawTape();
-      const early = ops.join();
-      ok("rolling: the tape laid from the old caret leftwards, the letters not yet under it still there", strip.cover > 0 && strip.cover < 27 && early.startsWith("a,b,tape:") && early.includes("tape:" + Math.round(118 - strip.cover) + "-118"), [early, strip.cover]);
-      now += 400; ops.length = 0; d.drawTape();
-      const laid = ops.join();
-      ok("...then laid all the way, no letters left under it, the note's text drawn on it", strip.cover === 27 && ops[0] === "tape:91-118" && !ops.includes("a") && !ops.includes("b") && ops.includes("o") && ops.includes("k"), laid);
-      ok("...held whole", d.tapeAlpha(TAPE_HOLD - 1) === 1 && d.tapeAlpha(TAPE_HOLD + 200) < 1 && d.tapeAlpha(TAPE_HOLD + 1000) === 0);
-      now += 3000; d.drawTape();
-      ok("...then gone", d.typeTapes.length === 0);
+      const view = fakeView();
+      const x = withView(mk({ typewriterTape: true }), view);
+      x.spawnXout(deleted);
+      const run = x.xouts[0];
+      ok("X-out: one run for the deletion, each letter where it stood", x.xouts.length === 1 && run.w === 27 && run.x0 === 91 && run.anchor === 40 && run.ghosts.map((g) => g.char + g.dx).join() === "a18, 9,b0", run);
+      ok("...struck nearest the caret first, one after another, then held and closed", run.ghosts[0].t === now && run.ghosts[2].t === now + 2 * STAGGER && run.closeT === now + 2 * STAGGER + HOLD);
+      // Backspace again at its left end, before it closes: the same run.
+      now += 30;
+      run.anchor = 39;
+      x.spawnXout({ forward: false, from: 39, old: Object.assign({}, deleted.old, { x: 91 }), letters: [{ char: "c", x: 82, w: 9 }] });
+      ok("a run of Backspaces is one run, growing to the left, its close put off", x.xouts.length === 1 && run.w === 36 && run.x0 === 82 && run.ghosts.map((g) => g.char + g.dx).join() === "a27, 18,b9,c0" && run.closeT === now + HOLD, run);
+      {
+        const f = withView(mk({ typewriterTape: true }), view);
+        const d1 = { forward: true, from: 40, old: Object.assign({}, deleted.old, { x: 91 }), letters: [{ char: "x", x: 91, w: 9 }] };
+        f.spawnXout(d1);
+        f.spawnXout(Object.assign({}, d1, { letters: [{ char: "y", x: 91, w: 9 }] }));
+        ok("a run of Deletes grows to the right", f.xouts.length === 1 && f.xouts[0].w === 18 && f.xouts[0].ghosts.map((g) => g.char + g.dx).join() === "x0,y9");
+      }
+      // Pinned to the note; typing while it shows closes it.
+      {
+        const e = withView(mk({ typewriterTape: true }), view);
+        e.spawnXout(deleted);
+        const r = e.xouts[0];
+        const edit = (map, typed, v = view) => e._recordEdit({ docChanged: true, view: v, state: { doc: { length: 99 } }, changes: { iterChanges(fn) { if (typed) fn(0, 0, 10, 11); }, mapPos: map } });
+        let assoc = null;
+        edit((pos, side) => { assoc = side; return pos + 5; }, false);
+        ok("its left end rides an edit, before text typed there", r.anchor === 45 && assoc === -1 && r.closeT > now);
+        edit((pos) => pos, true);
+        ok("...and typing closes it at once", r.closeT === now);
+        edit((pos) => pos + 100, true, {});
+        ok("...another note's edit touches it not", r.anchor === 45);
+      }
+      // Drawing, in the middle of a line: "rest" after the run.
+      {
+        const d = withView(mk({ typewriterTape: true }), fakeView("0123456789012345678901234567890123456789rest"));
+        const ops = [];
+        d.ctx = recorder(ops);
+        d.spawnXout(deleted);
+        now += 10; ops.length = 0; d.drawXout();
+        const first = ops.join();
+        ok("mid-line: the rest of the line covered where it is and drawn after the deleted letters", first.startsWith("cover:91-") && first.includes("r@118:1") && first.includes("t@145:1"), first);
+        ok("...the deleted letters where they stood, the first struck with an x", first.includes("a@109:") && first.includes("b@91:1") && ops.filter((o) => o.startsWith("x@")).length === 1, first);
+        now += 2 * STAGGER; ops.length = 0; d.drawXout();
+        ok("...each struck in turn, a struck letter dimmed to half under its x", ops.filter((o) => o.startsWith("x@")).length === 2 && ops.includes("a@109:0.5") && ops.includes("x@-4:1"), ops.join());
+        now = d.xouts[0].closeT + CLOSE / 2; ops.length = 0; d.drawXout();
+        const mid = ops.join();
+        ok("closing: the rest of the line slides back, the x'd letters fade", mid.includes("r@105:0.5") === false && mid.includes("r@105") && mid.includes("a@109:0.25"), mid);
+        now = d.xouts[0].closeT + CLOSE; d.drawXout();
+        ok("...then gone", d.xouts.length === 0);
+      }
+      // At a line's end nothing is held apart; with no solid page color
+      // behind the text there is nothing to cover it with.
+      {
+        const e = withView(mk({ typewriterTape: true }), fakeView());
+        const ops = [];
+        e.ctx = recorder(ops);
+        e.spawnXout(deleted);
+        now += 10; e.drawXout();
+        ok("at a line's end nothing is covered, the letters struck all the same", !ops.some((o) => o.startsWith("cover")) && ops.some((o) => o.startsWith("x@")));
+        const n = withView(mk({ typewriterTape: true }), fakeView("0123456789012345678901234567890123456789rest"));
+        n._cellBackground = () => null;
+        const ops2 = [];
+        n.ctx = recorder(ops2);
+        n.spawnXout(deleted);
+        now += 10; n.drawXout();
+        ok("...and with no solid page color the line is left as it is", !ops2.some((o) => o.startsWith("cover") || o.startsWith("r@")) && ops2.some((o) => o.startsWith("a@")));
+      }
     } finally { performance.now = real; }
-  }
-  // A letter stamped onto the tape (the Ink stamp covers the real letter
-  // with the page's color): the tape is put back under the stamp.
-  {
-    const e = withView(mk({ typewriterTape: true }), view);
-    const bands = [];
-    e._paintTapeBand = (xa, xb) => bands.push([xa, xb]);
-    e.typeTapes = [{ frame: { rowTop: 50, c0: 91, c1: 118, top: 52, h: 17, alpha: 1 } }];
-    e._tapeUnder(100, 47, 11, 24);
-    e._tapeUnder(200, 47, 11, 24);
-    e._tapeUnder(100, 90, 11, 24);
-    ok("a stamp on the tape gets the tape back under it, only there", bands.length === 1 && bands[0][0] === 99 && bands[0][1] === 112, bands);
-    ok("...from the stamp's cover, in ink that shows on the tape", /this\._tapeUnder\(p\.x - 1, p\.y, m\.width \+ 2, lh\)\) ink = this\.tapeInk\(p\.color\)/.test(require("fs").readFileSync(srcPath("effects-pops.ts"), "utf8")));
-    // Ink on the tape: the page's text color when it shows on white, else dark.
-    ok("letters on the tape: dark ink when the page's text is light", e.tapeInk("#dadada") === "#1f1f22" && e.tapeInk("#222222") === "#222222");
   }
   // Deletions reach it without the Pop effects, and the Pop effects' burst
   // does not come with it.
@@ -972,9 +968,9 @@ const TAPE_HOLD = 1500;
     const e = mk({ typewriterTape: true, popEffects: false, backspaceDisintegrate: true });
     let taped = 0, burst = 0;
     e.deletedLetters = () => deleted;
-    e.spawnTape = () => { taped++; };
+    e.spawnXout = () => { taped++; };
     e.spawnDisintegration = () => { burst++; return true; };
-    ok("a deletion reaches the tape with Pop effects off", e._deletionFxOn() === true && e._deletionFx({}, {}) === false && taped === 1 && burst === 0);
+    ok("a deletion reaches the X-out with Pop effects off", e._deletionFxOn() === true && e._deletionFx({}, {}) === false && taped === 1 && burst === 0);
     const off = mk({ typewriterTape: false, popEffects: false });
     ok("...and nothing wants a deletion with both off", off._deletionFxOn() === false);
   }

@@ -43,7 +43,7 @@ import type {
   TypeReturn,
   InkMark,
   EvaporateGlyph,
-  TapeStrip,
+  XoutRun,
 } from "./types";
 
 import { measureMethods } from "./engine/measure";
@@ -144,13 +144,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare spawnEvaporate: EffectsMethods["spawnEvaporate"];
   declare evaporatePose: EffectsMethods["evaporatePose"];
   declare drawEvaporate: EffectsMethods["drawEvaporate"];
-  declare _tapeOn: EffectsMethods["_tapeOn"];
-  declare spawnTape: EffectsMethods["spawnTape"];
-  declare tapeAlpha: EffectsMethods["tapeAlpha"];
-  declare _paintTapeBand: EffectsMethods["_paintTapeBand"];
-  declare _tapeUnder: EffectsMethods["_tapeUnder"];
-  declare tapeInk: EffectsMethods["tapeInk"];
-  declare drawTape: EffectsMethods["drawTape"];
+  declare _xoutOn: EffectsMethods["_xoutOn"];
+  declare spawnXout: EffectsMethods["spawnXout"];
+  declare xoutClosed: EffectsMethods["xoutClosed"];
+  declare drawXout: EffectsMethods["drawXout"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts
@@ -614,7 +611,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Backspace evaporation: the letters rising away, and the note as it was
   // before the deletion (what the letters are read back from).
   evaporateGlyphs!: EvaporateGlyph[];
-  typeTapes!: TapeStrip[];
+  xouts!: XoutRun[];
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
@@ -1706,7 +1703,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.inkMarks = [];
     this._inkView = null;
     this.evaporateGlyphs = [];
-    this.typeTapes = [];
+    this.xouts = [];
     this._deletionDoc = null;
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then

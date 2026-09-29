@@ -105,9 +105,9 @@ export const paintFrameMethods = {
     this._dirty = null;
 
     // On the text itself, under everything that flies off it.
-    // The correction tape first: the fresh ink and the letters leaving go
-    // on top of it.
-    this.drawTape();
+    // The x-out first: it holds the rest of the line apart, and the fresh
+    // ink and the letters leaving go on top of it.
+    this.drawXout();
     this.drawFreshInk();
     this.drawEvaporate();
     this.drawLettersParticles();

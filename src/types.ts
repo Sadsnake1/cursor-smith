@@ -371,18 +371,18 @@ export interface EvaporateGlyph {
 }
 // ms: its own sweep (Sounds times it to the machine's return), else the setting's.
 export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number; ms?: number }
-// Correction tape: one strip rolled over a run of deletions (effects-tape.ts).
-// anchor: its left end in the note, carried through edits; w: its length and
-// cover: how much of it is laid, in px; t: the last frame; last: its last
-// deletion; x0: its left end on screen at the last frame; ghosts: the
-// deleted letters, from its left end; frame: where it was drawn this frame.
-export interface TapeStrip {
-  view: unknown; anchor: number; forward: boolean;
-  w: number; cover: number; t: number; last: number; x0: number;
-  ghosts: { char: string; dx: number; w: number }[];
+// Typewriter's X-out: one run of deletions (effects-xout.ts). anchor: its
+// left end in the note, carried through edits; w: its width, px; x0: its left
+// end on screen at the last frame; ghosts: the deleted letters, from its left
+// end, each struck with its x at t; closeT: when it starts to close; bg: the
+// page's color behind it, to hold the rest of the line apart with (null: none
+// solid).
+export interface XoutRun {
+  view: unknown; anchor: number; forward: boolean; w: number; x0: number;
+  ghosts: { char: string; dx: number; w: number; t: number }[];
+  closeT: number; bg: string | null;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
   textColor: string;
-  frame: { rowTop: number; c0: number; c1: number; top: number; h: number; alpha: number } | null;
 }
 // Where Typewriter holds the caret at a moment: shifted by dx, dy and
 // squashed to sy of its height about its bottom edge.

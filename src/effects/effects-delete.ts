@@ -24,9 +24,9 @@ export const DELETION_MAX_CHARS = 40;
 
 export const effectsDeleteMethods = {
   // Whether anything wants a deletion's letters: the Pop effects' two, and
-  // Typewriter's Correction tape.
+  // Typewriter's X-out.
   _deletionFxOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._tapeOn();
+    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._xoutOn();
   },
 
   // The note as it is now, for the next deletion to read from; kept only
@@ -61,7 +61,7 @@ export const effectsDeleteMethods = {
     if (!this._deletionFxOn()) return false;
     const letters = this.deletedLetters(old, now);
     if (letters && this._evaporateOn()) this.spawnEvaporate(letters);
-    if (letters && this._tapeOn()) this.spawnTape(letters);
+    if (letters && this._xoutOn()) this.spawnXout(letters);
     if (!this.look.popEffects || !this.look.backspaceDisintegrate) return false;
     return this.spawnDisintegration(letters);
   },

@@ -1,10 +1,10 @@
 import { Plugin, View, addIcon } from "obsidian";
+import { EditorView } from "@codemirror/view";
 import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
 import { applyReducedMotion, isTextCaretHost } from "./util/motion";
 import { DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset, seedPresets } from "./settings/presets";
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings/settings";
 import { CursorSmithSettingTab } from "./settings/settings-tab";
-import type { EditorView } from "@codemirror/view";
 import type { Text as DocText } from "@codemirror/state";
 import type {
   Bounds,
@@ -105,6 +105,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare genericCaretChar: MeasureMethods["genericCaretChar"];
   declare resolveHoldChar: MeasureMethods["resolveHoldChar"];
   declare _imeCommitRange: MeasureMethods["_imeCommitRange"];
+  declare _recordEdit: MeasureMethods["_recordEdit"];
+  declare _editRangeAt: MeasureMethods["_editRangeAt"];
   declare isExcalidrawCaretHost: MeasureMethods["isExcalidrawCaretHost"];
   declare noteEditorFocused: MeasureMethods["noteEditorFocused"];
   declare _isVisiblyRendered: MeasureMethods["_isVisiblyRendered"];
@@ -197,6 +199,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare heatColor: PaintMethods["heatColor"];
   declare blinkPhase: PaintMethods["blinkPhase"];
   declare blinkWindow: PaintMethods["blinkWindow"];
+  declare _blinkClock: PaintMethods["_blinkClock"];
+  declare _blinkRestart: PaintMethods["_blinkRestart"];
   declare blinkAlpha: PaintMethods["blinkAlpha"];
   declare breathScale: PaintMethods["breathScale"];
   declare _cursorBounds: PaintMethods["_cursorBounds"];
@@ -391,6 +395,11 @@ export default class CursorSmithPlugin extends Plugin {
   // An input method's last commit (compositionend): what it wrote, when -
   // the caret's next move reads it as typing (issue #38; _imeCommitRange).
   _imeCommit: { data: string; t: number } | null = null;
+  // The last edit in a note, as CodeMirror reported it: where each insertion
+  // landed in the new document (_recordEdit). With several cursors one
+  // keystroke is several insertions, and each cursor finds its own here
+  // (_editRangeAt).
+  _lastEdit: { t: number; docLen: number; ranges: { from: number; to: number }[] } | null = null;
   _dirty!: Bounds | null;
   _dirtyFull!: boolean;
   _dirtyPrev!: Rect | null;
@@ -569,6 +578,9 @@ export default class CursorSmithPlugin extends Plugin {
   // window's (updateOverlayTarget).
   _mouseDoc!: Document | null;
   lastMoveTime!: number;
+  // Where the blink's running cycle started, with "Don't blink while typing"
+  // off (_blinkClock): a move resets it only once the caret has gone solid.
+  _blinkAnchor = 0;
   modalObserver!: MutationObserver | null;
   modalOpen!: boolean;
   // A modal, a menu or the bottom sheet over the note (the torch's
@@ -899,6 +911,8 @@ export default class CursorSmithPlugin extends Plugin {
     // Typewriter's Sounds (src/sound): heard as the text changes, not on
     // the frame loop, so they are set up once here, whatever the look.
     this._soundSetup();
+    // Every edit's insertions, for the letter effects (_editRangeAt).
+    this.registerEditorExtension(EditorView.updateListener.of((u) => this._recordEdit(u)));
 
     this.app.workspace.onLayoutReady(() => {
       // Honor the auto-control setting on startup: if Vim cursors are on and

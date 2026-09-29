@@ -115,11 +115,34 @@ export const paintSecondariesMethods = {
           ctx.scale(breath, breath);
           ctx.translate(-cx, -cy);
         }
+        // Typewriter's strike, as the primary's (1.7.3: the extra cursors
+        // never dipped). The stroke's clock is shared - one keystroke types
+        // at every cursor.
+        const pose = this.typewriterPose(performance.now());
+        const dipping = Math.abs(pose.dx) > 0.01 || Math.abs(pose.dy) > 0.01 || Math.abs(pose.sy - 1) > 0.001;
+        if (dipping) {
+          ctx.save();
+          ctx.translate(pose.dx, pose.dy);
+          if (Math.abs(pose.sy - 1) > 0.001) {
+            const bx = a.x + Math.max(a.w || 0, a.actualCharWidth || 0) / 2;
+            const by = a.top + (a.h || 0);
+            ctx.translate(bx, by);
+            ctx.scale(1, pose.sy);
+            ctx.translate(-bx, -by);
+          }
+          if (cb) {
+            cb.x0 += Math.min(0, pose.dx);
+            cb.x1 += Math.max(0, pose.dx);
+            cb.y0 += Math.min(0, pose.dy) - (a.h || 0) * Math.max(0, pose.sy - 1);
+            cb.y1 += Math.max(0, pose.dy);
+          }
+        }
         switch (style) {
           case "Line": this.drawGenericCaret(false); break;
           case "Underline": this.drawGenericCaret(true); break;
           case "Box": this.drawBoxCursor(); break;
         }
+        if (dipping) ctx.restore();
         if (breathing) ctx.restore();
       });
     }

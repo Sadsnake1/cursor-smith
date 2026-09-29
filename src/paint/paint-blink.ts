@@ -7,6 +7,7 @@
 // frame governor sleeps and wakes by, the alpha and the breathing scale.
 
 import { blinkAlphaAt, blinkSegments } from "../util/motion";
+import { BLINK_TYPING_HOLD_MS } from "../constants";
 import type CursorSmithPlugin from "../plugin";
 
 export const paintBlinkMethods = {
@@ -20,18 +21,9 @@ export const paintBlinkMethods = {
   // without also stopping everything else that keys off the blink.
   blinkPhase(this: CursorSmithPlugin, now: number): number {
     if (!this.look.blinkingEnabled) return 1;
-    // Build the effective hold window from two independent sources:
-    //   • smoothStopBlinking (existing): 450 ms hold, only active when smooth
-    //     movement is on (behaviour unchanged for existing users).
-    //   • blinkDelayMs (new): explicit user-controlled delay that works
-    //     regardless of whether smooth movement is enabled.
-    // We take the larger of the two so neither setting silently overrides the other.
-    let holdMs = 0;
-    if (this.look.smoothEnabled && this.look.smoothStopBlinking) holdMs = 450;
-    const delayMs = Math.max(0, this.look.blinkDelayMs ?? 0);
-    if (delayMs > holdMs) holdMs = delayMs;
     // Phase is measured from the END of the hold window, not from the wall
-    // clock.
+    // clock (_blinkClock: with "Don't blink while typing" off and no Blink
+    // delay there is no hold, and the cycle runs on through moves).
     //
     // blinkAlphaAt used to take `now` directly and do `now % period`, so the
     // cycle was anchored to nothing at all. The hold pins alpha at 1 and then
@@ -45,10 +37,10 @@ export const paintBlinkMethods = {
     // Anchoring here means the cycle always STARTS fully on and eases down on
     // schedule, which is also what every other editor does: move the caret and
     // the blink restarts from solid rather than resuming mid-cycle.
-    const elapsed = now - (this.lastMoveTime + holdMs);
-    if (!(elapsed > 0)) return 1;
-
     const speed = Math.max(0, this.look.blinkSpeed);
+    const clock = this._blinkClock(speed > 0 ? blinkSegments(speed).period : 0);
+    const elapsed = now - clock.start;
+    if (!(elapsed > 0)) return 1;
 
     // Blink-to-solid. After N full cycles the caret stops blinking and stays
     // lit until it next moves, which resets lastMoveTime and starts the count
@@ -65,8 +57,7 @@ export const paintBlinkMethods = {
     // directly, so a caret that has gone solid reports neither a fade nor a
     // changing draw signature: the loop drops to the idle heartbeat and stops
     // repainting entirely, instead of running two fades a second forever.
-    const stopAfter = Math.max(0, Math.round(this.look.blinkStopAfter ?? 0));
-    if (stopAfter > 0 && speed > 0 && elapsed >= stopAfter * blinkSegments(speed).period) return 1;
+    if (now >= clock.stopAt) return 1;
 
     return blinkAlphaAt(elapsed, speed, this.look.blinkOnOffBalance ?? 0.5, this.look.blinkFade ?? 0.15);
   },
@@ -87,22 +78,59 @@ export const paintBlinkMethods = {
   blinkWindow(this: CursorSmithPlugin, now: number): { fading: boolean; msToNext: number } {
     const none = { fading: false, msToNext: Infinity };
     if (!this.look.blinkingEnabled) return none;
-    let holdMs = 0;
-    if (this.look.smoothEnabled && this.look.smoothStopBlinking) holdMs = 450;
-    const delayMs = Math.max(0, this.look.blinkDelayMs ?? 0);
-    if (delayMs > holdMs) holdMs = delayMs;
     const speed = Math.max(0, this.look.blinkSpeed);
     if (speed <= 0) return none;
     const seg = blinkSegments(speed, this.look.blinkOnOffBalance ?? 0.5, this.look.blinkFade ?? 0.15);
-    const elapsed = now - (this.lastMoveTime + holdMs);
-    const stopAfter = Math.max(0, Math.round(this.look.blinkStopAfter ?? 0));
-    if (stopAfter > 0 && elapsed >= stopAfter * seg.period) return none;
+    const clock = this._blinkClock(seg.period);
+    const elapsed = now - clock.start;
+    if (now >= clock.stopAt) return none;
     if (!(elapsed > 0)) return { fading: false, msToNext: -elapsed + seg.p1 * seg.period };
     const phase = (elapsed % seg.period) / seg.period;
     if (phase < seg.p1) return { fading: false, msToNext: (seg.p1 - phase) * seg.period };
     if (phase < seg.p2) return { fading: true, msToNext: (seg.p2 - phase) * seg.period };
     if (phase < seg.p3) return { fading: false, msToNext: (seg.p3 - phase) * seg.period };
     return { fading: true, msToNext: (1 - phase) * seg.period };
+  },
+
+  // The blink's clock: where its cycle starts, and when Blink-to-solid
+  // stops it (Infinity when it never does).
+  //
+  // The hold comes from two independent sources, the larger winning so
+  // neither silently overrides the other:
+  //   • smoothStopBlinking ("Don't blink while typing"): 450 ms. It held only
+  //     with Smooth movement on as well, though its toggle sits on the
+  //     Blinking page by itself - with Smooth off it did nothing (1.7.3).
+  //   • blinkDelayMs: explicit user-controlled delay.
+  // With a hold every move restarts the cycle, lit, after it. With none -
+  // "Don't blink while typing" off, no delay - the blink runs on through
+  // typing and moves: its cycle started at _blinkAnchor, which a move resets
+  // only once the caret has gone solid (_blinkRestart). Off, every key used
+  // to restart the cycle all the same, so the caret sat lit while typing
+  // either way and the toggle looked dead (issue #7, 1.7.3); the settings'
+  // preview already blinked on.
+  //
+  // Blink-to-solid counts from the last move in both - typing keeps the
+  // blink going - and stops on a whole cycle of the clock, where the caret
+  // is lit: with a hold that is N cycles after it, without one the first
+  // cycle's end of the running clock past N periods from the move.
+  _blinkClock(this: CursorSmithPlugin, period: number): { start: number; stopAt: number } {
+    const delayMs = Math.max(0, this.look.blinkDelayMs ?? 0);
+    const holdMs = Math.max(this.look.smoothStopBlinking ? BLINK_TYPING_HOLD_MS : 0, delayMs);
+    const moved = this.lastMoveTime + holdMs;
+    const start = holdMs > 0 ? moved : (this._blinkAnchor || 0);
+    const stopAfter = Math.max(0, Math.round(this.look.blinkStopAfter ?? 0));
+    if (!(stopAfter > 0 && period > 0 && isFinite(period))) return { start, stopAt: Infinity };
+    const cycles = Math.max(stopAfter, Math.ceil((moved + stopAfter * period - start) / period - 1e-6));
+    return { start, stopAt: start + cycles * period };
+  },
+
+  // A move at `now`: whether it starts the blink's running clock again - it
+  // has gone solid (Blink-to-solid), so the cycle restarts from lit with no
+  // jump. The caret's move sets _blinkAnchor by it (commitMove).
+  _blinkRestart(this: CursorSmithPlugin, now: number): boolean {
+    if (!this.look.blinkingEnabled) return false;
+    const speed = Math.max(0, this.look.blinkSpeed);
+    return speed > 0 && now >= this._blinkClock(blinkSegments(speed).period).stopAt;
   },
 
   blinkAlpha(this: CursorSmithPlugin, now: number): number {

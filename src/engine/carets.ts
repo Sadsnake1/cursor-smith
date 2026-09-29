@@ -837,7 +837,11 @@ export const caretsMethods = {
     }
     this.lastActive = caret;
     this.pending = null;
-    this.lastMoveTime = performance.now(); 
+    const movedT = performance.now();
+    // "Don't blink while typing" off: the blink runs on through the move -
+    // unless it had gone solid; then the move starts it again from lit.
+    if (this._blinkRestart(movedT)) this._blinkAnchor = movedT;
+    this.lastMoveTime = movedT;
   },
 };
 export type CaretsMethods = typeof caretsMethods;

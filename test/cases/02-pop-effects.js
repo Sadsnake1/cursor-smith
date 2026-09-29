@@ -913,3 +913,41 @@ section("Typewriter (1.7.2): capitals strike deeper, the return timed to its sou
     ok("...and nothing wants a deletion with both off", off._deletionFxOn() === false);
   }
 }
+
+// ---------------------------------------------------------------------------
+section("Typing with several cursors (1.7.3)");
+{
+  // One keystroke types at every cursor: the document grows by more than
+  // any caret moves, and the rule "grew by exactly the caret's move" matched
+  // none of them - no strike, no stamp, no ink, no letter popped, anywhere.
+  // Each caret now finds its own insertion in the edit (_recordEdit).
+  const text0 = "ab\ncd\nef", text1 = "abx\ncdx\nefx";
+  const view = { state: { doc: { length: text1.length, sliceString: (a, b) => text1.slice(a, b) } }, coordsAtPos: (pos) => ({ left: 100 + pos * 10, right: 110 + pos * 10, top: 50, bottom: 74 }) };
+  const e = makeEngine({ typewriter: true, typewriterSpring: true, typewriterInk: true, popEffects: true, popLetters: true });
+  e.app = { workspace: { activeEditor: { editor: { cm: view } } } };
+  const got = { stamp: [], pop: [] };
+  e.spawnInkStamp = (ch, a) => got.stamp.push([ch, a.pos, a.x]);
+  e.spawnLetterParticle = (ch, a) => got.pop.push([ch, a.pos]);
+  // The edit as CodeMirror reports it: an "x" at the end of each line.
+  const changes = [[2, 2, 2, 3], [5, 5, 6, 7], [8, 8, 10, 11]];
+  e._recordEdit({ docChanged: true, state: { doc: { length: text1.length } }, changes: { iterChanges: (f) => changes.forEach((c) => f(...c)) } });
+  ok("the edit's insertions are recorded where they landed", JSON.stringify(e._lastEdit.ranges) === JSON.stringify([{ from: 2, to: 3 }, { from: 6, to: 7 }, { from: 10, to: 11 }]));
+  const rec = (pos, docLen) => ({ x: 100 + pos * 10, top: 50, h: 24, pos, docLen, char: "" });
+  // Each caret: before the keystroke at its line's end, now after its "x".
+  [[2, 3], [5, 7], [8, 11]].forEach(([was, now]) => { e.lastActive = rec(was, text0.length); e.resolveHoldChar(rec(now, text1.length)); });
+  ok("every cursor's letter is typed: a stamp and a popped letter at each", got.stamp.length === 3 && got.pop.length === 3 && got.stamp.every(([ch]) => ch === "x"), got);
+  ok("...each on its own letter, where it landed", JSON.stringify(got.stamp.map((s) => s[1])) === "[2,6,10]" && got.stamp[1][2] === 160, got.stamp);
+  ok("...and the stroke starts (the extra cursors dip with it)", e._typewriterT > 0);
+  // A move that lands on an insertion's end but in another document is not
+  // typing; nor a lone insertion (the classic rule's).
+  got.stamp.length = 0;
+  e.lastActive = rec(5, text0.length);
+  e.resolveHoldChar(rec(7, text1.length + 1));
+  ok("not in another document", got.stamp.length === 0);
+  e._lastEdit = { t: performance.now(), docLen: text1.length, ranges: [{ from: 6, to: 7 }] };
+  e.lastActive = rec(5, text0.length);
+  e.resolveHoldChar(rec(7, text1.length));
+  ok("...nor a single insertion the classic rule did not see", got.stamp.length === 0);
+  const src = require("fs").readFileSync(srcPath("paint-secondaries.ts"), "utf8");
+  ok("the extra cursors are drawn with Typewriter's strike", /this\.typewriterPose\(/.test(src));
+}

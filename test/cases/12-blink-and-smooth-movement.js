@@ -223,7 +223,7 @@ section("blink-to-solid: blink N times, then stay lit");
   const mk = (over) => {
     const e = makeEngine(Object.assign({
       blinkingEnabled: true, blinkSpeed: SPEED, blinkDelayMs: 0,
-      smoothEnabled: false, blinkStopAfter: 3,
+      smoothEnabled: false, smoothStopBlinking: false, blinkStopAfter: 3,
     }, over));
     e.lastMoveTime = 0;
     return e;
@@ -290,7 +290,7 @@ section("blink-to-solid: blink N times, then stay lit");
   // than stopping mid-breath.
   {
     const breath = makeEngine({
-      blinkingEnabled: true, blinkSpeed: SPEED, blinkDelayMs: 0, smoothEnabled: false,
+      blinkingEnabled: true, blinkSpeed: SPEED, blinkDelayMs: 0, smoothEnabled: false, smoothStopBlinking: false,
       blinkStopAfter: 2, blinkBreathing: true, blinkBreathDepth: 0.3,
     });
     breath.lastMoveTime = 0;
@@ -678,4 +678,70 @@ section("Glide style: Ease out, Smooth, Springy (1.7.1)");
   const typed = glide({ smoothStyle: "springy", smoothAdaptive: true }, true);
   ok("a typed letter never bounces, whatever the style: typing takes the chase", over(typed) <= 1e-9, over(typed));
   ok("Glide style is a look key, appended, Ease out by default", T.LOOK_KEYS.includes("smoothStyle") && T.DEFAULT_SETTINGS.smoothStyle === "ease");
+}
+
+// ---------------------------------------------------------------------------
+section("Don't blink while typing, on and off (1.7.3, issue #7)");
+{
+  // On, it held the caret lit after a move only with Smooth movement on as
+  // well, though its toggle sits on the Blinking page by itself. Off, every
+  // key still restarted the cycle from lit, so while typing the caret sat
+  // lit either way and the toggle looked dead. Now: on holds, off blinks on.
+  const PERIOD = 2500;
+  const src = (f) => require("fs").readFileSync(srcPath(f), "utf8");
+  const mk = (over) => { const e = makeEngine(Object.assign({ blinkingEnabled: true, blinkSpeed: 1, blinkDelayMs: 0, blinkStopAfter: 0, smoothEnabled: false }, over)); e.lastMoveTime = -1e9; e._blinkAnchor = 0; return e; };
+  // A move, as commitMove makes it.
+  const move = (e, t) => { if (e._blinkRestart(t)) e._blinkAnchor = t; e.lastMoveTime = t; };
+  ok("commitMove moves the blink's clock that way", /if \(this\._blinkRestart\(movedT\)\) this\._blinkAnchor = movedT;\s*this\.lastMoveTime = movedT;/.test(src("carets.ts")));
+  // The cycle's first fade-out, from its start.
+  const free = mk({ smoothStopBlinking: false });
+  let fade = 0;
+  for (let t = 0; t < PERIOD; t += 5) if (free.blinkPhase(t) < 1) { fade = t; break; }
+  ok("the cycle's first fade is " + fade + " ms in", fade > 0 && fade < PERIOD);
+  // Typing: a key every 150 ms for three cycles.
+  const keys = [];
+  for (let t = 100; t < 3 * PERIOD; t += 150) keys.push(t);
+  // What the caret shows, every 5 ms from the first key.
+  const typeOver = (e) => { const seen = []; let k = 0; for (let t = 0; t < 3 * PERIOD; t += 5) { while (k < keys.length && keys[k] <= t) move(e, keys[k++]); if (k) seen.push([t, e.blinkPhase(t)]); } return seen; };
+  for (const smooth of [false, true]) {
+    const on = mk({ smoothStopBlinking: true, smoothEnabled: smooth });
+    ok(`on, Smooth movement ${smooth ? "on" : "off"}: lit all through the typing`, typeOver(on).every(([, a]) => a === 1));
+    move(on, 10000);
+    ok("...lit for the hold after the last key", [0, 100, 300, 449].every((t) => on.blinkPhase(10000 + t) === 1));
+    ok("...and the cycle starts after it: the first fade 450 ms later", on.blinkPhase(10000 + fade + 440) === 1 && on.blinkPhase(10000 + fade + 460) < 1);
+  }
+  {
+    const off = mk({ smoothStopBlinking: false });
+    const seen = typeOver(off);
+    ok("off: the blink goes on through the typing - dark between keys", seen.some(([, a]) => a < 0.02));
+    ok("...on the rhythm it had before the first key, the keys never restart it", seen.every(([t, a]) => a === free.blinkPhase(t)));
+    let agree = true;
+    // Off the fades' exact edges, where either answer is right.
+    for (let t = 0.5; t < 3 * PERIOD; t += 7) { const a = off.blinkPhase(t), w = off.blinkWindow(t); if (w.fading !== (a > 0 && a < 1)) { agree = false; break; } }
+    ok("...and the frame governor wakes on the same clock", agree);
+  }
+  {
+    // Off with Blink-to-solid: typing keeps it blinking; after the last key
+    // it blinks N more cycles and stops on a cycle's end, lit, with no jump;
+    // a key after that starts it again from lit.
+    const off = mk({ smoothStopBlinking: false, blinkStopAfter: 2 });
+    const seen = typeOver(off);
+    const last = keys[keys.length - 1];
+    ok("off, Blink-to-solid 2: still blinking in the typing's third period", seen.some(([t, a]) => t > 2 * PERIOD && a < 0.02));
+    const stopAt = off._blinkClock(PERIOD).stopAt;
+    ok("...it stops on a whole cycle of its clock, at least 2 periods after the last key", stopAt % PERIOD === 0 && stopAt >= last + 2 * PERIOD && stopAt < last + 3 * PERIOD, { stopAt, last });
+    let worst = 0;
+    for (let t = stopAt - 300; t < stopAt + 300; t += 5) worst = Math.max(worst, Math.abs(off.blinkPhase(t) - off.blinkPhase(t + 5)));
+    ok("...with no jump", worst < 0.05, worst);
+    ok("...and stays lit", off.blinkPhase(stopAt + 50 * PERIOD) === 1 && off.blinkWindow(stopAt + 10).msToNext === Infinity);
+    const again = stopAt + 5 * PERIOD + 333;
+    move(off, again);
+    ok("a key after it starts the blink again, from lit", off._blinkAnchor === again && off.blinkPhase(again + 1) === 1 && off.blinkPhase(again + fade + 10) < 1);
+  }
+  {
+    // Off with a Blink delay: the delay holds after every move, as before.
+    const off = mk({ smoothStopBlinking: false, blinkDelayMs: 600 });
+    move(off, 5000);
+    ok("off with a Blink delay: lit for the delay after a move", off.blinkPhase(5000 + 590) === 1 && off.blinkPhase(5000 + 600 + fade + 10) < 1);
+  }
 }

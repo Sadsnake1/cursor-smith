@@ -264,6 +264,8 @@ export const TW_INK_FADE = 0.85;
 // ...and how much heavier it strikes: an outline around the letter in its
 // own weight, this share of its size wide, thinning to nothing as it lands.
 export const TW_INK_WEIGHT = 0.1;
+// "Don't blink while typing": how long the caret stays lit after it moves.
+export const BLINK_TYPING_HOLD_MS = 450;
 // A capital's strike (1.7.2): the shift lifted the whole type basket, so the
 // stroke is heavier - this much deeper, this much slower.
 export const TW_CAPITAL_DEPTH = 1.4;

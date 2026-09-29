@@ -618,7 +618,7 @@ section("frame governor: resting more (1.5.8)");
     const hold = mk({ blinkingEnabled: true, blinkDelayMs: 600, blinkSpeed: 1 }); hold.lastMoveTime = 1000;
     const wh = hold.blinkWindow(1100);
     ok("the post-move hold sleeps through to the first fade", !wh.fading && Math.abs(wh.msToNext - (500 + T.blinkSegments(1).p1 * 2500)) < 1e-6, wh);
-    const solid = mk({ blinkingEnabled: true, blinkSpeed: 1, blinkStopAfter: 2 }); solid.lastMoveTime = 0;
+    const solid = mk({ blinkingEnabled: true, blinkSpeed: 1, blinkStopAfter: 2, smoothStopBlinking: false }); solid.lastMoveTime = 0;
     ok("gone solid, no wake", solid.blinkWindow(2500 * 2 + 10).msToNext === Infinity && solid.blinkWindow(2500 + 10).msToNext !== Infinity);
     const engineSrc = src("engine.ts");
     ok("the idle gear sleeps until the heartbeat or that wake, whichever is sooner", /Math\.min\(caps\.idleMs, Math\.max\(1, Math\.ceil\(this\._idleWakeMs/.test(engineSrc));
@@ -858,8 +858,9 @@ section("the derived signature, the gear decision, the watchdog (1.5.8)");
     e._lastActivityT = NOW - T.INPUT_HOT_MS - 1;
     ok("...and not past it", e._decideGear(NOW, true).gear === "idle");
     // Speed 1: a 2500 ms period; balance 0.5 and fade 0.15 put the fade-out
-    // at 875 ms. 800 ms after a move: lit, 75 ms to the fade.
-    const b = mk({ blinkingEnabled: true, blinkSpeed: 1 }); b.lastActive = rec(1, 1); b.lastMoveTime = NOW - 800;
+    // at 875 ms. 800 ms into the cycle (no hold: it started at the move):
+    // lit, 75 ms to the fade.
+    const b = mk({ blinkingEnabled: true, blinkSpeed: 1, smoothStopBlinking: false }); b.lastActive = rec(1, 1); b.lastMoveTime = b._blinkAnchor = NOW - 800;
     const gb = b._decideGear(NOW, true);
     ok("a lit hold is idle with a wake at the fade", gb.gear === "idle" && Math.abs(gb.idleWake - 75) < 1e-6 && gb.blinkBucket === 1, gb);
     const gf = b._decideGear(NOW + 100, true);
@@ -943,7 +944,7 @@ section("the derived signature, the gear decision, the watchdog (1.5.8)");
       for (let t = 0; t < 9000; t += 13) { worst = Math.max(worst, Math.abs(oracle(t, speed, bal, fade) - T.blinkAlphaAt(t, speed, bal, fade))); n++; }
     }
     ok(`blinkAlphaAt over blinkSegments matches its old self over ${n} samples`, worst === 0, worst);
-    ok("blinkPhase reads the same clock for blink-to-solid", /stopAfter \* blinkSegments\(speed\)\.period/.test(src("paint-blink.ts")));
+    ok("blinkPhase reads the same clock for blink-to-solid", /this\._blinkClock\(speed > 0 \? blinkSegments\(speed\)\.period : 0\)/.test(src("paint-blink.ts")));
   }
 }
 

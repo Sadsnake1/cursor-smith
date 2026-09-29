@@ -19,6 +19,8 @@ import type CursorSmithPlugin from "../plugin";
 // How long an input method's commit waits for the caret's move that shows
 // it (a frame or two in practice).
 const IME_COMMIT_MS = 600;
+// How long an edit's insertions wait for the carets' moves that show them.
+const EDIT_RANGE_MS = 600;
 
 export const measureMethods = {
   caretCoords(this: CursorSmithPlugin): CaretRecord | null {
@@ -878,23 +880,37 @@ export const measureMethods = {
         const inserted = newCaret.pos > last.pos && newCaret.docLen - last.docLen === newCaret.pos - last.pos;
         // Typing after a commit means the commit is behind us.
         if (inserted) this._imeCommit = null;
-        const commit = inserted ? null : this._imeCommitRange(view, newCaret);
-        if (!inserted && !commit) return null;
-        const from = commit ? commit.from : last.pos, to = commit ? commit.to : newCaret.pos;
+        // With several cursors a keystroke inserts at each of them, so the
+        // document grows by more than any one caret moves and the rule above
+        // matched none: no stamp, no strike, no ink, no letter popped, on any
+        // of them (1.7.3). Each caret finds its own insertion in the edit.
+        const range = inserted ? null : (this._imeCommitRange(view, newCaret) || this._editRangeAt(newCaret));
+        if (!inserted && !range) return null;
+        const from = range ? range.from : last.pos, to = range ? range.to : newCaret.pos;
         // The last CHARACTER inserted, not the last code unit: an emoji is
         // two units or more, and the single unit before the caret was half
         // of one - it popped as a broken glyph (1.6.7).
         const justTyped = lastGrapheme(view.state.doc.sliceString(from, to));
         if (justTyped && justTyped !== "\n") {
-          // Where the letter was typed: the caret before it - for a commit,
-          // the last character's own place (the caret before was after the
-          // pinyin).
+          // Where the letter landed: its own place in the note now, not the
+          // caret before it. They differ whenever typing moved the line -
+          // Word-Smith's paragraph indent comes onto a line with its first
+          // letter, and the stamp and the popped letter sat 92 px left of
+          // it (1.7.3) - and for a commit (the caret was after the pinyin)
+          // or another caret's insertion before this one.
           let anchor = last;
-          if (commit) {
-            const at = to - justTyped.length;
-            const c = view.coordsAtPos(at, 1);
-            anchor = Object.assign({}, newCaret, { pos: at, x: c ? c.left : newCaret.x - (newCaret.actualCharWidth || 0) });
+          const at = to - justTyped.length;
+          const c = typeof view.coordsAtPos === "function" ? view.coordsAtPos(at, 1) : null;
+          if (c) {
+            const h = last.h || newCaret.h || c.bottom - c.top;
+            anchor = Object.assign({}, last, { pos: at, x: c.left, top: (c.top + c.bottom) / 2 - h / 2 });
+          } else if (range) {
+            anchor = Object.assign({}, newCaret, { pos: at, x: newCaret.x - (newCaret.actualCharWidth || 0) });
           }
+          // Typing moved the caret, however far: it keeps up (the keyboard
+          // step, _keyStepT) rather than gliding over from where the line
+          // began before its indent came.
+          this._keyStepT = performance.now();
           // Both gates, in the same shape Thunderstrike and Fireworks use:
           // the group's master toggle, then the effect's own.
           if (this.look.popEffects && this.look.popLetters) {
@@ -908,7 +924,7 @@ export const measureMethods = {
             this._typewriterHeavy = justTyped !== justTyped.toLowerCase() && justTyped === justTyped.toUpperCase();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, anchor);
             // Fresh ink: everything this keystroke (or commit) put in, wet.
-            if (this.look.typewriterFreshInk) this.spawnFreshInk(view, commit ? newCaret : last, from, to);
+            if (this.look.typewriterFreshInk) this.spawnFreshInk(view, range ? newCaret : last, from, to);
           }
           return justTyped;
         }
@@ -917,6 +933,26 @@ export const measureMethods = {
       /* fall through */
     }
     return null;
+  },
+
+  // An edit in a note (the update listener in onload): where each of its
+  // insertions landed in the new document.
+  _recordEdit(this: CursorSmithPlugin, u: { docChanged: boolean; state: { doc: { length: number } }; changes: { iterChanges(f: (fromA: number, toA: number, fromB: number, toB: number) => void): void } }) {
+    if (!u.docChanged) return;
+    const ranges: { from: number; to: number }[] = [];
+    u.changes.iterChanges((_fromA, _toA, fromB, toB) => { if (toB > fromB) ranges.push({ from: fromB, to: toB }); });
+    this._lastEdit = { t: performance.now(), docLen: u.state.doc.length, ranges };
+  },
+
+  // The insertion the last edit made at this caret - one of several (one
+  // caret typing is the classic rule's) that ends where the caret now is,
+  // in the same document, within a moment of the edit.
+  _editRangeAt(this: CursorSmithPlugin, newCaret: CaretRecord): { from: number; to: number } | null {
+    const e = this._lastEdit;
+    if (!e || e.ranges.length < 2 || typeof newCaret.pos !== "number" || newCaret.docLen !== e.docLen) return null;
+    if (performance.now() - e.t > EDIT_RANGE_MS) return null;
+    const r = e.ranges.find((x) => x.to === newCaret.pos);
+    return r && r.to - r.from <= 12 ? { from: r.from, to: r.to } : null;
   },
 
   // The characters an input method just committed, if the caret now sits

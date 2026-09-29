@@ -1491,7 +1491,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Carriage advance", "Each key carries the cursor a little past its new spot, then back.", "typewriterAdvance", { depth: 1, gate: true, when: tw }));
     effects.push(slider("Overshoot distance", "How far past its spot the cursor goes, in characters.", "typewriterAdvanceCw", [0.05, 1, 0.05], { depth: 2, fallback: 0.25, when: twOn("typewriterAdvance") }));
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
-    effects.push(toggle("Correction tape", "Backspace lifts the letters off with a strip of correction tape, as a Selectric II did.", "typewriterTape", { depth: 1, when: tw }));
+    effects.push(toggle("Correction tape", "Deleted letters are lifted off with correction tape.", "typewriterTape", { depth: 1, when: tw }));
     // Sounds (1.7.2, src/sound): real typewriters, recorded - a machine to
     // choose and a play button to hear it with before typing.
     effects.push(toggle("Sounds", "A real typewriter as you type, with its own sound for Space, Backspace and Enter.", "typewriterSound", { depth: 1, gate: true, when: tw }));

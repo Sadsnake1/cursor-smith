@@ -360,6 +360,8 @@ export interface DeletedLetters {
   letters: { char: string; x: number; w: number }[];
   forward: boolean;
   old: CaretRecord;
+  // Where the deletion was in the note now: the caret after it.
+  from?: number;
 }
 // Backspace evaporation: one deleted letter, where it stood, rising away.
 export interface EvaporateGlyph {
@@ -369,11 +371,18 @@ export interface EvaporateGlyph {
 }
 // ms: its own sweep (Sounds times it to the machine's return), else the setting's.
 export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number; ms?: number }
-// Correction tape: one deleted letter, the tape striking it and lifting it off.
+// Correction tape: one strip rolled over a run of deletions (effects-tape.ts).
+// anchor: its left end in the note, carried through edits; w: its length and
+// cover: how much of it is laid, in px; t: the last frame; last: its last
+// deletion; x0: its left end on screen at the last frame; ghosts: the
+// deleted letters, from its left end; frame: where it was drawn this frame.
 export interface TapeStrip {
-  char: string; x: number; w: number; top: number; h: number;
+  view: unknown; anchor: number; forward: boolean;
+  w: number; cover: number; t: number; last: number; x0: number;
+  ghosts: { char: string; dx: number; w: number }[];
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
-  color: string; start: number; delay: number;
+  textColor: string;
+  frame: { rowTop: number; c0: number; c1: number; top: number; h: number; alpha: number } | null;
 }
 // Where Typewriter holds the caret at a moment: shifted by dx, dy and
 // squashed to sy of its height about its bottom edge.

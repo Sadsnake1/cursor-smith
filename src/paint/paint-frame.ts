@@ -105,9 +105,11 @@ export const paintFrameMethods = {
     this._dirty = null;
 
     // On the text itself, under everything that flies off it.
+    // The correction tape first: the fresh ink and the letters leaving go
+    // on top of it.
+    this.drawTape();
     this.drawFreshInk();
     this.drawEvaporate();
-    this.drawTape();
     this.drawLettersParticles();
     this.drawCarriageReturns();
     // Underneath everything else: it's a background guide, and the cursor and

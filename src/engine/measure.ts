@@ -937,8 +937,11 @@ export const measureMethods = {
 
   // An edit in a note (the update listener in onload): where each of its
   // insertions landed in the new document.
-  _recordEdit(this: CursorSmithPlugin, u: { docChanged: boolean; state: { doc: { length: number } }; changes: { iterChanges(f: (fromA: number, toA: number, fromB: number, toB: number) => void): void } }) {
+  _recordEdit(this: CursorSmithPlugin, u: { docChanged: boolean; view?: unknown; state: { doc: { length: number } }; changes: { iterChanges(f: (fromA: number, toA: number, fromB: number, toB: number) => void): void; mapPos(pos: number, assoc?: number): number } }) {
     if (!u.docChanged) return;
+    // The correction tape's strips are pinned to the note: each left end
+    // rides the edit, staying before text typed at it (effects-tape.ts).
+    for (const s of this.typeTapes || []) if (s.view === u.view) s.anchor = u.changes.mapPos(s.anchor, -1);
     const ranges: { from: number; to: number }[] = [];
     u.changes.iterChanges((_fromA, _toA, fromB, toB) => { if (toB > fromB) ranges.push({ from: fromB, to: toB }); });
     this._lastEdit = { t: performance.now(), docLen: u.state.doc.length, ranges };

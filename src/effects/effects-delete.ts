@@ -116,6 +116,6 @@ export const effectsDeleteMethods = {
         letters.push({ char: chars[k], x, w });
       }
     }
-    return letters.length ? { letters, forward, old } : null;
+    return letters.length ? { letters, forward, old, from } : null;
   },
 };

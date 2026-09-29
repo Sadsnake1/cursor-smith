@@ -242,6 +242,7 @@ export const effectsPopsMethods = {
         const cx = inkL !== undefined && inkR !== undefined ? p.x + (inkR - inkL) / 2 : p.x + m.width / 2;
         const cy = inkA !== undefined && inkD !== undefined ? baseline - (inkA - inkD) / 2 : baseline - (ascent - descent) / 2;
         const grow = 1 + (inkScale - 1) * Math.pow(1 - land, 2);
+        let ink = p.color;
         if (p.bg) {
           // The stamp IS the letter: the real one covered with the
           // background behind it (its cell, in its own weight's width) for
@@ -253,6 +254,9 @@ export const effectsPopsMethods = {
           ctx.globalAlpha = 1;
           ctx.fillStyle = p.bg;
           ctx.fillRect(p.x - 1, p.y, m.width + 2, lh);
+          // A letter typed onto the correction tape is struck onto the tape,
+          // in the ink that shows on it.
+          if (this.typeTapes && this.typeTapes.length && this._tapeUnder(p.x - 1, p.y, m.width + 2, lh)) ink = this.tapeInk(p.color);
           p.alpha = 1;
         } else {
           // Nothing solid behind the text to cover it with: a bold overprint
@@ -261,7 +265,7 @@ export const effectsPopsMethods = {
           p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(Math.min(1, t / TW_INK_FADE)));
         }
         ctx.globalAlpha = Math.max(0, p.alpha);
-        ctx.fillStyle = p.color;
+        ctx.fillStyle = ink;
         ctx.translate(cx, cy);
         ctx.scale(grow, grow);
         ctx.translate(-cx, -cy);
@@ -269,7 +273,7 @@ export const effectsPopsMethods = {
         ctx.textBaseline = "alphabetic";
         const weight = p.bg ? size * TW_INK_WEIGHT * Math.pow(1 - land, 2) : 0;
         if (weight > 0.05) {
-          ctx.strokeStyle = p.color;
+          ctx.strokeStyle = ink;
           ctx.lineJoin = "round";
           ctx.lineWidth = weight;
           ctx.strokeText(p.char, p.x, baseline);

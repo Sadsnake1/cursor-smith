@@ -146,7 +146,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare drawEvaporate: EffectsMethods["drawEvaporate"];
   declare _tapeOn: EffectsMethods["_tapeOn"];
   declare spawnTape: EffectsMethods["spawnTape"];
-  declare tapePose: EffectsMethods["tapePose"];
+  declare tapeAlpha: EffectsMethods["tapeAlpha"];
+  declare _paintTapeBand: EffectsMethods["_paintTapeBand"];
+  declare _tapeUnder: EffectsMethods["_tapeUnder"];
+  declare tapeInk: EffectsMethods["tapeInk"];
   declare drawTape: EffectsMethods["drawTape"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];

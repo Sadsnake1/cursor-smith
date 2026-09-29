@@ -28,10 +28,10 @@ section("Typewriter's Sounds: the machines");
   const total = M.reduce((n, m) => n + T.soundBytes(m.mp3).byteLength, 0);
   ok("all ten under 650 KB", total < 650 * 1024, Math.round(total / 1024) + " KB");
   ok("the big recordings give 8 keys: fast typing repeats less", M.filter((m) => T.soundTakes(m).strike.length === 8).length >= 3, M.map((m) => T.soundTakes(m).strike.length));
-  const notice = fs.readFileSync(path.join(__dirname, "..", "..", "NOTICE"), "utf8");
-  const ids = [...new Set(M.flatMap((m) => [...m.credit.matchAll(/freesound\.org\/s\/(\d+)/g)].map((x) => x[1])))];
-  ok("every recording credited in NOTICE, its licence with it", ids.length >= 10 && ids.every((id) => notice.includes(`freesound.org/s/${id}/`)) && notice.includes("File:WWS_Typewriter.ogg") && /CC BY 3\.0/.test(notice) && /CC BY 4\.0/.test(notice), ids.filter((id) => !notice.includes(`freesound.org/s/${id}/`)));
-  ok("...and on each machine: its recording and licence, or a video recording NOTICE speaks for", M.every((m) => (/freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(m.credit) && /CC0|CC BY/.test(m.credit)) || (/video recording/.test(m.credit) && notice.includes(m.label + " is cut from video recordings"))), M.map((m) => m.credit));
+  // Credits live with each machine (no NOTICE file): who recorded it, where,
+  // under which licence - the CC BY recordings require it.
+  ok("every machine credits its recording: who, where, the licence", M.every((m) => (/freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(m.credit) && /CC0|CC BY/.test(m.credit)) || /video recordings/.test(m.credit)), M.map((m) => m.credit));
+  ok("...the CC BY ones by name", M.filter((m) => /CC BY/.test(m.credit)).every((m) => /recorded by \S+/.test(m.credit)) && M.filter((m) => /CC BY/.test(m.credit)).length >= 4);
   ok("an unknown machine (an older code's) is the default one", T.soundMachine("manual").id === "hermes3000" && T.soundMachine(undefined).id === "hermes3000" && T.soundMachine("lettera35").label === "Olivetti Lettera 35" && T.soundMachine("olivetti22").id === "hermes3000");
   const pairs = "th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co me de hi ri ro ic ne ea ra ce".split(" ");
   for (const n of [5, 6, 8]) {

@@ -31,7 +31,7 @@ section("Typewriter's Sounds: the machines");
   // Credits live with each machine (no NOTICE file): who recorded it, where,
   // under which licence - the CC BY recordings require it.
   // Credits are comments above each machine in samples.ts: in the source,
-  // not in the built main.js (the user's wish).
+  // not in the built main.js.
   const samplesSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "sound", "samples.ts"), "utf8");
   const credits = [...samplesSrc.matchAll(/^  \/\/ (.+)\n  \{\n    id: "([^"]+)"/gm)].map((x) => ({ id: x[2], text: x[1] }));
   ok("every machine but the Selectric credits its recording in the source: who, where, the licence",

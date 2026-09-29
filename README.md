@@ -63,6 +63,8 @@ Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Erika 5, IB
 
 Every sound is a recording of that machine: its keys, its space bar, Backspace, the bell near the end of a line and the carriage thrown back on Enter, with the streak on screen running as long as the carriage does. Paste, undo and Vim commands stay quiet. Off by default, and soft when on.
 
+Have better recordings of your favorite typewriter? [Send them my way](https://github.com/Sadsnake1/cursor-smith/issues) and I'll be happy to put them in the plugin.
+
 ## Settings
 
 <p align="center">

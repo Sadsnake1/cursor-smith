@@ -63,6 +63,15 @@ Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Erika 5, IB
 
 Have better recordings of your favorite typewriter? [Send them my way](https://github.com/Sadsnake1/cursor-smith/issues) and I'll be happy to put them in the plugin.
 
+Recordings, cut and levelled for the plugin:
+
+- Erika 5: Konrad Gutkowski for Work With Sounds, [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:WWS_Typewriter.ogg), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Mercedes, and the Olympia's bell: [doxent](https://freesound.org/s/193603/), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Olivetti Lettera 35: [Leossom](https://freesound.org/s/185522/), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Royal Portable: fastson ([typing](https://freesound.org/s/99694/), [bell](https://freesound.org/s/99695/)), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
+
+The Hermes 3000, L. C. Smith, Olympia, Sears Electric Twelve and Smith-Corona Corsair are public-domain recordings from Freesound.
+
 ## Settings
 
 <p align="center">

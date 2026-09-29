@@ -12,7 +12,7 @@
 import { Notice } from "obsidian";
 import { isTextCaretHost } from "../util/motion";
 import { VIM_MODE_LABELS } from "../settings/settings";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import type CursorSmithPlugin from "../plugin";
 
 export const vimMethods = {
@@ -289,6 +289,10 @@ export const vimMethods = {
       const view = this.app.workspace.activeEditor?.editor?.cm;
       // The note editor has focus, so a real editing mode applies instead.
       if (view && view.hasFocus) return false;
+      // So does an editor nested in it: a Live Preview table cell. The
+      // note's view.hasFocus is false there and the cell's text passed for
+      // an interface field - Command mode in every table (issue #40).
+      if (this._nestedEditorEl(view)) return false;
       // Follow the active editor's window, then the canvas's, so this keeps
       // working in pop-out windows (same convention as the caret helpers).
       const doc =
@@ -299,6 +303,23 @@ export const vimMethods = {
     } catch (e) {
       this._reportOnce("isVimCommandContext", e);
       return false;
+    }
+  },
+
+  // The editor nested in the note's that has focus, as its .cm-editor: a
+  // Live Preview table cell is edited in an editor of its own inside the
+  // note's (issue #40). Null when the note's editor itself has focus, or
+  // focus is outside it - and for Vim's ":" line, a panel of the note's
+  // editor rather than an editor of its own, which stays Command mode.
+  _nestedEditorEl(this: CursorSmithPlugin, view: EditorView | null | undefined): HTMLElement | null {
+    try {
+      if (!view || !view.dom || view.hasFocus) return null;
+      const a = view.dom.ownerDocument.activeElement;
+      const host = a && typeof a.closest === "function" ? a.closest(".cm-editor") : null;
+      return host && host !== view.dom && view.dom.contains(host) ? host as HTMLElement : null;
+    } catch (e) {
+      this._reportOnce("_nestedEditorEl", e);
+      return null;
     }
   },
 
@@ -323,6 +344,14 @@ export const vimMethods = {
         } else {
           const view = this.app.workspace.activeEditor?.editor?.cm;
           if (view && view.hasFocus) mode = this.detectVimMode(view);
+          else {
+            // A table cell: the mode of the cell's own editor (#40). Found
+            // nowhere, it stays null and the look keeps the note's mode
+            // (lookVimMode).
+            const cell = this._nestedEditorEl(view);
+            const cellView = cell ? EditorView.findFromDOM(cell) : null;
+            if (cellView) mode = this.detectVimMode(cellView);
+          }
         }
       }
     } catch (e) {

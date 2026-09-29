@@ -283,6 +283,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _vimBlockCursorShown: VimMethods["_vimBlockCursorShown"];
   declare detectVimMode: VimMethods["detectVimMode"];
   declare isVimCommandContext: VimMethods["isVimCommandContext"];
+  declare _nestedEditorEl: VimMethods["_nestedEditorEl"];
   declare currentVimMode: VimMethods["currentVimMode"];
   declare lookVimMode: VimMethods["lookVimMode"];
   declare onVimModeChanged: VimMethods["onVimModeChanged"];

@@ -347,3 +347,43 @@ section("bracket tether: blocks cut the line");
      spanAt("[ (| ]\n```\n)\n```") === null);
   ok("an inline quote run is unaffected", !!spanAt("`code|`"));
 }
+
+// ---------------------------------------------------------------------------
+section("Vim: a table cell is the note, not Command mode (issue #40)");
+{
+  // A Live Preview table cell is edited in an editor nested in the note's:
+  // the note's view.hasFocus is false and the cell's content is a text field,
+  // which read as the interface - Command mode in every table.
+  const el = (cls, parent) => {
+    const e = { cls, parent, isContentEditable: true, tagName: "DIV",
+      closest(sel) { for (let n = this; n; n = n.parent) if (sel === "." + n.cls) return n; return null; },
+      contains(o) { for (let n = o; n; n = n.parent) if (n === this) return true; return false; } };
+    return e;
+  };
+  const make = (focus) => {
+    const doc = { activeElement: null, hasFocus: () => true };
+    const noteDom = el("cm-editor", null); noteDom.ownerDocument = doc;
+    const noteContent = el("cm-content", noteDom);
+    const cellDom = el("cm-editor", el("cm-table-widget", noteContent));
+    const cellContent = el("cm-content", cellDom);
+    const panelInput = Object.assign(el("cm-vim-panel", el("cm-panels", noteDom)), { tagName: "INPUT", isContentEditable: false, type: "text" });
+    const palette = Object.assign(el("prompt-input", null), { tagName: "INPUT", isContentEditable: false, type: "text" });
+    doc.activeElement = { note: noteContent, cell: cellContent, panel: panelInput, palette }[focus];
+    const view = { dom: noteDom, contentDOM: noteContent, hasFocus: focus === "note", state: { selection: { main: { empty: true } } } };
+    const e = makeEngine({ vimModeEnabled: true });
+    e.app = { workspace: { activeEditor: { editor: { cm: view } } } };
+    e.isObsidianVimOn = () => true;
+    e.canvas = null;
+    return { e, view, cellDom };
+  };
+  ok("a table cell is not Command mode", make("cell").e.isVimCommandContext() === false);
+  ok("...found as the nested editor", make("cell").e._nestedEditorEl(make("cell").view) !== null);
+  ok("Vim's : line (a panel of the note's editor) still is", make("panel").e.isVimCommandContext() === true);
+  ok("...and so is an interface field", make("palette").e.isVimCommandContext() === true);
+  ok("the note's own editor is not, as before", make("note").e.isVimCommandContext() === false);
+  ok("a nested editor needs focus inside the note's", make("palette").e._nestedEditorEl(make("palette").view) === null && make("note").e._nestedEditorEl(make("note").view) === null);
+  // The mode: the cell's own editor's, through CodeMirror's findFromDOM.
+  const src = require("fs").readFileSync(srcPath("vim.ts"), "utf8");
+  ok("the look reads the cell's own editor's mode", /const cellView = cell \? EditorView\.findFromDOM\(cell\) : null;\s*if \(cellView\) mode = this\.detectVimMode\(cellView\);/.test(src));
+}
+

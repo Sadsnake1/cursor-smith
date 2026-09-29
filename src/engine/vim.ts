@@ -284,6 +284,7 @@ export const vimMethods = {
   // isTextCaretHost keeps this off elements that have no caret at all
   // (checkboxes, sliders, buttons); without it, clicking a toggle in Obsidian's
   // own settings would count as entering Command mode.
+  
   isVimCommandContext(this: CursorSmithPlugin) {
     try {
       const view = this.app.workspace.activeEditor?.editor?.cm;
@@ -295,7 +296,10 @@ export const vimMethods = {
         (view && view.dom && view.dom.ownerDocument) ||
         this.canvas?.ownerDocument ||
         document;
-      return isTextCaretHost(doc.activeElement);
+      const el = doc.activeElement as HTMLElement | null;
+      // Live Preview table cells drop editor focus in Live Preview. do not treat them as the Vim command line
+      if (el?.closest?.(".cm-table-widget, table")) return false;
+      return isTextCaretHost(el);
     } catch (e) {
       this._reportOnce("isVimCommandContext", e);
       return false;

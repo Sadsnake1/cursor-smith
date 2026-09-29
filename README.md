@@ -59,7 +59,7 @@ Some of them unlock extra options together. Try Blinking with the torch.
 
 ### Typewriter sounds
 
-Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Hermes Baby, Erika 5, IBM Selectric II, L C Smith, Mercedes, Olivetti Lettera 22 and 35, Olympia, Royal Quiet De Luxe, Royal Portable, Sears Electric Twelve or Smith-Corona Corsair. Press play to hear one before you type.
+Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve or Smith-Corona Corsair. Press play to hear one before you type.
 
 Every sound is a recording of that machine: its keys, its space bar, Backspace, the bell near the end of a line and the carriage thrown back on Enter, with the streak on screen running as long as the carriage does. Paste, undo and Vim commands stay quiet. Off by default, and soft when on.
 

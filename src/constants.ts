@@ -264,6 +264,10 @@ export const TW_INK_FADE = 0.85;
 // ...and how much heavier it strikes: an outline around the letter in its
 // own weight, this share of its size wide, thinning to nothing as it lands.
 export const TW_INK_WEIGHT = 0.1;
+// A capital's strike (1.7.2): the shift lifted the whole type basket, so the
+// stroke is heavier - this much deeper, this much slower.
+export const TW_CAPITAL_DEPTH = 1.4;
+export const TW_CAPITAL_TIME = 1.15;
 // The thickest a Line or an Underline cursor may be, in px (1.6.6: the
 // sliders ran to 12, "too much"; 10, then 7 at the user's word). Saved
 // values above it draw at it.

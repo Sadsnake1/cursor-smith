@@ -9,7 +9,7 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN } from "../constants";
+import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME } from "../constants";
 import { isTextCaretHost, lastGrapheme } from "../util/motion";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import type { EditorView } from "@codemirror/view";
@@ -904,6 +904,8 @@ export const measureMethods = {
           // stamp on the letter just typed, in its own cell.
           if (this.look.typewriter) {
             this._typewriterT = performance.now();
+            // A capital: the heavier stroke of the shifted basket.
+            this._typewriterHeavy = justTyped !== justTyped.toLowerCase() && justTyped === justTyped.toUpperCase();
             if (this.look.typewriterInk) this.spawnInkStamp(justTyped, anchor);
             // Fresh ink: everything this keystroke (or commit) put in, wet.
             if (this.look.typewriterFreshInk) this.spawnFreshInk(view, commit ? newCaret : last, from, to);
@@ -1427,7 +1429,7 @@ export const measureMethods = {
     if (!this.look.typewriter || !this._typewriterT) return false;
     const dt = now - this._typewriterT;
     if (dt < 0) return false;
-    return (!!this.look.typewriterSpring && dt < this.twOpt("typewriterStrikeMs", 80, 1000))
+    return (!!this.look.typewriterSpring && dt < this.twOpt("typewriterStrikeMs", 80, 1000) * (this._typewriterHeavy ? TW_CAPITAL_TIME : 1))
       || (!!this.look.typewriterAdvance && dt < this.twOpt("typewriterAdvanceMs", 40, 1000));
   },
 
@@ -1440,7 +1442,9 @@ export const measureMethods = {
     const lh = a.h || 20;
     const pose = { dx: 0, dy: 0, sy: 1 };
     if (this.look.typewriterSpring) {
-      const ms = this.twOpt("typewriterStrikeMs", 80, 1000);
+      // A capital's stroke is deeper and slower (TW_CAPITAL_*).
+      const heavy = !!this._typewriterHeavy;
+      const ms = this.twOpt("typewriterStrikeMs", 80, 1000) * (heavy ? TW_CAPITAL_TIME : 1);
       if (dt < ms) {
         const u = dt / ms;
         let sh;
@@ -1451,7 +1455,7 @@ export const measureMethods = {
           // Past rest (the negative lobe): Bounce scales it, 0 none.
           if (sh < 0) sh *= this.twOpt("typewriterBounce", 0, 3);
         }
-        pose.dy = sh * (this.twOpt("typewriterDepth", 0, 60) / 100) * lh;
+        pose.dy = sh * (this.twOpt("typewriterDepth", 0, 60) / 100) * lh * (heavy ? TW_CAPITAL_DEPTH : 1);
         const squash = this.twOpt("typewriterSquash", 0, 60) / 100;
         pose.sy = sh > 0 ? 1 - squash * sh : 1 + squash * 1.8 * -sh;
       }

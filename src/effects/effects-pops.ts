@@ -154,7 +154,14 @@ export const effectsPopsMethods = {
     const xs = typeof from.rowLeft === "number" ? from.rowLeft : Math.min(from.x, to.x);
     const x0 = from.x;
     if (!(x0 - xs > 2)) return;
+    // With Sounds on, the streak runs as long as the machine's own return:
+    // its head reaches the line's start as the carriage hits its stop. The
+    // sound comes first (the edit), the move a frame or two after.
+    const sw = this._returnSweep;
+    this._returnSweep = null;
+    const ms = sw && performance.now() - sw.t < 500 ? sw.ms : undefined;
     this.typeReturns.push({
+      ms,
       x0, xs,
       y: from.top + (from.h || 20) / 2 + (from.fontSize || 16) * 0.3,
       h: from.h || 20,
@@ -171,7 +178,7 @@ export const effectsPopsMethods = {
     if (!ctx || !this.typeReturns.length) return;
     const now = performance.now();
     this.typeReturns = this.typeReturns.filter((r) => {
-      const u = (now - r.start) / this.twOpt("typewriterReturnMs", 80, 2000);
+      const u = (now - r.start) / (r.ms || this.twOpt("typewriterReturnMs", 80, 2000));
       if (u >= 1) return false;
       const ease = (v: number) => 1 - Math.pow(1 - Math.max(0, Math.min(1, v)), 3);
       const head = r.x0 - (r.x0 - r.xs) * ease(u / 0.6);

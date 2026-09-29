@@ -928,6 +928,7 @@ export const engineMethods = {
       (this.typeReturns && this.typeReturns.length > 0) ||
       (this.inkMarks && this.inkMarks.length > 0) ||
       (this.evaporateGlyphs && this.evaporateGlyphs.length > 0) ||
+      (this.typeTapes && this.typeTapes.length > 0) ||
       // A Typewriter stroke is a wall-clock animation of the caret itself.
       this.typewriterMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting

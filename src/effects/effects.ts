@@ -13,6 +13,7 @@ import { effectsTrailMethods } from "./effects-trail";
 import { effectsInkMethods } from "./effects-ink";
 import { effectsEvaporateMethods } from "./effects-evaporate";
 import { effectsDeleteMethods } from "./effects-delete";
+import { effectsTapeMethods } from "./effects-tape";
 
 export const effectsMethods = {
   ...effectsFireMethods,
@@ -22,5 +23,6 @@ export const effectsMethods = {
   ...effectsInkMethods,
   ...effectsEvaporateMethods,
   ...effectsDeleteMethods,
+  ...effectsTapeMethods,
 };
 export type EffectsMethods = typeof effectsMethods;

@@ -429,6 +429,10 @@ export const soundMethods = {
           break;
         }
         const p = this._soundAtom("feed", 0, t0 + 0.03, SOUND_GAIN.feed * g, pan);
+        // Carriage return's streak, timed to this return: its head reaches
+        // the line's start (at 60% of its sweep) as the carriage stops, near
+        // the recording's end. Not for the preview (it has no caret).
+        if (!delay) this._returnSweep = { ms: Math.max(300, Math.min(4000, ((feed.dur - 0.09) / 0.6) * 1000)), t: performance.now() };
         const endX = rowLeft !== null ? rowLeft : x !== null ? x - ev.column * 8 : null;
         if (p && p.pan) { p.pan.pan.setValueAtTime(pan, t0 + 0.03); p.pan.pan.linearRampToValueAtTime(soundPan(endX, width), t0 + 0.03 + feed.dur); }
         break;

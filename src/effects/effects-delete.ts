@@ -23,9 +23,10 @@ import type CursorSmithPlugin from "../plugin";
 export const DELETION_MAX_CHARS = 40;
 
 export const effectsDeleteMethods = {
-  // Whether anything wants a deletion's letters.
+  // Whether anything wants a deletion's letters: the Pop effects' two, and
+  // Typewriter's Correction tape.
   _deletionFxOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate));
+    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._tapeOn();
   },
 
   // The note as it is now, for the next deletion to read from; kept only
@@ -47,7 +48,7 @@ export const effectsDeleteMethods = {
     if (this._deletePending && performance.now() - this._deletePending < 250) {
       const along = this._deletionFx(old, now);
       // Letters that could not be read still get the burst, where the caret is.
-      if (!along && this.look.backspaceDisintegrate && typeof old.docLen === "number" && typeof now.docLen === "number" && now.docLen < old.docLen) {
+      if (!along && this.look.popEffects && this.look.backspaceDisintegrate && typeof old.docLen === "number" && typeof now.docLen === "number" && now.docLen < old.docLen) {
         this.spawnFlamePixels(old, true);
       }
     }
@@ -60,7 +61,8 @@ export const effectsDeleteMethods = {
     if (!this._deletionFxOn()) return false;
     const letters = this.deletedLetters(old, now);
     if (letters && this._evaporateOn()) this.spawnEvaporate(letters);
-    if (!this.look.backspaceDisintegrate) return false;
+    if (letters && this._tapeOn()) this.spawnTape(letters);
+    if (!this.look.popEffects || !this.look.backspaceDisintegrate) return false;
     return this.spawnDisintegration(letters);
   },
 

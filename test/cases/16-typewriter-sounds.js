@@ -171,6 +171,8 @@ later(async () => {
     ok("Enter: the margin bell, then the machine's own carriage return, whole", bell && bell.when === 0 && feed && Math.abs(feed.when - 0.03) < 1e-9 && feed.from === 0 && Math.abs(feed.dur - hermes.feed[0].dur) < 1e-9, h.map((x) => [x.name, x.when, x.dur]));
     ok("...the bell well under the keys", bell.gain < T.SOUND_GAIN.strike * 0.7, bell.gain);
     ok("...the carriage running back across, from the cursor to the line's start", feed.p.pan.events.some((ev) => ev[0] === "ramp" && Math.abs(ev[1] - T.soundPan(300, 1000)) < 1e-9 && Math.abs(ev[2] - (10.03 + hermes.feed[0].dur)) < 1e-6));
+    ok("...and hands Carriage return's streak the return's length, its head at the line's start as the carriage stops", e._returnSweep && Math.abs(e._returnSweep.ms - ((hermes.feed[0].dur - 0.09) / 0.6) * 1000) < 1e-6, e._returnSweep);
+    e._returnSweep = null;
     e.settings.typewriterSoundBell = false;
     ok("Bell off: no bell", !play({ kind: "enter", column: 30 }).some((x) => x.name === "bell"));
     e.settings.typewriterSoundBell = true;
@@ -249,7 +251,7 @@ later(async () => {
 section("Typewriter's Sounds: the settings");
 {
   ok("four look keys, appended, off by default: the Hermes 3000 at half volume, the bell on",
-     T.LOOK_KEYS.slice(-4).join() === "typewriterSound,typewriterSoundVoice,typewriterSoundVolume,typewriterSoundBell" &&
+     T.LOOK_KEYS.slice(-5, -1).join() === "typewriterSound,typewriterSoundVoice,typewriterSoundVolume,typewriterSoundBell" &&
      T.DEFAULT_SETTINGS.typewriterSound === false && T.DEFAULT_SETTINGS.typewriterSoundVolume === 50 && T.DEFAULT_SETTINGS.typewriterSoundBell === true);
   const row = (rows, name) => rows.find((r) => r.name === name);
   const on = renderPanel({ typewriter: true, typewriterSound: true });

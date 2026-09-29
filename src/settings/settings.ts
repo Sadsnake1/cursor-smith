@@ -136,6 +136,7 @@ export const DEFAULT_SETTINGS = {
   typewriterSoundVoice: "hermes3000", // ...the machine: an id in samples.ts (hermes3000, underwood, selectric2, olivetti22, sears12)
   typewriterSoundVolume: 50,      // ...0 - 100
   typewriterSoundBell: true,      // ...Enter at the end of a line rings the machine's margin bell
+  typewriterTape: false,          // Correction tape (1.7.2): Backspace lifts the letters off with a strip of tape
   backspaceEvaporate: false, // Pop effects' Backspace evaporation: deleted letters rise and fade (Backspace and Delete)
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
@@ -513,6 +514,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "smoothStyle",
   // Typewriter's Sounds (1.7.2). Appended, off by default.
   "typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell",
+  // Typewriter's Correction tape (1.7.2). Appended, off by default.
+  "typewriterTape",
 ];
 
 // ---------------------------------------------------------------------------

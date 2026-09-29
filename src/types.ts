@@ -140,6 +140,7 @@ export interface Look {
   typewriterSoundVoice: string;
   typewriterSoundVolume: number;
   typewriterSoundBell: boolean;
+  typewriterTape: boolean;
   backspaceEvaporate: boolean;
   popLetters: boolean;
   popRainbow: boolean;
@@ -366,7 +367,14 @@ export interface EvaporateGlyph {
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
   color: string; start: number; delay: number; phase: number; drift: number;
 }
-export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number }
+// ms: its own sweep (Sounds times it to the machine's return), else the setting's.
+export interface TypeReturn { x0: number; xs: number; y: number; h: number; color: string; start: number; ms?: number }
+// Correction tape: one deleted letter, the tape striking it and lifting it off.
+export interface TapeStrip {
+  char: string; x: number; w: number; top: number; h: number;
+  fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
+  color: string; start: number; delay: number;
+}
 // Where Typewriter holds the caret at a moment: shifted by dx, dy and
 // squashed to sy of its height about its bottom edge.
 export interface TypewriterPose { dx: number; dy: number; sy: number }

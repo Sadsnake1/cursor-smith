@@ -814,3 +814,102 @@ section("Typewriter's Ink stamp: it grows about the letter's own middle (1.7.1)"
   ok("it scales about the ink's middle: the letter stays where it is as it shrinks", moves[0] && moves[0][0] === 104.5 && moves[0][1] === 64, moves[0]);
   ok("...and back out of it", moves[1] && moves[1][0] === -104.5 && moves[1][1] === -64, moves[1]);
 }
+
+// ---------------------------------------------------------------------------
+section("Typewriter (1.7.2): capitals strike deeper, the return timed to its sound, the correction tape");
+{
+  const mk = (over) => {
+    const e = makeEngine(Object.assign({ typewriter: true }, over));
+    e.styleFor = (k) => e.settings[k];
+    e.look = e.settings;
+    e.animActive = { x: 100, top: 200, w: 2, h: 24, actualCharWidth: 8 };
+    e.particles = []; e.typeReturns = []; e.typeTapes = [];
+    e._markDirty = () => {};
+    return e;
+  };
+  const t0 = 10000;
+  // A capital: the heavier stroke of the shifted basket.
+  const sp = mk({ typewriterSpring: true });
+  const deepest = (heavy) => { sp._typewriterT = t0; sp._typewriterHeavy = heavy; return Math.max(...Array.from({ length: 300 }, (_, i) => sp.typewriterPose(t0 + i).dy)); };
+  const low = deepest(false), cap = deepest(true);
+  ok("a capital strikes 40% deeper", Math.abs(cap / low - 1.4) < 0.02, [+low.toFixed(2), +cap.toFixed(2)]);
+  sp._typewriterHeavy = true; sp._typewriterT = t0;
+  ok("...and 15% slower: still moving where a letter's stroke has ended", sp.typewriterMoving(t0 + 250) === true && sp.typewriterMoving(t0 + 280) === false);
+  sp._typewriterHeavy = false;
+  ok("...a letter's stroke ends on time", sp.typewriterMoving(t0 + 250) === false);
+  {
+    // resolveHoldChar marks it: a capital letter, not a digit or a mark.
+    const text = "ab W7c";
+    const e = mk({ typewriterSpring: true });
+    e.app = { workspace: { activeEditor: { editor: { cm: { state: { doc: { length: text.length, sliceString: (a, b) => text.slice(a, b) } }, coordsAtPos: () => null } } } } };
+    const at = (pos, docLen) => ({ x: pos * 8, top: 20, h: 24, pos, docLen, char: "" });
+    const typed = (pos) => { e.lastActive = at(pos, text.length - 1); e.resolveHoldChar(at(pos + 1, text.length)); return e._typewriterHeavy; };
+    ok("resolveHoldChar marks a capital's stroke heavy - W yes, 7 and b no", typed(3) === true && typed(4) === false && typed(1) === false);
+  }
+
+  // The carriage return timed to the machine's own.
+  const cr = mk({ typewriterReturn: true, typewriterReturnMs: 300 });
+  const from = { x: 400, top: 200, h: 24, rowLeft: 100, fontSize: 16 }, to = { x: 100, top: 224, h: 24 };
+  cr._returnSweep = { ms: 1500, t: performance.now() };
+  cr.spawnCarriageReturn(from, to);
+  ok("with Sounds on, the streak takes the return's own time", cr.typeReturns[0].ms === 1500 && cr._returnSweep === null, cr.typeReturns[0]);
+  cr._returnSweep = { ms: 1500, t: performance.now() - 2000 };
+  cr.spawnCarriageReturn(from, to);
+  ok("...not a stale one: the setting's", cr.typeReturns[1].ms === undefined);
+  {
+    const real = performance.now;
+    try {
+      let now = 50000;
+      performance.now = () => now;
+      const d = mk({ typewriterReturn: true, typewriterReturnMs: 300 });
+      d.ctx = { save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, globalAlpha: 1, strokeStyle: "", lineCap: "", lineWidth: 1 };
+      d.typeReturns = [{ x0: 400, xs: 100, y: 212, h: 24, color: "#fff", start: now, ms: 1500 }, { x0: 400, xs: 100, y: 212, h: 24, color: "#fff", start: now }];
+      now += 1000;
+      d.drawCarriageReturns();
+      ok("...and is drawn for it: alive at 1 s, where the setting's 300 ms streak is gone", d.typeReturns.length === 1 && d.typeReturns[0].ms === 1500);
+    } finally { performance.now = real; }
+  }
+
+  // The correction tape.
+  const tp = mk({ typewriterTape: true });
+  const deleted = { forward: false, old: { top: 50, h: 24, fontSize: 16, fontFamily: "serif", fontWeight: "400", fontStyle: "normal", textColor: "#222" },
+    letters: [{ char: "a", x: 100, w: 9 }, { char: " ", x: 91, w: 9 }, { char: "b", x: 82, w: 9 }] };
+  tp.spawnTape(deleted);
+  ok("Correction tape: a strip for each deleted letter, none for a space, nearest the caret first", tp.typeTapes.length === 2 && tp.typeTapes[0].char === "a" && tp.typeTapes[1].char === "b" && tp.typeTapes[1].delay > tp.typeTapes[0].delay);
+  const g = tp.typeTapes[0];
+  const down = tp.tapePose(g, 0.1), up = tp.tapePose(g, 0.6), gone = tp.tapePose(g, 0.999);
+  ok("...it comes down over the letter (the letter still there under it)", !down.onTape && down.letterAlpha === 1 && down.tapeAlpha > 0.3 && down.tapeDy < 0);
+  ok("...then lifts away with the letter on it, both fading", up.onTape && up.letterDy < 0 && up.letterDy === up.tapeDy && up.letterAlpha < 1 && up.tapeAlpha < 0.92 && gone.letterAlpha < 0.01);
+  {
+    const real = performance.now;
+    try {
+      let now = 70000;
+      performance.now = () => now;
+      const d = mk({ typewriterTape: true });
+      const ops = [];
+      d.fontString = () => "16px serif";
+      d.ctx = { save() {}, restore() {}, globalAlpha: 1, fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textAlign: "", textBaseline: "",
+        measureText: () => ({ width: 9, fontBoundingBoxAscent: 14, fontBoundingBoxDescent: 4 }),
+        fillRect() { if (this.fillStyle !== "rgba(0, 0, 0, 0.18)" && this.fillStyle !== "rgba(0, 0, 0, 0.45)") ops.push("tape"); }, strokeRect() {}, fillText() { ops.push("letter"); } };
+      d.spawnTape(deleted);
+      now += 40; ops.length = 0; d.drawTape();
+      const first = ops.slice(0, 2).join();
+      now += 300; ops.length = 0; d.drawTape();
+      const later = ops.slice(0, 2).join();
+      now += 1000; d.drawTape();
+      ok("...drawn letter then tape as it comes down, tape then letter as it lifts, then gone", first === "letter,tape" && later === "tape,letter" && d.typeTapes.length === 0, [first, later, d.typeTapes.length]);
+    } finally { performance.now = real; }
+  }
+  // Deletions reach it without the Pop effects, and the Pop effects' burst
+  // does not come with it.
+  {
+    const e = mk({ typewriterTape: true, popEffects: false, backspaceDisintegrate: true });
+    let taped = 0, burst = 0;
+    e.deletedLetters = () => deleted;
+    e.spawnTape = () => { taped++; };
+    e.spawnDisintegration = () => { burst++; return true; };
+    ok("a deletion reaches the tape with Pop effects off", e._deletionFxOn() === true && e._deletionFx({}, {}) === false && taped === 1 && burst === 0);
+    const off = mk({ typewriterTape: false, popEffects: false });
+    ok("...and nothing wants a deletion with both off", off._deletionFxOn() === false);
+  }
+}

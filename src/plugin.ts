@@ -43,6 +43,7 @@ import type {
   TypeReturn,
   InkMark,
   EvaporateGlyph,
+  TapeStrip,
 } from "./types";
 
 import { measureMethods } from "./engine/measure";
@@ -141,6 +142,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare spawnEvaporate: EffectsMethods["spawnEvaporate"];
   declare evaporatePose: EffectsMethods["evaporatePose"];
   declare drawEvaporate: EffectsMethods["drawEvaporate"];
+  declare _tapeOn: EffectsMethods["_tapeOn"];
+  declare spawnTape: EffectsMethods["spawnTape"];
+  declare tapePose: EffectsMethods["tapePose"];
+  declare drawTape: EffectsMethods["drawTape"];
   declare renderWidth: MeasureMethods["renderWidth"];
   declare underlineThickness: MeasureMethods["underlineThickness"];
   // effects.ts
@@ -455,6 +460,11 @@ export default class CursorSmithPlugin extends Plugin {
   _popRainbowHue!: number;
   // When the last character was typed, for Typewriter (typewriterDip).
   _typewriterT!: number;
+  // The stroke under way is a capital's (deeper, slower: TW_CAPITAL_*).
+  _typewriterHeavy!: boolean;
+  // Sounds, as it plays a carriage return: how long the streak should
+  // sweep to end with the machine's own (spawnCarriageReturn reads it).
+  _returnSweep: { ms: number; t: number } | null = null;
   _presCacheT!: number;
   _presCacheV!: boolean;
   _realKeyT!: number;
@@ -577,6 +587,7 @@ export default class CursorSmithPlugin extends Plugin {
   // Backspace evaporation: the letters rising away, and the note as it was
   // before the deletion (what the letters are read back from).
   evaporateGlyphs!: EvaporateGlyph[];
+  typeTapes!: TapeStrip[];
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
@@ -1649,6 +1660,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.inkMarks = [];
     this._inkView = null;
     this.evaporateGlyphs = [];
+    this.typeTapes = [];
     this._deletionDoc = null;
     // Fireworks. Its own pool rather than flamePixels, for the same reason
     // thunderbolts have one: a shell is a two-phase animation (climb, then
@@ -1744,6 +1756,7 @@ export default class CursorSmithPlugin extends Plugin {
     // happens to be running at the same time.
     this._popRainbowHue = 0;
     this._typewriterT = 0;
+    this._typewriterHeavy = false;
 
     // Dedupe for the hide-native body class (see ensureCanvasForView). null
     // rather than a boolean so the first frame after a reset always differs

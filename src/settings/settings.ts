@@ -133,7 +133,7 @@ export const DEFAULT_SETTINGS = {
   typewriterFreshInkStrength: 0.8, // ...how strong the wet ink is at first, 1 the full cursor colour
   typewriterFreshInkText: false, // ...in the text's own color, bolder while wet, instead of the cursor's
   typewriterSound: false,         // Sounds (1.7.2): a real typewriter as you type (src/sound)
-  typewriterSoundVoice: "hermes3000", // ...the machine: an id in samples.ts (hermes3000, underwood, selectric2, olivetti22, sears12)
+  typewriterSoundVoice: "hermes3000", // ...the machine: an id in samples.ts (hermes3000, erika5, selectric2, olivetti22, ...)
   typewriterSoundVolume: 50,      // ...0 - 100
   typewriterSoundBell: true,      // ...Enter at the end of a line rings the machine's margin bell
   typewriterTape: false,          // Correction tape (1.7.2): Backspace lifts the letters off with a strip of tape

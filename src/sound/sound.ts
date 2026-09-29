@@ -3,7 +3,7 @@
 // plugin.
 //
 // Typewriter's Sounds (1.7.2): real typewriters as you type. Each machine is
-// its own recording (samples.ts: a Hermes 3000, an Underwood, an IBM
+// its own recording (samples.ts: a Hermes 3000, an Erika 5, an IBM
 // Selectric II, an Olivetti Lettera 22, a Sears Electric Twelve), its keys,
 // capitals, space bar, Backspace, carriage return and margin bell cut from
 // it, packed into one MP3 that is decoded once when the machine is chosen

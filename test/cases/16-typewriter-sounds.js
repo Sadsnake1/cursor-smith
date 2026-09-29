@@ -11,8 +11,8 @@ const path = require("path");
 section("Typewriter's Sounds: the machines");
 {
   const M = T.SOUND_MACHINES;
-  ok("fourteen real typewriters, the Hermes 3000 first and the default, the rest by name",
-     M.map((m) => m.label).join() === "Hermes 3000,Erika 5 (1940),Hermes Baby,IBM Selectric II,L C Smith (1946),Mercedes (1934),Olivetti Lettera 22,Olivetti Lettera 35,Olympia (1956),Royal Portable (1936),Royal Quiet De Luxe,Sears Electric Twelve,Smith-Corona Corsair,Underwood" &&
+  ok("thirteen real typewriters, the Hermes 3000 first and the default, the rest by name",
+     M.map((m) => m.label).join() === "Hermes 3000,Erika 5 (1940),Hermes Baby,IBM Selectric II,L C Smith (1946),Mercedes (1934),Olivetti Lettera 22,Olivetti Lettera 35,Olympia (1956),Royal Portable (1936),Royal Quiet De Luxe,Sears Electric Twelve,Smith-Corona Corsair" &&
      T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000" && new Set(M.map((m) => m.id)).size === M.length, M.map((m) => m.label));
   for (const m of M) {
     const takes = T.soundTakes(m);
@@ -26,11 +26,11 @@ section("Typewriter's Sounds: the machines");
     ok(`...a key is a key (under 0.2 s), the return and the bell longer`, takes.strike.every((t) => t.dur < 0.2) && takes.feed[0].dur > 0.35 && takes.bell[0].dur > 0.8, [takes.feed[0].dur, takes.bell[0].dur]);
   }
   const total = M.reduce((n, m) => n + T.soundBytes(m.mp3).byteLength, 0);
-  ok("all fourteen under 650 KB", total < 650 * 1024, Math.round(total / 1024) + " KB");
+  ok("all thirteen under 650 KB", total < 650 * 1024, Math.round(total / 1024) + " KB");
   ok("the big recordings give 8 keys: fast typing repeats less", M.filter((m) => T.soundTakes(m).strike.length === 8).length >= 4, M.map((m) => T.soundTakes(m).strike.length));
   const notice = fs.readFileSync(path.join(__dirname, "..", "..", "NOTICE"), "utf8");
   const ids = [...new Set(M.flatMap((m) => [...m.credit.matchAll(/freesound\.org\/s\/(\d+)/g)].map((x) => x[1])))];
-  ok("every recording credited in NOTICE, its licence with it", ids.length >= 14 && ids.every((id) => notice.includes(`freesound.org/s/${id}/`)) && notice.includes("File:WWS_Typewriter.ogg") && /CC BY 3\.0/.test(notice) && /CC BY 4\.0/.test(notice), ids.filter((id) => !notice.includes(`freesound.org/s/${id}/`)));
+  ok("every recording credited in NOTICE, its licence with it", ids.length >= 12 && ids.every((id) => notice.includes(`freesound.org/s/${id}/`)) && notice.includes("File:WWS_Typewriter.ogg") && /CC BY 3\.0/.test(notice) && /CC BY 4\.0/.test(notice), ids.filter((id) => !notice.includes(`freesound.org/s/${id}/`)));
   ok("...and on each machine: its recording and licence, or a video recording NOTICE speaks for", M.every((m) => (/freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(m.credit) && /CC0|CC BY/.test(m.credit)) || (/video recording/.test(m.credit) && notice.includes(m.label + " is cut from video recordings"))), M.map((m) => m.credit));
   ok("an unknown machine (an older code's) is the default one", T.soundMachine("manual").id === "hermes3000" && T.soundMachine(undefined).id === "hermes3000" && T.soundMachine("olivetti22").label === "Olivetti Lettera 22");
   const pairs = "th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co me de hi ri ro ic ne ea ra ce".split(" ");

@@ -34,8 +34,14 @@ section("Typewriter's Sounds: the machines");
   // not in the built main.js (the user's wish).
   const samplesSrc = fs.readFileSync(path.join(__dirname, "..", "..", "src", "sound", "samples.ts"), "utf8");
   const credits = [...samplesSrc.matchAll(/^  \/\/ (.+)\n  \{\n    id: "([^"]+)"/gm)].map((x) => ({ id: x[2], text: x[1] }));
-  ok("every machine credits its recording in the source: who, where, the licence", credits.length === M.length && credits.every((c) => (/freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(c.text) && /CC0|CC BY/.test(c.text)) || /video recordings/.test(c.text)), credits);
+  ok("every machine but the Selectric credits its recording in the source: who, where, the licence",
+     credits.length === M.length - 1 && !credits.some((c) => c.id === "selectric2") && credits.every((c) => /freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(c.text) && /CC0|CC BY/.test(c.text)), credits);
   ok("...the CC BY ones by name", credits.filter((c) => /CC BY/.test(c.text)).every((c) => /recorded by \S+/.test(c.text)) && credits.filter((c) => /CC BY/.test(c.text)).length >= 4);
+  // The README credits the CC BY recordings - author, link, licence.
+  const readme = fs.readFileSync(path.join(__dirname, "..", "..", "README.md"), "utf8");
+  ok("the README credits every CC BY recording: its author, its link, the licence",
+     ["File:WWS_Typewriter.ogg", "freesound.org/s/193603/", "freesound.org/s/185522/", "freesound.org/s/99694/", "freesound.org/s/99695/"].every((u) => readme.includes(u)) &&
+     ["Konrad Gutkowski", "doxent", "Leossom", "fastson", "CC BY 4.0", "CC BY 3.0"].every((w) => readme.includes(w)));
   const built = fs.readFileSync(path.join(__dirname, "..", "..", "main.js"), "utf8");
   ok("...and not in the built main.js", !/recorded by|freesound\.org|Work With Sounds/.test(built) && M.every((m) => !("credit" in m)));
   ok("an unknown machine (an older code's) is the default one", T.soundMachine("manual").id === "hermes3000" && T.soundMachine(undefined).id === "hermes3000" && T.soundMachine("lettera35").label === "Olivetti Lettera 35" && T.soundMachine("olivetti22").id === "hermes3000");

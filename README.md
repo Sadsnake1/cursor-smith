@@ -44,7 +44,7 @@ Eleven of them, from subtle to absurd. Each has its own switch and its own setti
 | Effect | What it does |
 |---|---|
 | **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
-| **Typewriter** | The cursor strikes like a typewriter key: a springy dip, an ink stamp on each letter, fresh ink that dries as you write, a carriage return on Enter, a small push forward as you type. Mix any of them. |
+| **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, correction tape when you delete, a carriage return on Enter, a small push forward as you type. And its sounds. Mix any of them. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
@@ -56,6 +56,12 @@ Eleven of them, from subtle to absurd. Each has its own switch and its own setti
 | **Torch spotlight** | Darkens everything except a pool of warm light around the cursor. |
 
 Some of them unlock extra options together. Try Blinking with the torch.
+
+### Typewriter sounds
+
+Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Hermes Baby, Erika 5, IBM Selectric II, L C Smith, Mercedes, Olivetti Lettera 22 and 35, Olympia, Royal Quiet De Luxe, Royal Portable, Sears Electric Twelve or Smith-Corona Corsair. Press play to hear one before you type.
+
+Every sound is a recording of that machine: its keys, its space bar, Backspace, the bell near the end of a line and the carriage thrown back on Enter, with the streak on screen running as long as the carriage does. Paste, undo and Vim commands stay quiet. Off by default, and soft when on.
 
 ## Settings
 

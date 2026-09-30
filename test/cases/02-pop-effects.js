@@ -628,7 +628,7 @@ section("Typewriter's sub-options (1.6.7)");
   const tab2 = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
   ok("the four switches sit under Typewriter, each opening its sliders", ["typewriterSpring", "typewriterInk", "typewriterReturn", "typewriterAdvance"].every((k) => tab2.includes(`"${k}", { depth: 1, gate: true, when: tw }`)));
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
-  ok("Enter fires the carriage return from where the old line ended", carets.includes("typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);"));
+  ok("Enter fires the carriage return from where the old line ended", /typewriterReturn\) \{\s*this\.spawnCarriageReturn\(this\.lastActive, caret\);/.test(carets));
 }
 
 // ---------------------------------------------------------------------------

@@ -227,6 +227,20 @@ section("multi-cursor: full effects on secondary carets");
     ok("the primary fires a strike and a volley and clears the flags",
        np.bolt === 1 && np.fw === 1 && primary._enterPending === 0 && primary._popKeyPending === 0, np);
     ok("...and a mouse-driven leap heats it", primary.heat > 0, primary.heat);
+    // Issue #43: with Typewriter's carriage return the caret keeps up with
+    // it (the keyboard step), after a click as after typing; without it an
+    // Enter glides as any jump does.
+    {
+      const tw = mk({ typewriter: true, typewriterReturn: true });
+      tw.spawnCarriageReturn = () => {};
+      tw.lastActive = rec(10, 10, 5); tw._enterPending = NOW; tw._keyStepT = 0;
+      tw.commitMove(rec(300, 200, 40));
+      ok("Enter with the carriage return: the caret keeps up with it", tw._keyStepT > 0 && tw._keyStepping(performance.now()));
+      const plain = mk({ typewriter: false });
+      plain.lastActive = rec(10, 10, 5); plain._enterPending = NOW; plain._keyStepT = 0;
+      plain.commitMove(rec(300, 200, 40));
+      ok("...without it, an Enter glides as before", plain._keyStepT === 0);
+    }
 
     const sec = mk({ popEffects: true, thunderstrike: true, fireworks: true, crtEffect: true, crtGlitch: true, speedDemon: true });
     const ns = spawns(sec);

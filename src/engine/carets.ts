@@ -818,7 +818,15 @@ export const caretsMethods = {
       if (this._enterPending && now - this._enterPending < 250) {
         this.spawnThunderbolt(caret);
         // Typewriter's carriage return: from where the old line ended.
-        if (this.look.typewriter && this.look.typewriterReturn) this.spawnCarriageReturn(this.lastActive, caret);
+        if (this.look.typewriter && this.look.typewriterReturn) {
+          this.spawnCarriageReturn(this.lastActive, caret);
+          // The caret goes with the carriage: it keeps up (the keyboard
+          // step) rather than gliding over from the old line's end behind
+          // the streak. Right after typing the keystrokes' step was still on
+          // and it did; after a click, or a pause, Smooth movement glided it
+          // and the streak ran on ahead (issue #43).
+          if (!secondary) this._keyStepT = performance.now();
+        }
       }
       // Same 250ms window and the same choice of anchor: the shells climb out
       // of the caret you can see, which after a Space or an Enter is the

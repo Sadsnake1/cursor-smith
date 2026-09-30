@@ -101,6 +101,10 @@ The top of the panel is short: enable the plugin, Vim mode on or off, your prese
 
 Dial in a cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it, the other person imports it and has your cursor. Seven come with the plugin to start from.
 
+## Cursor showcase
+
+Made a cursor you love? Save it as a preset, copy its share code and post it in the [Cursor Showcase](https://github.com/Sadsnake1/cursor-smith/issues/44), with a GIF if you can. Want someone else's? Copy their code and import it under Presets.
+
 ## Vim mode
 
 Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in the status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it.

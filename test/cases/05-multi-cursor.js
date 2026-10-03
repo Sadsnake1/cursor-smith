@@ -635,6 +635,36 @@ section("multi-cursor: full effects on secondary carets");
     // A keystroke is a keyboard step: it never waits for Movement delay
     // (1.7.1), so it commits at once, showing the character under the caret.
     ok("...but a keystroke does not wait: it commits at once", !d.pending && d.lastActive.pos === 5 && d.lastActive.char === "a", d.pending, d.lastActive);
+    // Issue #47: the keyboard never waits - an arrow down a line, a step into
+    // inline code (its top a pixel or two off the row's), a key pressed while
+    // a move is pending - and a pending move whose place in the note stays
+    // the same keeps its wait while the layout shifts under it.
+    {
+      const k = mk({ moveDelayMs: 200 });
+      k.pushTrail = () => {}; k.spawnFlamePixels = () => {}; k.app = cmOf(text);
+      k.lastActive = at(4, text.length, "t");
+      k._keyMoveT = performance.now();
+      k.updateActivePoint(Object.assign(at(11, text.length, ""), { top: 60 }));
+      ok("a key just pressed: a move off the row commits at once", !k.pending && k.lastActive.pos === 11, k.pending);
+      k._keyMoveT = 0;
+      k.updateActivePoint(Object.assign(at(13, text.length, ""), { top: 90 }));
+      ok("...no key: it waits", !!k.pending && k.lastActive.pos === 11);
+      k._keyMoveT = performance.now();
+      k.updateActivePoint(Object.assign(at(14, text.length, ""), { top: 92 }));
+      ok("...a key while it waits: it goes now", !k.pending && k.lastActive.pos === 14, k.pending);
+      const w = mk({ moveDelayMs: 200 });
+      w.pushTrail = () => {}; w.spawnFlamePixels = () => {}; w.app = cmOf(text);
+      w.lastActive = at(4, text.length, "t");
+      w._keyMoveT = 0;
+      const real = performance.now;
+      try {
+        let now = 50000;
+        performance.now = () => now;
+        w.updateActivePoint(Object.assign(at(11, text.length, ""), { top: 60, x: 300 }));
+        for (let i = 1; i <= 15; i++) { now += 16; w.updateActivePoint(Object.assign(at(11, text.length, ""), { top: 60, x: 300 + (i % 2) * 2 })); }
+        ok("a pending move at the same place, the layout shifting under it: committed after the delay", !w.pending && w.lastActive.pos === 11, [w.pending, w.lastActive && w.lastActive.pos]);
+      } finally { performance.now = real; }
+    }
   }
 
   // A jump flares the fire where the caret lands: decided on the committed

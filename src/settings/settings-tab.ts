@@ -1405,7 +1405,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     smooth.push(toggle("Keep up with typing", "While you type or delete, the cursor keeps up with every letter instead of gliding behind.", "smoothAdaptive", { depth: 1, gate: true, when: gliding }));
     smooth.push(slider("Typing glide", "How quickly each typed letter's glide finishes. Low shows a little glide, the top is instant.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
       { depth: 2, when: all(gliding, on("smoothAdaptive")) }));
-    smooth.push(slider("Movement delay", "Wait before gliding off after a click or jump, in ms. 0 follows immediately; typing never waits.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
+    smooth.push(slider("Movement delay", "Wait before gliding off after a click or jump, in ms. 0 follows immediately; the keyboard never waits.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
     // --- Effects -------------------------------------------------------------
     // The Effects page: a RAIL of chips at the top, one per effect with its
     // icon and a dot for "on", and the picked effect's rows under it - one

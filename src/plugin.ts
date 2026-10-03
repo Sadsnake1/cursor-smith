@@ -489,6 +489,9 @@ export default class CursorSmithPlugin extends Plugin {
   _presCacheT!: number;
   _presCacheV!: boolean;
   _realKeyT!: number;
+  // The last key that moves the caret (noteKeystroke): a move right after it
+  // is the keyboard's and never waits for Movement delay (issue #47).
+  _keyMoveT = 0;
   _reduceMatches!: boolean;
   _reduceMQ!: MediaQueryList | null;
   _reduceMQHandler!: ((e: MediaQueryListEvent) => void) | null;
@@ -1052,6 +1055,7 @@ export default class CursorSmithPlugin extends Plugin {
     // it. `kind` is what the keystroke MEANS, not which key produced it.
     const noteKeystroke = (kind: string, opts: { repeat?: boolean } = {}) => {
       const now = performance.now();
+      this._keyMoveT = now;
       if (kind === "delete") this._deletePending = now;
       if (kind === "enter") this._enterPending = now;
       // Fireworks fire on Space as well as Enter. Kept as its own flag rather

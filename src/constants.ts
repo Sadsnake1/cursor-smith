@@ -579,6 +579,10 @@ export const SERIF_TAPER = 0.3;
 // 2026-09-27). Jumps, Enter and a whole deleted word keep the full motion.
 export const KEY_STEP_CHARS = 2.5;
 export const KEY_STEP_HOLD_MS = 200;
+// How long after a key that moves the caret (typing, an arrow, Home/End,
+// Enter, Backspace) a caret move counts as the keyboard's: it never waits
+// for Movement delay (issue #47).
+export const KEY_MOVE_MS = 250;
 
 // Smooth movement's rates, per second (the glide closes 1 - e^(-rate x dt)
 // of the gap each frame; 95% of a move takes about 3 / rate). Catch-up speed

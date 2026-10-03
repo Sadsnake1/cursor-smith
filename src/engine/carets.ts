@@ -14,7 +14,7 @@ import {
   JUMP_TRAIL_MIN_DIST,
   SECONDARY_FULL_MAX,
   SECONDARY_MATCH_WINDOW,
-  KEY_STEP_CHARS,
+  KEY_STEP_CHARS, KEY_MOVE_MS,
   KEY_STEP_HOLD_MS,
   GLIDE_SPRING_FREQ,
   GLIDE_SPRINGY_DAMPING,
@@ -465,10 +465,17 @@ export const caretsMethods = {
     }
 
     const delay = Math.max(0, Math.round(this.look.moveDelayMs));
-    // Typing never waits: Movement delay is for clicks and jumps, and a
-    // keyboard step (KEY_STEP_CHARS) goes at once, as with no delay (1.7.1;
-    // it held every typed letter back by the delay).
-    if (delay <= 0 || (!this.pending && this._isKeyStep(this.lastActive, caret))) {
+    const now = performance.now();
+    // The keyboard never waits: Movement delay is for clicks and jumps. A
+    // keyboard step (KEY_STEP_CHARS) went at once since 1.7.1 (it held every
+    // typed letter back by the delay), but only along an unchanged row: a
+    // step into or out of inline code moves the caret's top by a pixel or
+    // two, an arrow up or down is not a step at all, and a key pressed while
+    // a move was pending restarted the wait - held arrows froze the cursor
+    // until they stopped (issue #47). Any move within KEY_MOVE_MS of a key
+    // that moves the caret goes now.
+    const keyed = !!this._keyMoveT && now - this._keyMoveT < KEY_MOVE_MS;
+    if (delay <= 0 || keyed || (!this.pending && this._isKeyStep(this.lastActive, caret))) {
       // For the letter pop only. The box moves at once, so it already sits
       // past the letter just typed and shows the character under it -
       // nothing at the end of a line. 1.6.0 to 1.6.3 kept the typed letter
@@ -480,12 +487,19 @@ export const caretsMethods = {
     }
 
     const pending = this.pending;
-    if (!pending || pending.caret.x !== caret.x || pending.caret.top !== caret.top) {
+    // The same place in the note, measured somewhere else: the layout moving
+    // under it (Live Preview showing or hiding the markup around it), not a
+    // new move. It takes the new coordinates and keeps its wait; a layout
+    // still settling restarted the wait every frame and the move never came
+    // (issue #47).
+    const samePlace = !!pending && typeof caret.pos === "number" && pending.caret.pos === caret.pos && pending.caret.assoc === caret.assoc;
+    if (!pending || (!samePlace && (pending.caret.x !== caret.x || pending.caret.top !== caret.top))) {
       // While the move is pending the box still sits at the old spot, so
       // it keeps the old character unless a keystroke gave it a new one.
-      this.pending = { caret, since: performance.now(), holdChar: this.resolveHoldChar(caret) ?? (this.lastActive ? this.lastActive.char : "") };
-    } else if (performance.now() - pending.since >= delay) {
-      this.commitMove(pending.caret);
+      this.pending = { caret, since: now, holdChar: this.resolveHoldChar(caret) ?? (this.lastActive ? this.lastActive.char : "") };
+    } else {
+      if (samePlace) pending.caret = caret;
+      if (now - pending.since >= delay) this.commitMove(pending.caret);
     }
   },
 

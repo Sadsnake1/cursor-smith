@@ -13,9 +13,11 @@
 
 </div>
 
-Most people never think about their cursor. This is for the ones who do! Writers who want a screen worth looking at, anyone who keeps losing the caret, and people who just like to make things their own.
+Most people never think about their cursor. This is for the ones who do!
 
-Every effect has its own switch. Reduced motion is respected out of the box. It's free. It swooshes. And it looks cool!
+Writers who want a screen worth looking at, anyone who keeps losing their caret, and people who just like to make things their own.
+
+Every effect has its own switch. Reduced motion is respected out of the box. It's free. It swooshes. And it looks cool! It also makes you a better writer!(maybe)
 
 https://github.com/user-attachments/assets/7eab19cc-b7ac-4476-bc40-514b4e75cf61
 

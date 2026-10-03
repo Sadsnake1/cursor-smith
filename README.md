@@ -13,9 +13,9 @@
 
 </div>
 
-Most people never think about their cursor. This is for the ones who do: writers who want a screen worth looking at, anyone who keeps losing the caret, and people who just like to make things their own.
+Most people never think about their cursor. This is for the ones who do! Writers who want a screen worth looking at, anyone who keeps losing the caret, and people who just like to make things their own.
 
-Every effect has its own switch. Reduced motion is respected out of the box. It's free.
+Every effect has its own switch. Reduced motion is respected out of the box. It's free. It swooshes. And it looks cool!
 
 https://github.com/user-attachments/assets/7eab19cc-b7ac-4476-bc40-514b4e75cf61
 
@@ -35,11 +35,11 @@ Box, Line or Underline, solid or hollow. Your colors for dark and light themes, 
 
 It can blink the way you like: speed, balance, fade, breathing, or not at all, or not while you type. It can glide to its new spot instead of jumping there, faster when you type fast.
 
-Multiple cursors get all of it. Every caret you add is drawn, styled and animated like the first.
+Multiple cursors get ALL of it. Every caret you add is drawn, styled and animated like the first. Shiny!
 
 ## The effects
 
-Eleven of them, from subtle to absurd. Each has its own switch and its own settings, and they stack.
+Eleven of them, from subtle to absurd. Each has its own switch and its own settings, and they stack together like peas in a pod.
 
 | Effect | What it does |
 |---|---|
@@ -55,7 +55,7 @@ Eleven of them, from subtle to absurd. Each has its own switch and its own setti
 | **Hot-head** | Sets the text you're working on alight, in pixel-art flames. |
 | **Torch spotlight** | Darkens everything except a pool of warm light around the cursor. |
 
-Some of them unlock extra options together. Try Blinking with the torch.
+Some of them unlock extra options together. Try Blinking with the Torch.
 
 ### Typewriter sounds
 
@@ -65,7 +65,7 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 
 
 
-Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve or Smith-Corona Corsair. Press play to hear one before you type.
+Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve or Smith-Corona Corsair. Press play to hear one before you type. Ready to annoy some people? Try it out!
 
 Have better recordings of your favorite typewriter? [Send them my way](https://github.com/Sadsnake1/cursor-smith/issues) and I'll be happy to put them in the plugin.
 
@@ -86,7 +86,7 @@ The Hermes 3000, L. C. Smith, Olympia, Sears Electric Twelve and Smith-Corona Co
 </p>
 
 
-The top of the panel is short: enable the plugin, Vim mode on or off, your presets, and the mode you're editing when Vim is on. Everything else is a page:
+Enable the plugin, Vim mode on or off, your presets, and the mode you're editing when Vim is on. Everything else is its own page:
 
 | Page | What's in it |
 |---|---|
@@ -99,15 +99,15 @@ The top of the panel is short: enable the plugin, Vim mode on or off, your prese
 
 ## Presets
 
-Dial in a cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it, the other person imports it and has your cursor. Seven come with the plugin to start from.
+Make a new shiny cursor, save it under a name, and it's one tap away in the settings. Every preset has a share code: copy it, send it to a friend or showcase it here, but only if its WORTHY! XD
 
 ## Cursor showcase
 
-Made a cursor you love? Save it as a preset, copy its share code and post it in the [Cursor Showcase](https://github.com/Sadsnake1/cursor-smith/issues/44), with a GIF if you can. Want someone else's? Copy their code and import it under Presets.
+Made a cursor you love? Save it as a preset, copy its share code and post it in the [Cursor Showcase](https://github.com/Sadsnake1/cursor-smith/issues/44).
 
 ## Vim mode
 
-Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in the status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it.
+Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in Obsidian's status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it.
 
 ## Commands
 
@@ -126,9 +126,9 @@ Four, all in the Command Palette, all take a hotkey. The Behavior page shows the
 
 **Performance.** The plugin only repaints a small area around the caret and idles when nothing moves. If Obsidian still feels slower with it on, or you're on battery, **Low power mode** halves every effect's frame rate.
 
-**Mobile.** Works on phones and tablets. The settings are built for a thumb.
+**Mobile.** Works on phones and tablets.
 
-**One device only.** *Behavior → Enable on this device* switches the cursor off on the device you're holding and nowhere else. Keep Obsidian's own cursor on the phone while the desktop keeps this one.
+**One device only.** *Behavior → Enable on this device* switches the cursor off on the device you're holding and nowhere else.
 
 ## Building from source
 
@@ -136,7 +136,7 @@ A TypeScript project: `src/` holds the modules, `npm run build` bundles them int
 
 ## Pairs with Word-Smith
 
-[Word-Smith](https://github.com/Sadsnake1/word-smith) is my other plugin, a writing suite for Obsidian. Its themes can color your caret per Vim mode, and its status bar can wear the same color back.
+[Word-Smith](https://github.com/Sadsnake1/word-smith) is my other plugin, a writing suite for Obsidian. Its themes can color your caret, including Vim mode, and its status bar can wear the same color back, so you can pair your cursor with the powerline.
 
 ## Forged elsewhere
 

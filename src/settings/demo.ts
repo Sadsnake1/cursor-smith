@@ -1097,7 +1097,9 @@ export class DemoStrip {
   private paint(d: Demo, alpha: number, cold: number) {
     const px = d.stepPx || 8;
     const s = d.state;
-    const from = Math.min(s.lead, s.trail) * px;
+    // A Line centered on the gap between letters, as the engine's (issue #48).
+    const lineShift = d.style === "line" && d.geo ? d.geo.lineW / 2 : 0;
+    const from = Math.min(s.lead, s.trail) * px - lineShift;
     const to = Math.max(s.lead, s.trail) * px;
     // A stretch of at most two letters, so the caret stays inside the cell.
     const stretch = Math.min(to - from, px * 2);
@@ -1191,7 +1193,7 @@ export class DemoStrip {
       const el = d.ghosts[i];
       if (!g) { el.setCssStyles({ opacity: "0" }); continue; }
       const life = 1 - (now - g.t0) / fade;
-      el.setCssStyles({ transform: `translateX(${(g.at * px).toFixed(2)}px)`, width: `${base.toFixed(2)}px`, opacity: (Math.max(0, life) * 0.6 * d.shape.alphaScale).toFixed(3) });
+      el.setCssStyles({ transform: `translateX(${(g.at * px - lineShift).toFixed(2)}px)`, width: `${base.toFixed(2)}px`, opacity: (Math.max(0, life) * 0.6 * d.shape.alphaScale).toFixed(3) });
     }
   }
 }

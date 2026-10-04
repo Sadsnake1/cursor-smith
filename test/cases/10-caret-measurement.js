@@ -845,3 +845,38 @@ section("Hide cursor when unfocused: off keeps the caret in a background window"
   ok("...nor when the page's focus had moved off the editor before the window lost it", !mk(false, elsewhere).editorFocused(viewIn(elsewhere)));
   ok("...nor with no editor at all", !mk(false, bg).editorFocused(null));
 }
+
+// Issue #48: a Line sits centered on the gap between the letters, as
+// Obsidian's own caret does - half its thickness each side - and a Box (or
+// an Underline) still starts at the gap. Read through genericCaretCoords,
+// the interface caret's measure (the note editor's and the extra cursors'
+// take the same half off).
+section("a Line cursor is centered on the gap (issue #48)");
+{
+  const { makeEngine } = require("../lib");
+  const measureAt = (look) => {
+    const e = makeEngine(look);
+    const input = { tagName: "INPUT", type: "text", value: "abc", selectionStart: 1, contains: () => false };
+    const doc = {
+      activeElement: input,
+      documentElement: { clientWidth: 1000 },
+      elementFromPoint: () => null,
+      defaultView: { getComputedStyle: () => ({ fontSize: "16px", fontFamily: "sans-serif", fontWeight: "400", fontStyle: "normal", color: "#ddd" }) },
+    };
+    e.settings.noteEditorOnly = false;
+    e.canvas = { ownerDocument: doc };
+    e.isExcalidrawCaretHost = () => false;
+    e.selectionFallbackCoords = () => ({ left: 100, top: 10, bottom: 30 });
+    e.genericCaretChar = () => "b";
+    e.measureCharWidth = () => 9;
+    return T.EngineProto.genericCaretCoords.call(e);
+  };
+  const line = measureAt({ cursorStyle: "Line", caretWidthPx: 6 });
+  ok("a 6px Line: from 3px left of the gap to 3px right of it", !!line && line.x === 97 && line.w === 6, line && [line.x, line.w]);
+  const thin = measureAt({ cursorStyle: "Line", caretWidthPx: 1.5 });
+  ok("...a thin one the same way, by half its own thickness", !!thin && Math.abs(thin.x - 99.25) < 1e-9, thin && thin.x);
+  const box = measureAt({ cursorStyle: "Box" });
+  ok("a Box still starts at the gap, a letter wide", !!box && box.x === 100 && box.w === 9, box && [box.x, box.w]);
+  const src = require("fs").readFileSync(srcPath("measure.ts"), "utf8");
+  ok("...and every caret measure takes the half off (the note editor's, the extra cursors', the interface's)", (src.match(/x: c\.left - lineShift/g) || []).length === 2 && /x: c\.x - \(line \? w \/ 2 : 0\)/.test(src));
+}

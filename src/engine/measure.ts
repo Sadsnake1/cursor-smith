@@ -275,8 +275,15 @@ export const measureMethods = {
       } = sc;
 
       let finalWidth = charWidth;
+      // A Line sits centered on the gap between the letters, as Obsidian's
+      // own caret does (CodeMirror draws it back by half its width) - not
+      // from the gap rightward, where a thick one ate into the next letter
+      // (issue #48). Everything that follows the caret's x (the smear, the
+      // serifs, the ghosts, the fire) follows it there.
+      let lineShift = 0;
       if (this.styleFor("cursorStyle") === "Line") {
         finalWidth = this.caretThickness();
+        lineShift = finalWidth / 2;
       }
 
       // Height: match the browser's native selection highlight box by
@@ -298,7 +305,7 @@ export const measureMethods = {
       const bottom = centerY + (h / 2);
 
       return {
-        x: c.left,
+        x: c.left - lineShift,
         top: top,
         bottom: bottom,
         h: h,
@@ -449,9 +456,11 @@ export const measureMethods = {
     if (lh && lh.endsWith("px")) h = parseFloat(lh);
     else if (lh && !isNaN(parseFloat(lh)) && lh !== "normal") h = st.fontSize * parseFloat(lh);
     const centerY = (c.top + c.bottom) / 2;
-    const w = this.styleFor("cursorStyle") === "Line" ? this.caretThickness() : st.charWidth;
+    const line = this.styleFor("cursorStyle") === "Line";
+    const w = line ? this.caretThickness() : st.charWidth;
+    // A Line centered on the gap (issue #48; see caretCoords).
     return {
-      x: c.x, top: centerY - h / 2, bottom: centerY + h / 2, h, w,
+      x: c.x - (line ? w / 2 : 0), top: centerY - h / 2, bottom: centerY + h / 2, h, w,
       actualCharWidth: st.charWidth,
       rowLeft: null, rowRight: null,
       char: st.char, textColor: st.textColor,
@@ -734,12 +743,15 @@ export const measureMethods = {
       const height = Math.max(4, (c.bottom - c.top) || fontSize * 1.2);
 
       let finalWidth = charWidth;
+      // A Line centered on the gap (issue #48; see caretCoords).
+      let lineShift = 0;
       if (this.styleFor("cursorStyle") === "Line") {
         finalWidth = this.caretThickness();
+        lineShift = finalWidth / 2;
       }
 
       return {
-        x: c.left,
+        x: c.left - lineShift,
         top: c.top,
         bottom: c.top + height,
         h: height,

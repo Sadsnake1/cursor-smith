@@ -54,7 +54,7 @@ import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
-import { BACKMAN_CHOMP_MS, BACKMAN_HOLD_MS, BACKMAN_LEAN, backManCells } from "../effects/effects-backman";
+import { BACKMAN_CHOMP_MS, BACKMAN_HOLD_MS, BACKMAN_LEAN, backManShape } from "../effects/effects-backman";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -545,10 +545,8 @@ interface Demo {
   geo: Geometry | null;
   keyHeavy: boolean;
   breath: number;
-  // Back-man (effects-backman.ts): when its spell of bites began, its eye,
-  // and whether the caret wears it now (to put the box back once).
-  bmStart: number;
-  bmEye: HTMLElement | null;
+  // Back-man (effects-backman.ts): whether the caret wears it now (to put
+  // the box back once).
   bmOn: boolean;
   burns: { x: number; t: number }[];
   fireAcc: number;
@@ -658,7 +656,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmStart: -1e9, bmEye: null, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -902,8 +900,6 @@ export class DemoStrip {
   // The preview, a typo backspaced: the letter evaporates or bursts apart,
   // as Backspace's effects do; the typewriter dips for the key.
   private onBack(d: Demo, at: number, ch: string, now: number) {
-    // Back-man's chomp runs on from the first bite of a spell.
-    if (d.keyKind !== "back" || now - d.keyT >= BACKMAN_HOLD_MS) d.bmStart = now;
     d.keyT = now;
     d.keyKind = "back";
     d.keyHeavy = false;
@@ -1191,35 +1187,32 @@ export class DemoStrip {
       styles.height = `${(d.style === "line" ? g.lineH : d.style === "underline" ? g.ulH : g.h).toFixed(2)}px`;
       styles.top = `${(d.style === "line" ? g.lineTop : d.style === "underline" ? g.top + g.h - g.ulH : g.top).toFixed(2)}px`;
     }
-    // Back-man, as the engine draws it (drawBackMan): the box masked to the
-    // creature's pixels - its mouth chomping toward the bite, Backspace's
-    // left - an eye, leaning into the bite about its bottom edge.
+    // Back-man, as the engine draws it (drawBackMan): one bite per letter,
+    // the mouth toward it (Backspace's: left), leaning into the bite about
+    // its bottom edge. Filled, the box cut to the creature's outline with
+    // its eye a hole (even-odd: the background shows); hollow, its outline
+    // drawn instead of the box's border, no eye.
     const bmSince = this.last - d.keyT;
     const bm = !!(look.popEffects && look.backMan && d.style === "box" && d.keyKind === "back" && bmSince >= 0 && bmSince < BACKMAN_HOLD_MS && d.geo);
     if (bm && d.geo) {
-      const w = base, h = d.geo.h;
-      const cols = Math.max(3, Math.min(6, Math.round(w / 2.2)));
-      const rows = Math.max(5, Math.min(14, Math.round(h / (w / cols))));
-      const open = Math.round(Math.abs(Math.sin((Math.PI * (this.last - d.bmStart)) / BACKMAN_CHOMP_MS)) * 4) / 4;
-      const { body, eye } = backManCells(cols, rows, open, -1);
-      const path = [...body, eye].map(([c, r]) => `M${c} ${r}h1v1h-1z`).join("");
-      const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${cols} ${rows}' preserveAspectRatio='none' shape-rendering='crispEdges'><path fill='white' d='${path}'/></svg>`;
-      const mask = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+      const open = bmSince < BACKMAN_CHOMP_MS ? Math.sin((Math.PI * bmSince) / BACKMAN_CHOMP_MS) : 0;
+      const { body, eye } = backManShape(open, -1);
       const lean = Math.pow(1 - bmSince / BACKMAN_HOLD_MS, 2);
-      Object.assign(styles, {
-        maskImage: mask, webkitMaskImage: mask, maskSize: "100% 100%", webkitMaskSize: "100% 100%", maskRepeat: "no-repeat", webkitMaskRepeat: "no-repeat",
-        transformOrigin: "50% 100%",
-        transform: `${styles.transform} skewX(${Math.atan(BACKMAN_LEAN * lean).toFixed(3)}rad)`,
-      });
-      if (!d.bmEye) d.bmEye = d.caret.createSpan({ cls: "cursor-smith-backman-eye", attr: { "aria-hidden": "true" } });
-      d.bmEye.setCssStyles({
-        display: "block", left: `${((eye[0] * w) / cols).toFixed(2)}px`, top: `${((eye[1] * h) / rows).toFixed(2)}px`,
-        width: `${(w / cols).toFixed(2)}px`, height: `${(h / rows).toFixed(2)}px`, backgroundColor: readableGlyphColor(d.shape.fill, "contrast"),
-      });
+      const pct = ([x, y]: [number, number]) => (x * 100).toFixed(1) + "% " + (y * 100).toFixed(1) + "%";
+      Object.assign(styles, { transformOrigin: "50% 100%", transform: styles.transform + " skewX(" + Math.atan(BACKMAN_LEAN * lean).toFixed(3) + "rad)" });
+      if (d.shape.hollowWidth) {
+        const pts = body.map(([x, y]) => (x * 100).toFixed(1) + "," + (y * 100).toFixed(1)).join(" ");
+        const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><polygon points='" + pts +
+          "' fill='none' stroke='" + d.shape.fill + "' stroke-width='" + d.geo.outline.toFixed(2) + "' vector-effect='non-scaling-stroke'/></svg>";
+        Object.assign(styles, { borderColor: "transparent", borderImage: "none", backgroundImage: 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")', backgroundSize: "100% 100%" });
+      } else {
+        const hole: [number, number][] = [[eye.x, eye.y], [eye.x + eye.w, eye.y], [eye.x + eye.w, eye.y + eye.h], [eye.x, eye.y + eye.h], [eye.x, eye.y]];
+        styles.clipPath = "polygon(evenodd, " + [...body, body[0], ...hole, body[0]].map(pct).join(", ") + ")";
+      }
       d.bmOn = true;
     } else if (d.bmOn) {
-      Object.assign(styles, { maskImage: "", webkitMaskImage: "", transformOrigin: "" });
-      if (d.bmEye) d.bmEye.setCssStyles({ display: "none" });
+      Object.assign(styles, { clipPath: "", transformOrigin: "" });
+      if (d.shape.hollowWidth) Object.assign(styles, { borderColor: d.shape.fill, borderImage: d.shape.gradient ? d.shape.gradient + " 1" : "", backgroundImage: "", backgroundSize: "" });
       d.bmOn = false;
     }
     d.caret.setCssStyles(styles);

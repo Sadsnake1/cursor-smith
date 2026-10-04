@@ -1094,11 +1094,3 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   width: 16px;
   height: 16px;
 }
-
-/* Back-man's eye in the previews (demo.ts): a pixel on the caret, placed
-   and colored inline. */
-.cursor-smith-backman-eye {
-  position: absolute;
-  display: none;
-  pointer-events: none;
-}

@@ -512,10 +512,11 @@ export const paintShapeMethods = {
       } else {
       const paintStyle = this._bodyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity);
       // Back-man (effects-backman.ts): while Backspace or Delete eats, the
-      // box is the creature - filled, hollow or not.
+      // box is the creature - filled with its eye cut out, or as a hollow
+      // Box its outline.
       const bm = this.backManPose(now);
       if (bm) {
-        this.drawBackMan(ctx, active.x, active.top, renderW, active.h, paintStyle, color, bm);
+        this.drawBackMan(ctx, active.x, active.top, renderW, active.h, paintStyle, bm, hollow ? strokeW : 0);
       } else if (hollow) {
         // Stroke exactly the path the solid style fills, so the outline
         // deforms with a smear and rounds with Rounded Corners rather than

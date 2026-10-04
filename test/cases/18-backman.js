@@ -7,20 +7,16 @@ const { T, ok, section, makeEngine, renderPanel } = require("../lib");
 
 section("Back-man: the creature");
 {
-  const grid = (cells, eye, C, R) => {
-    const g = Array.from({ length: R }, () => Array(C).fill("."));
-    for (const [c, r] of cells) g[r][c] = "#";
-    g[eye[1]][eye[0]] = "o";
-    return g.map((row) => row.join(""));
-  };
-  const C = 4, R = 10;
-  const open = T.backManCells(C, R, 1, 1), shut = T.backManCells(C, R, 0, 1), left = T.backManCells(C, R, 1, -1);
-  const og = grid(open.body, open.eye, C, R), sg = grid(shut.body, shut.eye, C, R), lg = grid(left.body, left.eye, C, R);
-  ok("open, facing right: a wedge cut from the right side, deepest in the middle", og.some((row) => row.endsWith("..")) && og.every((row) => row[0] !== "." || [0, R - 1].includes(og.indexOf(row))), og);
-  ok("...shut: a one-pixel mouth, the rest whole", sg.filter((row) => /\.$/.test(row)).length === 3 && sg.filter((row, r) => r > 0 && r < R - 1 && row.endsWith(".")).length === 1, sg);
-  ok("...the corners off (a rounded block), no tail", og[0][0] === "." && og[0][C - 1] === "." && og[R - 1][0] === "." && og[R - 1][C - 1] === ".");
-  ok("an eye up near the front, in the head", open.eye[0] === C - 2 && open.eye[1] < R / 2 && og[open.eye[1]][open.eye[0]] === "o");
-  ok("facing left (Backspace): the same creature mirrored, the mouth and the eye on the left", lg.every((row, r) => row === og[r].split("").reverse().join("")) && left.eye[0] === 1, lg);
+  // Smooth, not pixels: an outline in a unit box, and an eye.
+  const open = T.backManShape(1, 1), shut = T.backManShape(0, 1), left = T.backManShape(1, -1);
+  // The mouth's corner: the right side's point furthest in, between the jaws.
+  const deepest = (shape) => Math.min(...shape.body.filter(([x, y]) => x > 0.05 && y > 0.3 && y < 0.85).map(([x]) => x));
+  ok("open, facing right: a V bitten into the right side, well into the box", deepest(open) < 0.5 && deepest(open) > 0.3, deepest(open));
+  ok("...shut: the jaws meet, nothing bitten out", deepest(shut) === 1, shut.body);
+  ok("...its corners cut, no tail (nothing outside the box)", open.body.every(([x, y]) => x >= 0 && x <= 1 && y >= 0 && y <= 1) && !open.body.some(([x, y]) => (x === 0 && y === 0) || (x === 1 && y === 1)));
+  ok("a big eye up near the front: four tenths of the box wide, above the mouth", open.eye.w >= 0.4 && open.eye.x + open.eye.w > 0.8 && open.eye.y + open.eye.h < 0.45, open.eye);
+  ok("facing left (Backspace): the same creature mirrored, the mouth and the eye on the left",
+     left.body.every(([x, y], i) => Math.abs(x - (1 - open.body[i][0])) < 1e-9 && y === open.body[i][1]) && left.eye.x < 0.2 && Math.abs(left.eye.x + left.eye.w - (1 - open.eye.x)) < 1e-9);
 }
 
 section("Back-man: the bites");
@@ -37,10 +33,12 @@ section("Back-man: the bites");
     ok("Backspace: it faces left, leaning in fully, its mouth starting shut", !!p && p.dir === -1 && p.lean === 1 && p.open < 0.01, p);
     now += T.BACKMAN_CHOMP_MS / 2;
     p = e.backManPose(now);
-    ok("...half a chomp on: wide open", p.open > 0.99, p.open);
-    now += 100; e._backManBite(-1);
+    ok("...half a bite on: wide open", p.open > 0.99, p.open);
+    now += T.BACKMAN_CHOMP_MS / 2 + 10;
+    ok("...one bite per letter: shut again after it, still there", e.backManPose(now).open === 0);
+    e._backManBite(-1);
     now += T.BACKMAN_CHOMP_MS / 2;
-    ok("a held Backspace keeps one spell: the chomp runs on from its first bite", Math.abs(e.backManPose(now).open - Math.abs(Math.sin(Math.PI * (now - 1000) / T.BACKMAN_CHOMP_MS))) < 1e-9);
+    ok("the next letter: a bite of its own, from its key", e.backManPose(now).open > 0.99);
     now += T.BACKMAN_HOLD_MS + 1;
     ok("...and it is a Box again a moment after the last bite", e.backManPose(now) === null && !e.backManMoving(now));
     e._backManBite(1);
@@ -72,4 +70,22 @@ section("Back-man: the setting");
   ok("...and not on a Box", !row.settingEl.classes.includes("cursor-smith-needs"));
   const rolls = Array.from({ length: 300 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50, sounds: false }, T.seededRandom(500 + k)));
   ok("the Randomizer rolls it sometimes, on a Box only", rolls.some((l) => l.backMan) && rolls.every((l) => !l.backMan || l.cursorStyle === "Box"));
+}
+
+section("Back-man: drawn");
+{
+  // A canvas that records what is drawn.
+  const calls = [];
+  const ctx = new Proxy({}, {
+    get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }),
+    set: (o, k, v) => { o[k] = v; calls.push(["set " + String(k), v]); return true; },
+  });
+  const pose = { open: 1, dir: -1, lean: 1 };
+  T.EngineProto.drawBackMan.call({}, ctx, 100, 10, 9, 24, "#ff8800", pose);
+  const erase = calls.findIndex((c) => c[0] === "set globalCompositeOperation" && c[1] === "destination-out");
+  ok("filled: the creature, then its eye cut out of it - the background shows, whatever it is", calls.some((c) => c[0] === "fill") && erase > 0 && calls.slice(erase).some((c) => c[0] === "fillRect"));
+  ok("...the glow kept out of the cut", calls.some((c) => c[0] === "set shadowBlur" && c[1] === 0));
+  calls.length = 0;
+  T.EngineProto.drawBackMan.call({}, ctx, 100, 10, 9, 24, "#ff8800", pose, 2);
+  ok("hollow: its outline, at the outline's width, and no eye", calls.some((c) => c[0] === "stroke") && calls.some((c) => c[0] === "set lineWidth" && c[1] === 2) && !calls.some((c) => c[0] === "fill" || c[0] === "fillRect"));
 }

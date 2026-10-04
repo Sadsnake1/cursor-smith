@@ -51,7 +51,8 @@
 // no teardown). No loop at all under reduced motion, or where there is
 // no requestAnimationFrame (the tests).
 import type { Look } from "../types";
-import { blinkAlphaAt, smoothCatchRate } from "../util/motion";
+import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
+import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
@@ -89,6 +90,30 @@ export function shapeOf(look: Partial<Look>, color: string, stops: string[], px:
     serifs: style === "line" && !!look.lineSerifs,
     alphaScale: (look.cursorOpacity ?? 1) * (look.cursorTranslucent ? TRANSLUCENT_ALPHA : 1),
   };
+}
+
+// The caret as the engine draws it (measure.ts: lineSpan, caretThickness,
+// underlineThickness; paint-shape.ts: the outline), at the preview's size:
+// its letters are 12px where the editor's are 16, so every px setting is
+// taken at three quarters, and its line box is the editor's 1.5 line height
+// (18px) inside the demo's 22px cell. A Box is the whole line box, a letter
+// wide; a Line its thickness to the tenth of a pixel, Cursor height of the
+// line, centered; an Underline its thickness (or 15% of the line) at the
+// line's foot; a hollow Box its outline's width.
+export interface Geometry { top: number; h: number; lineW: number; lineTop: number; lineH: number; ulH: number; outline: number }
+export const PREVIEW_SCALE = 0.75;
+export const PREVIEW_LINE = 18;
+export const PREVIEW_TOP = 2;
+export function geometryOf(look: Partial<Look>): Geometry {
+  const k = PREVIEW_SCALE, LH = PREVIEW_LINE, TOP = PREVIEW_TOP;
+  const w = Number(look.caretWidthPx);
+  const lineW = (Number.isFinite(w) && w > 0 ? Math.max(0.5, Math.min(7, w)) : 2) * k;
+  const pct = Math.max(20, Math.min(100, Number(look.caretHeightPct ?? 100) || 100)) / 100;
+  const lineH = LH * pct;
+  const u = look.underlineWidthPx || 0;
+  const ulH = u > 0 ? Math.max(0.5, Math.min(u, 7)) * k : Math.max(2, Math.round((LH / k) * 0.15)) * k;
+  const outline = Math.max(0.5, Math.min(6, look.boxHollowWidth || 2)) * k;
+  return { top: TOP, h: LH, lineW, lineTop: TOP + (LH - lineH) / 2, lineH, ulH, outline };
 }
 
 // Milliseconds: one "keystroke", the pause at the end of the word, the
@@ -131,10 +156,14 @@ export interface DemoState {
   queue: ScriptAction[];
   wait: number;
   events: ScriptEvent[];
+  // The preview's glide, as the engine's (carets.ts): a spring's velocity
+  // (Smooth, Springy), a Linear run (from, to, how far along).
+  gv: number;
+  run: { from: number; to: number; u: number } | null;
 }
 
 export function initialState(now: number): DemoState {
-  return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [], buffer: "", queue: [], wait: 0, events: [] };
+  return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [], buffer: "", queue: [], wait: 0, events: [], gv: 0, run: null };
 }
 
 // The preview's lines: one at random for each roll, never the last
@@ -179,6 +208,7 @@ export const SCRIPT_LINES = [
   "Get me outta hereeee",
   "Your cursor is in another castle",
   "Is Word-Smith my brother?",
+  "Am I a Cursor or Caret?",
 ];
 export const SCRIPT_MAX = 44;
 
@@ -319,14 +349,54 @@ export function stepScript(s: DemoState, look: Partial<Look>, dt: number, now: n
     s.phaseMs = 0;
     s.wait += a.ms;
   }
-  return settle(s, look, dt, now);
+  return settle(s, look, dt, now, glide(s, look, dt));
+}
+
+// Smooth movement, the engine's way (carets.ts, the glide): Glide speed on
+// its exponential scale (smoothCatchRate), raised to the typing rate
+// (smoothTypingRate) while typing keeps up; then Glide style - Ease out
+// chases, Smooth and Springy ride a spring (critically damped, or at 0.55
+// for the overshoot), Linear runs straight at one speed and stops dead;
+// typing that keeps up always chases (a letter should not bounce). In
+// letters, not px; the arrival test likewise. Answers whether it moved the
+// leading edge (Smooth movement on).
+export function glide(s: DemoState, look: Partial<Look>, dt: number): boolean {
+  if (!look.smoothEnabled) return false;
+  const dtS = Math.min(0.1, dt / 1000);
+  const typing = !!look.smoothAdaptive && s.phase === "type";
+  let rate = Math.max(0.5, smoothCatchRate(look.catchUpSpeed ?? 0.55));
+  if (typing) rate = Math.max(rate, smoothTypingRate(look.maxCatchUpSpeed ?? 0.85));
+  const style = look.smoothStyle ?? "ease";
+  if (style !== "linear" || typing) s.run = null;
+  if (style === "linear" && !typing) {
+    s.gv = 0;
+    if (!s.run || s.run.to !== s.target) s.run = { from: s.lead, to: s.target, u: 0 };
+    s.run.u = Math.min(1, s.run.u + (dtS * rate) / GLIDE_LINEAR_SPAN);
+    s.lead = s.run.from + (s.run.to - s.run.from) * s.run.u;
+  } else if ((style === "smooth" || style === "springy") && !typing) {
+    const w = GLIDE_SPRING_FREQ * rate;
+    const zeta = style === "springy" ? GLIDE_SPRINGY_DAMPING : 1;
+    const steps = Math.max(1, Math.min(16, Math.ceil(dtS * 240)));
+    const h = dtS / steps;
+    for (let i = 0; i < steps; i++) {
+      s.gv += (w * w * (s.target - s.lead) - 2 * zeta * w * s.gv) * h;
+      s.lead += s.gv * h;
+    }
+  } else {
+    s.gv = 0;
+    s.lead += (s.target - s.lead) * (1 - Math.exp(-rate * dtS));
+  }
+  if (Math.abs(s.target - s.lead) < 0.03 && Math.abs(s.gv) < 0.8) { s.lead = s.target; s.gv = 0; }
+  return true;
 }
 
 // The springs, the heat and the ghosts' fading, after the timeline moved.
-function settle(s: DemoState, look: Partial<Look>, dt: number, now: number): DemoState {
+function settle(s: DemoState, look: Partial<Look>, dt: number, now: number, glided = false): DemoState {
   const dtS = Math.min(0.1, dt / 1000);
-  // The leading edge: the engine's glide, or a snap.
-  if (look.smoothEnabled) {
+  // The leading edge: the engine's glide (the preview's: glide()), or a snap.
+  if (glided) {
+    // Moved already.
+  } else if (look.smoothEnabled) {
     const rate = Math.max(0.5, smoothCatchRate(look.catchUpSpeed ?? 0.55));
     s.lead += (s.target - s.lead) * (1 - Math.exp(-rate * dtS));
   } else if (look.smear) {
@@ -367,6 +437,24 @@ export function blinkAlpha(s: DemoState, look: Partial<Look>, now: number): numb
   if (!look.blinkingEnabled) return 1;
   if (look.smoothStopBlinking && now - s.lastKeyMs < (look.blinkDelayMs ?? 0) + TYPE_MS * 1.5) return 1;
   return blinkAlphaAt(now, look.blinkSpeed ?? 1, look.blinkOnOffBalance ?? 0.5, look.blinkFade ?? 0.15);
+}
+
+// The preview's blink, the engine's clock (paint-blink.ts): held lit after
+// a move for Don't blink while typing's hold (the Blink delay, at least
+// 450 ms) - none with it off - then a cycle that starts fully on, and solid
+// again after Stop after cycles. With Breathing the caret keeps its
+// opacity and breathes in size instead (`breath`, 0 .. 1).
+export function blinkReal(s: DemoState, look: Partial<Look>, now: number): { alpha: number; breath: number } {
+  if (!look.blinkingEnabled) return { alpha: 1, breath: 0 };
+  const speed = Math.max(0, look.blinkSpeed ?? 1);
+  if (!(speed > 0)) return { alpha: 1, breath: 0 };
+  const hold = look.smoothStopBlinking ? Math.max(450, look.blinkDelayMs ?? 0) : 0;
+  const elapsed = now - s.lastKeyMs - hold;
+  if (!(elapsed > 0)) return { alpha: 1, breath: 0 };
+  const stop = Math.max(0, look.blinkStopAfter ?? 0);
+  if (stop > 0 && elapsed >= stop * blinkSegments(speed).period) return { alpha: 1, breath: 0 };
+  const a = blinkAlphaAt(elapsed, speed, look.blinkOnOffBalance ?? 0.5, look.blinkFade ?? 0.15);
+  return look.blinkBreathing ? { alpha: 1, breath: 1 - a } : { alpha: a, breath: 0 };
 }
 
 // The caret's color at this heat: the preset's own color when cold,
@@ -456,6 +544,12 @@ interface Demo {
   // carried over between frames; the last key's kind (the carriage
   // advance is a typed letter's, not Backspace's).
   chars: { el: HTMLElement; ch: string; t: number; wet: boolean }[];
+  // The caret as the engine measures it, at the preview's size (geometryOf);
+  // whether the last key was a capital (Typewriter's deeper stroke); the
+  // blink's breath (Breathing).
+  geo: Geometry | null;
+  keyHeavy: boolean;
+  breath: number;
   burns: { x: number; t: number }[];
   fireAcc: number;
   keyKind: "type" | "back";
@@ -534,6 +628,19 @@ export class DemoStrip {
     }
     const caret = demo.createSpan({ cls: `cursor-smith-pcard-caret cursor-smith-pcard-caret-${style}` + (shape.serifs ? " is-serif" : ""), attr: { "aria-hidden": "true" } });
     dress(caret, String(shape.alphaScale));
+    // The preview: the caret the engine measures, not the cards' rounded
+    // little one.
+    if (script) {
+      const g = geometryOf(look);
+      const real = (el: HTMLElement) => {
+        if (style === "line") el.setCssStyles({ top: `${g.lineTop}px`, height: `${g.lineH}px`, width: `${g.lineW}px` });
+        else if (style === "underline") el.setCssStyles({ top: `${g.top + g.h - g.ulH}px`, height: `${g.ulH}px` });
+        else el.setCssStyles({ top: `${g.top}px`, height: `${g.h}px` });
+        if (shape.hollowWidth) el.setCssStyles({ borderWidth: `${g.outline}px` });
+      };
+      real(caret);
+      for (const gh of ghosts) real(gh);
+    }
     if (look.crtEffect && look.glow) caret.setCssStyles({ boxShadow: `0 0 6px ${shape.fill}` });
     // A Box shows the letter it sits on, as "letter inside" does: the name
     // again inside the caret, clipped to it, in the color mode's color
@@ -544,12 +651,14 @@ export class DemoStrip {
     let innerWritten: HTMLElement | null = null, innerRest: HTMLElement | null = null;
     if (style === "box" && look.showChar !== false && !shape.hollowWidth && !look.cursorTranslucent) {
       inner = caret.createSpan({ cls: "cursor-smith-pcard-caret-text", text: script ? "" : name });
+      // Over the real letters: the caret's top is the line box's, not 5px.
+      if (script) inner.setCssStyles({ top: `-${PREVIEW_TOP}px` });
       inner.setCssStyles({ color: readableGlyphColor(shape.fill, look.glyphColorMode ?? "contrast") });
       if (script) { innerWritten = inner.createSpan({ text: "" }); innerRest = inner.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }); }
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: script ? geometryOf(look) : null, keyHeavy: false, breath: 0, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -627,7 +736,11 @@ export class DemoStrip {
       }
       this.moveParticles(d, dt, now);
       const heat = d.look.speedDemon && !d.look.speedDemonNoCursorHeat ? d.state.heat : 0;
-      this.paint(d, blinkAlpha(d.state, d.look, now), 1 - heat);
+      if (d.script) {
+        const b = blinkReal(d.state, d.look, now);
+        d.breath = b.breath;
+        this.paint(d, b.alpha, 1 - heat);
+      } else this.paint(d, blinkAlpha(d.state, d.look, now), 1 - heat);
     }
     this.raf = 0;
     if (!this.win) return;
@@ -767,6 +880,7 @@ export class DemoStrip {
     const x = i * d.stepPx;
     d.keyT = now;
     d.keyKind = "type";
+    d.keyHeavy = ch !== ch.toLowerCase() && ch === ch.toUpperCase();
     if (look.hotHead) d.burns.push({ x: i, t: now });
     // Popping letters: thrown up and spinning, falling back (0.45 s), or
     // risen straight up and faded (0.65 s).
@@ -787,6 +901,7 @@ export class DemoStrip {
   private onBack(d: Demo, at: number, ch: string, now: number) {
     d.keyT = now;
     d.keyKind = "back";
+    d.keyHeavy = false;
     if (d.look.hotHead) d.burns.push({ x: at, t: now });
     this.deleted(d, [{ ch, at }], now);
   }
@@ -1007,7 +1122,9 @@ export class DemoStrip {
     const to = Math.max(s.lead, s.trail) * px;
     // A stretch of at most two letters, so the caret stays inside the cell.
     const stretch = Math.min(to - from, px * 2);
-    const base = d.style === "line" ? d.shape.thick : Math.max(1, px - 1);
+    // The preview's caret is a letter wide (a Box, an Underline) or its
+    // Line thickness, as the engine's; the cards' a hair under a letter.
+    const base = d.style === "line" ? (d.geo ? d.geo.lineW : d.shape.thick) : d.geo ? px : Math.max(1, px - 1);
     const width = base + stretch;
     // Heat warms a flat fill; a gradient keeps its colors (as the engine's
     // custom ramp flattens a gradient, the demo leaves it be).
@@ -1017,17 +1134,42 @@ export class DemoStrip {
     // element; the unwritten half only ever held the first line, to measure
     // the letters by.
     if (d.script) this.paintText(d, s.buffer, this.last);
-    // The typewriter's dip: down and back over the strike's length, after
-    // each letter written.
-    let dip = 0, advance = 0;
-    if (d.script && d.look.typewriter && d.look.typewriterSpring) {
-      const k = (this.last - d.keyT) / Math.max(60, d.look.typewriterStrikeMs ?? 240);
-      if (k >= 0 && k < 1) dip = Math.sin(Math.PI * k) * ((d.look.typewriterDepth ?? 18) / 100) * 12;
+    // Typewriter's pose, the engine's (measure.ts, typewriterPose): Springy
+    // strike dips on a damped spring that rises past rest (Bounce) and
+    // settles, squashed at the bottom and stretched on the rebound, a
+    // capital's deeper and slower; Carriage advance carries it past its spot
+    // and back. Squash is about the caret's bottom edge.
+    let dip = 0, advance = 0, sy = 1;
+    const look = d.look;
+    if (d.script && look.typewriter) {
+      const dt = this.last - d.keyT;
+      const clamp = (v: number | undefined, lo: number, hi: number, dflt: number) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : dflt));
+      if (look.typewriterSpring) {
+        const ms = clamp(look.typewriterStrikeMs, 80, 1000, 240) * (d.keyHeavy ? TW_CAPITAL_TIME : 1);
+        if (dt >= 0 && dt < ms) {
+          const u = dt / ms;
+          let sh;
+          if (u < TW_SPRING_DOWN) sh = 1 - Math.pow(1 - u / TW_SPRING_DOWN, 2);
+          else {
+            const v = (u - TW_SPRING_DOWN) / (1 - TW_SPRING_DOWN);
+            sh = Math.cos(v * Math.PI * 1.5) * Math.pow(1 - v, 1.2);
+            if (sh < 0) sh *= clamp(look.typewriterBounce, 0, 3, 1);
+          }
+          dip = sh * (clamp(look.typewriterDepth, 0, 60, 18) / 100) * PREVIEW_LINE * (d.keyHeavy ? TW_CAPITAL_DEPTH : 1);
+          const squash = clamp(look.typewriterSquash, 0, 60, 14) / 100;
+          sy = sh > 0 ? 1 - squash * sh : 1 + squash * 1.8 * -sh;
+        }
+      }
+      if (look.typewriterAdvance && d.keyKind === "type") {
+        const ms = clamp(look.typewriterAdvanceMs, 40, 1000, 150);
+        if (dt >= 0 && dt < ms) {
+          const u = dt / ms;
+          advance = (Math.sin(Math.PI * u) * (1 - u) / 0.5796) * clamp(look.typewriterAdvanceCw, 0, 3, 0.25) * px;
+        }
+      }
     }
-    if (d.script && d.look.typewriter && d.look.typewriterAdvance && d.keyKind === "type") {
-      const k = (this.last - d.keyT) / Math.max(40, d.look.typewriterAdvanceMs ?? 150);
-      if (k >= 0 && k < 1) advance = Math.sin(Math.PI * k) * (d.look.typewriterAdvanceCw ?? 0.25) * px;
-    }
+    // Breathing: the blink as a change of size, about the middle.
+    if (d.breath > 0) sy *= 1 - (look.blinkBreathDepth ?? 0.2) * d.breath;
     const styles: Record<string, string> = {
       transform: dip || advance ? `translate(${(from + advance).toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`,
       width: `${width.toFixed(2)}px`,
@@ -1043,6 +1185,20 @@ export class DemoStrip {
       styles.backgroundImage = `linear-gradient(180deg, ${color} 0%, #ffffff 50%, ${color} 100%)`;
       styles.backgroundSize = "100% 300%";
       styles.backgroundPosition = `0 ${t.toFixed(1)}%`;
+    }
+    // The preview's height, squashed or breathing about its bottom edge
+    // (breathing about its middle).
+    if (d.geo && sy !== 1) {
+      const g = d.geo;
+      const top = d.style === "line" ? g.lineTop : d.style === "underline" ? g.top + g.h - g.ulH : g.top;
+      const h = d.style === "line" ? g.lineH : d.style === "underline" ? g.ulH : g.h;
+      const hh = h * sy;
+      styles.height = `${hh.toFixed(2)}px`;
+      styles.top = `${(d.breath > 0 ? top + (h - hh) / 2 : top + (h - hh)).toFixed(2)}px`;
+    } else if (d.geo) {
+      const g = d.geo;
+      styles.height = `${(d.style === "line" ? g.lineH : d.style === "underline" ? g.ulH : g.h).toFixed(2)}px`;
+      styles.top = `${(d.style === "line" ? g.lineTop : d.style === "underline" ? g.top + g.h - g.ulH : g.top).toFixed(2)}px`;
     }
     d.caret.setCssStyles(styles);
     // The letter copy inside a Box stays over the real letters: it is

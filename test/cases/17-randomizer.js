@@ -281,3 +281,43 @@ section("Randomizer: the preview's script");
   ok("...lines one after another, each cleared, every key an event (typed, backspaced, cleared)",
      lines.length >= 2 && events.filter((e) => e.do === "clear").length >= 1 && events.filter((e) => e.do === "type").length > 30 && events.every((e) => ["type", "back", "clear"].includes(e.do)), [lines.length, events.length]);
 }
+
+section("Randomizer: the preview's caret, as the engine's");
+{
+  // The glide, from 0 to 10 letters, at 60 frames a second.
+  const ride = (look, typing = false, ms = 1500) => {
+    const s = T.demoInitialState(0);
+    s.target = 10; s.phase = typing ? "type" : "jump";
+    const path = [];
+    for (let t = 0; t < ms; t += 16) { T.demoGlide(s, Object.assign({ smoothEnabled: true, catchUpSpeed: 0.55 }, look), 16); path.push(s.lead); }
+    return path;
+  };
+  const ease = ride({ smoothStyle: "ease" }), smooth = ride({ smoothStyle: "smooth" }), springy = ride({ smoothStyle: "springy" }), linear = ride({ smoothStyle: "linear" });
+  ok("Glide style Ease out: quickest at the start, never past the spot, arrives", ease[1] - ease[0] > ease[6] - ease[5] && Math.max(...ease) <= 10 && ease[ease.length - 1] === 10);
+  ok("...Smooth: a soft start, no overshoot", smooth[1] < ease[1] && Math.max(...smooth) <= 10.0001 && smooth[smooth.length - 1] === 10);
+  ok("...Springy: past the spot, then settles on it", Math.max(...springy) > 10.3 && springy[springy.length - 1] === 10, Math.max(...springy));
+  // The steps before the last (the last is cut short by the stop).
+  const steps = linear.slice(1, 4).map((v, i) => v - linear[i]);
+  ok("...Linear: one speed, then a dead stop", steps.every((d) => Math.abs(d - steps[0]) < 1e-9) && linear.includes(10) && linear.slice(linear.indexOf(10)).every((v) => v === 10));
+  const typed = ride({ smoothStyle: "springy", smoothAdaptive: true, maxCatchUpSpeed: 0.85 }, true, 400);
+  ok("...typing that keeps up chases (no bounce), at the typing rate - faster", Math.max(...typed) <= 10 && typed[3] > ease[3], [typed[3], ease[3]]);
+  ok("...Smooth movement off: no glide (the caret jumps)", (() => { const s = T.demoInitialState(0); s.target = 10; return T.demoGlide(s, { smoothEnabled: false }, 16) === false && s.lead === 0; })());
+
+  const g = T.demoGeometryOf({ caretWidthPx: 2.3, caretHeightPct: 60, underlineWidthPx: 0, boxHollowWidth: 1.5 });
+  ok("the caret's size: a Line's thickness to the tenth (at the preview's three quarters), its height a share of the line, centered",
+     Math.abs(g.lineW - 2.3 * 0.75) < 1e-9 && Math.abs(g.lineH - 18 * 0.6) < 1e-9 && Math.abs(g.lineTop - (2 + (18 - 18 * 0.6) / 2)) < 1e-9 && g.h === 18 && g.top === 2, g);
+  ok("...an Underline 15% of the line by default, its own thickness when set; an outline its width",
+     Math.abs(g.ulH - 4 * 0.75) < 1e-9 && Math.abs(T.demoGeometryOf({ underlineWidthPx: 5 }).ulH - 3.75) < 1e-9 && Math.abs(g.outline - 1.125) < 1e-9);
+
+  const s = T.demoInitialState(0);
+  s.lastKeyMs = 1000;
+  const look = { blinkingEnabled: true, blinkSpeed: 1, smoothStopBlinking: true, blinkDelayMs: 0 };
+  // Blink speed 1: a 2.5 s cycle, off from about 1.25 s into it.
+  const at = (lk, t) => T.demoBlinkReal(s, Object.assign({}, look, lk), t);
+  ok("the blink: lit through the hold after a move (450 ms at least), then a cycle that starts fully on",
+     at({}, 1400).alpha === 1 && at({}, 1460).alpha === 1 && at({}, 2200).alpha === 1 && [2800, 3000, 3200].every((t) => at({}, t).alpha < 0.5));
+  ok("...no hold with Don't blink while typing off: the cycle from the move itself", [2400, 2600].every((t) => at({ smoothStopBlinking: false }, t).alpha < 0.5) && at({}, 2400).alpha > 0.5);
+  ok("...solid after Stop after cycles; Breathing keeps it lit and breathes instead",
+     at({ blinkStopAfter: 2 }, 1450 + 60000).alpha === 1 && at({ blinkStopAfter: 2 }, 3000).alpha < 0.5 &&
+     [2800, 3000, 3200].every((t) => at({ blinkBreathing: true }, t).alpha === 1 && at({ blinkBreathing: true }, t).breath > 0.5));
+}

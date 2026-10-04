@@ -169,6 +169,7 @@ export const SCRIPT_LINES = [
   "Blink twice if you need help.",
   "Loading creativity... 3%",
   "404: Words not found.",
+  "Get me outta hereeee",
 ];
 export const SCRIPT_MAX = 44;
 

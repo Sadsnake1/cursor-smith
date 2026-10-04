@@ -30,6 +30,9 @@ export class Modal {
 export class Notice {
   static messages: any[] = [];
   constructor(message: any) { Notice.messages.push(message); }
+  hide() {}
 }
+// The Randomizer asks whether it runs on a phone (no focus there: the keyboard).
+export const Platform = { isMobile: false, isDesktop: true };
 export function setSettingClass(C: any) { Setting = C; }
 export function restoreSettingClass() { Setting = RealSetting; }

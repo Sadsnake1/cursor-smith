@@ -79,6 +79,7 @@ const CANDLE_ICON = `<g transform="scale(4.1667)" fill="none" stroke="currentCol
 </g>`;
 
 import { libraryMethods } from "./settings/library";
+import type { RollUndo } from "./settings/library";
 import { vimMethods } from "./engine/vim";
 import { engineMethods } from "./engine/engine";
 import { caretsMethods } from "./engine/carets";
@@ -271,6 +272,11 @@ export default class CursorSmithPlugin extends Plugin {
   declare deleteVimPreset: LibraryMethods["deleteVimPreset"];
   declare cycleVimPreset: LibraryMethods["cycleVimPreset"];
   declare importVimPreset: LibraryMethods["importVimPreset"];
+  declare rollCursor: LibraryMethods["rollCursor"];
+  declare undoRoll: LibraryMethods["undoRoll"];
+  declare _lookReplaced: LibraryMethods["_lookReplaced"];
+  declare rollFromPalette: LibraryMethods["rollFromPalette"];
+  declare undoFromPalette: LibraryMethods["undoFromPalette"];
   // --- vim.ts
   declare isVimUiMode: VimMethods["isVimUiMode"];
   declare toggleUiMode: VimMethods["toggleUiMode"];
@@ -359,6 +365,8 @@ export default class CursorSmithPlugin extends Plugin {
   // a constructor, which is what the definite-assignment marks say.
   // The engine's state, declared from _resetEngineState by the generator.
   _activePresetName!: string;
+  // The Randomizer's undo stack (library.ts, rollCursor): this session's.
+  _rollUndo: RollUndo[] = [];
   _appliedVimMode!: string | null;
   _auroraCanvas!: HTMLCanvasElement | null;
   _auroraCtx!: CanvasRenderingContext2D | null;
@@ -856,6 +864,24 @@ export default class CursorSmithPlugin extends Plugin {
       id: "toggle",
       name: "Toggle on/off",
       callback: () => this.toggle(),
+    });
+
+    // The Randomizer (1.7.7): a whole new cursor from the palette, with its
+    // page's dials or with everything at once, and the way back.
+    this.addCommand({
+      id: "randomize",
+      name: "Randomize",
+      callback: () => { void this.rollFromPalette(false); },
+    });
+    this.addCommand({
+      id: "randomize-chaos",
+      name: "Randomize (full chaos)",
+      callback: () => { void this.rollFromPalette(true); },
+    });
+    this.addCommand({
+      id: "undo-randomize",
+      name: "Undo randomize",
+      callback: () => { void this.undoFromPalette(); },
     });
 
     this.addCommand({

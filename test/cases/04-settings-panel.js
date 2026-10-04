@@ -749,7 +749,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const lookNow = { cursorStyle: "Box", showChar: true, cursorTranslucent: true, blinkingEnabled: true, blinkSpeed: 1.0, blinkBreathing: true, smoothEnabled: false, popEffects: true, flameTrail: true, crtEffect: true, smear: false };
     const rows = renderWholePanel(Object.assign({}, lookNow, { userPresets: { One: T.pickLook(Object.assign({}, T.DEFAULT_SETTINGS, lookNow)) } }));
     const top = rows.pages;
-    ok("the pages, in order (no Presets page: the presets are in the header)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects", top.map((p) => p.name));
+    ok("the pages, in order (no Presets page: the presets are in the header; the Randomizer last)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Randomizer", top.map((p) => p.name));
     ok("...each with an icon and a line", top.every((p) => p.icon && p.desc.length > 10), top.map((p) => [p.icon, p.desc]));
     const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
     ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
@@ -1052,7 +1052,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"].map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
     const vim = renderWholePanel({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes, vimPresets: { Setup: modes }, vimActivePreset: "Setup" });
     const vtop = vim.pages;
-    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects", vtop.map((p) => p.name));
+    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Randomizer", vtop.map((p) => p.name));
     ok("...flagged while Obsidian's Vim key bindings are off", vim.pages.find((p) => p.name === "Vim").status === "warning");
     ok("...holding the Vim switches", vim.find((r) => r.name === "Control Obsidian's Vim key bindings").page === "Vim");
     ok("Vim mode adds no Presets page either", !vim.pages.some((p) => p.name === "Presets"));
@@ -1163,7 +1163,7 @@ section("settings panel: the two callers and their hooks");
     catch (e) { threw = e; }
     ok("normalDefinitions builds", !threw, threw && threw.message);
     ok("...the four look cards (the presets live in the header)",
-       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
+       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects,Randomizer", sectionsOf(rows));
 
     // Cursor style: writes to plugin.settings, restarts the engine, and
     // refreshes the panel so the new style's sub-options appear.
@@ -1252,7 +1252,7 @@ section("settings panel: the whole tree");
   ok("the version is a muted footer line under the pages, out of search",
      foot.settingEl.classes.includes("cursor-smith-footer") && foot.desc === "Cursor-Smith 0.0.0-test" && foot.def.searchable === false, foot.desc);
   ok("...then Behavior and the look cards",
-     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects", sections);
+     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Randomizer", sections);
   const names = cua.map((r) => r.name);
   ok("Enable plugin and the Vim mode toggle come first, then the strip, then General's switches in order",
      names.indexOf("Enable plugin") < names.indexOf("Vim mode") &&
@@ -1281,7 +1281,7 @@ section("settings panel: the whole tree");
   ok("the whole Vim panel renders", !vim.threw, vim.threw && vim.threw.message);
   const vimSections = [...new Set(vim.map(sectionOf))].filter((s) => s !== null);
   ok("...its cards: Behavior, Vim, then the look (the mode row is in the header)",
-     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects", vimSections);
+     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Randomizer", vimSections);
   ok("the status bar colour row hangs off the status bar toggle",
      vim.some((r) => r.name === "Color status bar text to match the cursor"));
   ok("the Vim warning is a header row that shows only while Obsidian's Vim is off",

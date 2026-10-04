@@ -345,7 +345,13 @@ export const DEFAULT_SETTINGS = {
   // everywhere is what every release so far has done. Structural (like
   // hideNativeCaret), so deliberately NOT a per-Vim-mode look key.
   noteEditorOnly: false,
-  showChar: true, 
+  // The Randomizer's dials (1.7.7, randomize.ts): how a roll is made, not a
+  // look - not in LOOK_KEYS, so never in a preset or a share code.
+  rollChaos: 35,
+  rollColor: 60,
+  rollMotion: 50,
+  rollSounds: false,
+  showChar: true,
   moveDelayMs: 0,        
   smear: true,           
   smearStiffness: 0.6,

@@ -1032,3 +1032,39 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
 .cursor-smith-keys-ctl .setting-hotkey { margin: 0; align-self: center; }
 .cursor-smith-keys-key { white-space: nowrap; }
 .cursor-smith-keys-note { margin-top: 4px; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+
+/* The Randomizer's pill (1.7.7): a text field as wide as the page, its text
+   big, for the real cursor to be tried in after a roll. Left-aligned: the
+   cursor in a field is measured from its text's start. */
+.setting-item.cursor-smith-roll-pill-row {
+  border-top: none;
+  padding-block: 6px 14px;
+}
+.setting-item.cursor-smith-roll-pill-row .setting-item-info {
+  display: none;
+}
+.setting-item.cursor-smith-roll-pill-row .setting-item-control {
+  flex: 1 1 auto;
+  width: 100%;
+}
+.setting-item.cursor-smith-roll-pill-row .cursor-smith-roll-field {
+  width: 100%;
+  height: auto;
+  padding: 0.5em 1.1em;
+  border-radius: 999px;
+  font-size: 1.7em;
+  font-family: var(--font-text);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+}
+.setting-item.cursor-smith-roll-pill-row .cursor-smith-roll-field:focus {
+  border-color: var(--interactive-accent);
+}
+.cursor-smith-roll-buttons-row .cursor-smith-roll-dice {
+  display: inline-flex;
+  margin-inline-end: 6px;
+}
+.cursor-smith-roll-buttons-row .cursor-smith-roll-dice svg {
+  width: 16px;
+  height: 16px;
+}

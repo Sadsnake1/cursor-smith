@@ -121,6 +121,15 @@ Enable the plugin, Vim mode on or off, your presets, and the mode you're editing
 | **Blinking** | If it blinks, how, and how fast |
 | **Smooth movement** | Gliding instead of jumping |
 | **Effects** | Pick an effect, see its settings. A tick marks the ones that are on |
+| **Randomizer** | Roll a whole new cursor. Then type in the big box on top to try it |
+
+## Randomizer
+
+Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. Type in the big box on top to try it, roll again, or **Undo** your way back. Like one? Save it as a preset.
+
+Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Turn on **Include sounds** and every roll picks a sound too. A horse, maybe.
+
+With Vim mode on, it rolls the mode you're editing.
 
 ## Presets
 
@@ -136,13 +145,16 @@ Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get t
 
 ## Commands
 
-Four, all in the Command Palette, all take a hotkey. The Behavior page shows the keys you've set, with a button to set them.
+Seven, all in the Command Palette, all take a hotkey. The Behavior page shows the keys you've set, with a button to set them.
 
 | Command | What it does |
 |---|---|
 | **Toggle Cursor-Smith on/off** | The whole plugin off and back on, settings untouched. |
 | **Cycle preset** | The next saved preset. Bind it to a key and flip through your cursors. |
 | **Toggle Vim mode** | One cursor, or one per Vim mode. Flips Obsidian's Vim key bindings with it when you've let it. |
+| **Randomize** | A whole new cursor, rolled with the Randomizer's sliders. A notice lets you undo it. |
+| **Randomize (full chaos)** | Everything on, everything turned up. You asked for it. |
+| **Undo randomize** | The cursor before the last roll, back. |
 | **Performance report** | Measures ten seconds of typing and copies a short report. Paste it into an issue if Obsidian feels slower with the plugin on. |
 
 ## Good to know

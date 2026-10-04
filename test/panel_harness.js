@@ -109,6 +109,8 @@ function control() {
     extraSettingsEl: makeEl("div"),
     // A dropdown's <select>: the Sound row builds its option groups in it.
     selectEl: makeEl("select"),
+    // A button's element: the Randomizer draws its dice in it.
+    buttonEl: makeEl("button"),
   };
   return c;
 }

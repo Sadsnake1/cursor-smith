@@ -1,4 +1,4 @@
-import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
+import { PluginSettingTab, Setting, App, Modal, Platform, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
 import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
@@ -85,6 +85,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // and has no chip since 2026-09-27 ("nobody goes through all that"): only
   // the panel harness sets it, to see every row at once.
   _effectsPick: string | null = null;
+  // The Randomizer's field, where its buttons put the cursor after a roll.
+  _rollField: HTMLInputElement | null = null;
   // The effects that are on in the look the pages show (set with the
   // pages), for the Effects entry's icons; and the observer that puts
   // them there.
@@ -796,7 +798,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       },
     ];
     // Under the toggles, as Word-Smith has them: the keys for the commands.
-    items.push(this.hotkeysRow(["toggle", "toggle-cua-vim-mode", "cycle-preset"]));
+    items.push(this.hotkeysRow(["toggle", "toggle-cua-vim-mode", "cycle-preset", "randomize", "randomize-chaos"]));
     return this.section("Behavior", items);
   }
 
@@ -967,7 +969,116 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       ["Smooth movement", "spline", "Gliding to the new spot instead of jumping."],
       ["Effects", "wand", "Trails, sparks, fire, lightning, a torch."],
     ];
-    return cards.map((group, i) => this.page(meta[i][0], meta[i][1], meta[i][2], [group], s[meta[i][0]]));
+    return [...cards.map((group, i) => this.page(meta[i][0], meta[i][1], meta[i][2], [group], s[meta[i][0]])), this.rollPage()];
+  }
+
+  // --- The Randomizer (1.7.7, randomize.ts) --------------------------------
+  // A page of its own: a big pill of a text field on top with the real
+  // cursor in it (the plugin draws in text fields; with Vim on, the field
+  // shows the mode being rolled - vim.ts, currentVimMode), Randomize and
+  // Undo under it with a line saying what was rolled, then the dials a roll
+  // is made from and its Sounds switch. A roll replaces the look being
+  // edited: the global one, or the Vim mode whose tab is picked.
+  rollPage(): SettingDefinitionPage {
+    const plugin = this.plugin;
+    const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow()];
+    const dial = (name: string, desc: string, key: "rollChaos" | "rollColor" | "rollMotion") => this.row(name, desc, (s) => {
+      let handle: SliderComponent | null = null;
+      s.addSlider((sl) => {
+        handle = sl;
+        sl.setLimits(0, 100, 5).setValue(plugin.settings[key]).onChange(async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); });
+      }).addExtraButton((btn) => btn
+        .setIcon("rotate-ccw")
+        .setTooltip(`Restore default (${DEFAULT_SETTINGS[key]})`)
+        .onClick(() => {
+          plugin.settings[key] = DEFAULT_SETTINGS[key];
+          if (handle) handle.setValue(DEFAULT_SETTINGS[key]);
+          void plugin.saveSettings();
+        }));
+    });
+    items.push(dial("Chaos", "How many effects, and how strong. At 100, all of them at once.", "rollChaos"));
+    items.push(dial("Color", "From one calm color to gradients and rainbows.", "rollColor"));
+    items.push(dial("Motion", "How likely gliding, smear and trails are, and how far they go.", "rollMotion"));
+    items.push(this.row("Include sounds", "A roll picks a sound too: a typewriter, a keyboard, or a horse. Off rolls a silent cursor.", (s) => {
+      s.addToggle((t) => t.setValue(!!plugin.settings.rollSounds).onChange(async (v) => { plugin.settings.rollSounds = v; await plugin.saveSettings(); }));
+    }));
+    return this.page("Randomizer", "dices", "Roll a whole new cursor, calm or full chaos.", [this.section("Randomizer", items)],
+      () => `Chaos ${plugin.settings.rollChaos}` + (plugin.settings.rollSounds ? " · sounds" : ""));
+  }
+
+  // The pill: a text field as wide as the page, its text big, the real
+  // cursor in it once it has focus - type in it to try a roll.
+  rollPillRow(): SettingDefinitionRender {
+    return {
+      name: "Try it",
+      desc: "",
+      searchable: false,
+      render: (setting) => {
+        this.resetRow(setting);
+        setting.settingEl.addClass("cursor-smith-roll-pill-row");
+        const field = setting.controlEl.createEl("input", {
+          cls: "cursor-smith-roll-field",
+          attr: { type: "text", value: "Roll the dice, then type here", "aria-label": "Try it here", spellcheck: "false" },
+        });
+        this._rollField = field;
+      },
+    };
+  }
+
+  // Randomize and Undo, and what the last roll came out as.
+  rollButtonsRow(): SettingDefinitionRender {
+    const plugin = this.plugin;
+    return {
+      name: "Roll",
+      desc: "Replaces the cursor you're editing. Save it in Presets if you like it.",
+      render: (setting) => {
+        this.resetRow(setting);
+        setting.settingEl.addClass("cursor-smith-roll-buttons-row");
+        let undoBtn: HTMLButtonElement | null = null;
+        const say = (text: string) => setting.setDesc(text);
+        const paintUndo = () => { if (undoBtn) undoBtn.disabled = !plugin._rollUndo?.length; };
+        // Into the field, at its end, so the new cursor shows where it can
+        // be tried (not on a phone: the keyboard would come up).
+        const showOff = () => {
+          const f = this._rollField;
+          if (!f || !f.isConnected || Platform.isMobile) return;
+          f.focus();
+          f.setSelectionRange(f.value.length, f.value.length);
+        };
+        setting.addButton((b) => {
+          b.setButtonText("Randomize").setCta().onClick(async () => {
+            const { look } = await plugin.rollCursor({ fromPanel: true });
+            say(this.rollSummary(look));
+            paintUndo();
+            showOff();
+          });
+          // Dice, then the word.
+          b.buttonEl.empty();
+          setIcon(b.buttonEl.createSpan({ cls: "cursor-smith-roll-dice" }), "dices");
+          b.buttonEl.createSpan({ text: "Randomize" });
+        });
+        setting.addButton((b) => {
+          undoBtn = b.buttonEl;
+          b.setButtonText("Undo").onClick(async () => {
+            if (await plugin.undoRoll()) say("The cursor before the last roll is back.");
+            paintUndo();
+            showOff();
+          });
+        });
+        paintUndo();
+      },
+    };
+  }
+
+  // What a roll came out as: its shape, its colors, its effects, its sound.
+  rollSummary(look: Partial<Look>): string {
+    const parts = [String(look.cursorStyle || "Box")];
+    parts.push(look.gradientEnabled ? `${look.gradientCount ?? 2} colors` : "one color");
+    if (look.smoothEnabled) parts.push("gliding");
+    const effects = RAIL_EFFECTS.filter((e) => e.key !== "typewriterSound" && !!look[e.key as keyof Look]).map((e) => e.name);
+    parts.push(effects.length ? effects.join(", ") : "no effects");
+    if (look.typewriterSound) parts.push("sound: " + soundMachine(look.typewriterSoundVoice).label);
+    return parts.join(" · ");
   }
 
 

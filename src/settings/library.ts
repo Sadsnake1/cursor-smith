@@ -13,11 +13,19 @@ import {
   VIM_MODE_KEYS,
   VIM_STATE_KEYS,
   cloneVimModes,
+  pickLook,
   presetWithDefaults,
   vimModeSnapshot,
 } from "./settings";
 import { codeToPreset, codeToVimPreset } from "./share";
-import type { CursorSmithSettings } from "../types";
+import { rollLook } from "./randomize";
+import type { RollOptions } from "./randomize";
+import type { CursorSmithSettings, Look } from "../types";
+
+// One roll taken back: the look it replaced, where (null: the global
+// look; else a Vim mode), and the preset that was in use.
+export interface RollUndo { mode: string | null; look: Partial<Look>; preset: string }
+const ROLL_UNDO_DEPTH = 20;
 import type CursorSmithPlugin from "../plugin";
 
 export const libraryMethods = {
@@ -64,6 +72,77 @@ export const libraryMethods = {
     if (this.settings.enabled) this.enable();
     // Track which preset is active so cyclePreset() knows where to start.
     this._activePresetName = name;
+  },
+
+  // ---- The Randomizer (1.7.7, randomize.ts) ----
+
+  // Roll a whole new cursor into the look being edited: the global one, or
+  // in the Vim panel a mode - the panel's tab when rolled from the panel,
+  // the mode the cursor is in when rolled from the palette. The look it
+  // replaces goes on this session's undo stack. full: Chaos, Color and
+  // Motion at 100. No preset is in use after it (Save keeps one you like).
+  async rollCursor(this: CursorSmithPlugin, { full = false, fromPanel = false } = {}) {
+    const s = this.settings;
+    const opts: RollOptions = full
+      ? { chaos: 100, color: 100, motion: 100, sounds: !!s.rollSounds }
+      : { chaos: s.rollChaos, color: s.rollColor, motion: s.rollMotion, sounds: !!s.rollSounds };
+    const rolled = rollLook(opts);
+    const mode = this.isVimUiMode()
+      ? (fromPanel ? this._vimEditMode : (this.lookVimMode() || this._vimEditMode)) || "normal"
+      : null;
+    const target: Partial<Look> = mode ? s.vimModes[mode] : s;
+    if (!this._rollUndo) this._rollUndo = [];
+    this._rollUndo.push({ mode, look: pickLook(target), preset: mode ? s.vimActivePreset : this._activePresetName || "" });
+    if (this._rollUndo.length > ROLL_UNDO_DEPTH) this._rollUndo.shift();
+    Object.assign(target, rolled);
+    if (mode) s.vimActivePreset = "";
+    else this._activePresetName = "";
+    await this._lookReplaced();
+    return { mode, look: rolled };
+  },
+
+  // The look before the last roll, back where it was.
+  async undoRoll(this: CursorSmithPlugin): Promise<boolean> {
+    const last = this._rollUndo?.pop();
+    if (!last) return false;
+    const target: Partial<Look> = last.mode ? this.settings.vimModes[last.mode] : this.settings;
+    Object.assign(target, last.look);
+    if (last.mode) this.settings.vimActivePreset = last.preset;
+    else this._activePresetName = last.preset;
+    await this._lookReplaced();
+    return true;
+  },
+
+  // A whole look written at once: saved, the engine restarted on it, the
+  // torch's own engine started or stopped as the new look asks.
+  async _lookReplaced(this: CursorSmithPlugin) {
+    await this.saveSettings();
+    if (!this.settings.enabled) return;
+    this.enable();
+    if (!this.torchPossible()) this.disableTorchOverlay();
+    else if (!this.torchEngineActive) this.enableTorchOverlay();
+  },
+
+  // The palette's roll: a notice with Undo in it, and the panel redrawn if
+  // it is open.
+  async rollFromPalette(this: CursorSmithPlugin, full: boolean) {
+    const { mode } = await this.rollCursor({ full });
+    this.refreshSettingTab();
+    const what = (full ? "Full chaos" : "New cursor") + (mode ? ` for ${mode[0].toUpperCase() + mode.slice(1)} mode` : "");
+    const notice = new Notice(createFragment((f) => {
+      f.appendText(`Cursor-Smith: ${what}. `);
+      const undo = f.createEl("button", { text: "Undo", attr: { type: "button" } });
+      undo.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void (async () => { await this.undoRoll(); this.refreshSettingTab(); notice.hide(); })();
+      });
+    }), 6000);
+  },
+
+  async undoFromPalette(this: CursorSmithPlugin) {
+    const undone = await this.undoRoll();
+    this.refreshSettingTab();
+    new Notice(undone ? "Cursor-Smith: the cursor before the last roll is back." : "Cursor-Smith: nothing to undo.");
   },
 
   async deleteUserPreset(this: CursorSmithPlugin, name: string) {

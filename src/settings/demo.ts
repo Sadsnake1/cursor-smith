@@ -210,6 +210,8 @@ export const SCRIPT_LINES = [
   "Your cursor is in another castle",
   "Is Word-Smith my brother?",
   "Am I a Cursor or Caret?",
+  "One Cursor to Rule Them ALL",
+  "way too maaaaaany options",
 ];
 export const SCRIPT_MAX = 44;
 

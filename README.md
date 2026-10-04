@@ -46,7 +46,7 @@ Twelve of them, from subtle to absurd. Each has its own switch and its own setti
 |---|---|
 | **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
-| **Sounds** | Real typewriters, mechanical keyboards, chalk on a blackboard or a kalimba as you type, each with its own Space, Backspace and Enter. |
+| **Sounds** | Real typewriters, mechanical keyboards, a piano, chalk on a blackboard, a horse and more as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
@@ -70,8 +70,8 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 Turn on **Sounds** in Effects and pick one. Press play to hear it before you type.
 
 - **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
-- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks. Every key sounds from where it sits on the board.
-- **Something else:** Chalk on a blackboard, and a Kalimba that turns your words into little tunes.
+- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks, IBM Buckling Spring, Topre, Gateron Ink Black. Every key sounds from where it sits on the board.
+- **Something else:** Chalk on a blackboard, a Kalimba and a Piano that turn your words into little tunes, 8-Bit, Sine Bumps, Glitch, and a Horse. Yes, a horse.
 
 Ready to annoy some people? Try it out!
 
@@ -86,13 +86,14 @@ Recordings, cut and leveled for the plugin:
 
 The Hermes 3000, L. C. Smith, Olympia, Sears Electric Twelve and Smith-Corona Corsair are public-domain recordings from Freesound.
 
-The keyboards, the chalk and the kalimba come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX and NovelKeys Cream packs were first [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. Both are MIT licensed:
+Most keyboards and the other sounds come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX and NovelKeys Cream packs were first [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. The IBM Buckling Spring, Topre and Gateron Ink Black come from Thomas Lai's [kbsim](https://github.com/tplai/kbsim). All three are MIT licensed:
 
 <details>
-<summary>MIT License (OmaVibes, Mechvibes)</summary>
+<summary>MIT License (OmaVibes, Mechvibes, kbsim)</summary>
 
 Copyright (c) 2026 Mohammed Shareef<br>
-Copyright (c) 2021 Hai Nguyen
+Copyright (c) 2021 Hai Nguyen<br>
+Copyright (c) Thomas Lai
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 

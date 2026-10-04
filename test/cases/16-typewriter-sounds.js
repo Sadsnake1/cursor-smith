@@ -17,11 +17,11 @@ section("Sounds: the machines");
   ok("ten real typewriters, the Hermes 3000 first and the default, the rest by name",
      TW.map((m) => m.label).join() === "Hermes 3000,Erika 5 (1940),IBM Selectric II,L. C. Smith (1946),Mercedes (1934),Olivetti Lettera 35,Olympia (1956),Royal Portable (1936),Sears Electric Twelve,Smith-Corona Corsair" &&
      M[0].id === "hermes3000" && T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000" && new Set(M.map((m) => m.id)).size === M.length, M.map((m) => m.label));
-  ok("then eight keyboards (issue #46's picks) and two other sounds, each of a kind, the kinds in order",
-     KB.map((m) => m.label).join() === "Akko Lavender Purple,NovelKeys Cream,Cherry MX Red,Cherry MX Brown,Cherry MX Blue,Cherry MX Black,Razer Green,Thocks" &&
-     OTHER.map((m) => m.label).join() === "Chalk,Kalimba" && TW.length + KB.length + OTHER.length === M.length &&
+  ok("then eleven keyboards (issue #46's picks, then the listening page's) and seven other sounds, each of a kind, the kinds in order",
+     KB.map((m) => m.label).join() === "Akko Lavender Purple,NovelKeys Cream,Cherry MX Red,Cherry MX Brown,Cherry MX Blue,Cherry MX Black,Razer Green,Thocks,IBM Buckling Spring,Topre,Gateron Ink Black" &&
+     OTHER.map((m) => m.label).join() === "Chalk,Kalimba,Piano,8-Bit,Sine Bumps,Glitch,Horse" && TW.length + KB.length + OTHER.length === M.length &&
      M.map((m) => m.kind).join() === [...TW, ...KB, ...OTHER].map((m) => m.kind).join(), M.map((m) => m.kind));
-  ok("...only the Kalimba plays notes (never detuned)", M.filter((m) => m.tonal).map((m) => m.id).join() === "kalimba");
+  ok("...the ones that play notes are never detuned: Kalimba, Piano, 8-Bit, Sine Bumps", M.filter((m) => m.tonal).map((m) => m.id).join() === "kalimba,piano,bit8,sinebumps");
   const common = (m) => {
     const bytes = new Uint8Array(T.soundBytes(m.mp3));
     const mp3 = (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) || String.fromCharCode(bytes[0], bytes[1], bytes[2]) === "ID3";
@@ -40,15 +40,18 @@ section("Sounds: the machines");
   for (const m of [...KB, ...OTHER]) {
     const takes = T.soundTakes(m);
     const all = T.KEYBOARD_ATOMS.every((n) => (takes[n] || []).length > 0) && !takes.capital && !takes.feed && !takes.bell;
-    const counts = takes.strike.length >= 5 && takes.strike.length <= 8 && takes.space.length === 1 && takes.back.length === 1 && takes.enter.length === 1;
+    // 8-Bit has one blip for every letter.
+    const counts = takes.strike.length >= (m.id === "bit8" ? 1 : 5) && takes.strike.length <= 8 && takes.space.length === 1 && takes.back.length === 1 && takes.enter.length === 1;
     const { bytes, mp3, inOrder } = common(m);
     ok(`${m.label}: its keys (5 to 8), its space bar, Backspace and Enter - no capitals, no return, no bell - in order`, all && counts && inOrder, Object.fromEntries(Object.entries(takes).map(([k, v]) => [k, v.length])));
-    ok(`...as one MP3 under 64 KB, its first sound inside the first take`, mp3 && bytes.length < 64 * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + m.sounds[0][2], [bytes.length, m.onset]);
-    const longest = m.tonal ? 1.3 : 0.3;
-    ok(`...every sound short: ${m.tonal ? "a note rings under 1.3 s" : "a key under 0.3 s"}`, m.sounds.every(([, , dur]) => dur < longest), m.sounds.map((x) => x[2]));
+    // Notes ring longer, so a piano is bigger.
+    const kb = m.tonal ? 96 : 64;
+    ok(`...as one MP3 under ${kb} KB, its first sound inside the first take`, mp3 && bytes.length < kb * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + m.sounds[0][2], [bytes.length, m.onset]);
+    const longest = m.tonal ? 1.3 : m.kind === "keyboard" ? 0.35 : 0.45;
+    ok(`...every sound short: ${m.tonal ? "a note rings under 1.3 s" : m.kind === "keyboard" ? "a key under 0.35 s" : "under 0.45 s"}`, m.sounds.every(([, , dur]) => dur < longest), m.sounds.map((x) => x[2]));
   }
   const total = M.reduce((n, m) => n + T.soundBytes(m.mp3).byteLength, 0);
-  ok("all twenty under 900 KB", total < 900 * 1024, Math.round(total / 1024) + " KB");
+  ok("all twenty-eight under 1.2 MB", total < 1200 * 1024, Math.round(total / 1024) + " KB");
   ok("the big recordings give 8 keys: fast typing repeats less", TW.filter((m) => T.soundTakes(m).strike.length === 8).length >= 3 && KB.filter((m) => T.soundTakes(m).strike.length === 8).length >= 6, M.map((m) => T.soundTakes(m).strike.length));
   // Credits live with each machine (no NOTICE file): who recorded it, where,
   // under which licence - the CC BY recordings require it.
@@ -59,8 +62,9 @@ section("Sounds: the machines");
   ok("every machine but the Selectric credits its recording in the source: who, where, the licence",
      credits.length === M.length - 1 && !credits.some((c) => c.id === "selectric2") &&
      credits.filter((c) => T.soundMachine(c.id).kind === "typewriter").every((c) => /freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(c.text) && /CC0|CC BY/.test(c.text)), credits);
-  ok("...the keyboards and the other sounds: OmaVibes, MIT; the Mechvibes packs Mechvibes too",
-     credits.filter((c) => T.soundMachine(c.id).kind !== "typewriter").every((c) => /OmaVibes by Mohammed Shareef \(github\.com\/mshareef-git\/omavibes\), MIT/.test(c.text)) &&
+  ok("...the keyboards and the other sounds: OmaVibes or kbsim, MIT; the Mechvibes packs Mechvibes too",
+     credits.filter((c) => T.soundMachine(c.id).kind !== "typewriter").every((c) => /OmaVibes by Mohammed Shareef \(github\.com\/mshareef-git\/omavibes\), MIT|kbsim by Thomas Lai \(github\.com\/tplai\/kbsim\), MIT/.test(c.text)) &&
+     ["buckling", "topre", "inkblack"].every((id) => /kbsim/.test(credits.find((c) => c.id === id).text)) &&
      ["nkcream", "mxred", "mxbrown", "mxblue", "mxblack"].every((id) => /github\.com\/hainguyents13\/mechvibes, MIT/.test(credits.find((c) => c.id === id).text)));
   ok("...the CC BY ones by name", credits.filter((c) => /CC BY/.test(c.text)).every((c) => /recorded by \S+/.test(c.text)) && credits.filter((c) => /CC BY/.test(c.text)).length >= 4);
   // The README credits the CC BY recordings - author, link, licence.
@@ -68,9 +72,9 @@ section("Sounds: the machines");
   ok("the README credits every CC BY recording: its author, its link, the licence",
      ["File:WWS_Typewriter.ogg", "freesound.org/s/193603/", "freesound.org/s/185522/", "freesound.org/s/99694/", "freesound.org/s/99695/"].every((u) => readme.includes(u)) &&
      ["Konrad Gutkowski", "doxent", "Leossom", "fastson", "CC BY 4.0", "CC BY 3.0"].every((w) => readme.includes(w)));
-  ok("...and OmaVibes and Mechvibes, with their MIT notices", ["github.com/mshareef-git/omavibes", "Copyright (c) 2026 Mohammed Shareef", "github.com/hainguyents13/mechvibes", "Copyright (c) 2021 Hai Nguyen"].every((w) => readme.includes(w)));
+  ok("...and OmaVibes, Mechvibes and kbsim, with their MIT notices", ["github.com/mshareef-git/omavibes", "Copyright (c) 2026 Mohammed Shareef", "github.com/hainguyents13/mechvibes", "Copyright (c) 2021 Hai Nguyen", "github.com/tplai/kbsim", "Copyright (c) Thomas Lai"].every((w) => readme.includes(w)));
   const built = fs.readFileSync(path.join(__dirname, "..", "..", "main.js"), "utf8");
-  ok("...and not in the built main.js", !/recorded by|freesound\.org|Work With Sounds|omavibes|mechvibes/i.test(built) && M.every((m) => !("credit" in m)));
+  ok("...and not in the built main.js", !/recorded by|freesound\.org|Work With Sounds|omavibes|mechvibes|kbsim/i.test(built) && M.every((m) => !("credit" in m)));
   ok("an unknown machine (an older code's) is the default one", T.soundMachine("manual").id === "hermes3000" && T.soundMachine(undefined).id === "hermes3000" && T.soundMachine("lettera35").label === "Olivetti Lettera 35" && T.soundMachine("olivetti22").id === "hermes3000");
   const pairs = "th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co me de hi ri ro ic ne ea ra ce".split(" ");
   ok("a keyboard's keys are heard where they sit: Q left, P right, Space in the middle, Enter right, Tab left",

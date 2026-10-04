@@ -63,8 +63,10 @@ export const effectsDeleteMethods = {
     if (!this._deletionFxOn()) return false;
     const letters = this.deletedLetters(old, now);
     if (letters && this._xoutOn()) this.spawnXout(letters);
-    if (this._backManOn()) {
-      if (letters) this.spawnBackManMeal(letters);
+    // Back-man eats the letters it can read (a text field's it cannot: the
+    // burst goes on there, as before it).
+    if (this._backManOn() && letters) {
+      this.spawnBackManMeal(letters);
       return true;
     }
     if (letters && this._evaporateOn()) this.spawnEvaporate(letters);

@@ -1585,9 +1585,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // or Delete - the letters rise and fade.
     effects.push(toggle("Backspace evaporation", "Letters you delete, with Backspace or Delete, rise and fade away.", "backspaceEvaporate", { depth: 1, gate: true, when: pop }));
     // Back-man (1.7.7): the Box cursor turns into a little creature
-    // that eats what Backspace and Delete take. A Box's only.
-    effects.push(toggle("Back-man", "Backspace and Delete turn the Box cursor into a hungry little creature that gulps down the letters.", "backMan",
-      { depth: 1, gate: true, when: pop, needs: { when: isStyle("Box"), hint: "Needs the Box cursor, in Appearance." } }));
+    // that eats what Backspace and Delete take; a Line chomps it like a
+    // beak. Not an Underline.
+    effects.push(toggle("Back-man", "Backspace and Delete turn a Box into a hungry creature that gulps the letters; a Line chomps like a beak.", "backMan",
+      { depth: 1, gate: true, when: pop, needs: { when: () => isStyle("Box")() || isStyle("Line")(), hint: "Needs the Box or Line cursor, in Appearance." } }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],

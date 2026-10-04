@@ -880,3 +880,28 @@ section("a Line cursor is centered on the gap (issue #48)");
   const src = require("fs").readFileSync(srcPath("measure.ts"), "utf8");
   ok("...and every caret measure takes the half off (the note editor's, the extra cursors', the interface's)", (src.match(/x: c\.left - lineShift/g) || []).length === 2 && /x: c\.x - \(line \? w \/ 2 : 0\)/.test(src));
 }
+
+section("Another surface: the caret is there at once");
+{
+  // From the note into a text field (the command palette, a search box):
+  // no glide, smear or ghosts across the window between them.
+  const e = makeEngine({ cursorStyle: "Box", smear: true, smoothEnabled: true, crtEffect: true });
+  e.styleFor = (k) => e.look[k];
+  e._resetEngineState();
+  const rec = (x, top, pos) => ({ x, top, bottom: top + 20, h: 20, w: 9, actualCharWidth: 9, rowLeft: 0, rowRight: 500, char: "a", textColor: "#ccc", fontSize: 16, fontFamily: "x", fontWeight: "400", fontStyle: "normal", letterSpacing: 0, pos });
+  e.commitMove(rec(300, 400, 12));
+  e.commitMove(rec(309, 400, 13));
+  e.animActive = rec(305, 400, 13);
+  e.smearQuad = { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } };
+  e._smearLead = { x: 300, y: 400, vx: 0, vy: 0 };
+  e._smearTrail = { x: 300, y: 400 };
+  e.trail = [{ x: 300, y: 400 }];
+  const field = rec(40, 60, "search-input");
+  e.commitMove(field);
+  ok("into a text field: the drawn caret is there at once, the smear and the ghosts started over", e.animActive.x === 40 && e.animActive.top === 60 && e.smearQuad === null && e._smearLead === null && e.trail.length === 0 && e.lastActive === field);
+  e.smearQuad = { tl: { x: 0, y: 0 }, tr: { x: 0, y: 0 }, br: { x: 0, y: 0 }, bl: { x: 0, y: 0 } };
+  e.commitMove(rec(49, 60, "search-input"));
+  ok("...a step within the field is a move as ever", e.smearQuad !== null);
+  e.commitMove(rec(300, 400, 13));
+  ok("...and back into the note, at once again", e.animActive.x === 300 && e.smearQuad === null);
+}

@@ -148,10 +148,13 @@ export default class CursorSmithPlugin extends Plugin {
   declare _xoutOn: EffectsMethods["_xoutOn"];
   declare _backManOn: EffectsMethods["_backManOn"];
   declare _backManBite: EffectsMethods["_backManBite"];
+  declare _backManSelected: EffectsMethods["_backManSelected"];
   declare spawnBackManMeal: EffectsMethods["spawnBackManMeal"];
   declare backManPose: EffectsMethods["backManPose"];
   declare backManMoving: EffectsMethods["backManMoving"];
   declare drawBackMan: EffectsMethods["drawBackMan"];
+  declare drawBackManLine: EffectsMethods["drawBackManLine"];
+  declare _drawBackManMeal: EffectsMethods["_drawBackManMeal"];
   declare spawnXout: EffectsMethods["spawnXout"];
   declare xoutClosed: EffectsMethods["xoutClosed"];
   declare drawXout: EffectsMethods["drawXout"];
@@ -358,6 +361,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare updateSmoothCursor: CaretsMethods["updateSmoothCursor"];
   declare commitMove: CaretsMethods["commitMove"];
   declare _isKeyStep: CaretsMethods["_isKeyStep"];
+  declare _caretSurface: CaretsMethods["_caretSurface"];
+  declare _arrive: CaretsMethods["_arrive"];
   declare _keyStepping: CaretsMethods["_keyStepping"];
 
   // The engine keeps its working state as instance fields set where they
@@ -618,6 +623,9 @@ export default class CursorSmithPlugin extends Plugin {
   typeReturns!: TypeReturn[];
   // When the caret last took a keyboard step (see KEY_STEP_CHARS).
   _keyStepT!: number;
+  // The surface the primary caret was last committed on (_caretSurface):
+  // the note, or a text field's key; unset before the first.
+  _lastSurface?: string;
   // Fresh ink: the wet runs, and the editor they were typed in.
   inkMarks!: InkMark[];
   _inkView!: EditorView | null;
@@ -1143,8 +1151,10 @@ export default class CursorSmithPlugin extends Plugin {
 
       if (k === "Backspace" || k === "Delete") {
         noteKeystroke("delete", e);
-        // Back-man eats toward the letters going: left, or right for Delete.
-        this._backManBite(k === "Delete" ? 1 : -1);
+        // Back-man eats toward the letters going: left, or right for Delete;
+        // a word (Ctrl, or Option on a Mac), a line (Cmd) or a selection in
+        // one big bite.
+        this._backManBite(k === "Delete" ? 1 : -1, e.ctrlKey || e.altKey || e.metaKey || this._backManSelected());
       }
       // Enter flag: consumed by the next commitMove() so a Thunderstrike can
       // be aimed at the caret's NEW line. Keyed off the keystroke rather than
@@ -1181,7 +1191,7 @@ export default class CursorSmithPlugin extends Plugin {
       const t = e.inputType || "";
       if (t.startsWith("delete")) {
         noteKeystroke("delete");
-        this._backManBite(t === "deleteContentForward" || t === "deleteWordForward" ? 1 : -1);
+        this._backManBite(t.includes("Forward") ? 1 : -1, /^delete(Word|SoftLine|HardLine|EntireSoftLine|ByCut|ByDrag)/.test(t) || this._backManSelected());
       }
       else if (t === "insertLineBreak" || t === "insertParagraph") noteKeystroke("enter");
       else if (t === "insertText" || t === "insertCompositionText" ||

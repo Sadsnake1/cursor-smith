@@ -726,6 +726,30 @@ export const caretsMethods = {
     this.animActive.rowRight = this.lastActive.rowRight;
   },
 
+  // Which surface a caret is on: the note (a CodeMirror caret, its place a
+  // number) or a plain text field (its place the field's own key).
+  _caretSurface(this: CursorSmithPlugin, c: CaretRecord): string {
+    return typeof c.pos === "string" ? c.pos : "note";
+  },
+
+  // The caret arriving on another surface - from the note into the command
+  // palette or a search box, back, or from one field to another: it is
+  // there at once. No glide, smear or ghosts across the window between the
+  // two: a streak from the note up into the palette, long and slow with a
+  // loose smear, read as the cursor glitching ("not in command palette,
+  // search box, anything"). Its own animations (the blink, Back-man) go on.
+  _arrive(this: CursorSmithPlugin, caret: CaretRecord) {
+    this.animActive = { ...caret };
+    this._smoothMoving = false;
+    this.smearQuad = null;
+    this.smearShape = null;
+    this.smearCenterPrev = null;
+    this._smearLead = null;
+    this._smearTrail = null;
+    this._smearMoving = false;
+    this.trail = [];
+  },
+
   // A keyboard step from `a` to `b`: along the same row, by at most
   // KEY_STEP_CHARS characters.
   _isKeyStep(this: CursorSmithPlugin, a: CaretRecord, b: CaretRecord): boolean {
@@ -748,6 +772,25 @@ export const caretsMethods = {
     // editor and is fed by the primary's moves alone, and except CLEARING
     // those flags, which is the primary's job.
     const secondary = this._caretPass === "secondary";
+    // Another surface (_arrive): the caret is there at once, and nothing of
+    // the move is drawn - no jump trail, glitch or fire across the window;
+    // this commit only records it.
+    if (!secondary && caret) {
+      const surface = this._caretSurface(caret);
+      const arrived = this._lastSurface !== undefined && this._lastSurface !== surface;
+      this._lastSurface = surface;
+      if (arrived) {
+        this._arrive(caret);
+        // (The note is kept current by the frames it sits still: _deletionStill.)
+        this._deletePending = 0;
+        this._enterPending = 0;
+        this._popKeyPending = 0;
+        this.lastActive = caret;
+        this.pending = null;
+        this.lastMoveTime = performance.now();
+        return;
+      }
+    }
     // Speed Demon: a caret move that no heat-bumping keystroke accounts for -
     // a mouse click, a Vim motion from another plugin, a jump to a search hit -
     // still represents the user going somewhere, so it heats too. Scaled by how

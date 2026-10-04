@@ -234,7 +234,7 @@ section("Randomizer: the preview's script");
     if (acts.filter((a) => a.do === "type").some((a) => a.ms > 75)) fast = false;
   }
   ok("every script types its line exactly, typos and all put right", ok1);
-  ok("...typos now and then, not always (a neighboring key, backspaced)", typos > 60 && typos < 20 * 30, typos);
+  ok("...typos now and then, not always (a neighboring key, backspaced)", typos > 3 * T.SCRIPT_LINES.length && typos < T.SCRIPT_LINES.length * 30, typos);
   ok("...typed fast (under 75 ms a key)", fast);
   ok("...then plays with the cursor - five or more moves, all inside the line - and ends at the line's end, cleared", okMoves && okEnd);
   const jumps = T.scriptFor("Kepano made me do it.", T.seededRandom(3)).filter((a) => a.do === "move");

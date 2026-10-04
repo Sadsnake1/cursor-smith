@@ -7,7 +7,7 @@ import type { SoundKind } from "../sound/samples";
 import { soundMachine } from "../sound/sound";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
 import { readableGlyphColor } from "../util/color";
-import { DemoStrip, SCRIPT_TEXT } from "./demo";
+import { DemoStrip } from "./demo";
 import { rollAllowed } from "./randomize";
 import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "../types";
 
@@ -979,10 +979,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   }
 
   // --- The Randomizer (1.7.7, randomize.ts) --------------------------------
-  // A page of its own: a big pill on top where the look being edited plays
-  // - the preset cards' demo, bigger, writing "The quick brown fox..." and
-  // jumping through it word to word (demo.ts, stepScript), clipped to the
-  // pill - Randomize and Undo under it with a line saying what was rolled,
+  // A page of its own: a big box on top where the look being edited plays
+  // - the preset cards' demo, bigger, typing funny lines with a typo fixed
+  // now and then and playing with the cursor (demo.ts, scriptFor), clipped
+  // to the box - Randomize and Undo under it with a line saying what was rolled,
   // then the dials a roll is made from and its sounds switch. A roll
   // replaces the look being edited: the global one, or the Vim mode whose
   // tab is picked. (A text field with the real cursor in it came first; the
@@ -1059,7 +1059,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const look: Partial<Look> = plugin.isVimUiMode() ? plugin.settings.vimModes[plugin._vimEditMode] ?? plugin.settings : plugin.settings;
     const dark = plugin.isDarkTheme();
     const { color, ramp, gradient } = this.demoColors(look, dark);
-    this._rollDemos.add(stage, SCRIPT_TEXT, look, color, ramp, gradient, plugin.reducedMotion(), true, true);
+    this._rollDemos.add(stage, "", look, color, ramp, gradient, plugin.reducedMotion(), true, true);
   }
 
   // Randomize and Undo, and what the last roll came out as.

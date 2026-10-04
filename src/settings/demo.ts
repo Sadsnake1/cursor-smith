@@ -31,12 +31,14 @@
 //     translucency and opacity multiply the alpha, and the letter inside a
 //     Box takes the color mode (contrast, tinted, inverted).
 //
-// The Randomizer's pill (1.7.7) is the same demo, bigger, on a script of
-// its own (stepScript): it writes a sentence letter by letter, jumps
-// through it word to word, clears it and starts over, for as long as the
-// page is open - with what a roll is most about added on top: letters
-// popping out, fireworks on Space, the typewriter's dip, the text
-// evaporating when it is cleared.
+// The Randomizer's preview (1.7.7) is the same demo, bigger, on a script of
+// its own (scriptFor, stepScript): a line picked at random from
+// SCRIPT_LINES, typed fast, a typo now and then caught and backspaced, then
+// a little play with the cursor - quick jumps word to word, a few steps
+// letter by letter - then cleared and the next line, for as long as the
+// page is open; with what a roll is most about added on top: letters
+// popping out, fireworks on Space, the typewriter's dip, what is deleted
+// evaporating.
 //
 // Only the preset in use plays (the ticked card), and only DEMO_CYCLES
 // passes over its name; then it glides to the idle spot and rests. Every
@@ -114,26 +116,106 @@ export interface DemoState {
   heat: number;
   // CRT ghosts: where each was left (letters) and when.
   ghosts: { at: number; t0: number }[];
-  // The pill's script: how many letters are written, and the next stop of
-  // the jumps.
-  shown: number;
-  stop: number;
+  // The preview's script: the text written so far (typos and all), the
+  // actions still to play and the wait before the next one, and what the
+  // last frame's actions did, for the effects (the strip reads and empties
+  // it).
+  buffer: string;
+  queue: ScriptAction[];
+  wait: number;
+  events: ScriptEvent[];
 }
 
 export function initialState(now: number): DemoState {
-  return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [], shown: 0, stop: 0 };
+  return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [], buffer: "", queue: [], wait: 0, events: [] };
 }
 
-// The pill's sentence, its pace, and where its jumps go: word to word, in
-// an order that crosses the line both ways, then the end.
-export const SCRIPT_TEXT = "The quick brown fox jumps over the lazy dog.";
-const SCRIPT_TYPE_MS = 85;
-const SCRIPT_JUMP_MS = 560;
-const SCRIPT_HOLD_MS = 700;
-export function scriptTour(text: string): number[] {
-  const starts = Array.from(text.matchAll(/\S+/g), (m) => m.index ?? 0);
-  const at = (i: number) => starts[Math.min(i, starts.length - 1)] ?? 0;
-  return [at(1), at(7), at(3), at(0), at(5), at(8), text.length];
+// The preview's lines: one at random each time round, never the same twice
+// running. At most SCRIPT_MAX letters, so the text keeps one size.
+export const SCRIPT_LINES = [
+  "The quick brown fox... you know the rest.",
+  "Kepano made me do it.",
+  "Cursor-Smith is not even real.",
+  "Hello, Mr. Anderson...",
+  "I came here to write. Now look at me.",
+  "Just one more cursor tweak, then I write.",
+  "It's not procrastination. It's research.",
+  "This cursor has more plot than my novel.",
+  "Backspace is my cardio.",
+  "Typing so fast my cursor caught fire.",
+  "Follow the white cursor.",
+  "Chapter one: in which I pick a cursor.",
+  "Writer's block? I'll blink through it.",
+  "Your vault called. It wants words.",
+  "Plot twist: the cursor was the hero.",
+  "Note to self: write notes, not cursors.",
+  "Dear diary, today I typed a lot.",
+  "Ctrl+Z can't save you now.",
+  "Obsidian, but make it sparkle.",
+  "I don't have typos. I have effects.",
+];
+export const SCRIPT_MAX = 44;
+
+// One step of the script, and the wait after it (ms). A move is a jump
+// (word to word) or a step (one letter, an arrow key's).
+export type ScriptAction =
+  | { do: "type"; ch: string; ms: number }
+  | { do: "back"; ms: number }
+  | { do: "move"; to: number; ms: number }
+  | { do: "hold"; ms: number }
+  | { do: "clear"; ms: number };
+export interface ScriptEvent { do: "type" | "back" | "clear"; ch: string; at: number }
+
+// The keys next to each letter (QWERTY): where a typo lands.
+const NEAR: Record<string, string> = {
+  q: "wa", w: "qes", e: "wrd", r: "etf", t: "ryg", y: "tuh", u: "yij", i: "uok", o: "ipl", p: "ol",
+  a: "qsz", s: "awdz", d: "sefx", f: "drgc", g: "fthv", h: "gyjb", j: "hukn", k: "jilm", l: "kop",
+  z: "asx", x: "zsdc", c: "xdfv", v: "cfgb", b: "vghn", n: "bhjm", m: "njk",
+};
+
+// A line's script: typed at a typist's pace; now and then (two at most, not
+// in the first letters) a neighboring key hit instead, a letter or two
+// more before it is noticed, then backspaced and put right; a hold; a play
+// with the cursor - quick jumps to word edges, runs of single steps; back
+// to the end, a hold, cleared, a short rest.
+export function scriptFor(line: string, rand: () => number): ScriptAction[] {
+  const out: ScriptAction[] = [];
+  const typeMs = () => Math.round(38 + rand() * 34);
+  let typos = 0;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const near = NEAR[ch.toLowerCase()];
+    if (near && i > 2 && typos < 2 && rand() < 0.07) {
+      typos++;
+      const wrong = near[Math.floor(rand() * near.length) % near.length];
+      out.push({ do: "type", ch: ch === ch.toLowerCase() ? wrong : wrong.toUpperCase(), ms: typeMs() });
+      const more = Math.min(Math.floor(rand() * 3), line.length - i - 1);
+      for (let k = 1; k <= more; k++) out.push({ do: "type", ch: line[i + k], ms: typeMs() });
+      out.push({ do: "hold", ms: Math.round(170 + rand() * 130) });
+      for (let k = 0; k <= more; k++) out.push({ do: "back", ms: 55 });
+    }
+    out.push({ do: "type", ch, ms: typeMs() });
+  }
+  out.push({ do: "hold", ms: 420 });
+  const n = line.length;
+  const edges = Array.from(new Set([0, n, ...Array.from(line.matchAll(/\S+/g), (m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]).flat()])).sort((a, b) => a - b);
+  let at = n;
+  const plays = 5 + Math.floor(rand() * 3);
+  for (let p = 0; p < plays; p++) {
+    if (rand() < 0.35) {
+      const dir = rand() < 0.5 ? -1 : 1;
+      const k = 2 + Math.floor(rand() * 3);
+      for (let j = 0; j < k; j++) { at = Math.max(0, Math.min(n, at + dir)); out.push({ do: "move", to: at, ms: 75 }); }
+    } else {
+      let to = edges[Math.floor(rand() * edges.length) % edges.length];
+      if (to === at) to = edges[(edges.indexOf(to) + 1) % edges.length];
+      at = to;
+      out.push({ do: "move", to: at, ms: Math.round(230 + rand() * 110) });
+    }
+  }
+  out.push({ do: "move", to: n, ms: 620 });
+  out.push({ do: "clear", ms: 380 });
+  return out;
 }
 
 // The caret asked to a new spot: a CRT ghost left where it was, and the
@@ -174,31 +256,42 @@ export function step(s: DemoState, look: Partial<Look>, n: number, dt: number, n
   return settle(s, look, dt, now);
 }
 
-// The pill's script, one frame: write the sentence (a letter a keystroke,
-// `shown` following), hold, jump through it stop by stop, hold, clear it
-// (the caret back to the start), and write it again. Pure, like step().
-export function stepScript(s: DemoState, look: Partial<Look>, n: number, dt: number, now: number, tour: number[]): DemoState {
+// The preview's script, one frame: every action whose wait is over, played
+// in order (a long frame plays several), `next` asked for the next line's
+// actions when the queue runs out; what each did goes into `events`.
+// Typing and Backspace act at the end of the text (the caret is there while
+// typing); a move only moves. Pure, like step().
+export function stepScript(s: DemoState, look: Partial<Look>, dt: number, now: number, next: () => ScriptAction[]): DemoState {
   s.phaseMs += dt;
-  const move = (to: number) => moveTo(s, look, to, now);
-  if (s.phase === "type") {
-    if (s.phaseMs >= SCRIPT_TYPE_MS) {
-      s.phaseMs = 0;
-      if (s.target < n) { move(s.target + 1); s.shown = s.target; }
-      else s.phase = "holdEnd";
+  s.wait -= dt;
+  for (let guard = 0; s.wait <= 0 && guard < 64; guard++) {
+    if (!s.queue.length) s.queue = next();
+    const a = s.queue.shift();
+    if (!a) break;
+    if (a.do === "type") {
+      s.buffer += a.ch;
+      moveTo(s, look, s.buffer.length, now);
+      s.phase = "type";
+      s.events.push({ do: "type", ch: a.ch, at: s.buffer.length - 1 });
+    } else if (a.do === "back") {
+      const ch = s.buffer.slice(-1);
+      s.buffer = s.buffer.slice(0, -1);
+      moveTo(s, look, s.buffer.length, now);
+      s.phase = "type";
+      s.events.push({ do: "back", ch, at: s.buffer.length });
+    } else if (a.do === "move") {
+      moveTo(s, look, Math.max(0, Math.min(s.buffer.length, a.to)), now);
+      s.phase = "jump";
+    } else if (a.do === "clear") {
+      s.events.push({ do: "clear", ch: "", at: s.buffer.length });
+      s.buffer = "";
+      moveTo(s, look, 0, now);
+      s.phase = "clear";
+    } else {
+      s.phase = "holdEnd";
     }
-  } else if (s.phase === "holdEnd") {
-    if (s.phaseMs >= SCRIPT_HOLD_MS) { s.phaseMs = 0; s.phase = "jump"; s.stop = 0; }
-  } else if (s.phase === "jump") {
-    if (s.phaseMs >= SCRIPT_JUMP_MS) {
-      s.phaseMs = 0;
-      if (s.stop < tour.length) move(tour[s.stop++]);
-      else s.phase = "clear";
-    }
-  } else if (s.phase === "clear") {
-    if (s.phaseMs >= SCRIPT_HOLD_MS) { s.phaseMs = 0; s.shown = 0; move(0); s.phase = "holdStart"; }
-  } else if (s.phaseMs >= HOLD_START_MS) {
     s.phaseMs = 0;
-    s.phase = "type";
+    s.wait += a.ms;
   }
   return settle(s, look, dt, now);
 }
@@ -318,8 +411,9 @@ interface Demo {
   rest: HTMLElement | null;
   innerWritten: HTMLElement | null;
   innerRest: HTMLElement | null;
-  shownPainted: number;
-  tour: number[];
+  painted: string;
+  // The line being played, for the next one to differ.
+  line: string;
   poolMax: number;
   scaled: boolean;
   keyT: number;
@@ -351,6 +445,9 @@ export class DemoStrip {
   // Builds the demo into `host` and starts it. `color` is the preset's
   // color for the current theme; `heatStops` its four heat stops for it.
   add(host: HTMLElement, name: string, look: Partial<Look>, color: string, heatStops: string[], gradientStops: string[], reduced: boolean, play: boolean, script = false) {
+    // The preview: its first line, at random (the rest are picked as it
+    // plays); the line is also what the letters are measured on.
+    if (script) name = SCRIPT_LINES[Math.floor(Math.random() * SCRIPT_LINES.length)];
     const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" + (script ? " cursor-smith-roll-demo" : "") });
     const text = demo.createSpan({ cls: "cursor-smith-pcard-text cursor-smith-pcard-name", text: script ? "" : name });
     // The pill's sentence in two halves, the unwritten one invisible: the
@@ -401,7 +498,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, shownPainted: -1, tour: script ? scriptTour(name) : [], poolMax: script ? 64 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, poolMax: script ? 64 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -409,8 +506,8 @@ export class DemoStrip {
       // and once more from the loop with the measured one (a still demo
       // is a done one, dropped after that frame).
       d.state.target = d.state.lead = d.state.trail = idleAt(d.n);
-      // The pill still: the sentence written, the caret after it.
-      if (script) { d.state.target = d.state.lead = d.state.trail = d.n; d.state.shown = d.n; }
+      // The preview still: its line written, the caret after it.
+      if (script) { d.state.target = d.state.lead = d.state.trail = d.n; d.state.buffer = name; }
       d.done = true;
     }
     // Painted once here (a guessed letter width), then from the loop.
@@ -452,13 +549,14 @@ export class DemoStrip {
       if (!d.scaled) this.fit(d);
       if (!d.done && d.script) {
         const before = d.state.target;
-        const shownBefore = d.state.shown;
-        stepScript(d.state, d.look, d.n, dt, now, d.tour);
-        if (d.state.target !== before) {
-          this.onMove(d, before, now);
-          if (d.state.shown > shownBefore) this.onType(d, d.state.shown - 1, now);
+        stepScript(d.state, d.look, dt, now, () => this.nextLine(d));
+        if (d.state.target !== before) this.onMove(d, before, now);
+        for (const ev of d.state.events) {
+          if (ev.do === "type") this.onType(d, ev.at, ev.ch, now);
+          else if (ev.do === "back") this.onBack(d, ev.at, now);
+          else this.onClear(d, ev.at, now);
         }
-        if (d.state.shown < shownBefore) this.onClear(d, shownBefore, now);
+        d.state.events.length = 0;
         this.emit(d, dt, now);
       } else if (!d.done) {
         const before = d.state.target;
@@ -490,11 +588,19 @@ export class DemoStrip {
     }
   };
 
-  // The pill: scaled to fill its stage, left of center (once, with the
-  // letters measured).
+  // The preview's next line: any but the one just played, and its script.
+  private nextLine(d: Demo): ScriptAction[] {
+    let line = d.line;
+    for (let i = 0; i < 8 && line === d.line; i++) line = SCRIPT_LINES[Math.floor(Math.random() * SCRIPT_LINES.length)];
+    d.line = line;
+    return scriptFor(line, Math.random);
+  }
+
+  // The preview: scaled to fill its stage, left of center (once, with the
+  // letters measured) - for the longest line, so every line has one size.
   private fit(d: Demo) {
     const stage = d.el.parentElement;
-    const textW = d.stepPx * d.n + 22;
+    const textW = d.stepPx * SCRIPT_MAX + 22;
     if (!stage || !(stage.clientWidth > 0) || !(textW > 0)) return;
     const k = Math.max(1, Math.min(2.6, (stage.clientWidth - 56) / textW));
     d.el.setCssStyles({ transform: `translateY(-50%) scale(${k.toFixed(3)})` });
@@ -515,11 +621,10 @@ export class DemoStrip {
     d.particles.push({ el, x, y, vx, vy, t0: now, life, size, color, g });
   }
 
-  // The pill, a letter written: it pops out of the caret (Popping letters),
-  // Space sends fireworks up, the typewriter dips.
-  private onType(d: Demo, i: number, now: number) {
+  // The preview, a letter written: it pops out of the caret (Popping
+  // letters), Space sends fireworks up, the typewriter dips.
+  private onType(d: Demo, i: number, ch: string, now: number) {
     const look = d.look;
-    const ch = d.name.charAt(i) || " ";
     const x = i * d.stepPx;
     d.keyT = now;
     const color = () => {
@@ -541,7 +646,20 @@ export class DemoStrip {
     }
   }
 
-  // The pill, the sentence cleared: what was deleted evaporates (rises and
+  // The preview, a typo backspaced: the letter evaporates or bursts apart,
+  // as Backspace's effects do; the typewriter dips for the key.
+  private onBack(d: Demo, at: number, now: number) {
+    const look = d.look;
+    d.keyT = now;
+    if (!look.popEffects || !(look.backspaceEvaporate || look.backspaceDisintegrate)) return;
+    for (let j = 0; j < 4; j++) {
+      const x = (at + Math.random()) * d.stepPx;
+      if (look.backspaceDisintegrate) this.spawn(d, x, 8, (Math.random() - 0.5) * 70, (Math.random() - 0.5) * 70, 450, 2, d.color, now);
+      else this.spawn(d, x, 8, (Math.random() - 0.5) * 8, -(14 + Math.random() * 14), 700, 2, d.color, now);
+    }
+  }
+
+  // The preview, the line cleared: what was deleted evaporates (rises and
   // fades) or bursts apart, as Backspace's effects do.
   private onClear(d: Demo, was: number, now: number) {
     const look = d.look;
@@ -638,14 +756,13 @@ export class DemoStrip {
     // custom ramp flattens a gradient, the demo leaves it be).
     const heated = cold < 1 && !d.shape.gradient;
     const color = heated ? heatColor(d.color, d.heatStops, 1 - cold) : d.shape.fill;
-    // The pill's sentence, written so far.
-    if (d.script && d.shownPainted !== s.shown) {
-      d.shownPainted = s.shown;
-      const name = d.name;
-      d.written?.setText(name.slice(0, s.shown));
-      d.rest?.setText(name.slice(s.shown));
-      d.innerWritten?.setText(name.slice(0, s.shown));
-      d.innerRest?.setText(name.slice(s.shown));
+    // The preview's text, written so far (typos and all). The unwritten
+    // half only ever held the first line, to measure the letters by.
+    if (d.script && d.painted !== s.buffer) {
+      d.painted = s.buffer;
+      d.written?.setText(s.buffer);
+      d.innerWritten?.setText(s.buffer);
+      if (d.stepPx) { d.rest?.setText(""); d.innerRest?.setText(""); }
     }
     // The typewriter's dip: down and back over the strike's length, after
     // each letter written.

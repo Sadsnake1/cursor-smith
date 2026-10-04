@@ -126,7 +126,7 @@ Enable the plugin, Vim mode on or off, your presets, and the mode you're editing
 
 ## Randomizer
 
-Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it writes "The quick brown fox..." and jumps around the line. Roll again, or **Undo** your way back. Like one? Save it as a preset.
+Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it types silly lines, fixes its own typos and plays with the cursor. Roll again, or **Undo** your way back. Like one? Save it as a preset.
 
 Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Turn on **Include sounds** and every roll picks a sound too. A horse, maybe.
 

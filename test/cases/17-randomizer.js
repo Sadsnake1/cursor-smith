@@ -159,7 +159,7 @@ section("Randomizer: its page");
   const stage = pill.controlEl.children.find((c) => c.classes.includes("cursor-smith-roll-stage"));
   const demo = stage && stage.children.find((c) => c.classes.includes("cursor-smith-roll-demo"));
   ok("the pill is a stage with the demo in it, the sentence to write in two halves (none written yet)",
-     !!demo && !!demo.querySelector(".cursor-smith-pcard-caret") && demo.querySelector(".cursor-smith-roll-unwritten").text === T.SCRIPT_TEXT);
+     !!demo && !!demo.querySelector(".cursor-smith-pcard-caret") && T.SCRIPT_LINES.includes(demo.querySelector(".cursor-smith-roll-unwritten").text));
   const roll = named("Roll");
   ok("Randomize and Undo; Undo off with nothing to undo", roll.buttons.length === 2 && roll.buttons[0]._text === "Randomize" && roll.buttons[1]._text === "Undo");
   const chaos = named("Chaos");
@@ -182,12 +182,12 @@ section("Randomizer: the pill's demo waits while its page is away");
   // A window: frames and timers by hand.
   const frames = [], timers = [];
   const win = { requestAnimationFrame: (f) => { frames.push(f); return frames.length; }, cancelAnimationFrame: () => {}, setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout: () => {} };
-  const doc = { defaultView: win, createRange: () => ({ selectNodeContents() {}, getBoundingClientRect: () => ({ width: 44 * 7 }) }) };
+  const doc = { defaultView: win, createRange: () => ({ selectNodeContents() {}, getBoundingClientRect: () => ({ width: 30 * 7 }) }) };
   const stage = makeEl("div");
   stage.ownerDocument = doc;
   stage.clientWidth = 700;
   const strip = new T.DemoStrip();
-  strip.add(stage, T.SCRIPT_TEXT, { cursorStyle: "Box", blinkingEnabled: false }, "#ff3366", [], [], false, true, true);
+  strip.add(stage, "", { cursorStyle: "Box", blinkingEnabled: false }, "#ff3366", [], [], false, true, true);
   const demo = stage.children[0];
   demo.isConnected = true;
   const text = demo.querySelector(".cursor-smith-pcard-text");
@@ -210,25 +210,47 @@ section("Randomizer: the pill's demo waits while its page is away");
   ok("reset lets it go: the loop stops", frames.length === 0 && timers.length === 0);
 }
 
-section("Randomizer: the pill's script");
+section("Randomizer: the preview's script");
 {
-  const n = T.SCRIPT_TEXT.length;
-  const tour = T.scriptTour(T.SCRIPT_TEXT);
-  ok("the sentence, and a tour of word starts that ends at its end", T.SCRIPT_TEXT === "The quick brown fox jumps over the lazy dog." &&
-     tour.length === 7 && tour[tour.length - 1] === n && tour.slice(0, -1).every((i) => i === 0 || T.SCRIPT_TEXT[i - 1] === " "), tour);
-  const look = {};
+  ok("its lines: the user's four and more, none longer than the box holds, all different",
+     ["The quick brown fox... you know the rest.", "Kepano made me do it.", "Cursor-Smith is not even real.", "Hello, Mr. Anderson..."].every((l) => T.SCRIPT_LINES.includes(l)) &&
+     T.SCRIPT_LINES.length >= 16 && T.SCRIPT_LINES.every((l) => l.length <= T.SCRIPT_MAX) && new Set(T.SCRIPT_LINES).size === T.SCRIPT_LINES.length,
+     T.SCRIPT_LINES.filter((l) => l.length > T.SCRIPT_MAX));
+  // Every line, many seeds: what a script types, played on the text, is the line.
+  const play = (acts) => { let b = "", at = 0; const moves = []; for (const a of acts) { if (a.do === "type") { b += a.ch; at = b.length; } else if (a.do === "back") { b = b.slice(0, -1); at = b.length; } else if (a.do === "move") { at = a.to; moves.push(a); } } return { b, at, moves }; };
+  let typos = 0, ok1 = true, okMoves = true, okEnd = true, fast = true;
+  for (const line of T.SCRIPT_LINES) for (let seed = 1; seed <= 30; seed++) {
+    const acts = T.scriptFor(line, T.seededRandom(seed * 7919 + line.length));
+    const clearAt = acts.findIndex((a) => a.do === "clear");
+    const r = play(acts.slice(0, clearAt));
+    if (r.b !== line) ok1 = false;
+    if (r.at !== line.length || acts[acts.length - 1].do !== "clear") okEnd = false;
+    if (!r.moves.every((m) => m.to >= 0 && m.to <= line.length) || r.moves.length < 5) okMoves = false;
+    const backs = acts.filter((a) => a.do === "back").length;
+    if (backs) typos++;
+    if (acts.filter((a) => a.do === "type").some((a) => a.ms > 75)) fast = false;
+  }
+  ok("every script types its line exactly, typos and all put right", ok1);
+  ok("...typos now and then, not always (a neighboring key, backspaced)", typos > 60 && typos < 20 * 30, typos);
+  ok("...typed fast (under 75 ms a key)", fast);
+  ok("...then plays with the cursor - five or more moves, all inside the line - and ends at the line's end, cleared", okMoves && okEnd);
+  const jumps = T.scriptFor("Kepano made me do it.", T.seededRandom(3)).filter((a) => a.do === "move");
+  ok("...quick jumps (under 350 ms) and single steps (75 ms)", jumps.every((a) => a.ms === 75 || (a.ms >= 230 && a.ms <= 340) || a.ms === 620), jumps.map((a) => a.ms));
+  const typo = T.scriptFor("The quick brown fox... you know the rest.", T.seededRandom(11));
+  const i = typo.findIndex((a) => a.do === "back");
+  ok("a typo is a key next to the right one", i < 0 || (() => { const r = play(typo.slice(0, i)); const line = "The quick brown fox... you know the rest."; let k = 0; while (r.b[k] === line[k]) k++; return "wqesrtfygdhujikolpaszxcvbnm".includes(r.b[k].toLowerCase()) && r.b[k] !== line[k]; })());
+
+  // Played: the text grows, a typo shows and goes, the line is cleared, the
+  // next one is another.
+  const lines = [];
   const s = T.demoInitialState(0);
   let now = 0;
-  const run = (ms) => { for (let t = 0; t < ms; t += 16) { now += 16; T.demoStepScript(s, look, n, 16, now, tour); } };
-  run(85 * 10 + 20);
-  ok("it writes a letter a keystroke, the caret after it", s.phase === "type" && s.shown === s.target && s.shown >= 9 && s.shown <= 11, [s.shown, s.target]);
-  run(85 * n);
-  ok("...the whole sentence, then holds", s.shown === n && s.target === n && (s.phase === "holdEnd" || s.phase === "jump"));
-  const seen = [];
-  for (let i = 0; i < 400 && s.phase !== "clear"; i++) { run(16); if (seen[seen.length - 1] !== s.target) seen.push(s.target); }
-  ok("...jumps through it, stop by stop, to the end", seen.join() === [n, ...tour].join() || seen.join() === tour.join(), seen);
-  run(800);
-  ok("...then clears it and starts over at the start", s.shown === 0 && s.target === 0);
-  run(500 + 85 * 3);
-  ok("...writing again", s.phase === "type" && s.shown > 0);
+  const next = () => { const l = T.SCRIPT_LINES[(lines.length * 5) % T.SCRIPT_LINES.length]; lines.push(l); return T.scriptFor(l, T.seededRandom(lines.length)); };
+  const events = [];
+  const run = (ms) => { for (let t = 0; t < ms; t += 16) { now += 16; T.demoStepScript(s, {}, 16, now, next); events.push(...s.events); s.events.length = 0; } };
+  run(600);
+  ok("it plays: letters typed, the caret at the text's end", s.buffer.length >= 6 && s.target === s.buffer.length && lines[0].startsWith(s.buffer.slice(0, 3)), s.buffer);
+  run(20000);
+  ok("...lines one after another, each cleared, every key an event (typed, backspaced, cleared)",
+     lines.length >= 2 && events.filter((e) => e.do === "clear").length >= 1 && events.filter((e) => e.do === "type").length > 30 && events.every((e) => ["type", "back", "clear"].includes(e.do)), [lines.length, events.length]);
 }

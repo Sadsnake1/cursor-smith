@@ -131,8 +131,8 @@ export function initialState(now: number): DemoState {
 }
 
 // The preview's lines: one at random each time round, never the same twice
-// running. At most SCRIPT_MAX letters (the countdown's), so the text keeps
-// one size.
+// running. At most SCRIPT_MAX letters, so the text keeps one size (a
+// 50-letter countdown made all of it smaller; the user had it shortened).
 export const SCRIPT_LINES = [
   "The quick brown fox... you know the rest.",
   "Kepano made me do it.",
@@ -155,9 +155,10 @@ export const SCRIPT_LINES = [
   "The cursor blinked first.",
   "34j0934)@#$#U*$FH0hr082h34",
   "Can you even vibecode such a thing?",
-  "Deleting Vault in 3...2....1....0.5...0.4999999999",
+  "Deleting Vault in 3...2...1...0.4999999",
+  "You can never have too many cursors...",
 ];
-export const SCRIPT_MAX = 50;
+export const SCRIPT_MAX = 44;
 
 // One step of the script, and the wait after it (ms). A move is a jump
 // (word to word) or a step (one letter, an arrow key's).

@@ -331,7 +331,7 @@ later(async () => {
 section("Sounds: the settings");
 {
   ok("four look keys, appended, off by default: the Hermes 3000 at half volume, the bell on",
-     T.LOOK_KEYS.slice(-5, -1).join() === "typewriterSound,typewriterSoundVoice,typewriterSoundVolume,typewriterSoundBell" &&
+     T.LOOK_KEYS.slice(T.LOOK_KEYS.indexOf("typewriterSound"), T.LOOK_KEYS.indexOf("typewriterSound") + 5).join() === "typewriterSound,typewriterSoundVoice,typewriterSoundVolume,typewriterSoundBell,typewriterTape" &&
      T.DEFAULT_SETTINGS.typewriterSound === false && T.DEFAULT_SETTINGS.typewriterSoundVolume === 50 && T.DEFAULT_SETTINGS.typewriterSoundBell === true);
   const row = (rows, name) => rows.find((r) => r.name === name);
   const { sectionOf } = require("../panel_harness");

@@ -14,6 +14,7 @@ import { effectsInkMethods } from "./effects-ink";
 import { effectsEvaporateMethods } from "./effects-evaporate";
 import { effectsDeleteMethods } from "./effects-delete";
 import { effectsXoutMethods } from "./effects-xout";
+import { effectsBackManMethods } from "./effects-backman";
 
 export const effectsMethods = {
   ...effectsFireMethods,
@@ -24,5 +25,6 @@ export const effectsMethods = {
   ...effectsEvaporateMethods,
   ...effectsDeleteMethods,
   ...effectsXoutMethods,
+  ...effectsBackManMethods,
 };
 export type EffectsMethods = typeof effectsMethods;

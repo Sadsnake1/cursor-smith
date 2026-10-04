@@ -995,6 +995,8 @@ export const engineMethods = {
       (this.xouts && this.xouts.length > 0) ||
       // A Typewriter stroke is a wall-clock animation of the caret itself.
       this.typewriterMoving(nowT) ||
+      // So is Back-man's chomp, past the last bite.
+      this.backManMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting
       // out its stagger delay, which paints nothing yet but must not be
       // allowed to drop the loop into the idle heartbeat - the volley

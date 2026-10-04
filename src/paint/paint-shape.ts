@@ -511,7 +511,12 @@ export const paintShapeMethods = {
         );
       } else {
       const paintStyle = this._bodyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity);
-      if (hollow) {
+      // Back-man (effects-backman.ts): while Backspace or Delete eats, the
+      // box is the creature - filled, hollow or not.
+      const bm = this.backManPose(now);
+      if (bm) {
+        this.drawBackMan(ctx, active.x, active.top, renderW, active.h, paintStyle, color, bm);
+      } else if (hollow) {
         // Stroke exactly the path the solid style fills, so the outline
         // deforms with a smear and rounds with Rounded Corners rather than
         // staying a sharp rectangle while the filled version curves. This
@@ -572,7 +577,8 @@ export const paintShapeMethods = {
       // as two letters. And it still reaches zero, which was the whole point
       // of the first fix.
       const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha);
-      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar
+      // Not on Back-man: it has a face, not a letter.
+      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar && !this.backManPose(now)
           && glyphAlpha >= 0.01) {
         ctx.save();
         ctx.globalAlpha = glyphAlpha;

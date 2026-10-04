@@ -44,7 +44,7 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 
 | Effect | What it does |
 |---|---|
-| **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
+| **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete, or Back-man eats it: your Box cursor grows an eye and a hungry little mouth. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Sounds** | Real typewriters, mechanical keyboards, a piano, chalk on a blackboard, a horse and more as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |

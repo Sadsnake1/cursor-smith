@@ -48,6 +48,7 @@ import type {
 
 import { measureMethods } from "./engine/measure";
 import { effectsMethods } from "./effects/effects";
+import type { BackManState } from "./effects/effects-backman";
 import { paintMethods } from "./paint/paint";
 import { torchMethods } from "./torch/torch";
 import type { MeasureMethods } from "./engine/measure";
@@ -145,6 +146,11 @@ export default class CursorSmithPlugin extends Plugin {
   declare evaporatePose: EffectsMethods["evaporatePose"];
   declare drawEvaporate: EffectsMethods["drawEvaporate"];
   declare _xoutOn: EffectsMethods["_xoutOn"];
+  declare _backManOn: EffectsMethods["_backManOn"];
+  declare _backManBite: EffectsMethods["_backManBite"];
+  declare backManPose: EffectsMethods["backManPose"];
+  declare backManMoving: EffectsMethods["backManMoving"];
+  declare drawBackMan: EffectsMethods["drawBackMan"];
   declare spawnXout: EffectsMethods["spawnXout"];
   declare xoutClosed: EffectsMethods["xoutClosed"];
   declare drawXout: EffectsMethods["drawXout"];
@@ -618,6 +624,8 @@ export default class CursorSmithPlugin extends Plugin {
   // before the deletion (what the letters are read back from).
   evaporateGlyphs!: EvaporateGlyph[];
   xouts!: XoutRun[];
+  // Back-man's spell of bites (effects-backman.ts), or null.
+  _backMan: BackManState | null = null;
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
@@ -1132,7 +1140,11 @@ export default class CursorSmithPlugin extends Plugin {
       // (see there).
       this._realKeyT = performance.now();
 
-      if (k === "Backspace" || k === "Delete") noteKeystroke("delete", e);
+      if (k === "Backspace" || k === "Delete") {
+        noteKeystroke("delete", e);
+        // Back-man eats toward the letters going: left, or right for Delete.
+        this._backManBite(k === "Delete" ? 1 : -1);
+      }
       // Enter flag: consumed by the next commitMove() so a Thunderstrike can
       // be aimed at the caret's NEW line. Keyed off the keystroke rather than
       // off "the caret moved down a line", because that also describes arrow
@@ -1166,7 +1178,10 @@ export default class CursorSmithPlugin extends Plugin {
       this._markActivity("input");
       if (performance.now() - (this._realKeyT || 0) < 60) return;
       const t = e.inputType || "";
-      if (t.startsWith("delete")) noteKeystroke("delete");
+      if (t.startsWith("delete")) {
+        noteKeystroke("delete");
+        this._backManBite(t === "deleteContentForward" || t === "deleteWordForward" ? 1 : -1);
+      }
       else if (t === "insertLineBreak" || t === "insertParagraph") noteKeystroke("enter");
       else if (t === "insertText" || t === "insertCompositionText" ||
                t === "insertReplacementText" || t === "insertFromPaste") {

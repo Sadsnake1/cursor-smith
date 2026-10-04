@@ -761,7 +761,9 @@ export class DemoStrip {
     const stage = d.el.parentElement;
     const textW = d.stepPx * SCRIPT_MAX + 22;
     if (!stage || !(stage.clientWidth > 0) || !(textW > 0)) return;
-    const k = Math.max(1, Math.min(2.6, (stage.clientWidth - 56) / textW));
+    // About the editor's own size (its 16px over the demo's 12): bigger read
+    // as a banner ("make the text smaller", the user); smaller on a phone.
+    const k = Math.max(0.7, Math.min(1.45, (stage.clientWidth - 56) / textW));
     d.el.setCssStyles({ transform: `translateY(-50%) scale(${k.toFixed(3)})` });
     d.scaled = true;
   }

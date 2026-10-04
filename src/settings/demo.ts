@@ -151,8 +151,8 @@ export const SCRIPT_LINES = [
   "Note to self: write notes, not cursors.",
   "Dear diary, today I typed a lot.",
   "Ctrl+Z can't save you now.",
-  "Obsidian, but make it sparkle.",
-  "I don't have typos. I have effects.",
+  "Ten minutes of writing, two hours of cursor.",
+  "The cursor blinked first.",
 ];
 export const SCRIPT_MAX = 44;
 

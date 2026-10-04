@@ -2,10 +2,12 @@
 // CursorSmithPlugin.prototype like the other method files. `this` is the
 // plugin.
 //
-// Typewriter's Sounds (1.7.2): real typewriters as you type. Each machine is
-// its own recording (samples.ts: a Hermes 3000, an Erika 5, an IBM
-// Selectric II, an Olivetti Lettera 35, a Sears Electric Twelve), its keys,
-// capitals, space bar, Backspace, carriage return and margin bell cut from
+// Sounds: real typewriters as you type (1.7.2, a part of Typewriter then),
+// and since 1.7.7 an effect of their own with keyboards and other sounds
+// beside them (issue #46). Each machine is its own recording (samples.ts:
+// ten typewriters - a Hermes 3000, an Erika 5, an IBM Selectric II, ... -
+// eight mechanical keyboards, a chalk and a kalimba), its keys, capitals,
+// space bar, Backspace, carriage return or Enter and margin bell cut from
 // it, packed into one MP3 that is decoded once when the machine is chosen
 // and played a slice at a time.
 //
@@ -19,8 +21,9 @@
 // the carriage does, the bell well under the keys.
 //
 // All of it is here and in samples.ts; what else knows about it: one line in
-// onload (_soundSetup), four settings (typewriterSound*), their rows under
-// Typewriter, and the declarations in plugin.ts - so it comes out whole.
+// onload (_soundSetup), four settings (typewriterSound*, the name kept from
+// when they were Typewriter's), their rows on the Effects page's Sounds, and
+// the declarations in plugin.ts - so it comes out whole.
 import { EditorView } from "@codemirror/view";
 import type { ViewUpdate } from "@codemirror/view";
 import { DEFAULT_SETTINGS } from "../settings/settings";
@@ -31,15 +34,19 @@ import type CursorSmithPlugin from "../plugin";
 // What a machine's recording holds: its keys (strike), heavier keys for
 // capitals, its space bar, Backspace (a lighter mechanical sound), the whole
 // carriage return (feed: the lever, the line feed, the carriage run back,
-// the stop), and the margin bell.
-export type AtomName = "strike" | "capital" | "space" | "back" | "feed" | "bell";
-export const ATOM_NAMES: AtomName[] = ["strike", "capital", "space", "back", "feed", "bell"];
+// the stop), and the margin bell - a typewriter's. A keyboard's: its keys,
+// its space bar, Backspace and Enter; no capitals (Shift is not heard on
+// the letter), no bell. The other sounds have a keyboard's.
+export type AtomName = "strike" | "capital" | "space" | "back" | "feed" | "bell" | "enter";
+export const ATOM_NAMES: AtomName[] = ["strike", "capital", "space", "back", "feed", "bell", "enter"];
+export const TYPEWRITER_ATOMS: AtomName[] = ["strike", "capital", "space", "back", "feed", "bell"];
+export const KEYBOARD_ATOMS: AtomName[] = ["strike", "space", "back", "enter"];
 
 // Each sound's level before the volume. The recordings are levelled when
 // they are cut (the keys alike, the bell well under them - "too loud", the
 // user, of the first one); this is the last word.
 export const SOUND_GAIN: Record<AtomName, number> = {
-  strike: 1, capital: 1, space: 1, back: 0.9, feed: 0.85, bell: 0.55,
+  strike: 1, capital: 1, space: 1, back: 0.9, feed: 0.85, bell: 0.55, enter: 0.95,
 };
 // Two sounds closer than this are one keystroke (a held key's repeats go
 // through, softer); Enter always plays.
@@ -196,6 +203,22 @@ export function classifySoundEdit(tr: SoundTransaction, lastKey: SoundKey | null
   return { kind: "key", char: ch, capital: ch !== ch.toLowerCase() && ch === ch.toUpperCase() };
 }
 
+// Where a keyboard's key sits left to right: its place on a QWERTY board,
+// close to the middle (subtle) - Space in it, Enter and Backspace right, Tab
+// left. A key not on the board is in the middle.
+const KEY_ROWS: [string, number][] = [["1234567890-=", 0], ["qwertyuiop[]", 0.5], ["asdfghjkl;'", 0.8], ["zxcvbnm,./", 1.3]];
+export function keyPan(key: string): number {
+  if (key === "Enter" || key === "Backspace" || key === "Delete") return 0.2;
+  if (key === "Tab") return -0.2;
+  const c = (key || "").toLowerCase();
+  if (c.length !== 1 || c === " ") return 0;
+  for (const [row, off] of KEY_ROWS) {
+    const i = row.indexOf(c);
+    if (i >= 0) return Math.max(-0.2, Math.min(0.2, ((i + off) / 12 - 0.5) * 0.4));
+  }
+  return 0;
+}
+
 // Where a sound sits left to right: the carriage's place, from the cursor's
 // across the window, kept close to the middle (subtle).
 export function soundPan(x: number | null | undefined, width: number): number {
@@ -236,10 +259,10 @@ export const soundMethods = {
   },
 
   // Whether sounds are on for the look showing now: the plugin, this
-  // device, Typewriter and its Sounds.
+  // device, Sounds (Typewriter or not, since 1.7.7).
   _soundOn(this: CursorSmithPlugin): boolean {
     const l = this.look;
-    return !!(this._sound && this.settings.enabled && this._deviceEnabled !== false && l && l.typewriter && l.typewriterSound);
+    return !!(this._sound && this.settings.enabled && this._deviceEnabled !== false && l && l.typewriterSound);
   },
 
   // The chosen machine's id (an unknown one - a code from a newer or older
@@ -382,13 +405,20 @@ export const soundMethods = {
     g *= 1 + (this._soundRand() - 0.5) * 0.16;
     const t0 = ctx.currentTime + delay;
     const width = window.innerWidth || 1000;
-    const pan = soundPan(x, width);
-    const rate = () => 1 + (this._soundRand() - 0.5) * 0.03;
+    const m = soundMachine(s.voice);
+    const typewriter = m.kind === "typewriter";
+    // A typewriter's sound comes from its carriage, a keyboard's from the
+    // key; the other sounds from where the cursor writes.
+    const keyName = ev.kind === "key" ? ev.char : ev.kind === "space" ? " " : ev.kind === "enter" ? "Enter" : ev.kind === "tab" ? "Tab" : "Backspace";
+    const pan = m.kind === "keyboard" ? keyPan(keyName) : soundPan(x, width);
+    // Never two takes alike: a hair of pitch - but notes stay in tune.
+    const rate = () => (m.tonal ? 1 : 1 + (this._soundRand() - 0.5) * 0.03);
     const count = (n: AtomName) => (s.takes[n] || []).length;
     const take = (n: AtomName) => Math.floor(this._soundRand() * Math.max(1, count(n)));
     switch (ev.kind) {
       case "key":
-        if (ev.capital) this._soundAtom("capital", take("capital"), t0, SOUND_GAIN.capital * g, pan, rate());
+        // A capital: a typewriter's heavier key; on a keyboard its letter.
+        if (ev.capital && count("capital")) this._soundAtom("capital", take("capital"), t0, SOUND_GAIN.capital * g, pan, rate());
         else this._soundAtom("strike", typebarOf(ev.char, count("strike")), t0, SOUND_GAIN.strike * g, pan, rate());
         break;
       case "space":
@@ -397,16 +427,19 @@ export const soundMethods = {
       case "back":
       case "del": {
         // Backspace, the carriage pulled back a notch; Delete its brighter
-        // twin (the same sound, a little higher). A word taken: a notch or
-        // two more after it, softer.
-        const r = ev.kind === "del" ? 1.07 : 1;
+        // twin (the same sound, a little higher - not for notes). A word
+        // taken on a typewriter: a notch or two more after it, softer; on a
+        // keyboard one key took it.
+        const r = ev.kind === "del" && !m.tonal ? 1.07 : 1;
         this._soundAtom("back", take("back"), t0, SOUND_GAIN.back * g, pan, r * rate());
-        for (let k = 1; k < Math.min(ev.count, 3); k++) {
+        for (let k = 1; typewriter && k < Math.min(ev.count, 3); k++) {
           this._soundAtom("back", take("back"), t0 + 0.045 * k, SOUND_GAIN.back * g * (1 - 0.18 * k), pan - 0.02 * k, r * rate());
         }
         break;
       }
       case "tab": {
+        // A keyboard's Tab: a wide key, like its space bar.
+        if (!typewriter) { this._soundAtom("space", take("space"), t0, SOUND_GAIN.space * g * 0.9, pan, rate()); break; }
         // The tabulator: the carriage jumps to its stop - the end of the
         // return's run.
         const feed = (s.takes.feed || [])[0];
@@ -414,6 +447,13 @@ export const soundMethods = {
         break;
       }
       case "enter": {
+        // A keyboard's Enter: its key. The other sounds': theirs (the
+        // kalimba's chord).
+        if (!typewriter) {
+          if (count("enter")) this._soundAtom("enter", 0, t0, SOUND_GAIN.enter * g, pan, rate());
+          else this._soundAtom("strike", 0, t0, SOUND_GAIN.strike * g, pan, rate());
+          break;
+        }
         // The margin bell if the line reached it, then the carriage return -
         // the lever, the line feed, the carriage run back (from the cursor's
         // place to the line's start, left to right in the ears), the stop.
@@ -446,8 +486,8 @@ export const soundMethods = {
     }, SOUND_IDLE_MS);
   },
 
-  // The Machine row's play button: a few words typed, a slip taken back, a
-  // space, Enter - the machine as it sounds in use.
+  // The Sound row's play button: a few words typed, a slip taken back, a
+  // space, Enter - the machine (or keyboard) as it sounds in use.
   async soundPreview(this: CursorSmithPlugin) {
     const s = this._sound;
     const ctx = this._soundCtx();

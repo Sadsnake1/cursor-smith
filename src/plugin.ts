@@ -3,7 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
 import { applyReducedMotion, isTextCaretHost } from "./util/motion";
 import { DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset, seedPresets } from "./settings/presets";
-import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook } from "./settings/settings";
+import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook, soundsApart } from "./settings/settings";
 import { CursorSmithSettingTab } from "./settings/settings-tab";
 import type { Text as DocText } from "@codemirror/state";
 import type {
@@ -657,6 +657,16 @@ export default class CursorSmithPlugin extends Plugin {
     // the CUA switch into re-enabling vim forever. Drop it from settings so
     // it also disappears from data.json on the next save.
     delete this.settings.vimPrevObsidianVim;
+
+    // Sounds, their own effect since 1.7.7: a look saved before with Sounds
+    // on and Typewriter off was silent and stays so (soundsApart), once. Not
+    // saved here: until the next save it runs again, harmlessly - the only
+    // way to a look with Sounds on and Typewriter off is a change, which
+    // saves the flag with it.
+    if (!this.settings.soundsApart) {
+      if (saved) soundsApart(this.settings);
+      this.settings.soundsApart = true;
+    }
 
     // Seed default presets for first-time users (or any install missing
     // them), and bring an untouched retuned one up to date (seedPresets).

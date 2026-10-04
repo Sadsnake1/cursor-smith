@@ -40,12 +40,13 @@ Multiple cursors get ALL of it. Every caret you add is drawn, styled and animate
 
 ## The effects
 
-Eleven of them, from subtle to absurd. Each has its own switch and its own settings, and they stack together like peas in a pod.
+Twelve of them, from subtle to absurd. Each has its own switch and its own settings, and they stack together like peas in a pod.
 
 | Effect | What it does |
 |---|---|
 | **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
-| **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. And its sounds. Mix any of them. |
+| **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
+| **Sounds** | Real typewriters, mechanical keyboards, chalk on a blackboard or a kalimba as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
@@ -58,7 +59,7 @@ Eleven of them, from subtle to absurd. Each has its own switch and its own setti
 
 Some of them unlock extra options together. Try Blinking with the Torch.
 
-### Typewriter sounds
+### Sounds
 
 
 
@@ -66,11 +67,17 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 
 
 
-Turn on **Sounds** under Typewriter and pick a machine: Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve or Smith-Corona Corsair. Press play to hear one before you type. Ready to annoy some people? Try it out!
+Turn on **Sounds** in Effects and pick one. Press play to hear it before you type.
 
-Have better recordings of your favorite typewriter? [Send them my way](https://github.com/Sadsnake1/cursor-smith/issues) and I'll be happy to put them in the plugin.
+- **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
+- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks. Every key sounds from where it sits on the board.
+- **Something else:** Chalk on a blackboard, and a Kalimba that turns your words into little tunes.
 
-Recordings, cut and levelled for the plugin:
+Ready to annoy some people? Try it out!
+
+Have better recordings of your favorite typewriter or keyboard? [Send them my way](https://github.com/Sadsnake1/cursor-smith/issues) and I'll be happy to put them in the plugin.
+
+Recordings, cut and leveled for the plugin:
 
 - Erika 5: Konrad Gutkowski for Work With Sounds, [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:WWS_Typewriter.ogg), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 - Mercedes, and the Olympia's bell: [doxent](https://freesound.org/s/193603/), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
@@ -78,6 +85,22 @@ Recordings, cut and levelled for the plugin:
 - Royal Portable: fastson ([typing](https://freesound.org/s/99694/), [bell](https://freesound.org/s/99695/)), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)
 
 The Hermes 3000, L. C. Smith, Olympia, Sears Electric Twelve and Smith-Corona Corsair are public-domain recordings from Freesound.
+
+The keyboards, the chalk and the kalimba come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX and NovelKeys Cream packs were first [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. Both are MIT licensed:
+
+<details>
+<summary>MIT License (OmaVibes, Mechvibes)</summary>
+
+Copyright (c) 2026 Mohammed Shareef<br>
+Copyright (c) 2021 Hai Nguyen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+</details>
 
 ## Settings
 

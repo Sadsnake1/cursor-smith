@@ -13,6 +13,10 @@ export type CursorSmithSettings = typeof DEFAULT_SETTINGS & {
   userPresets?: Record<string, Partial<CursorSmithSettings>>;
   vimPresets?: Record<string, Record<string, Look>>;
   vimPrevObsidianVim?: boolean;
+  // Sounds became an effect of their own (1.7.7), no longer a part of
+  // Typewriter: set once the looks saved before were brought over
+  // (soundsApart in settings.ts).
+  soundsApart?: boolean;
 };
 // A saved settings object as it comes off disk: any version's keys.
 export type LegacySettings = Partial<CursorSmithSettings> & Record<string, unknown>;

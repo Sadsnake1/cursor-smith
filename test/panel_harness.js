@@ -107,6 +107,8 @@ function control() {
     onClick: (fn) => { c._click = fn; return c; },
     inputEl: makeEl("input"),
     extraSettingsEl: makeEl("div"),
+    // A dropdown's <select>: the Sound row builds its option groups in it.
+    selectEl: makeEl("select"),
   };
   return c;
 }

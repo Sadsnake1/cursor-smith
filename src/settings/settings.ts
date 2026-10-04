@@ -629,6 +629,24 @@ export function migrateLegacyKeys(src: LegacySettings | null | undefined): Legac
   return o;
 }
 
+// Sounds, an effect of their own since 1.7.7: before, they played only with
+// Typewriter on, so a look saved then with Sounds on and Typewriter off was
+// silent - and would start clacking on upgrade. Once, on the first load
+// after it (the settings' soundsApart unset), every saved look of that kind
+// - the settings, the Vim modes, every preset - has its Sounds switched off,
+// as it was heard. Answers how many were.
+export function soundsApart(settings: LegacySettings): number {
+  let n = 0;
+  const fix = (look: Partial<Look> | null | undefined) => {
+    if (look && typeof look === "object" && look.typewriterSound && !look.typewriter) { look.typewriterSound = false; n++; }
+  };
+  fix(settings);
+  for (const look of Object.values(settings.vimModes || {})) fix(look);
+  for (const look of Object.values(settings.userPresets || {})) fix(look);
+  for (const modes of Object.values(settings.vimPresets || {})) for (const look of Object.values(modes || {})) fix(look);
+  return n;
+}
+
 // Copy only the look keys out of an arbitrary settings-shaped object.
 export function pickLook(src: Partial<CursorSmithSettings> | null | undefined): Partial<Look> {
   const o: Partial<Look> = {};

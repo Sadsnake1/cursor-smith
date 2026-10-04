@@ -142,7 +142,7 @@ export const SCRIPT_LINES = [
   "Just one more cursor tweak, then I write.",
   "It's not procrastination. It's research.",
   "This cursor has more plot than my novel.",
-  "Backspace is my cardio.",
+  "Backspacing is my cardio.",
   "Typing so fast my cursor caught fire.",
   "Follow the white cursor.",
   "Chapter one: in which I pick a cursor.",

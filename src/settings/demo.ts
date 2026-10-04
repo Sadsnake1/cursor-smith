@@ -171,6 +171,7 @@ export const SCRIPT_LINES = [
   "404: Words not found.",
   "Get me outta hereeee",
   "Your cursor is in another castle",
+  "Is Word-Smith my brother?",
 ];
 export const SCRIPT_MAX = 44;
 

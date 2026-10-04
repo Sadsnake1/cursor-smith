@@ -164,6 +164,11 @@ export const SCRIPT_LINES = [
   "Earth is amazing!",
   "Will you marry me? <3",
   "I think old_Joe tried to say something",
+  "See you, Space Cowboy.",
+  "The cursor is mightier than the sword.",
+  "Blink twice if you need help.",
+  "Loading creativity... 3%",
+  "404: Words not found.",
 ];
 export const SCRIPT_MAX = 44;
 

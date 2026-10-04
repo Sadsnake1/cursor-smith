@@ -17,8 +17,8 @@ section("Sounds: the machines");
   ok("ten real typewriters, the Hermes 3000 first and the default, the rest by name",
      TW.map((m) => m.label).join() === "Hermes 3000,Erika 5 (1940),IBM Selectric II,L. C. Smith (1946),Mercedes (1934),Olivetti Lettera 35,Olympia (1956),Royal Portable (1936),Sears Electric Twelve,Smith-Corona Corsair" &&
      M[0].id === "hermes3000" && T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000" && new Set(M.map((m) => m.id)).size === M.length, M.map((m) => m.label));
-  ok("then eleven keyboards (issue #46's picks, then the listening page's) and seven other sounds, each of a kind, the kinds in order",
-     KB.map((m) => m.label).join() === "Akko Lavender Purple,NovelKeys Cream,Cherry MX Red,Cherry MX Brown,Cherry MX Blue,Cherry MX Black,Razer Green,Thocks,IBM Buckling Spring,Topre,Gateron Ink Black" &&
+  ok("then eighteen keyboards (issue #46's picks, the listening page's, then popular switches) and seven other sounds, each of a kind, the kinds in order",
+     KB.map((m) => m.label).join() === "Akko Lavender Purple,NovelKeys Cream,Cherry MX Red,Cherry MX Brown,Cherry MX Blue,Cherry MX Black,Razer Green,Thocks,IBM Buckling Spring,Topre,Gateron Ink Black,Holy Panda,Durock Alpaca,Gateron Turquoise Tealios,Kailh Box Navy,Alps SKCM Blue,Everglide Oreo,Everglide Crystal Purple" &&
      OTHER.map((m) => m.label).join() === "Chalk,Kalimba,Piano,8-Bit,Sine Bumps,Glitch,Horse" && TW.length + KB.length + OTHER.length === M.length &&
      M.map((m) => m.kind).join() === [...TW, ...KB, ...OTHER].map((m) => m.kind).join(), M.map((m) => m.kind));
   ok("...the ones that play notes are never detuned: Kalimba, Piano, 8-Bit, Sine Bumps", M.filter((m) => m.tonal).map((m) => m.id).join() === "kalimba,piano,bit8,sinebumps");
@@ -62,10 +62,10 @@ section("Sounds: the machines");
   ok("every machine but the Selectric credits its recording in the source: who, where, the licence",
      credits.length === M.length - 1 && !credits.some((c) => c.id === "selectric2") &&
      credits.filter((c) => T.soundMachine(c.id).kind === "typewriter").every((c) => /freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(c.text) && /CC0|CC BY/.test(c.text)), credits);
-  ok("...the keyboards and the other sounds: OmaVibes or kbsim, MIT; the Mechvibes packs Mechvibes too",
-     credits.filter((c) => T.soundMachine(c.id).kind !== "typewriter").every((c) => /OmaVibes by Mohammed Shareef \(github\.com\/mshareef-git\/omavibes\), MIT|kbsim by Thomas Lai \(github\.com\/tplai\/kbsim\), MIT/.test(c.text)) &&
-     ["buckling", "topre", "inkblack"].every((id) => /kbsim/.test(credits.find((c) => c.id === id).text)) &&
-     ["nkcream", "mxred", "mxbrown", "mxblue", "mxblack"].every((id) => /github\.com\/hainguyents13\/mechvibes, MIT/.test(credits.find((c) => c.id === id).text)));
+  ok("...the keyboards and the other sounds: OmaVibes, kbsim or Mechvibes, MIT; the Mechvibes packs Mechvibes too",
+     credits.filter((c) => T.soundMachine(c.id).kind !== "typewriter").every((c) => /OmaVibes by Mohammed Shareef \(github\.com\/mshareef-git\/omavibes\), MIT|kbsim by Thomas Lai \(github\.com\/tplai\/kbsim\), MIT|Mechvibes' pack \(github\.com\/hainguyents13\/mechvibes, MIT\)/.test(c.text)) &&
+     ["buckling", "topre", "inkblack", "holypanda", "alpaca", "tealios", "boxnavy", "alpsblue"].every((id) => /kbsim/.test(credits.find((c) => c.id === id).text)) &&
+     ["nkcream", "mxred", "mxbrown", "mxblue", "mxblack", "egoreo", "egpurple"].every((id) => /github\.com\/hainguyents13\/mechvibes, MIT/.test(credits.find((c) => c.id === id).text)));
   ok("...the CC BY ones by name", credits.filter((c) => /CC BY/.test(c.text)).every((c) => /recorded by \S+/.test(c.text)) && credits.filter((c) => /CC BY/.test(c.text)).length >= 4);
   // The README credits the CC BY recordings - author, link, licence.
   const readme = fs.readFileSync(path.join(__dirname, "..", "..", "README.md"), "utf8");

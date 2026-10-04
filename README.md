@@ -70,7 +70,7 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 Turn on **Sounds** on its own page, pick a category, then a sound. Press play to hear it before you type.
 
 - **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
-- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks, IBM Buckling Spring, Topre, Gateron Ink Black. Every key sounds from where it sits on the board.
+- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks, IBM Buckling Spring, Topre, Gateron Ink Black, Holy Panda, Durock Alpaca, Gateron Turquoise Tealios, Kailh Box Navy, Alps SKCM Blue, Everglide Oreo, Everglide Crystal Purple. Every key sounds from where it sits on the board.
 - **Something else:** Chalk on a blackboard, a Kalimba and a Piano that turn your words into little tunes, 8-Bit, Sine Bumps, Glitch, and a Horse. Yes, a horse.
 
 Ready to annoy some people? Try it out!
@@ -86,7 +86,7 @@ Recordings, cut and leveled for the plugin:
 
 The Hermes 3000, L. C. Smith, Olympia, Sears Electric Twelve and Smith-Corona Corsair are public-domain recordings from Freesound.
 
-Most keyboards and the other sounds come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX and NovelKeys Cream packs were first [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. The IBM Buckling Spring, Topre and Gateron Ink Black come from Thomas Lai's [kbsim](https://github.com/tplai/kbsim). All three are MIT licensed:
+Most keyboards and the other sounds come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX, NovelKeys Cream and Everglide packs are [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. The IBM Buckling Spring, Topre, Gateron Ink Black, Holy Panda, Durock Alpaca, Gateron Turquoise Tealios, Kailh Box Navy and Alps SKCM Blue come from Thomas Lai's [kbsim](https://github.com/tplai/kbsim). All three are MIT licensed:
 
 <details>
 <summary>MIT License (OmaVibes, Mechvibes, kbsim)</summary>

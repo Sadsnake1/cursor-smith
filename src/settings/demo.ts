@@ -54,7 +54,8 @@ import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
-import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_CHOMP_MS, BACKMAN_GROW, BACKMAN_HOLD_MS, backManShape, backManSpring } from "../effects/effects-backman";
+import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_CHOMP_MS, BACKMAN_GROW, BACKMAN_HOLD_MS, backManBite, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
+import type { BackManCmd } from "../effects/effects-backman";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -479,7 +480,7 @@ interface Particle {
   // rest are plain fading pixels): a thrown letter, a risen one, an
   // evaporating one, an x over a deleted letter, a Hot-head chunk or spark,
   // a firework shell or spark.
-  kind?: "letter" | "rise" | "evap" | "xout" | "fire" | "spark" | "shell" | "burst";
+  kind?: "letter" | "rise" | "evap" | "xout" | "fire" | "spark" | "shell" | "burst" | "meal";
   rot?: number;
   shape0?: number;
   phase?: number;
@@ -545,9 +546,11 @@ interface Demo {
   geo: Geometry | null;
   keyHeavy: boolean;
   breath: number;
-  // Back-man (effects-backman.ts): its last bite, its bend's spring, and
-  // whether the caret wears it now (to put the box back once).
+  // Back-man (effects-backman.ts): its last bite, its bend's spring, its
+  // mouth's corner (x, for the letters going in), and whether the caret
+  // wears it now (to put the box back once).
   bmT: number;
+  bmMouth: number;
   bm: { bend: number; v: number; at: number };
   bmOn: boolean;
   burns: { x: number; t: number }[];
@@ -658,7 +661,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmT: -1e9, bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmT: -1e9, bmMouth: 0, bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -785,8 +788,8 @@ export class DemoStrip {
     el.setText(char);
     el.toggleClass("is-letter", !!char);
     el.setCssStyles(char
-      ? { width: "auto", height: "auto", backgroundColor: "transparent", color, opacity: "1", fontSize: "", filter: "" }
-      : { width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1", fontSize: "", filter: "" });
+      ? { width: "auto", height: "auto", backgroundColor: "transparent", color, opacity: "1", fontSize: "", filter: "", zIndex: kind === "meal" ? "0" : "" }
+      : { width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1", fontSize: "", filter: "", zIndex: "" });
     const part: Particle = { el, x, y, vx, vy, t0: now, life, size, color, g, kind };
     d.particles.push(part);
     return part;
@@ -912,7 +915,7 @@ export class DemoStrip {
     d.keyKind = "back";
     d.keyHeavy = false;
     if (d.look.hotHead) d.burns.push({ x: at, t: now });
-    this.deleted(d, [{ ch, at }], now);
+    this.deleted(d, [{ ch, at }], now, true);
   }
 
   // Letters deleted (a typo backspaced, or the line cleared), as the
@@ -920,12 +923,19 @@ export class DemoStrip {
   // effects' evaporation lifts each letter itself, swaying and spreading
   // as it rises and fades (1.1 s, a little after the one before);
   // disintegration bursts each apart in flipped colors.
-  private deleted(d: Demo, letters: { ch: string; at: number }[], now: number) {
+  private deleted(d: Demo, letters: { ch: string; at: number }[], now: number, bite = false) {
     const look = d.look;
     const cw = d.stepPx || 7;
+    // A Backspace with Back-man on: it eats the letter, the others stand
+    // aside (a line cleared is not its bite).
+    const backMan = bite && !!(look.popEffects && look.backMan && d.style === "box");
     letters.forEach(({ ch, at }, k) => {
       if (!ch.trim()) return;
       const x = at * cw;
+      if (backMan) {
+        if (k < 8) this.spawn(d, x, 11, 0, 0, BACKMAN_CHOMP_MS, 0, "var(--text-normal)", now, ch, 0, "meal");
+        return;
+      }
       if (look.typewriter && look.typewriterTape) {
         const ghost = this.spawn(d, x, 11, 0, 0, 500, 0, "var(--text-normal)", now, ch, 0, "xout");
         if (ghost) ghost.el.setCssStyles({ opacity: "0.45" });
@@ -1020,6 +1030,10 @@ export class DemoStrip {
         const y = p.y - 22 * 1.2 * (1 - Math.pow(1 - t, 2));
         const x = p.x + Math.sin((p.phase ?? 0) + t * 5) * 22 * 0.16 * t;
         p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${(1 + 0.35 * t).toFixed(2)})`, opacity: (0.85 * (1 - t)).toFixed(2) });
+      } else if (p.kind === "meal") {
+        const e = 1 - (1 - t) * (1 - t);
+        const x = p.x + (d.bmMouth - (d.stepPx || 7) / 2 - p.x) * e;
+        p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${p.y.toFixed(1)}px) scale(${Math.max(0.05, 1 - 0.8 * e).toFixed(2)})`, opacity: "1" });
       } else if (p.kind === "xout") {
         p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (t < 0.5 ? 1 : 1 - (t - 0.5) * 2).toFixed(2) });
       } else if (p.kind === "fire" || p.kind === "spark") {
@@ -1196,12 +1210,14 @@ export class DemoStrip {
       styles.top = `${(d.style === "line" ? g.lineTop : d.style === "underline" ? g.top + g.h - g.ulH : g.top).toFixed(2)}px`;
     }
     // Back-man, as the engine draws it (drawBackMan): one bite per letter,
-    // the mouth toward it (Backspace's: left), its head and feet the box's,
-    // its sides bent in a V on the bend's spring (on past the bites while it
-    // settles) and swelling while it eats. The caret is widened on both
-    // sides for the bend to show; filled, it is cut to the creature's
-    // outline; hollow, the outline is drawn instead of the box's border.
-    let bm: { open: number; bend: number; grow: number } | null = null;
+    // the mouth toward it (Backspace's: left), soft-lipped; the gulp's
+    // swell, front then back, and the eye's happy squint; its head and feet
+    // the box's, its sides bent in a V on the bend's spring (on past the
+    // bites while it settles). The caret is widened on both sides for the
+    // bend to show; filled, it is cut to the creature's outline, the eye a
+    // hole with a glint; hollow, the outline and a dot of an eye are drawn
+    // instead of the box's border.
+    let bm: (ReturnType<typeof backManBite> & { bend: number }) | null = null;
     if (look.popEffects && look.backMan && d.style === "box" && d.geo) {
       const b = d.bm;
       if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.at = this.last; }
@@ -1209,29 +1225,35 @@ export class DemoStrip {
       // engine's does.
       const since = this.last - d.bmT;
       const eating = since >= 0 && since < BACKMAN_HOLD_MS;
-      if (eating || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) {
-        bm = {
-          open: eating && since < BACKMAN_CHOMP_MS ? Math.sin((Math.PI * since) / BACKMAN_CHOMP_MS) : 0,
-          bend: b.bend,
-          grow: eating ? BACKMAN_GROW * Math.sqrt(1 - since / BACKMAN_HOLD_MS) : 0,
-        };
-      }
+      if (eating || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) bm = { ...backManBite(eating ? since : 1e9), bend: b.bend };
     }
     if (bm && d.geo) {
-      const body = backManShape(bm.open, -1, bm.bend, bm.grow);
+      const body = backManShape(bm.open, -1, bm.bend, bm.front, bm.back);
       const m = Math.ceil((BACKMAN_BEND_MAX + BACKMAN_GROW) * width) + 1;
       const wide = width + 2 * m, high = parseFloat(styles.height) || d.geo.h;
+      d.bmMouth = from + body[3][0] * width;
       Object.assign(styles, { width: `${wide.toFixed(2)}px`, transform: `${styles.transform} translateX(${-m}px)` });
+      const sw = d.shape.hollowWidth ? d.geo.outline : 0;
+      const n = (v: number) => v.toFixed(2);
+      const trace = (cmds: BackManCmd[], ox: number, oy: number) => cmds.map((c) =>
+        c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n(ox + c[1])} ${n(oy + c[2])} ${n(ox + c[3])} ${n(oy + c[4])}` : `${c[0]}${n(ox + c[1])} ${n(oy + c[2])}`).join(" ");
+      const outline = trace(backManOutline(body, bm.open, width - sw, high - sw), m + sw / 2, sw / 2);
+      const eye = backManEye(-1, bm.bend, bm.squint, width, high);
+      const ex = m + eye.cx, ey = eye.cy;
+      const eyePath = eye.closed
+        ? `M${n(ex - eye.rx)} ${n(ey)} A${n(eye.rx)} ${n(eye.rx)} 0 0 1 ${n(ex + eye.rx)} ${n(ey)} L${n(ex + eye.rx - eye.thick)} ${n(ey)} A${n(eye.rx - eye.thick)} ${n(eye.rx - eye.thick)} 0 0 0 ${n(ex - eye.rx + eye.thick)} ${n(ey)} Z`
+        : `M${n(ex - eye.rx)} ${n(ey)} A${n(eye.rx)} ${n(Math.max(0.1, eye.ry))} 0 1 0 ${n(ex + eye.rx)} ${n(ey)} A${n(eye.rx)} ${n(Math.max(0.1, eye.ry))} 0 1 0 ${n(ex - eye.rx)} ${n(ey)} Z`;
+      const g = eye.glint;
+      const glintPath = g ? ` M${n(m + g.x - g.r)} ${n(g.y)} A${n(g.r)} ${n(g.r)} 0 1 0 ${n(m + g.x + g.r)} ${n(g.y)} A${n(g.r)} ${n(g.r)} 0 1 0 ${n(m + g.x - g.r)} ${n(g.y)} Z` : "";
       if (d.shape.hollowWidth) {
-        const sw = d.geo.outline;
-        const pts = body.map(([x, y]) => (m + sw / 2 + x * (width - sw)).toFixed(2) + "," + (sw / 2 + y * (high - sw)).toFixed(2)).join(" ");
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${wide.toFixed(2)} ${high.toFixed(2)}' preserveAspectRatio='none'><polygon points='${pts}' fill='none' stroke='${d.shape.fill}' stroke-width='${sw.toFixed(2)}' stroke-linejoin='miter'/></svg>`;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n(wide)} ${n(high)}' preserveAspectRatio='none'><path d='${outline}' fill='none' stroke='${d.shape.fill}' stroke-width='${n(sw)}' stroke-linejoin='round'/><path d='${eyePath}' fill='${d.shape.fill}'/></svg>`;
         Object.assign(styles, {
           borderColor: "transparent", borderImage: "none", backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
           backgroundSize: "100% 100%", backgroundOrigin: "border-box", backgroundRepeat: "no-repeat",
         });
       } else {
-        styles.clipPath = "polygon(" + body.map(([x, y]) => (m + x * width).toFixed(2) + "px " + (y * 100).toFixed(1) + "%").join(", ") + ")";
+        // Even-odd: the eye a hole, the glint inside it the body again.
+        styles.clipPath = `path(evenodd, "${outline} ${eyePath}${glintPath}")`;
       }
       d.bmOn = true;
     } else if (d.bmOn) {

@@ -148,6 +148,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _xoutOn: EffectsMethods["_xoutOn"];
   declare _backManOn: EffectsMethods["_backManOn"];
   declare _backManBite: EffectsMethods["_backManBite"];
+  declare spawnBackManMeal: EffectsMethods["spawnBackManMeal"];
   declare backManPose: EffectsMethods["backManPose"];
   declare backManMoving: EffectsMethods["backManMoving"];
   declare drawBackMan: EffectsMethods["drawBackMan"];

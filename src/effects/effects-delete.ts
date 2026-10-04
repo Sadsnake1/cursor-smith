@@ -4,9 +4,10 @@
 // them exactly as before. `this` is the plugin.
 //
 // What a deletion took, letter by letter, and where each letter stood - for
-// the two Pop effects that answer a deletion: Backspace disintegration (a
-// burst in each letter's cell) and Backspace evaporation (the letters rising
-// away). Backspace takes the letters before the caret and moves it; Delete
+// the Pop effects that answer a deletion: Backspace disintegration (a burst
+// in each letter's cell), Backspace evaporation (the letters rising away)
+// and Back-man (the letters going into its mouth; when it is on, it has
+// them, and the other two stand aside). Backspace takes the letters before the caret and moves it; Delete
 // takes the letters after it and leaves it still - no move, no commit - so
 // a commit (commitMove) and the frames the caret sits still (updateActivePoint)
 // both hand the deletion here. By then the text is gone from the note, so
@@ -23,10 +24,10 @@ import type CursorSmithPlugin from "../plugin";
 export const DELETION_MAX_CHARS = 40;
 
 export const effectsDeleteMethods = {
-  // Whether anything wants a deletion's letters: the Pop effects' two, and
-  // Typewriter's X-out.
+  // Whether anything wants a deletion's letters: the Pop effects' three,
+  // and Typewriter's X-out.
   _deletionFxOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._xoutOn();
+    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._xoutOn() || this._backManOn();
   },
 
   // The note as it is now, for the next deletion to read from; kept only
@@ -55,13 +56,18 @@ export const effectsDeleteMethods = {
     this._deletionDoc = doc;
   },
 
-  // Both effects for one deletion. True when the burst was laid along the
-  // letters, so the caller does not make the one where the caret stood too.
+  // The effects for one deletion. True when the burst was laid along the
+  // letters (or Back-man ate them), so the caller does not make the one
+  // where the caret stood too.
   _deletionFx(this: CursorSmithPlugin, old: CaretRecord, now: CaretRecord): boolean {
     if (!this._deletionFxOn()) return false;
     const letters = this.deletedLetters(old, now);
-    if (letters && this._evaporateOn()) this.spawnEvaporate(letters);
     if (letters && this._xoutOn()) this.spawnXout(letters);
+    if (this._backManOn()) {
+      if (letters) this.spawnBackManMeal(letters);
+      return true;
+    }
+    if (letters && this._evaporateOn()) this.spawnEvaporate(letters);
     if (!this.look.popEffects || !this.look.backspaceDisintegrate) return false;
     return this.spawnDisintegration(letters);
   },

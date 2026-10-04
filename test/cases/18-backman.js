@@ -13,18 +13,18 @@ section("Back-man: the creature");
   const open = T.backManShape(1, 1), shut = T.backManShape(0, 1), left = T.backManShape(1, -1);
   // The mouth's corner: the right side's point furthest in, between the jaws.
   const deepest = (body) => Math.min(...body.filter(([x, y]) => x > 0.05 && y > 0.2 && y < 0.8).map(([x]) => x));
-  ok("open, facing right: a V bitten into the right side at its middle, well into the box", deepest(open) < 0.5 && deepest(open) > 0.3 && open.some(([x, y]) => x === deepest(open) && y === 0.5), deepest(open));
+  ok("open, facing right: a V bitten into the right side at its middle, most of the way into the box", deepest(open) < 0.3 && deepest(open) > 0.1 && open.some(([x, y]) => x === deepest(open) && y === 0.5), deepest(open));
   ok("...shut: the jaws meet, nothing bitten out", deepest(shut) === 1, shut);
   ok("...no tail, no eye: an outline inside the box and nothing more", Array.isArray(open) && open.every(([x, y]) => x >= 0 && x <= 1 && y >= 0 && y <= 1));
   const corners = (body) => [[0, 0], [1, 0], [1, 1], [0, 1]].every(([cx, cy]) => body.some(([x, y]) => Math.abs(x - cx) < 1e-9 && y === cy));
   ok("its head and feet are the box's: the four corners, square, and nothing else on the top or the bottom edge", corners(open) && open.filter(([, y]) => y === 0 || y === 1).length === 4);
   ok("facing left (Backspace): the same creature mirrored, the mouth on the left",
-     left.every(([x, y], i) => Math.abs(x - (1 - open[i][0])) < 1e-9 && y === open[i][1]) && left.some(([x, y]) => y === 0.5 && x > 0.5 && x < 0.7));
+     left.every(([x, y], i) => Math.abs(x - (1 - open[i][0])) < 1e-9 && y === open[i][1]) && left.some(([x, y]) => y === 0.5 && x > 0.7 && x < 0.9));
   const bent = T.backManShape(0, -1, -0.4);
   ok("bent (leftward): the sides a V from the middle - the middles moved the whole bend, the head and feet not at all",
      corners(bent) && bent.filter(([, y]) => y === 0.5).every(([x]) => x === 0 - 0.4 || x === 1 - 0.4), bent);
-  const jawTop = T.backManShape(1, -1, -0.4).find(([, y]) => Math.abs(y - 0.24) < 1e-9);
-  ok("...nearer the head, less: an upper jaw a quarter down bends a bit under half (a straight V, not a curve)", !!jawTop && Math.abs(jawTop[0] - -0.4 * 0.48) < 1e-9, jawTop);
+  const jawTop = T.backManShape(1, -1, -0.4).find(([, y]) => Math.abs(y - 0.14) < 1e-9);
+  ok("...nearer the head, less: the upper jaw, a seventh down, bends under a third as far (a straight V, not a curve)", !!jawTop && Math.abs(jawTop[0] - -0.4 * 0.28) < 1e-9, jawTop);
   const fat = T.backManShape(0, 1, 0, 0.2);
   ok("swelling: both sides out at the middle, the head and feet the box's", corners(fat) && fat.some(([x, y]) => y === 0.5 && Math.abs(x - 1.2) < 1e-9) && fat.some(([x, y]) => y === 0.5 && Math.abs(x + 0.2) < 1e-9));
 }
@@ -39,7 +39,7 @@ section("Back-man: the spring");
     if (peak < -0.1) back = Math.max(back, s.bend);
   }
   ok("a bite (leftward) bends it a good part of a box width", peak < -0.2 && peak >= -T.BACKMAN_BEND_MAX, peak);
-  ok("...then it swings back past straight (inertia)", back > 0.03, back);
+  ok("...then it eases back, a hair past straight (a little inertia, no wobble)", back > 0.002 && back < 0.15 * -peak, back);
   ok("...and settles", Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05, s);
   const a = { bend: 0, v: 3 }, b = { bend: 0, v: 3 };
   for (let k = 0; k < 30; k++) T.backManSpring(a, 1 / 120);
@@ -71,12 +71,16 @@ section("Back-man: the bites");
     ok("...one bite per letter: shut again after it, still there, swelling less", p.open === 0 && p.grow < 0.8 * T.BACKMAN_GROW);
     e._backManBite(-1);
     now += T.BACKMAN_CHOMP_MS / 2;
-    ok("the next letter: a bite of its own, from its key", e.backManPose(now).open > 0.99);
-    now += T.BACKMAN_HOLD_MS + 1;
     p = e.backManPose(now);
-    ok("after the last bite: done eating (no bite, no swell), still bending as it settles", !!p && p.open === 0 && p.grow === 0 && Math.abs(p.bend) > 0.004, p);
+    ok("the next letter: a bite of its own, from its key", p.open > 0.99);
+    const atBite = Math.abs(p.bend);
+    const last = now - T.BACKMAN_CHOMP_MS / 2;
+    now = last + T.BACKMAN_HOLD_MS - 1;
+    p = e.backManPose(now);
+    ok("after the last bite: the mouth shut, the bend easing back", !!p && p.open === 0 && Math.abs(p.bend) < atBite / 2, [atBite, p]);
+    now = last + 500;
+    ok("...and a Box again within half a second", e.backManPose(now) === null && !e.backManMoving(now));
     now += 1500;
-    ok("...and a Box again once it has settled", e.backManPose(now) === null && !e.backManMoving(now));
     e._backManBite(1);
     now += T.BACKMAN_CHOMP_MS / 2;
     p = e.backManPose(now);

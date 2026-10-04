@@ -22,12 +22,13 @@ import type CursorSmithPlugin from "../plugin";
 export const BACKMAN_HOLD_MS = 280;
 export const BACKMAN_CHOMP_MS = 140;
 export const BACKMAN_GROW = 0.18;
-// The bend's spring: its frequency (Hz) and damping ratio (under 1: it
-// swings past straight), the kick a bite gives it (box widths a second)
-// and the most it bends (box widths, at the middle).
-export const BACKMAN_BEND_HZ = 4.2;
-export const BACKMAN_BEND_DAMPING = 0.32;
-export const BACKMAN_BEND_KICK = 16;
+// The bend's spring: its frequency (Hz) and damping ratio (0.62: a hair
+// past straight on the way back, then still - the user found 0.32's wobble
+// too much), the kick a bite gives it (box widths a second) and the most
+// it bends (box widths, at the middle).
+export const BACKMAN_BEND_HZ = 6;
+export const BACKMAN_BEND_DAMPING = 0.62;
+export const BACKMAN_BEND_KICK = 26;
 export const BACKMAN_BEND_MAX = 0.6;
 
 export interface BackManState { t: number; dir: number; bend: number; v: number; at: number }
@@ -61,7 +62,7 @@ export function backManSpring(s: { bend: number; v: number }, dt: number) {
 // tests and both painters (the canvas's and the settings' previews).
 export function backManShape(open: number, dir: number, bend = 0, grow = 0): [number, number][] {
   const o = Math.max(0, Math.min(1, open));
-  const jaw = 0.26 * o, depth = 0.62 * o;
+  const jaw = 0.36 * o, depth = 0.78 * o;
   // Facing right; the front's points marked (they swell forward, the back's
   // backward).
   const right: [number, number, boolean][] = [

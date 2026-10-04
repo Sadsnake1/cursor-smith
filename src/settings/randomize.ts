@@ -8,10 +8,12 @@
 //   - Motion: how likely gliding, the smear and the trails are, and how far
 //     they move.
 //   - Sounds: whether the roll picks a sound too; off, the roll is silent.
+//   - A switch per effect: which ones a roll may pick (all of them but the
+//     torch unless told otherwise).
 //
-// A roll is every look key but the torch's: the torch darkens the whole
-// window, which is no cursor of anyone's choosing, so it stays off and its
-// settings stay as they are. Values come from the settings' own ranges, so
+// A roll is every look key but the torch's settings: the torch darkens the
+// whole window, which is no cursor of anyone's choosing, so it is rolled
+// only when its switch is on - and then it is lit as its settings are. Values come from the settings' own ranges, so
 // a rolled cursor is one the panel could have made. Pure and seedable (the
 // tests roll with a seed); the plugin applies it (library.ts, rollCursor).
 import { DEFAULT_SETTINGS, LOOK_KEYS } from "./settings";
@@ -24,6 +26,9 @@ export interface RollOptions {
   color: number;   // 0 - 100
   motion: number;  // 0 - 100
   sounds: boolean;
+  // Per effect (ROLL_TOGGLES' keys): false keeps it out of the roll. A key
+  // not there is allowed, but the torch's.
+  allow?: Partial<Record<string, boolean>>;
 }
 
 // The effects a roll chooses among - the Effects rail's, but the torch
@@ -33,7 +38,19 @@ export const ROLL_EFFECTS: (keyof Look)[] = [
   "energyEffect", "crtEffect", "speedDemon", "hotHead",
 ];
 
-// The torch's keys: a roll leaves them alone (the torch itself off).
+// The effects a roll can be told to leave out, in the Effects page's
+// order: the nine, Motion smear (Motion's) and the torch (out unless let in).
+export const ROLL_TOGGLES: (keyof Look)[] = [
+  "popEffects", "typewriter", "flameTrail", "stardustEnabled", "bracketTether", "smear",
+  "energyEffect", "crtEffect", "speedDemon", "hotHead", "torchEffect",
+];
+export function rollAllowed(allow: Partial<Record<string, boolean>> | null | undefined, key: string): boolean {
+  const v = allow ? allow[key] : undefined;
+  return v === undefined ? key !== "torchEffect" : !!v;
+}
+
+// The torch's keys: a roll leaves them alone (the torch itself off, unless
+// it is let in).
 const TORCH_KEYS = new Set<string>(["torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius", "overlayDarkness",
   "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed", "overlayBlinkSync", "overlayBlinkDepth", "overlayFlickerAmount"]);
 const SOUND_KEYS = new Set<string>(["typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell"]);
@@ -55,6 +72,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   const unit = (v: number) => Math.max(0, Math.min(1, (Number.isFinite(v) ? v : 0) / 100));
   const chaos = unit(opts.chaos), color = unit(opts.color), motion = unit(opts.motion);
   const full = chaos >= 0.999;
+  const allowed = (key: string) => rollAllowed(opts.allow, key);
   const chance = (p: number) => full || rand() < p;
   const pick = <T>(list: T[]): T => list[Math.floor(rand() * list.length) % list.length];
   // A value in a setting's range, on its step.
@@ -111,18 +129,21 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   look.smoothStyle = pick(["ease", "smooth", "springy", "linear"]);
   look.catchUpSpeed = any(0.35 + 0.3 * (1 - motion), 0.8, 0.05);
   look.smoothAdaptive = true;
-  look.smear = chance(0.1 + 0.7 * motion);
+  look.smear = allowed("smear") && chance(0.1 + 0.7 * motion);
   look.smearStiffness = any(0.3, 0.8, 0.05);
   look.smearTrailingStiffness = snap(0.5 - 0.4 * motion + rand() * 0.15, 0.05, 1, 0.05);
   look.smearTaper = rand() < 0.4;
 
-  // Effects: one at Chaos 0, all nine at 100.
-  const n = full ? ROLL_EFFECTS.length : Math.max(1, Math.min(ROLL_EFFECTS.length, Math.round(1 + chaos * 8 + (rand() - 0.5) * 1.6 * Math.min(1, chaos * 4))));
-  const order = ROLL_EFFECTS.slice();
+  // Effects: of the ones let in, one at Chaos 0, all of them at 100 (none
+  // let in: none).
+  const pool: (keyof Look)[] = [...ROLL_EFFECTS, "torchEffect"].filter((k) => allowed(k)) as (keyof Look)[];
+  const max = pool.length;
+  const n = !max ? 0 : full ? max : Math.max(1, Math.min(max, Math.round(1 + chaos * (max - 1) + (rand() - 0.5) * 1.6 * Math.min(1, chaos * 4))));
+  const order = pool.slice();
   for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
   const on = new Set(order.slice(0, n));
   // Motion leans on the moving ones: CRT's trail and the pixel trail.
-  if (!full && motion > 0.7 && !on.has("crtEffect") && rand() < motion - 0.5) on.add("crtEffect");
+  if (!full && motion > 0.7 && allowed("crtEffect") && !on.has("crtEffect") && rand() < motion - 0.5) on.add("crtEffect");
   for (const k of on) out[k] = true;
 
   if (on.has("popEffects")) {

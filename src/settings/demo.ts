@@ -332,6 +332,21 @@ export class DemoStrip {
   private raf = 0;
   private last = 0;
   private win: Window | null = null;
+  // The pill's wait for its page to come back (a slow poll, not a frame
+  // loop spinning for nothing).
+  private poll = 0;
+
+  // Every demo let go, the loop stopped (the pill's, before its next one).
+  reset() {
+    if (this.win) {
+      if (this.raf) this.win.cancelAnimationFrame(this.raf);
+      if (this.poll) this.win.clearTimeout(this.poll);
+    }
+    this.raf = 0;
+    this.poll = 0;
+    this.last = 0;
+    this.demos = [];
+  }
 
   // Builds the demo into `host` and starts it. `color` is the preset's
   // color for the current theme; `heatStops` its four heat stops for it.
@@ -401,9 +416,12 @@ export class DemoStrip {
     // Painted once here (a guessed letter width), then from the loop.
     this.paint(d, 1, 1);
     if (!win || typeof win.requestAnimationFrame !== "function") return;
+    // Another window (the settings window closed and opened again): the
+    // old one's loop is gone with it.
+    if (win !== this.win) { this.raf = 0; this.poll = 0; }
     this.demos.push(d);
     this.win = win;
-    if (!this.raf) this.raf = win.requestAnimationFrame(this.tick);
+    if (!this.raf && !this.poll) this.raf = win.requestAnimationFrame(this.tick);
   }
 
   private tick = (now: number) => {
@@ -413,8 +431,14 @@ export class DemoStrip {
     // done; the loop ends with the last of them.
     // A demo that is done stays in the loop until it has settled at the
     // idle spot and its particles are gone.
-    this.demos = this.demos.filter((d) => d.el.isConnected && !(d.done && d.stepPx > 0 && d.particles.length === 0 && d.state.lead === d.state.target && d.state.trail === d.state.lead));
-    for (const d of this.demos) {
+    // The pill's demo is not let go when its element leaves the document:
+    // Obsidian's settings take a page's rows out and put them back (another
+    // page opened, a re-render), and a demo dropped then came back frozen -
+    // mid-blink, with no cursor (the user: "sometimes the pill stops
+    // displaying the cursor"). It waits instead; reset() lets it go.
+    this.demos = this.demos.filter((d) => (d.script || d.el.isConnected) && !(d.done && d.stepPx > 0 && d.particles.length === 0 && d.state.lead === d.state.target && d.state.trail === d.state.lead));
+    const live = this.demos.filter((d) => d.el.isConnected);
+    for (const d of live) {
       if (!d.stepPx) {
         // The letters' own width, without the span's padding: a Range
         // over the text node measures the glyphs alone.
@@ -452,7 +476,18 @@ export class DemoStrip {
       const heat = d.look.speedDemon && !d.look.speedDemonNoCursorHeat ? d.state.heat : 0;
       this.paint(d, blinkAlpha(d.state, d.look, now), 1 - heat);
     }
-    this.raf = this.demos.length && this.win ? this.win.requestAnimationFrame(this.tick) : 0;
+    this.raf = 0;
+    if (!this.win) return;
+    if (live.length) this.raf = this.win.requestAnimationFrame(this.tick);
+    else if (this.demos.length) {
+      // All away: look again in a while, and pick up from a fresh frame.
+      this.last = 0;
+      const win = this.win;
+      this.poll = win.setTimeout(() => {
+        this.poll = 0;
+        if (!this.raf && this.win === win) this.raf = win.requestAnimationFrame(this.tick);
+      }, 400);
+    }
   };
 
   // The pill: scaled to fill its stage, left of center (once, with the

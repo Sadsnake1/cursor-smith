@@ -351,6 +351,10 @@ export const DEFAULT_SETTINGS = {
   rollColor: 60,
   rollMotion: 50,
   rollSounds: false,
+  // Which effects a roll may pick, by key (ROLL_TOGGLES); a key not here is
+  // let in, but the torch's. Replaced whole on a write, never changed in
+  // place (this object is the defaults' own).
+  rollEffects: {} as Record<string, boolean>,
   showChar: true,
   moveDelayMs: 0,        
   smear: true,           

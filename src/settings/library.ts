@@ -83,9 +83,10 @@ export const libraryMethods = {
   // Motion at 100. No preset is in use after it (Save keeps one you like).
   async rollCursor(this: CursorSmithPlugin, { full = false, fromPanel = false } = {}) {
     const s = this.settings;
+    // Full chaos too keeps out what the switches keep out.
     const opts: RollOptions = full
-      ? { chaos: 100, color: 100, motion: 100, sounds: !!s.rollSounds }
-      : { chaos: s.rollChaos, color: s.rollColor, motion: s.rollMotion, sounds: !!s.rollSounds };
+      ? { chaos: 100, color: 100, motion: 100, sounds: !!s.rollSounds, allow: s.rollEffects }
+      : { chaos: s.rollChaos, color: s.rollColor, motion: s.rollMotion, sounds: !!s.rollSounds, allow: s.rollEffects };
     const rolled = rollLook(opts);
     const mode = this.isVimUiMode()
       ? (fromPanel ? this._vimEditMode : (this.lookVimMode() || this._vimEditMode)) || "normal"

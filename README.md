@@ -130,6 +130,8 @@ Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its sh
 
 Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Turn on **Include sounds** and every roll picks a sound too. A horse, maybe.
 
+Below them, a switch for every effect: turn one off and the dice never pick it. The Torch is off until you let it in.
+
 With Vim mode on, it rolls the mode you're editing.
 
 ## Presets

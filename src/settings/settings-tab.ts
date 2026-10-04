@@ -788,7 +788,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       },
     ];
     // Under the toggles, as Word-Smith has them: the keys for the commands.
-    items.push(this.hotkeysRow(["toggle", "toggle-cua-vim-mode", "cycle-preset", "randomize", "randomize-chaos"]));
+    items.push(this.hotkeysRow(["toggle", "toggle-cua-vim-mode", "cycle-preset", "randomize"]));
     return this.section("Behavior", items);
   }
 
@@ -982,7 +982,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // A page of its own: a big box on top where the look being edited plays
   // - the preset cards' demo, bigger, typing funny lines with a typo fixed
   // now and then and playing with the cursor (demo.ts, scriptFor), clipped
-  // to the box - Randomize and Undo under it with a line saying what was rolled,
+  // to the box - Randomize under it with a line saying what was rolled,
   // then the dials a roll is made from and its sounds switch. A roll
   // replaces the look being edited: the global one, or the Vim mode whose
   // tab is picked. (A text field with the real cursor in it came first; the
@@ -1062,7 +1062,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     this._rollDemos.add(stage, "", look, color, ramp, gradient, plugin.reducedMotion(), true, true);
   }
 
-  // Randomize and Undo, and what the last roll came out as.
+  // Randomize, and what the last roll came out as (no Undo: the user's word).
   rollButtonsRow(): SettingDefinitionRender {
     const plugin = this.plugin;
     return {
@@ -1071,14 +1071,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       render: (setting) => {
         this.resetRow(setting);
         setting.settingEl.addClass("cursor-smith-roll-buttons-row");
-        let undoBtn: HTMLButtonElement | null = null;
         const say = (text: string) => setting.setDesc(text);
-        const paintUndo = () => { if (undoBtn) undoBtn.disabled = !plugin._rollUndo?.length; };
         setting.addButton((b) => {
           b.setButtonText("Randomize").setCta().onClick(async () => {
-            const { look } = await plugin.rollCursor({ fromPanel: true });
+            const { look } = await plugin.rollCursor();
             say(this.rollSummary(look));
-            paintUndo();
             this.playRollDemo();
           });
           // Dice, then the word.
@@ -1086,15 +1083,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           setIcon(b.buttonEl.createSpan({ cls: "cursor-smith-roll-dice" }), "dices");
           b.buttonEl.createSpan({ text: "Randomize" });
         });
-        setting.addButton((b) => {
-          undoBtn = b.buttonEl;
-          b.setButtonText("Undo").onClick(async () => {
-            if (await plugin.undoRoll()) say("The cursor before the last roll is back.");
-            paintUndo();
-            this.playRollDemo();
-          });
-        });
-        paintUndo();
       },
     };
   }

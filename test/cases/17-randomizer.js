@@ -78,7 +78,6 @@ function rollPlugin(settings = {}, vim = false) {
   p.settings = Object.assign({}, T.DEFAULT_SETTINGS, { torchEffect: true }, settings);
   p.settings.vimModes = {};
   for (const m of ["normal", "insert", "visual", "replace", "command"]) p.settings.vimModes[m] = Object.assign(T.pickLook(T.DEFAULT_SETTINGS), { colorDark: "#123456" });
-  p._rollUndo = [];
   p._activePresetName = "Typer";
   p._vimEditMode = "insert";
   p.isVimUiMode = () => vim;
@@ -113,40 +112,34 @@ section("Randomizer: the effects it can roll");
   ok("the torch and the bracket tether are never rolled, even at Chaos 100 with a stale switch for them", wild.every((l) => l.torchEffect === false && l.bracketTether === false && !("overlayRadius" in l)));
 }
 
-section("Randomizer: rolling and taking it back");
+section("Randomizer: rolling");
 later(async () => {
   const p = rollPlugin({ cursorStyle: "Line", colorDark: "#abcdef", hotHead: true, rollChaos: 100, rollColor: 100, rollMotion: 100 });
-  const before = T.pickLook(p.settings);
-  const { mode, look } = await p.rollCursor({ fromPanel: true });
-  ok("a roll lands on the global look (no Vim panel), all of it", mode === null && Object.entries(look).every(([k, v]) => p.settings[k] === v) && p.settings.torchEffect === false);
+  const { vim, look } = await p.rollCursor();
+  ok("a roll lands on the global look (no Vim panel), all of it", vim === false && Object.entries(look).every(([k, v]) => p.settings[k] === v) && p.settings.torchEffect === false);
   ok("...saved, the engine restarted, the torch's engine stopped (the torch was on)", p.calls.join() === "save,enable,torch-off", p.calls);
   ok("...no preset in use after it", p._activePresetName === "");
   ok("...the dials' own settings untouched", p.settings.rollChaos === 100 && p.settings.rollColor === 100);
-  await p.rollCursor({});
-  ok("two rolls, two looks to go back through", p._rollUndo.length === 2);
-  await p.undoRoll(); await p.undoRoll();
-  ok("Undo twice: the look before the first roll, whole, and its preset", T.LOOK_KEYS.every((k) => JSON.stringify(p.settings[k]) === JSON.stringify(before[k])) && p._activePresetName === "Typer" && p.settings.torchEffect === true);
-  ok("...and nothing more to undo", (await p.undoRoll()) === false);
-  for (let i = 0; i < 25; i++) await p.rollCursor({});
-  ok("the undo stack keeps the last 20", p._rollUndo.length === 20);
+  const first = T.pickLook(p.settings);
+  await p.rollCursor();
+  ok("...and another roll, another cursor (no undo: none kept)", T.LOOK_KEYS.some((k) => JSON.stringify(p.settings[k]) !== JSON.stringify(first[k])) && !("_rollUndo" in p) && typeof p.undoRoll === "undefined");
 
   const v = rollPlugin({ vimModeEnabled: true, uiMode: "vim", vimActivePreset: "Preset1" }, true);
   const global = T.pickLook(v.settings);
-  const r1 = await v.rollCursor({ fromPanel: true });
-  ok("Vim panel: the mode whose tab is picked is rolled, the others and the global look untouched",
-     r1.mode === "insert" && v.settings.vimModes.insert.colorDark !== "#123456" && v.settings.vimModes.normal.colorDark === "#123456" &&
+  const r1 = await v.rollCursor();
+  const modes = ["normal", "insert", "visual", "replace", "command"];
+  ok("Vim on: every mode rolled, each its own cursor; the global look untouched; no Vim preset in use",
+     r1.vim === true && modes.every((m) => v.settings.vimModes[m].colorDark !== "#123456") &&
+     new Set(modes.map((m) => JSON.stringify(T.pickLook(v.settings.vimModes[m])))).size === 5 &&
      T.LOOK_KEYS.every((k) => JSON.stringify(v.settings[k]) === JSON.stringify(global[k])) && v.settings.vimActivePreset === "");
-  const r2 = await v.rollCursor({});
-  ok("...from the palette: the mode the cursor is in", r2.mode === "normal" && v.settings.vimModes.normal.colorDark !== "#123456");
-  await v.undoRoll(); await v.undoRoll();
-  ok("...Undo puts each mode back, and the Vim preset", v.settings.vimModes.normal.colorDark === "#123456" && v.settings.vimModes.insert.colorDark === "#123456" && v.settings.vimActivePreset === "Preset1");
+  ok("...and it answers the look of the mode whose tab is open (the preview plays it)", JSON.stringify(T.pickLook(r1.look)) === JSON.stringify(T.pickLook(Object.fromEntries(Object.keys(r1.look).map((k) => [k, v.settings.vimModes.insert[k]])))));
 
-  const full = rollPlugin({ rollChaos: 0, rollColor: 0, rollMotion: 0 });
-  await full.rollCursor({ full: true });
-  ok("full chaos ignores the dials: every effect", T.ROLL_EFFECTS.every((k) => full.settings[k]));
-  const kept = rollPlugin({ rollEffects: { hotHead: false, popEffects: false } });
-  await kept.rollCursor({ full: true });
-  ok("...but not the switches: what they keep out stays out", !kept.settings.hotHead && !kept.settings.popEffects && kept.settings.typewriter);
+  const full = rollPlugin({ rollChaos: 100, rollColor: 100, rollMotion: 100 });
+  await full.rollCursor();
+  ok("Chaos at 100: every effect", T.ROLL_EFFECTS.every((k) => full.settings[k]));
+  const kept = rollPlugin({ rollChaos: 100, rollEffects: { hotHead: false, popEffects: false } });
+  await kept.rollCursor();
+  ok("...but not what the switches keep out", !kept.settings.hotHead && !kept.settings.popEffects && kept.settings.typewriter);
 });
 
 section("Randomizer: its page");
@@ -161,7 +154,7 @@ section("Randomizer: its page");
   ok("the pill is a stage with the demo in it, the sentence to write in two halves (none written yet)",
      !!demo && !!demo.querySelector(".cursor-smith-pcard-caret") && T.SCRIPT_LINES.includes(demo.querySelector(".cursor-smith-roll-unwritten").text));
   const roll = named("Roll");
-  ok("Randomize and Undo; Undo off with nothing to undo", roll.buttons.length === 2 && roll.buttons[0]._text === "Randomize" && roll.buttons[1]._text === "Undo");
+  ok("Randomize alone: no Undo", roll.buttons.length === 1 && roll.buttons[0]._text === "Randomize");
   const chaos = named("Chaos");
   ok("the dials are 0 - 100 sliders on their settings, each with its reset", chaos.sliders[0]._limits.min === 0 && chaos.sliders[0]._limits.max === 100 && chaos.sliders[0]._value === 35 && chaos.extras.length === 1);
   ok("the switch reads its setting", named("Include sounds").toggles[0]._value === false);

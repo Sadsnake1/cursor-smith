@@ -372,6 +372,8 @@ button.cursor-smith-pcard:hover {
   margin: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 15px;
+  /* The demo's effects stay inside the card. */
+  overflow: hidden;
   background-color: transparent;
   color: var(--text-normal);
   font-size: var(--font-ui-small);

@@ -126,13 +126,13 @@ Enable the plugin, Vim mode on or off, your presets, and the mode you're editing
 
 ## Randomizer
 
-Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it types silly lines, fixes its own typos and plays with the cursor. Roll again, or **Undo** your way back. Like one? Save it as a preset.
+Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it types silly lines, fixes its own typos and plays with the cursor. Roll again until you like one, then save it as a preset.
 
 Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Turn on **Include sounds** and every roll picks a sound too. A horse, maybe.
 
 Below them, a switch for every effect: turn one off and the dice never pick it. The Torch is off until you let it in.
 
-With Vim mode on, it rolls the mode you're editing.
+With Vim mode on, every mode gets a new cursor of its own.
 
 ## Presets
 
@@ -148,16 +148,14 @@ Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get t
 
 ## Commands
 
-Seven, all in the Command Palette, all take a hotkey. The Behavior page shows the keys you've set, with a button to set them.
+Five, all in the Command Palette, all take a hotkey. The Behavior page shows the keys you've set, with a button to set them.
 
 | Command | What it does |
 |---|---|
 | **Toggle Cursor-Smith on/off** | The whole plugin off and back on, settings untouched. |
 | **Cycle preset** | The next saved preset. Bind it to a key and flip through your cursors. |
 | **Toggle Vim mode** | One cursor, or one per Vim mode. Flips Obsidian's Vim key bindings with it when you've let it. |
-| **Randomize** | A whole new cursor, rolled with the Randomizer's sliders. A notice lets you undo it. |
-| **Randomize (full chaos)** | Everything on, everything turned up. You asked for it. |
-| **Undo randomize** | The cursor before the last roll, back. |
+| **Randomize** | A whole new cursor, rolled with the Randomizer's sliders. |
 | **Performance report** | Measures ten seconds of typing and copies a short report. Paste it into an issue if Obsidian feels slower with the plugin on. |
 
 ## Good to know

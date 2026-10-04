@@ -121,8 +121,8 @@ export function geometryOf(look: Partial<Look>): Geometry {
 const TYPE_MS = 170;
 const HOLD_END_MS = 650;
 const HOLD_START_MS = 450;
-// Particles per card, at most.
-const POOL = 18;
+// Particles per card, at most (the real fire needs a few dozen).
+const POOL = 60;
 // The preview's Hot-head: its grid square (the engine's font size over
 // HOT_PX_DIVISOR, at the demo's 12px) and its block shapes, biggest first -
 // fire.ts's HOT_BLOCK_SHAPES, the notched ones left out (an element is a
@@ -309,7 +309,7 @@ export function step(s: DemoState, look: Partial<Look>, n: number, dt: number, n
     s.phaseMs = 0;
     s.phase = "type";
   }
-  return settle(s, look, dt, now);
+  return settle(s, look, dt, now, glide(s, look, dt));
 }
 
 // The preview's script, one frame: every action whose wait is over, played
@@ -429,14 +429,6 @@ function settle(s: DemoState, look: Partial<Look>, dt: number, now: number, glid
   const fade = look.trailFadeMs ?? 300;
   s.ghosts = s.ghosts.filter((g) => now - g.t0 < fade);
   return s;
-}
-
-// The blink's alpha at this moment, 1 while a keystroke is fresh when the
-// preset holds the caret lit while typing.
-export function blinkAlpha(s: DemoState, look: Partial<Look>, now: number): number {
-  if (!look.blinkingEnabled) return 1;
-  if (look.smoothStopBlinking && now - s.lastKeyMs < (look.blinkDelayMs ?? 0) + TYPE_MS * 1.5) return 1;
-  return blinkAlphaAt(now, look.blinkSpeed ?? 1, look.blinkOnOffBalance ?? 0.5, look.blinkFade ?? 0.15);
 }
 
 // The preview's blink, the engine's clock (paint-blink.ts): held lit after
@@ -628,9 +620,9 @@ export class DemoStrip {
     }
     const caret = demo.createSpan({ cls: `cursor-smith-pcard-caret cursor-smith-pcard-caret-${style}` + (shape.serifs ? " is-serif" : ""), attr: { "aria-hidden": "true" } });
     dress(caret, String(shape.alphaScale));
-    // The preview: the caret the engine measures, not the cards' rounded
-    // little one.
-    if (script) {
+    // The caret the engine measures (the cards' too, since the preview's
+    // was made real: "improve the demo presets pills too", the user).
+    {
       const g = geometryOf(look);
       const real = (el: HTMLElement) => {
         if (style === "line") el.setCssStyles({ top: `${g.lineTop}px`, height: `${g.lineH}px`, width: `${g.lineW}px` });
@@ -652,13 +644,13 @@ export class DemoStrip {
     if (style === "box" && look.showChar !== false && !shape.hollowWidth && !look.cursorTranslucent) {
       inner = caret.createSpan({ cls: "cursor-smith-pcard-caret-text", text: script ? "" : name });
       // Over the real letters: the caret's top is the line box's, not 5px.
-      if (script) inner.setCssStyles({ top: `-${PREVIEW_TOP}px` });
+      inner.setCssStyles({ top: `-${PREVIEW_TOP}px` });
       inner.setCssStyles({ color: readableGlyphColor(shape.fill, look.glyphColorMode ?? "contrast") });
       if (script) { innerWritten = inner.createSpan({ text: "" }); innerRest = inner.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }); }
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: script ? geometryOf(look) : null, keyHeavy: false, breath: 0, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -727,6 +719,9 @@ export class DemoStrip {
         const phaseBefore = d.state.phase;
         step(d.state, d.look, d.n, dt, now);
         if (d.state.target !== before) this.onMove(d, before, now);
+        if (d.state.target === before + 1 && phaseBefore === "type") this.onType(d, before, d.name.charAt(before) || " ", now);
+        else if (Math.abs(d.state.target - before) >= 2 && d.look.hotHead) d.burns.push({ x: d.state.target, t: now });
+        if (d.look.hotHead) this.burn(d, dt, now);
         // A pass ends as the caret reaches the end of the name; after the
         // last one the demo heads for the idle spot and rests.
         if (phaseBefore === "type" && d.state.phase === "holdEnd" && ++d.cycles >= DEMO_CYCLES) { d.done = true; d.state.target = idleAt(d.n); }
@@ -736,11 +731,9 @@ export class DemoStrip {
       }
       this.moveParticles(d, dt, now);
       const heat = d.look.speedDemon && !d.look.speedDemonNoCursorHeat ? d.state.heat : 0;
-      if (d.script) {
-        const b = blinkReal(d.state, d.look, now);
-        d.breath = b.breath;
-        this.paint(d, b.alpha, 1 - heat);
-      } else this.paint(d, blinkAlpha(d.state, d.look, now), 1 - heat);
+      const b = d.done && !d.script ? { alpha: 1, breath: 0 } : blinkReal(d.state, d.look, now);
+      d.breath = b.breath;
+      this.paint(d, b.alpha, 1 - heat);
     }
     this.raf = 0;
     if (!this.win) return;
@@ -820,7 +813,7 @@ export class DemoStrip {
     const fade = look.hotHeadFade ?? 620;
     const heightMul = (look.hotHeadHeight ?? 0.55) / 0.55;
     const spread = (look.hotHeadSpread ?? 4) * 0.1 * cw;
-    const right = (d.state.buffer.length + 0.5) * cw;
+    const right = ((d.script ? d.state.buffer.length : d.n) + 0.5) * cw;
     for (; d.fireAcc >= 1; d.fireAcc--) {
       let r = Math.random() * sum, bi = 0;
       while (bi < d.burns.length - 1 && (r -= weights[bi]) > 0) bi++;
@@ -960,10 +953,6 @@ export class DemoStrip {
         this.spawn(d, x0 + Math.random() * px, 6 + Math.random() * 10, (Math.random() - 0.5) * 30 + Math.sin(ang) * g * 0.3, (Math.random() - 0.5) * 30 + Math.cos(ang) * g * 0.3, Math.min(700, look.flameTrailLifeMs ?? 400), size, d.color, now);
       }
     }
-    if (look.hotHead && !d.script) {
-      const count = Math.round(2 * (look.hotHeadQuantity ?? 1));
-      for (let i = 0; i < count; i++) this.spawnFlame(d, x0 + Math.random() * px, now);
-    }
   }
 
   // Over time: Stardust while the caret rests, flames while it types (and
@@ -980,24 +969,12 @@ export class DemoStrip {
         d.spawnAcc = 0;
         this.spawn(d, x + (Math.random() - 0.5) * 12, 12 + Math.random() * 6, (Math.random() - 0.5) * 8, -(10 + Math.random() * 12), 900, 1, d.color, now);
       }
-    } else if (look.hotHead && !resting && !d.script) {
-      const every = 70 / (look.hotHeadQuantity ?? 1);
-      if (d.spawnAcc >= every) { d.spawnAcc = 0; this.spawnFlame(d, x + Math.random() * Math.max(2, d.stepPx - 2), now); }
     } else if (look.speedDemon && look.speedDemonSparks && st.heat > 0.6) {
       if (d.spawnAcc >= 90) {
         d.spawnAcc = 0;
         this.spawn(d, x + Math.random() * d.stepPx, 6, (Math.random() - 0.5) * 40, -(30 + Math.random() * 30), 450, 1, heatColor(d.color, d.heatStops, 0.9), now);
       }
     }
-  }
-
-  // One flame: a pixel that climbs and fades, in the fire's colors (or
-  // the cursor's, with Fire in cursor color on).
-  private spawnFlame(d: Demo, x: number, now: number) {
-    const look = d.look;
-    const rise = 24 * (look.hotHeadHeight ?? 0.55);
-    const color = look.hotHeadFlat ? d.color : ["#ff6a1a", "#ffa62b", "#ffd166", "#fff1b8"][Math.floor(Math.random() * 4)];
-    this.spawn(d, x, 4 + Math.random() * 4, (Math.random() - 0.5) * 6, -(rise + Math.random() * rise * 0.5) * 2, Math.min(600, look.hotHeadFade ?? 620) * 0.6, 2, color, now);
   }
 
   private moveParticles(d: Demo, dt: number, now: number) {
@@ -1141,7 +1118,7 @@ export class DemoStrip {
     // and back. Squash is about the caret's bottom edge.
     let dip = 0, advance = 0, sy = 1;
     const look = d.look;
-    if (d.script && look.typewriter) {
+    if (look.typewriter) {
       const dt = this.last - d.keyT;
       const clamp = (v: number | undefined, lo: number, hi: number, dflt: number) => Math.max(lo, Math.min(hi, Number.isFinite(Number(v)) ? Number(v) : dflt));
       if (look.typewriterSpring) {

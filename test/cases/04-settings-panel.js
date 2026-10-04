@@ -959,7 +959,8 @@ section("settings panel: the rail, the summaries, the resets, the cards");
       ok("CRT leaves a ghost per keystroke, up to the trail length", crt.ghosts.length === 3 && crt.ghosts.every((g) => typeof g.at === "number"), crt.ghosts.length);
       const hot = run({ speedDemon: true }, 8, K * 8);
       ok("Speed demon heats up while typing", hot.heat > 0.4, hot.heat);
-      const blink = T.demoBlinkAlpha;
+      // The engine's blink clock (demo.ts, blinkReal), the cards' too.
+      const blink = (st, look, now) => T.demoBlinkReal(st, look, now).alpha;
       const fresh = init(1000);
       ok("a blinking preset holds the caret lit right after a keystroke when it doesn't blink while typing, and blinks otherwise", blink(fresh, { blinkingEnabled: true, smoothStopBlinking: true, blinkSpeed: 1 }, 1100) === 1 && blink(fresh, { blinkingEnabled: false }, 5000) === 1 && [0, 300, 600, 900, 1200, 1500, 1800].some((dt) => blink(fresh, { blinkingEnabled: true, smoothStopBlinking: false, blinkSpeed: 1 }, 5000 + dt) < 0.5));
       ok("the card in use plays two passes over its name, then rests one space past it; the others sit there still", T.DEMO_CYCLES === 2 && T.demoIdleAt(3) === 4 && String(cardOf("Glide").querySelector(".cursor-smith-pcard-caret").style.transform) === "translateX(48.00px)" && String(named_("One").querySelector(".cursor-smith-pcard-caret").style.transform) === "translateX(0.00px)" && /demos[.]add[(][^;]*isActive[)]/.test(require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8")), [cardOf("Glide").querySelector(".cursor-smith-pcard-caret").style.transform, named_("One").querySelector(".cursor-smith-pcard-caret").style.transform]);

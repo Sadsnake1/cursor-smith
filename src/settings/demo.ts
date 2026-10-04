@@ -157,6 +157,7 @@ export const SCRIPT_LINES = [
   "Can you even vibecode such a thing?",
   "Deleting Vault in 3...2...1...0.4999999",
   "You can never have too many cursors...",
+  "The cake is a lie.",
 ];
 export const SCRIPT_MAX = 44;
 

@@ -1,4 +1,4 @@
-import { PluginSettingTab, Setting, App, Modal, Platform, setIcon } from "obsidian";
+import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
 import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
@@ -7,7 +7,7 @@ import type { SoundKind } from "../sound/samples";
 import { soundMachine } from "../sound/sound";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
 import { readableGlyphColor } from "../util/color";
-import { DemoStrip } from "./demo";
+import { DemoStrip, SCRIPT_TEXT } from "./demo";
 import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "../types";
 
 // The effects, in the order the Effects page lists them: the master key,
@@ -17,9 +17,6 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
-  // Sounds (1.7.7): Typewriter's until then, an effect of their own with the
-  // keyboards and the other sounds (issue #46). The keys kept their names.
-  { key: "typewriterSound", name: "Sounds", icon: "volume-2", desc: "Typewriters, mechanical keyboards and more as you type." },
   { key: "flameTrail", name: "Pixel trail", icon: "wind", desc: "A puff of colored pixels wherever the cursor has just been." },
   { key: "stardustEnabled", name: "Stardust", icon: "sparkles", desc: "Floating motes that drift up, or orbit the cursor." },
   { key: "bracketTether", name: "Bracket tether", icon: "brackets", desc: "A line under the span between matching brackets or quotes." },
@@ -85,8 +82,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // and has no chip since 2026-09-27 ("nobody goes through all that"): only
   // the panel harness sets it, to see every row at once.
   _effectsPick: string | null = null;
-  // The Randomizer's field, where its buttons put the cursor after a roll.
-  _rollField: HTMLInputElement | null = null;
+  // The Randomizer's pill, and the demo loop that plays in it.
+  _rollStage: HTMLElement | null = null;
+  _rollDemos: DemoStrip | null = null;
   // The effects that are on in the look the pages show (set with the
   // pages), for the Effects entry's icons; and the observer that puts
   // them there.
@@ -600,19 +598,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           const card = strip.createDiv({ cls: "cursor-smith-pcard" + (isActive ? " is-active" : "") });
           const use = card.createEl("button", { cls: "cursor-smith-pcard-use", attr: { type: "button", "aria-label": `Use preset ${name}`, "aria-pressed": isActive ? "true" : "false" } });
           if (isActive) setIcon(use.createSpan({ cls: "cursor-smith-tick" }), "check");
-          // Speed demon's ramp: the engine's own warm one, or the preset's
-          // four stops with Custom gradient on (paint.ts, heatColorFor).
-          const ramp = !look.speedDemonGradient ? ["#ff8c28", "#ff461e", "#fff0c8"] : dark
-            ? [look.speedHeatDark1, look.speedHeatDark2, look.speedHeatDark3, look.speedHeatDark4].map((c) => c ?? "")
-            : [look.speedHeatLight1, look.speedHeatLight2, look.speedHeatLight3, look.speedHeatLight4].map((c) => c ?? "");
-          // The gradient's stops for the theme, as many as Number of colors.
-          const count = Math.max(2, Math.min(4, look.gradientCount ?? 2));
-          const gradient = (dark
-            ? [look.gradientDark1, look.gradientDark2, look.gradientDark3, look.gradientDark4]
-            : [look.gradientLight1, look.gradientLight2, look.gradientLight3, look.gradientLight4]).slice(0, count).map((c) => c ?? "");
+          const { color, ramp, gradient } = this.demoColors(look, dark);
           // Only the card in use plays (two passes, then it rests); the
           // others sit still.
-          demos.add(use, name, look, (dark ? look.colorDark : look.colorLight) ?? "", ramp, gradient, reduced, isActive);
+          demos.add(use, name, look, color, ramp, gradient, reduced, isActive);
           use.addEventListener("click", () => {
             void (async () => {
               await (vim ? plugin.loadVimPreset(name) : plugin.loadUserPreset(name));
@@ -968,17 +957,35 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       ["Blinking", "eye-closed", "If it blinks, how, and how fast."],
       ["Smooth movement", "spline", "Gliding to the new spot instead of jumping."],
       ["Effects", "wand", "Trails, sparks, fire, lightning, a torch."],
+      ["Sounds", "volume-2", "Typewriters, keyboards and more as you type."],
     ];
     return [...cards.map((group, i) => this.page(meta[i][0], meta[i][1], meta[i][2], [group], s[meta[i][0]])), this.rollPage()];
   }
 
+  // A look's colors for its demo, in this theme: its own, Speed demon's
+  // ramp (the engine's own warm one, or the look's four stops with Custom
+  // gradient on - paint.ts, heatColorFor), its gradient's stops (as many as
+  // Number of colors).
+  demoColors(look: Partial<Look>, dark: boolean): { color: string; ramp: string[]; gradient: string[] } {
+    const ramp = !look.speedDemonGradient ? ["#ff8c28", "#ff461e", "#fff0c8"] : dark
+      ? [look.speedHeatDark1, look.speedHeatDark2, look.speedHeatDark3, look.speedHeatDark4].map((c) => c ?? "")
+      : [look.speedHeatLight1, look.speedHeatLight2, look.speedHeatLight3, look.speedHeatLight4].map((c) => c ?? "");
+    const count = Math.max(2, Math.min(4, look.gradientCount ?? 2));
+    const gradient = (dark
+      ? [look.gradientDark1, look.gradientDark2, look.gradientDark3, look.gradientDark4]
+      : [look.gradientLight1, look.gradientLight2, look.gradientLight3, look.gradientLight4]).slice(0, count).map((c) => c ?? "");
+    return { color: (dark ? look.colorDark : look.colorLight) ?? "", ramp, gradient };
+  }
+
   // --- The Randomizer (1.7.7, randomize.ts) --------------------------------
-  // A page of its own: a big pill of a text field on top with the real
-  // cursor in it (the plugin draws in text fields; with Vim on, the field
-  // shows the mode being rolled - vim.ts, currentVimMode), Randomize and
-  // Undo under it with a line saying what was rolled, then the dials a roll
-  // is made from and its Sounds switch. A roll replaces the look being
-  // edited: the global one, or the Vim mode whose tab is picked.
+  // A page of its own: a big pill on top where the look being edited plays
+  // - the preset cards' demo, bigger, writing "The quick brown fox..." and
+  // jumping through it word to word (demo.ts, stepScript), clipped to the
+  // pill - Randomize and Undo under it with a line saying what was rolled,
+  // then the dials a roll is made from and its sounds switch. A roll
+  // replaces the look being edited: the global one, or the Vim mode whose
+  // tab is picked. (A text field with the real cursor in it came first; the
+  // cursor got out of the box, and typing to see it was a chore.)
   rollPage(): SettingDefinitionPage {
     const plugin = this.plugin;
     const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow()];
@@ -1006,23 +1013,33 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       () => `Chaos ${plugin.settings.rollChaos}` + (plugin.settings.rollSounds ? " · sounds" : ""));
   }
 
-  // The pill: a text field as wide as the page, its text big, the real
-  // cursor in it once it has focus - type in it to try a roll.
+  // The pill: as wide as the page, the look being edited playing in it.
   rollPillRow(): SettingDefinitionRender {
     return {
-      name: "Try it",
+      name: "Preview",
       desc: "",
       searchable: false,
       render: (setting) => {
         this.resetRow(setting);
         setting.settingEl.addClass("cursor-smith-roll-pill-row");
-        const field = setting.controlEl.createEl("input", {
-          cls: "cursor-smith-roll-field",
-          attr: { type: "text", value: "Roll the dice, then type here", "aria-label": "Try it here", spellcheck: "false" },
-        });
-        this._rollField = field;
+        this._rollStage = setting.controlEl.createDiv({ cls: "cursor-smith-roll-stage", attr: { "aria-hidden": "true" } });
+        this.playRollDemo();
       },
     };
+  }
+
+  // The look being edited, playing in the pill from the start - again after
+  // every roll (a new demo: its shape is computed once).
+  playRollDemo() {
+    const plugin = this.plugin;
+    const stage = this._rollStage;
+    if (!stage) return;
+    stage.empty();
+    if (!this._rollDemos) this._rollDemos = new DemoStrip();
+    const look: Partial<Look> = plugin.isVimUiMode() ? plugin.settings.vimModes[plugin._vimEditMode] ?? plugin.settings : plugin.settings;
+    const dark = plugin.isDarkTheme();
+    const { color, ramp, gradient } = this.demoColors(look, dark);
+    this._rollDemos.add(stage, SCRIPT_TEXT, look, color, ramp, gradient, plugin.reducedMotion(), true, true);
   }
 
   // Randomize and Undo, and what the last roll came out as.
@@ -1037,20 +1054,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         let undoBtn: HTMLButtonElement | null = null;
         const say = (text: string) => setting.setDesc(text);
         const paintUndo = () => { if (undoBtn) undoBtn.disabled = !plugin._rollUndo?.length; };
-        // Into the field, at its end, so the new cursor shows where it can
-        // be tried (not on a phone: the keyboard would come up).
-        const showOff = () => {
-          const f = this._rollField;
-          if (!f || !f.isConnected || Platform.isMobile) return;
-          f.focus();
-          f.setSelectionRange(f.value.length, f.value.length);
-        };
         setting.addButton((b) => {
           b.setButtonText("Randomize").setCta().onClick(async () => {
             const { look } = await plugin.rollCursor({ fromPanel: true });
             say(this.rollSummary(look));
             paintUndo();
-            showOff();
+            this.playRollDemo();
           });
           // Dice, then the word.
           b.buttonEl.empty();
@@ -1062,7 +1071,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           b.setButtonText("Undo").onClick(async () => {
             if (await plugin.undoRoll()) say("The cursor before the last roll is back.");
             paintUndo();
-            showOff();
+            this.playRollDemo();
           });
         });
         paintUndo();
@@ -1075,7 +1084,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const parts = [String(look.cursorStyle || "Box")];
     parts.push(look.gradientEnabled ? `${look.gradientCount ?? 2} colors` : "one color");
     if (look.smoothEnabled) parts.push("gliding");
-    const effects = RAIL_EFFECTS.filter((e) => e.key !== "typewriterSound" && !!look[e.key as keyof Look]).map((e) => e.name);
+    const effects = RAIL_EFFECTS.filter((e) => !!look[e.key]).map((e) => e.name);
     parts.push(effects.length ? effects.join(", ") : "no effects");
     if (look.typewriterSound) parts.push("sound: " + soundMachine(look.typewriterSoundVoice).label);
     return parts.join(" · ");
@@ -1275,7 +1284,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const gates: Set<keyof Look> = new Set();
     // Every key each card's rows write, for the card's reset button (and
     // the tests, which check that no look key is left out).
-    const cardKeys: Record<string, (keyof Look)[]> = { Appearance: [], Blinking: [], "Smooth movement": [], Effects: [] };
+    const cardKeys: Record<string, (keyof Look)[]> = { Appearance: [], Blinking: [], "Smooth movement": [], Effects: [], Sounds: [] };
     let card = "Appearance";
     const owns = (key: keyof Look) => { if (!cardKeys[card].includes(key)) cardKeys[card].push(key); };
 
@@ -1611,29 +1620,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(slider("Overshoot duration", "How long the overshoot lasts, in milliseconds.", "typewriterAdvanceMs", [80, 400, 10], { depth: 2, fallback: 150, when: twOn("typewriterAdvance") }));
     effects.push(toggle("X-out", "Deleted letters are overtyped with x, then the line closes up.", "typewriterTape", { depth: 1, when: tw }));
 
-    // Sounds (src/sound): real typewriters, recorded (1.7.2, under
-    // Typewriter until 1.7.7), mechanical keyboards and other sounds - one
-    // to choose, grouped by kind, and a play button to hear it with before
-    // typing. The bell is a typewriter's.
-    const showSound = shown("typewriterSound");
-    effects.push(toggle("Sounds", "Typewriters, mechanical keyboards and more as you type, with their own Space, Backspace and Enter.", "typewriterSound", { gate: true, when: showSound }));
-    const sounding = all(showSound, on("typewriterSound"));
-    owns("typewriterSoundVoice");
-    effects.push(row("Sound", "Which one you hear. Press play to listen.", (s) => {
-      s.addDropdown((d) => {
-        // Grouped by kind: a typewriter, a keyboard, something else.
-        const groups: [SoundKind, string][] = [["typewriter", "Typewriters"], ["keyboard", "Keyboards"], ["other", "Something else"]];
-        for (const [kind, label] of groups) {
-          const og = d.selectEl.createEl("optgroup", { attr: { label } });
-          for (const m of SOUND_MACHINES.filter((x) => x.kind === kind)) og.createEl("option", { text: m.label, value: m.id });
-        }
-        d.setValue(soundMachine(get("typewriterSoundVoice")).id).onChange(redraw("typewriterSoundVoice"));
-      });
-      s.addExtraButton((b) => b.setIcon("play").setTooltip("Play a few words").onClick(() => { void this.plugin.soundPreview(); }));
-    }, { depth: 1, when: sounding }));
-    effects.push(slider("Volume", "How loud the sounds are, as a percentage.", "typewriterSoundVolume", [0, 100, 5], { depth: 1, fallback: 50, when: sounding }));
-    effects.push(toggle("Bell", "Enter at the end of a line rings the typewriter's margin bell.", "typewriterSoundBell",
-      { depth: 1, when: () => sounding() && soundMachine(get("typewriterSoundVoice")).kind === "typewriter" }));
 
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
@@ -1766,11 +1752,44 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(slider("Flicker depth", "How far the flame swings. At 1 it gutters right out.", "overlayFlickerAmount", [0.05, 1, 0.05],
       { depth: 2, fallback: 0.35, when: all(torch, on("overlayFlicker")) }));
     effects.push(toggle("Keep sidebars lit", "Darkens every note tab; sidebars, ribbon and other views stay lit. Desktop only.", "overlaySpareSidebars", { depth: 1, when: torch }));
+    // --- Sounds --------------------------------------------------------------
+    // Sounds (src/sound): real typewriters, recorded (1.7.2, under
+    // Typewriter until 1.7.7), mechanical keyboards and other sounds - a page
+    // of their own since 1.7.7 (a day as a chip on the Effects rail before
+    // that: "a main category under Effects", the user). A Category first, so
+    // the Sound list is one kind's, short (28 in one list was a scroll); a
+    // play button to hear it before typing. The bell is a typewriter's.
+    card = "Sounds";
+    const sounds: SettingGroupItem[] = [];
+    sounds.push(toggle("Sounds", "Typewriters, mechanical keyboards and more as you type, with their own Space, Backspace and Enter.", "typewriterSound", { gate: true }));
+    const sounding = on("typewriterSound");
+    owns("typewriterSoundVoice");
+    const kindOf = (): SoundKind => soundMachine(get("typewriterSoundVoice")).kind;
+    // A kind picked: its first sound, and the Sound list rebuilt with that
+    // kind's (a rebuild: the list's options change, not just what shows).
+    const SOUND_KINDS: Record<SoundKind, string> = { typewriter: "Typewriters", keyboard: "Keyboards", other: "Something else" };
+    sounds.push(row("Category", "Typewriters, mechanical keyboards, or something else.", (s) => {
+      s.addDropdown((d) => d.addOptions(SOUND_KINDS).setValue(kindOf()).onChange((k) => {
+        const first = SOUND_MACHINES.find((m) => m.kind === k);
+        if (first) void rebuild("typewriterSoundVoice")(first.id);
+      }));
+    }, { depth: 1, when: sounding }));
+    sounds.push(row("Sound", "Which one you hear. Press play to listen.", (s) => {
+      s.addDropdown((d) => d.addOptions(Object.fromEntries(SOUND_MACHINES.filter((m) => m.kind === kindOf()).map((m) => [m.id, m.label])))
+        .setValue(soundMachine(get("typewriterSoundVoice")).id)
+        .onChange(redraw("typewriterSoundVoice")));
+      s.addExtraButton((b) => b.setIcon("play").setTooltip("Play a few words").onClick(() => { void this.plugin.soundPreview(); }));
+    }, { depth: 1, when: sounding }));
+    sounds.push(slider("Volume", "How loud the sounds are, as a percentage.", "typewriterSoundVolume", [0, 100, 5], { depth: 1, fallback: 50, when: sounding }));
+    sounds.push(toggle("Bell", "Enter at the end of a line rings the typewriter's margin bell.", "typewriterSoundBell",
+      { depth: 1, when: () => sounding() && kindOf() === "typewriter" }));
+
     // Each tab ends with its reset.
     appearance.push(this.resetLinkRow("Appearance", resetCard("Appearance")));
     blinking.push(this.resetLinkRow("Blinking", resetCard("Blinking")));
     smooth.push(this.resetLinkRow("Smooth movement", resetCard("Smooth movement")));
     effects.push(this.resetLinkRow("Effects", resetCard("Effects")));
+    sounds.push(this.resetLinkRow("Sounds", resetCard("Sounds")));
 
     // What each page's entry says it is set to.
     const summaries: Record<string, () => string> = {
@@ -1789,6 +1808,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         const on = RAIL_EFFECTS.filter((e) => !!get(e.key));
         return on.length ? on.map((e) => e.name).join(" · ") : "Off";
       },
+      Sounds: () => (get("typewriterSound") ? soundMachine(get("typewriterSoundVoice")).label : "Off"),
     };
 
     const cards: LookCards = [
@@ -1796,6 +1816,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       this.section("Blinking", blinking),
       this.section("Smooth movement", smooth),
       this.section("Effects", effects),
+      this.section("Sounds", sounds),
     ];
     cards.gates = gates;
     cards.cardKeys = cardKeys;

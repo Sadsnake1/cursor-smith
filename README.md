@@ -40,7 +40,7 @@ Multiple cursors get ALL of it. Every caret you add is drawn, styled and animate
 
 ## The effects
 
-Twelve of them, from subtle to absurd. Each has its own switch and its own settings, and they stack together like peas in a pod.
+Eleven of them, from subtle to absurd, and sounds on top. Each has its own switch and its own settings, and they stack together like peas in a pod.
 
 | Effect | What it does |
 |---|---|
@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 
 
 
-Turn on **Sounds** in Effects and pick one. Press play to hear it before you type.
+Turn on **Sounds** on its own page, pick a category, then a sound. Press play to hear it before you type.
 
 - **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
 - **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks, IBM Buckling Spring, Topre, Gateron Ink Black. Every key sounds from where it sits on the board.
@@ -121,11 +121,12 @@ Enable the plugin, Vim mode on or off, your presets, and the mode you're editing
 | **Blinking** | If it blinks, how, and how fast |
 | **Smooth movement** | Gliding instead of jumping |
 | **Effects** | Pick an effect, see its settings. A tick marks the ones that are on |
-| **Randomizer** | Roll a whole new cursor. Then type in the big box on top to try it |
+| **Sounds** | Typewriters, keyboards and more: pick a category, then a sound, and press play |
+| **Randomizer** | Roll a whole new cursor and watch it write in the big preview on top |
 
 ## Randomizer
 
-Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. Type in the big box on top to try it, roll again, or **Undo** your way back. Like one? Save it as a preset.
+Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it writes "The quick brown fox..." and jumps around the line. Roll again, or **Undo** your way back. Like one? Save it as a preset.
 
 Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Turn on **Include sounds** and every roll picks a sound too. A horse, maybe.
 

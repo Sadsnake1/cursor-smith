@@ -31,6 +31,13 @@
 //     translucency and opacity multiply the alpha, and the letter inside a
 //     Box takes the color mode (contrast, tinted, inverted).
 //
+// The Randomizer's pill (1.7.7) is the same demo, bigger, on a script of
+// its own (stepScript): it writes a sentence letter by letter, jumps
+// through it word to word, clears it and starts over, for as long as the
+// page is open - with what a roll is most about added on top: letters
+// popping out, fireworks on Space, the typewriter's dip, the text
+// evaporating when it is cleared.
+//
 // Only the preset in use plays (the ticked card), and only DEMO_CYCLES
 // passes over its name; then it glides to the idle spot and rests. Every
 // other card sits still at the idle spot: one space past the end of the
@@ -97,8 +104,9 @@ export interface DemoState {
   // The leading edge and, with Motion smear, the trailing edge, in letters.
   lead: number;
   trail: number;
-  // The timeline: which phase, and how long it has run.
-  phase: "type" | "holdEnd" | "holdStart";
+  // The timeline: which phase, and how long it has run. The pill's script
+  // adds "jump" (word to word) and "clear".
+  phase: "type" | "holdEnd" | "holdStart" | "jump" | "clear";
   phaseMs: number;
   // The moment of the last keystroke, for Don't blink while typing.
   lastKeyMs: number;
@@ -106,10 +114,37 @@ export interface DemoState {
   heat: number;
   // CRT ghosts: where each was left (letters) and when.
   ghosts: { at: number; t0: number }[];
+  // The pill's script: how many letters are written, and the next stop of
+  // the jumps.
+  shown: number;
+  stop: number;
 }
 
 export function initialState(now: number): DemoState {
-  return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [] };
+  return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [], shown: 0, stop: 0 };
+}
+
+// The pill's sentence, its pace, and where its jumps go: word to word, in
+// an order that crosses the line both ways, then the end.
+export const SCRIPT_TEXT = "The quick brown fox jumps over the lazy dog.";
+const SCRIPT_TYPE_MS = 85;
+const SCRIPT_JUMP_MS = 560;
+const SCRIPT_HOLD_MS = 700;
+export function scriptTour(text: string): number[] {
+  const starts = Array.from(text.matchAll(/\S+/g), (m) => m.index ?? 0);
+  const at = (i: number) => starts[Math.min(i, starts.length - 1)] ?? 0;
+  return [at(1), at(7), at(3), at(0), at(5), at(8), text.length];
+}
+
+// The caret asked to a new spot: a CRT ghost left where it was, and the
+// moment kept (Don't blink while typing).
+function moveTo(s: DemoState, look: Partial<Look>, to: number, now: number) {
+  if (look.crtEffect && (look.trailLength ?? 0) > 0) {
+    s.ghosts.push({ at: s.lead, t0: now });
+    if (s.ghosts.length > (look.trailLength ?? 0)) s.ghosts.shift();
+  }
+  s.target = to;
+  s.lastKeyMs = now;
 }
 
 // Where a caret rests: one space past the end of the name.
@@ -120,16 +155,8 @@ export const idleAt = (n: number) => n + 1;
 // With `frozen` the timeline stands still and only the springs run - a
 // demo that has played its passes gliding to the idle spot.
 export function step(s: DemoState, look: Partial<Look>, n: number, dt: number, now: number, frozen = false): DemoState {
-  const dtS = Math.min(0.1, dt / 1000);
   s.phaseMs += dt;
-  const move = (to: number) => {
-    if (look.crtEffect && (look.trailLength ?? 0) > 0) {
-      s.ghosts.push({ at: s.lead, t0: now });
-      if (s.ghosts.length > (look.trailLength ?? 0)) s.ghosts.shift();
-    }
-    s.target = to;
-    s.lastKeyMs = now;
-  };
+  const move = (to: number) => moveTo(s, look, to, now);
   if (frozen) {
     // No keystroke, no jump: the springs settle on the target below.
   } else if (s.phase === "type") {
@@ -144,7 +171,41 @@ export function step(s: DemoState, look: Partial<Look>, n: number, dt: number, n
     s.phaseMs = 0;
     s.phase = "type";
   }
+  return settle(s, look, dt, now);
+}
 
+// The pill's script, one frame: write the sentence (a letter a keystroke,
+// `shown` following), hold, jump through it stop by stop, hold, clear it
+// (the caret back to the start), and write it again. Pure, like step().
+export function stepScript(s: DemoState, look: Partial<Look>, n: number, dt: number, now: number, tour: number[]): DemoState {
+  s.phaseMs += dt;
+  const move = (to: number) => moveTo(s, look, to, now);
+  if (s.phase === "type") {
+    if (s.phaseMs >= SCRIPT_TYPE_MS) {
+      s.phaseMs = 0;
+      if (s.target < n) { move(s.target + 1); s.shown = s.target; }
+      else s.phase = "holdEnd";
+    }
+  } else if (s.phase === "holdEnd") {
+    if (s.phaseMs >= SCRIPT_HOLD_MS) { s.phaseMs = 0; s.phase = "jump"; s.stop = 0; }
+  } else if (s.phase === "jump") {
+    if (s.phaseMs >= SCRIPT_JUMP_MS) {
+      s.phaseMs = 0;
+      if (s.stop < tour.length) move(tour[s.stop++]);
+      else s.phase = "clear";
+    }
+  } else if (s.phase === "clear") {
+    if (s.phaseMs >= SCRIPT_HOLD_MS) { s.phaseMs = 0; s.shown = 0; move(0); s.phase = "holdStart"; }
+  } else if (s.phaseMs >= HOLD_START_MS) {
+    s.phaseMs = 0;
+    s.phase = "type";
+  }
+  return settle(s, look, dt, now);
+}
+
+// The springs, the heat and the ghosts' fading, after the timeline moved.
+function settle(s: DemoState, look: Partial<Look>, dt: number, now: number): DemoState {
+  const dtS = Math.min(0.1, dt / 1000);
   // The leading edge: the engine's glide, or a snap.
   if (look.smoothEnabled) {
     const rate = Math.max(0.5, smoothCatchRate(look.catchUpSpeed ?? 0.55));
@@ -210,6 +271,8 @@ interface Particle {
   t0: number; life: number;
   size: number;
   color: string;
+  // A pull down, px/s² (a popped letter tumbling); 0 for the rest.
+  g: number;
 }
 
 // The caret's fixed look, from the Appearance settings, computed once.
@@ -246,6 +309,21 @@ interface Demo {
   style: string;
   state: DemoState;
   stepPx: number;
+  // The pill (1.7.7): on the script, its written and unwritten halves (and
+  // the Box's letter copy's), the jumps, the particles it may have, its
+  // scale, and the last keystroke for the typewriter's dip.
+  script: boolean;
+  name: string;
+  written: HTMLElement | null;
+  rest: HTMLElement | null;
+  innerWritten: HTMLElement | null;
+  innerRest: HTMLElement | null;
+  shownPainted: number;
+  tour: number[];
+  poolMax: number;
+  scaled: boolean;
+  keyT: number;
+  hue: number;
 }
 
 // Every card's demo in one strip, on one frame loop.
@@ -257,9 +335,13 @@ export class DemoStrip {
 
   // Builds the demo into `host` and starts it. `color` is the preset's
   // color for the current theme; `heatStops` its four heat stops for it.
-  add(host: HTMLElement, name: string, look: Partial<Look>, color: string, heatStops: string[], gradientStops: string[], reduced: boolean, play: boolean) {
-    const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" });
-    const text = demo.createSpan({ cls: "cursor-smith-pcard-text cursor-smith-pcard-name", text: name });
+  add(host: HTMLElement, name: string, look: Partial<Look>, color: string, heatStops: string[], gradientStops: string[], reduced: boolean, play: boolean, script = false) {
+    const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" + (script ? " cursor-smith-roll-demo" : "") });
+    const text = demo.createSpan({ cls: "cursor-smith-pcard-text cursor-smith-pcard-name", text: script ? "" : name });
+    // The pill's sentence in two halves, the unwritten one invisible: the
+    // letters keep their places (and the measure its width) as they appear.
+    const written = script ? text.createSpan({ text: "" }) : null;
+    const rest = script ? text.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }) : null;
     const style = String(look.cursorStyle || "Box").toLowerCase();
     // The letter width is measured on the first frame; 8px is the shape's
     // first guess until then.
@@ -296,17 +378,24 @@ export class DemoStrip {
     // so it lies over the real letters. Not on a hollow or translucent box,
     // where the real letter shows through.
     let inner: HTMLElement | null = null;
+    let innerWritten: HTMLElement | null = null, innerRest: HTMLElement | null = null;
     if (style === "box" && look.showChar !== false && !shape.hollowWidth && !look.cursorTranslucent) {
-      inner = caret.createSpan({ cls: "cursor-smith-pcard-caret-text", text: name });
+      inner = caret.createSpan({ cls: "cursor-smith-pcard-caret-text", text: script ? "" : name });
       inner.setCssStyles({ color: readableGlyphColor(shape.fill, look.glyphColorMode ?? "contrast") });
+      if (script) { innerWritten = inner.createSpan({ text: "" }); innerRest = inner.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }); }
     }
-    const d: Demo = { el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0 };
+    const d: Demo = {
+      el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
+      script, name, written, rest, innerWritten, innerRest, shownPainted: -1, tour: script ? scriptTour(name) : [], poolMax: script ? 64 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+    };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
       // Still, at the idle spot - painted now with a guessed letter width,
       // and once more from the loop with the measured one (a still demo
       // is a done one, dropped after that frame).
       d.state.target = d.state.lead = d.state.trail = idleAt(d.n);
+      // The pill still: the sentence written, the caret after it.
+      if (script) { d.state.target = d.state.lead = d.state.trail = d.n; d.state.shown = d.n; }
       d.done = true;
     }
     // Painted once here (a guessed letter width), then from the loop.
@@ -336,7 +425,18 @@ export class DemoStrip {
         if (w > 0 && d.n > 0) d.stepPx = w / d.n;
         else continue;
       }
-      if (!d.done) {
+      if (!d.scaled) this.fit(d);
+      if (!d.done && d.script) {
+        const before = d.state.target;
+        const shownBefore = d.state.shown;
+        stepScript(d.state, d.look, d.n, dt, now, d.tour);
+        if (d.state.target !== before) {
+          this.onMove(d, before, now);
+          if (d.state.shown > shownBefore) this.onType(d, d.state.shown - 1, now);
+        }
+        if (d.state.shown < shownBefore) this.onClear(d, shownBefore, now);
+        this.emit(d, dt, now);
+      } else if (!d.done) {
         const before = d.state.target;
         const phaseBefore = d.state.phase;
         step(d.state, d.look, d.n, dt, now);
@@ -355,13 +455,68 @@ export class DemoStrip {
     this.raf = this.demos.length && this.win ? this.win.requestAnimationFrame(this.tick) : 0;
   };
 
-  // A particle from the pool, or none when the card has its share.
-  private spawn(d: Demo, x: number, y: number, vx: number, vy: number, life: number, size: number, color: string, now: number) {
-    if (d.particles.length >= POOL) return;
+  // The pill: scaled to fill its stage, left of center (once, with the
+  // letters measured).
+  private fit(d: Demo) {
+    const stage = d.el.parentElement;
+    const textW = d.stepPx * d.n + 22;
+    if (!stage || !(stage.clientWidth > 0) || !(textW > 0)) return;
+    const k = Math.max(1, Math.min(2.6, (stage.clientWidth - 56) / textW));
+    d.el.setCssStyles({ transform: `translateY(-50%) scale(${k.toFixed(3)})` });
+    d.scaled = true;
+  }
+
+  // A particle from the pool, or none when the card has its share. With
+  // `char`, a letter (a popped one) instead of a pixel, pulled down by `g`.
+  private spawn(d: Demo, x: number, y: number, vx: number, vy: number, life: number, size: number, color: string, now: number, char = "", g = 0) {
+    if (d.particles.length >= d.poolMax) return;
     let el = d.pool.pop() ?? null;
     if (!el) el = d.el.createSpan({ cls: "cursor-smith-pcard-particle", attr: { "aria-hidden": "true" } });
-    el.setCssStyles({ width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1" });
-    d.particles.push({ el, x, y, vx, vy, t0: now, life, size, color });
+    el.setText(char);
+    el.toggleClass("is-letter", !!char);
+    el.setCssStyles(char
+      ? { width: "auto", height: "auto", backgroundColor: "transparent", color, opacity: "1" }
+      : { width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1" });
+    d.particles.push({ el, x, y, vx, vy, t0: now, life, size, color, g });
+  }
+
+  // The pill, a letter written: it pops out of the caret (Popping letters),
+  // Space sends fireworks up, the typewriter dips.
+  private onType(d: Demo, i: number, now: number) {
+    const look = d.look;
+    const ch = d.name.charAt(i) || " ";
+    const x = i * d.stepPx;
+    d.keyT = now;
+    const color = () => {
+      if (!look.popRainbow) return d.color;
+      d.hue = (d.hue + 37) % 360;
+      return `hsl(${d.hue.toFixed(0)}, 90%, 62%)`;
+    };
+    if (look.popEffects && look.popLetters && ch !== " ") {
+      if (look.popLettersRise) this.spawn(d, x, -2, 0, -26, 700, 0, color(), now, ch);
+      else this.spawn(d, x, -2, (Math.random() - 0.5) * 60, -(40 + Math.random() * 30), 800, 0, color(), now, ch, 160);
+    }
+    if (look.popEffects && look.fireworks && ch === " ") {
+      const k = Math.round(8 * Math.min(2, look.fireworksQuantity ?? 1));
+      for (let j = 0; j < k; j++) {
+        const a = (j / k) * Math.PI * 2;
+        const v = 30 + Math.random() * 20;
+        this.spawn(d, x, -6, Math.cos(a) * v, Math.sin(a) * v - 10, 600, 2, color(), now);
+      }
+    }
+  }
+
+  // The pill, the sentence cleared: what was deleted evaporates (rises and
+  // fades) or bursts apart, as Backspace's effects do.
+  private onClear(d: Demo, was: number, now: number) {
+    const look = d.look;
+    if (!look.popEffects || !(look.backspaceEvaporate || look.backspaceDisintegrate)) return;
+    const k = Math.min(28, was);
+    for (let j = 0; j < k; j++) {
+      const x = (j / Math.max(1, k - 1)) * was * d.stepPx;
+      if (look.backspaceDisintegrate) this.spawn(d, x, 8, (Math.random() - 0.5) * 80, (Math.random() - 0.5) * 80, 550, 2, d.color, now);
+      else this.spawn(d, x, 8, (Math.random() - 0.5) * 8, -(14 + Math.random() * 14), 900, 2, d.color, now);
+    }
   }
 
   // On a keystroke (or the jump back): Pixel trail throws pixels from the
@@ -425,6 +580,7 @@ export class DemoStrip {
     for (const p of d.particles) {
       const age = (now - p.t0) / p.life;
       if (age >= 1) { p.el.setCssStyles({ opacity: "0" }); d.pool.push(p.el); continue; }
+      p.vy += p.g * dtS;
       p.x += p.vx * dtS;
       p.y += p.vy * dtS;
       p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (1 - age).toFixed(2) });
@@ -447,8 +603,24 @@ export class DemoStrip {
     // custom ramp flattens a gradient, the demo leaves it be).
     const heated = cold < 1 && !d.shape.gradient;
     const color = heated ? heatColor(d.color, d.heatStops, 1 - cold) : d.shape.fill;
+    // The pill's sentence, written so far.
+    if (d.script && d.shownPainted !== s.shown) {
+      d.shownPainted = s.shown;
+      const name = d.name;
+      d.written?.setText(name.slice(0, s.shown));
+      d.rest?.setText(name.slice(s.shown));
+      d.innerWritten?.setText(name.slice(0, s.shown));
+      d.innerRest?.setText(name.slice(s.shown));
+    }
+    // The typewriter's dip: down and back over the strike's length, after
+    // each letter written.
+    let dip = 0;
+    if (d.script && d.look.typewriter && d.look.typewriterSpring) {
+      const k = (this.last - d.keyT) / Math.max(60, d.look.typewriterStrikeMs ?? 240);
+      if (k >= 0 && k < 1) dip = Math.sin(Math.PI * k) * ((d.look.typewriterDepth ?? 18) / 100) * 12;
+    }
     const styles: Record<string, string> = {
-      transform: `translateX(${from.toFixed(2)}px)`,
+      transform: dip ? `translate(${from.toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`,
       width: `${width.toFixed(2)}px`,
       opacity: String(d.shape.alphaScale * alpha),
     };

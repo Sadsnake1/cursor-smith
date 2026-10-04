@@ -1033,9 +1033,9 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
 .cursor-smith-keys-key { white-space: nowrap; }
 .cursor-smith-keys-note { margin-top: 4px; font-size: var(--font-ui-smaller); color: var(--text-faint); }
 
-/* The Randomizer's pill (1.7.7): a text field as wide as the page, its text
-   big, for the real cursor to be tried in after a roll. Left-aligned: the
-   cursor in a field is measured from its text's start. */
+/* The Randomizer's pill (1.7.7): as wide as the page, the look being edited
+   playing in it - the preset cards' demo, scaled up (demo.ts sets the
+   scale), clipped to the pill so nothing it throws gets out. */
 .setting-item.cursor-smith-roll-pill-row {
   border-top: none;
   padding-block: 6px 14px;
@@ -1047,18 +1047,32 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   flex: 1 1 auto;
   width: 100%;
 }
-.setting-item.cursor-smith-roll-pill-row .cursor-smith-roll-field {
+.cursor-smith-roll-stage {
+  position: relative;
   width: 100%;
-  height: auto;
-  padding: 0.5em 1.1em;
+  height: 76px;
+  overflow: hidden;
   border-radius: 999px;
-  font-size: 1.7em;
-  font-family: var(--font-text);
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
 }
-.setting-item.cursor-smith-roll-pill-row .cursor-smith-roll-field:focus {
-  border-color: var(--interactive-accent);
+.cursor-smith-roll-stage .cursor-smith-roll-demo {
+  position: absolute;
+  left: 30px;
+  top: 50%;
+  margin: 0;
+  transform: translateY(-50%);
+  transform-origin: left center;
+}
+/* The sentence's unwritten half: in place, unseen. */
+.cursor-smith-roll-unwritten {
+  visibility: hidden;
+}
+/* A popped letter: the particle's box, sized by its letter. */
+.cursor-smith-pcard-particle.is-letter {
+  border-radius: 0;
+  line-height: 1;
+  font-weight: 700;
 }
 .cursor-smith-roll-buttons-row .cursor-smith-roll-dice {
   display: inline-flex;

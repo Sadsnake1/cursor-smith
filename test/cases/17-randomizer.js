@@ -130,14 +130,39 @@ section("Randomizer: its page");
 {
   const rows = renderWholePanel({});
   const named = (n) => rows.find((r) => r.name === n);
-  ok("a page of its own after Effects, with the pill, the buttons, three dials and the sounds switch",
-     ["Try it", "Roll", "Chaos", "Color", "Motion", "Include sounds"].every((n) => named(n)));
-  const pill = named("Try it");
-  const field = pill.controlEl.children.find((c) => c.tag === "input");
-  ok("the pill is a text field, the cursor's to show in", !!field && field.classes.includes("cursor-smith-roll-field") && field.attrs.type === "text");
+  ok("a page of its own, last, with the pill, the buttons, three dials and the sounds switch",
+     ["Preview", "Roll", "Chaos", "Color", "Motion", "Include sounds"].every((n) => named(n)));
+  const pill = named("Preview");
+  const stage = pill.controlEl.children.find((c) => c.classes.includes("cursor-smith-roll-stage"));
+  const demo = stage && stage.children.find((c) => c.classes.includes("cursor-smith-roll-demo"));
+  ok("the pill is a stage with the demo in it, the sentence to write in two halves (none written yet)",
+     !!demo && !!demo.querySelector(".cursor-smith-pcard-caret") && demo.querySelector(".cursor-smith-roll-unwritten").text === T.SCRIPT_TEXT);
   const roll = named("Roll");
   ok("Randomize and Undo; Undo off with nothing to undo", roll.buttons.length === 2 && roll.buttons[0]._text === "Randomize" && roll.buttons[1]._text === "Undo");
   const chaos = named("Chaos");
   ok("the dials are 0 - 100 sliders on their settings, each with its reset", chaos.sliders[0]._limits.min === 0 && chaos.sliders[0]._limits.max === 100 && chaos.sliders[0]._value === 35 && chaos.extras.length === 1);
   ok("the switch reads its setting", named("Include sounds").toggles[0]._value === false);
+}
+
+section("Randomizer: the pill's script");
+{
+  const n = T.SCRIPT_TEXT.length;
+  const tour = T.scriptTour(T.SCRIPT_TEXT);
+  ok("the sentence, and a tour of word starts that ends at its end", T.SCRIPT_TEXT === "The quick brown fox jumps over the lazy dog." &&
+     tour.length === 7 && tour[tour.length - 1] === n && tour.slice(0, -1).every((i) => i === 0 || T.SCRIPT_TEXT[i - 1] === " "), tour);
+  const look = {};
+  const s = T.demoInitialState(0);
+  let now = 0;
+  const run = (ms) => { for (let t = 0; t < ms; t += 16) { now += 16; T.demoStepScript(s, look, n, 16, now, tour); } };
+  run(85 * 10 + 20);
+  ok("it writes a letter a keystroke, the caret after it", s.phase === "type" && s.shown === s.target && s.shown >= 9 && s.shown <= 11, [s.shown, s.target]);
+  run(85 * n);
+  ok("...the whole sentence, then holds", s.shown === n && s.target === n && (s.phase === "holdEnd" || s.phase === "jump"));
+  const seen = [];
+  for (let i = 0; i < 400 && s.phase !== "clear"; i++) { run(16); if (seen[seen.length - 1] !== s.target) seen.push(s.target); }
+  ok("...jumps through it, stop by stop, to the end", seen.join() === [n, ...tour].join() || seen.join() === tour.join(), seen);
+  run(800);
+  ok("...then clears it and starts over at the start", s.shown === 0 && s.target === 0);
+  run(500 + 85 * 3);
+  ok("...writing again", s.phase === "type" && s.shown > 0);
 }

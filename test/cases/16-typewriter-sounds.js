@@ -334,19 +334,27 @@ section("Sounds: the settings");
      T.LOOK_KEYS.slice(-5, -1).join() === "typewriterSound,typewriterSoundVoice,typewriterSoundVolume,typewriterSoundBell" &&
      T.DEFAULT_SETTINGS.typewriterSound === false && T.DEFAULT_SETTINGS.typewriterSoundVolume === 50 && T.DEFAULT_SETTINGS.typewriterSoundBell === true);
   const row = (rows, name) => rows.find((r) => r.name === name);
-  // The harness shows every effect at once (its pick is "all").
+  const { sectionOf } = require("../panel_harness");
+  const visible = (r) => !!r && (typeof r.def.visible !== "function" || r.def.visible());
   const panel = (look) => renderPanel(look);
   const on = panel({ typewriter: false, typewriterSound: true });
   const idx = (n) => on.findIndex((r) => r.name === n);
-  ok("Sounds is an effect of its own, after Typewriter, with Sound, Volume and Bell under it - Typewriter off",
-     ["Sounds", "Sound", "Volume", "Bell"].every((n) => row(on, n) && row(on, n).def.visible()) &&
-     idx("Typewriter") < idx("Sounds") && idx("Sounds") < idx("Sound") && idx("Sound") < idx("Volume") && idx("Volume") < idx("Bell") &&
-     !row(on, "Carriage advance").def.visible() && !row(on, "Machine"), on.map((r) => r.name));
-  ok("...and Effects owns their keys (its Reset puts them back)", ["typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell"].every((k) => on.cardKeys.Effects.includes(k)));
+  ok("Sounds is a page of its own after Effects, with Category, Sound, Volume and Bell - Typewriter off",
+     ["Sounds", "Category", "Sound", "Volume", "Bell"].every((n) => visible(row(on, n)) && sectionOf(row(on, n)) === "Sounds") &&
+     idx("Sounds") < idx("Category") && idx("Category") < idx("Sound") && idx("Sound") < idx("Volume") && idx("Volume") < idx("Bell") &&
+     !visible(row(on, "Carriage advance")) && !row(on, "Machine"), on.map((r) => r.name));
+  ok("...and owns their keys (its Reset puts them back)", ["typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell"].every((k) => on.cardKeys.Sounds.includes(k) && !on.cardKeys.Effects.includes(k)));
   const off = panel({ typewriterSound: false });
-  ok("Sounds off: its rows hidden", row(off, "Sounds").def.visible() && !row(off, "Sound").def.visible() && !row(off, "Volume").def.visible() && !row(off, "Bell").def.visible());
+  ok("Sounds off: its rows hidden", visible(row(off, "Sounds")) && !visible(row(off, "Category")) && !visible(row(off, "Sound")) && !visible(row(off, "Volume")) && !visible(row(off, "Bell")));
   const kb = panel({ typewriterSound: true, typewriterSoundVoice: "nkcream" });
-  ok("...a keyboard chosen: no Bell (a typewriter's)", row(kb, "Sound").def.visible() && row(kb, "Volume").def.visible() && !row(kb, "Bell").def.visible());
+  ok("...a keyboard chosen: no Bell (a typewriter's)", visible(row(kb, "Sound")) && visible(row(kb, "Volume")) && !visible(row(kb, "Bell")));
+  // The Category: the kind of the sound chosen; the Sound list that kind's.
+  const cat = row(kb, "Category").dropdowns[0], snd = row(kb, "Sound").dropdowns[0];
+  ok("Category: the chosen sound's kind, of the three", cat._value === "keyboard" && Object.keys(cat._options).join() === "typewriter,keyboard,other");
+  ok("...and Sound lists that kind's only (no scrolling through 28)", Object.keys(snd._options).join() === T.SOUND_MACHINES.filter((m) => m.kind === "keyboard").map((m) => m.id).join() && snd._value === "nkcream", Object.keys(snd._options));
+  const updates = kb.tab.updates;
+  cat._change("other");
+  ok("...a kind picked: its first sound, and the rows rebuilt with its list", kb.settings.typewriterSoundVoice === "chalk" && kb.tab.updates === updates + 1);
   const tw = panel({ typewriter: true, typewriterSound: false });
   ok("Typewriter on, Sounds off: no sound rows under Typewriter", row(tw, "Carriage advance").def.visible() && !row(tw, "Sound").def.visible() && !row(tw, "Volume").def.visible() && !row(tw, "Bell").def.visible());
 }

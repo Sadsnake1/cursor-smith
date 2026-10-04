@@ -201,7 +201,7 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
   const rows = panelRows({});
   const { sectionOf } = require("../panel_harness");
   const sections = [...new Set(rows.map(sectionOf))].filter((s) => s !== null);
-  ok("the look settings are four cards", sections.join() === "Appearance,Blinking,Smooth movement,Effects", sections);
+  ok("the look settings are five cards (Sounds its own since 1.7.7)", sections.join() === "Appearance,Blinking,Smooth movement,Effects,Sounds", sections);
   ok("every row has a name or a note",
      rows.every((r) => r.name || r.def.render), rows.filter((r) => !r.name && !r.def.render).map((r) => r.def));
 }
@@ -708,13 +708,12 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     ok("the Effects card opens with the rail", !!rail && sectionOf(rail) === "Effects" && rows.filter((r) => sectionOf(r) === "Effects")[0] === rail);
     const chips = rail.settingEl.querySelectorAll(".cursor-smith-chip");
     const chip = (name) => chips.find((c) => c.children.some((k) => k.text === name));
-    ok("one chip per effect, and no All (2026-09-27)", chips.length === 12 && !chip("All"), chips.length);
-    ok("...Sounds one of them since 1.7.7, right after Typewriter", chips.indexOf(chip("Sounds")) === chips.indexOf(chip("Typewriter")) + 1);
-    ok("every effect's chip carries its Lucide icon (Hot-head a flame, Speed demon a gauge, Typewriter a keyboard, Sounds a speaker, the torch the candle)",
-       chips.slice(0, 12).every((c) => c.querySelector(".cursor-smith-chip-icon") && c.querySelector(".cursor-smith-chip-icon").icon)
+    ok("one chip per effect, and no All (2026-09-27)", chips.length === 11 && !chip("All"), chips.length);
+    ok("...and none for Sounds: a page of its own (1.7.7)", !chip("Sounds"));
+    ok("every effect's chip carries its Lucide icon (Hot-head a flame, Speed demon a gauge, Typewriter a keyboard, the torch the candle)",
+       chips.slice(0, 11).every((c) => c.querySelector(".cursor-smith-chip-icon") && c.querySelector(".cursor-smith-chip-icon").icon)
        && chip("Hot-head").querySelector(".cursor-smith-chip-icon").icon === "flame" && chip("Speed demon").querySelector(".cursor-smith-chip-icon").icon === "gauge"
        && chip("Typewriter").querySelector(".cursor-smith-chip-icon").icon === "keyboard"
-       && chip("Sounds").querySelector(".cursor-smith-chip-icon").icon === "volume-2"
        && chip("Torch spotlight").querySelector(".cursor-smith-chip-icon").icon === "cursor-smith-candle");
     ok("the picked chip - with none picked, the first - is the rail's one Tab stop, and arrows move it", chips.filter((c) => c.attrs.tabindex === "0").length === 1 && chips.find((c) => c.attrs.tabindex === "0") === (chips.find((c) => c.classes.includes("is-picked")) || chips[0]) && (() => { const i = chips.findIndex((c) => c.attrs.tabindex === "0"); rail.settingEl.querySelector(".cursor-smith-rail").listeners.keydown({ key: "ArrowRight", target: chips[i], preventDefault() {} }); return chips[(i + 1) % chips.length].focused === true && chips[(i + 1) % chips.length].attrs.tabindex === "0"; })(), chips.map((c) => c.attrs.tabindex));
     ok("a chip marks the effects that are on", chip("Pop effects").classes.includes("is-on") && chip("Motion smear").classes.includes("is-on") && !chip("CRT effects").classes.includes("is-on"));
@@ -749,7 +748,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const lookNow = { cursorStyle: "Box", showChar: true, cursorTranslucent: true, blinkingEnabled: true, blinkSpeed: 1.0, blinkBreathing: true, smoothEnabled: false, popEffects: true, flameTrail: true, crtEffect: true, smear: false };
     const rows = renderWholePanel(Object.assign({}, lookNow, { userPresets: { One: T.pickLook(Object.assign({}, T.DEFAULT_SETTINGS, lookNow)) } }));
     const top = rows.pages;
-    ok("the pages, in order (no Presets page: the presets are in the header; the Randomizer last)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Randomizer", top.map((p) => p.name));
+    ok("the pages, in order (no Presets page: the presets are in the header; the Randomizer last)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", top.map((p) => p.name));
     ok("...each with an icon and a line", top.every((p) => p.icon && p.desc.length > 10), top.map((p) => [p.icon, p.desc]));
     const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
     ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
@@ -1052,7 +1051,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"].map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
     const vim = renderWholePanel({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes, vimPresets: { Setup: modes }, vimActivePreset: "Setup" });
     const vtop = vim.pages;
-    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Randomizer", vtop.map((p) => p.name));
+    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", vtop.map((p) => p.name));
     ok("...flagged while Obsidian's Vim key bindings are off", vim.pages.find((p) => p.name === "Vim").status === "warning");
     ok("...holding the Vim switches", vim.find((r) => r.name === "Control Obsidian's Vim key bindings").page === "Vim");
     ok("Vim mode adds no Presets page either", !vim.pages.some((p) => p.name === "Presets"));
@@ -1100,7 +1099,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
   {
     const rows = panelRows({ blinkSpeed: 2.5, blinkBreathing: true, blinkingEnabled: true });
     const resetRow = (card) => rows.find((r) => sectionOf(r) === card && r.settingEl.classes.includes("cursor-smith-reset-row"));
-    ok("every tab ends with its reset", ["Appearance", "Blinking", "Smooth movement", "Effects"].every((c) => !!resetRow(c)));
+    ok("every tab ends with its reset", ["Appearance", "Blinking", "Smooth movement", "Effects", "Sounds"].every((c) => !!resetRow(c)));
     const link = resetRow("Blinking").controlEl.querySelector(".cursor-smith-reset-link");
     ok("...a link naming the tab", link && /Reset Blinking to defaults/.test(link.children.map((c) => c.text).join("")), link && link.children.map((c) => c.text));
     ok("...that is the last row of its tab", rows.filter((r) => sectionOf(r) === "Blinking").pop() === resetRow("Blinking"));
@@ -1163,7 +1162,7 @@ section("settings panel: the two callers and their hooks");
     catch (e) { threw = e; }
     ok("normalDefinitions builds", !threw, threw && threw.message);
     ok("...the four look cards (the presets live in the header)",
-       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects,Randomizer", sectionsOf(rows));
+       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", sectionsOf(rows));
 
     // Cursor style: writes to plugin.settings, restarts the engine, and
     // refreshes the panel so the new style's sub-options appear.
@@ -1205,7 +1204,7 @@ section("settings panel: the two callers and their hooks");
     catch (e) { threw = e; }
     ok("modeDefinitions builds", !threw, threw && threw.message);
     ok("...the four look cards and no Presets",
-       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects", sectionsOf(rows));
+       sectionsOf(rows).filter((s) => s !== null).join() === "Appearance,Blinking,Smooth movement,Effects,Sounds", sectionsOf(rows));
 
     const added = press(rows, "Cursor style", "dropdowns", "Underline");
     ok("Cursor style writes the mode's snapshot, not the global settings",
@@ -1252,7 +1251,7 @@ section("settings panel: the whole tree");
   ok("the version is a muted footer line under the pages, out of search",
      foot.settingEl.classes.includes("cursor-smith-footer") && foot.desc === "Cursor-Smith 0.0.0-test" && foot.def.searchable === false, foot.desc);
   ok("...then Behavior and the look cards",
-     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Randomizer", sections);
+     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", sections);
   const names = cua.map((r) => r.name);
   ok("Enable plugin and the Vim mode toggle come first, then the strip, then General's switches in order",
      names.indexOf("Enable plugin") < names.indexOf("Vim mode") &&
@@ -1281,7 +1280,7 @@ section("settings panel: the whole tree");
   ok("the whole Vim panel renders", !vim.threw, vim.threw && vim.threw.message);
   const vimSections = [...new Set(vim.map(sectionOf))].filter((s) => s !== null);
   ok("...its cards: Behavior, Vim, then the look (the mode row is in the header)",
-     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Randomizer", vimSections);
+     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", vimSections);
   ok("the status bar colour row hangs off the status bar toggle",
      vim.some((r) => r.name === "Color status bar text to match the cursor"));
   ok("the Vim warning is a header row that shows only while Obsidian's Vim is off",

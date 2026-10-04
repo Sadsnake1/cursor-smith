@@ -334,12 +334,7 @@ export const vimMethods = {
 
     let mode = null;
     try {
-      // The Randomizer's field (settings-tab.ts, rollPillRow): the cursor in
-      // it is the mode being rolled, the panel's tab, so a roll is seen.
-      const doc = this.canvas?.ownerDocument ?? document;
-      const focused = doc.activeElement;
-      if (focused && focused.classList && focused.classList.contains("cursor-smith-roll-field")) mode = this._vimEditMode || "normal";
-      else if (this.isObsidianVimOn()) {
+      if (this.isObsidianVimOn()) {
         // Interface/command line first. Whenever one of those fields has focus
         // the editor does not, so view.hasFocus is false and the branch below
         // would report null (no vim theming at all) — this check has to happen

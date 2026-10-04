@@ -96,8 +96,9 @@ function rollPlugin(settings = {}, vim = false) {
 
 section("Randomizer: the effects it can roll");
 {
-  ok("a switch per effect, the Effects page's eleven, in its order", T.ROLL_TOGGLES.join() === "popEffects,typewriter,flameTrail,stardustEnabled,bracketTether,smear,energyEffect,crtEffect,speedDemon,hotHead,torchEffect");
-  ok("...all let in by default but the torch", T.ROLL_TOGGLES.every((k) => T.rollAllowed({}, k) === (k !== "torchEffect")) && T.rollAllowed(null, "hotHead") && T.rollAllowed({ torchEffect: true }, "torchEffect") && !T.rollAllowed({ hotHead: false }, "hotHead"));
+  ok("a switch per effect a roll may pick, in the Effects page's order: no torch, no bracket tether", T.ROLL_TOGGLES.join() === "popEffects,typewriter,flameTrail,stardustEnabled,smear,energyEffect,crtEffect,speedDemon,hotHead");
+  ok("...all let in by default; the torch and the tether never, switch or not", T.ROLL_TOGGLES.every((k) => T.rollAllowed({}, k)) && T.rollAllowed(null, "hotHead") && !T.rollAllowed({ hotHead: false }, "hotHead") &&
+     !T.rollAllowed({ torchEffect: true }, "torchEffect") && !T.rollAllowed({ bracketTether: true }, "bracketTether"));
   const noPops = many({ chaos: 80, allow: { popEffects: false, hotHead: false } }, 200);
   ok("an effect switched off is never rolled", noPops.every((l) => !l.popEffects && !l.hotHead) && noPops.some((l) => l.typewriter));
   const noSmear = many({ motion: 100, allow: { smear: false } }, 100);
@@ -108,9 +109,8 @@ section("Randomizer: the effects it can roll");
   ok("...two let in at Chaos 100: those two, every time", two.every((l) => effectsOn(l) === 2 && l.stardustEnabled && l.crtEffect));
   const calmTwo = many({ chaos: 0, allow: Object.assign(Object.fromEntries(T.ROLL_TOGGLES.map((k) => [k, false])), { stardustEnabled: true, crtEffect: true }) }, 60);
   ok("...and at Chaos 0, one of them", calmTwo.every((l) => effectsOn(l) === 1));
-  const torch = many({ chaos: 100, allow: { torchEffect: true } }, 20);
-  ok("the torch let in: lit at Chaos 100, its own settings left as they are", torch.every((l) => l.torchEffect === true && !("overlayRadius" in l)));
-  ok("...and sometimes, not always, lower down", (() => { const t = many({ chaos: 30, allow: { torchEffect: true } }, 200).filter((l) => l.torchEffect).length; return t > 5 && t < 150; })());
+  const wild = many({ chaos: 100, allow: { torchEffect: true, bracketTether: true } }, 40);
+  ok("the torch and the bracket tether are never rolled, even at Chaos 100 with a stale switch for them", wild.every((l) => l.torchEffect === false && l.bracketTether === false && !("overlayRadius" in l)));
 }
 
 section("Randomizer: rolling and taking it back");
@@ -166,13 +166,13 @@ section("Randomizer: its page");
   ok("the dials are 0 - 100 sliders on their settings, each with its reset", chaos.sliders[0]._limits.min === 0 && chaos.sliders[0]._limits.max === 100 && chaos.sliders[0]._value === 35 && chaos.extras.length === 1);
   ok("the switch reads its setting", named("Include sounds").toggles[0]._value === false);
   const head = rows.findIndex((r) => r.name === "Effects it can roll");
-  const switches = rows.slice(head + 1, head + 12);
-  ok("then a switch per effect under its own subheading, the Effects page's names, out of settings search",
-     head > rows.indexOf(named("Include sounds")) && switches.map((r) => r.name).join() === "Pop effects,Typewriter,Pixel trail,Stardust,Bracket tether,Motion smear,Energy beam,CRT effects,Speed demon,Hot-head,Torch spotlight" &&
-     switches.every((r) => r.def.searchable === false && r.toggles.length === 1), switches.map((r) => r.name));
-  ok("...all on but the torch", switches.slice(0, 10).every((r) => r.toggles[0]._value === true) && switches[10].toggles[0]._value === false);
+  const switches = rows.slice(head + 1, head + 10);
+  ok("then a switch per effect a roll may pick, under its own subheading, the Effects page's names, out of settings search - no torch, no bracket tether",
+     head > rows.indexOf(named("Include sounds")) && switches.map((r) => r.name).join() === "Pop effects,Typewriter,Pixel trail,Stardust,Motion smear,Energy beam,CRT effects,Speed demon,Hot-head" &&
+     switches.every((r) => r.def.searchable === false && r.toggles.length === 1) && !rows.slice(head).some((r) => r.name === "Torch spotlight" || r.name === "Bracket tether"), switches.map((r) => r.name));
+  ok("...all on", switches.every((r) => r.toggles[0]._value === true));
   const before = T.DEFAULT_SETTINGS.rollEffects;
-  switches[9].toggles[0]._change(false);
+  switches[8].toggles[0]._change(false);
   ok("...a switch writes a new object (never the defaults' own)", rows.settings.rollEffects.hotHead === false && rows.settings.rollEffects !== before && JSON.stringify(T.DEFAULT_SETTINGS.rollEffects) === "{}");
 }
 
@@ -194,7 +194,8 @@ section("Randomizer: the pill's demo waits while its page is away");
   text.ownerDocument = doc;
   let t = 1000;
   const run = (ms) => { for (let i = 0; i < ms / 16; i++) { const f = frames.shift(); if (!f) return false; t += 16; f(t); } return true; };
-  const written = () => text.children[0].text || "";
+  // The text: a letter an element (Typewriter's ink is per letter).
+  const written = () => text.children[0].children.map((c) => c.text).join("");
   ok("it plays: frame after frame, the sentence written", run(1000) && written().length > 6, written());
   demo.isConnected = false;
   const at = written();
@@ -231,7 +232,7 @@ section("Randomizer: the pill's demo waits while its page is away");
     strip.reset();
     strip.add(stage2, "", { cursorStyle: "Box", blinkingEnabled: false }, "#ff3366", [], [], true, true, true);
     const dm = stage2.children[stage2.children.length - 1];
-    lines.push(dm.querySelector(".cursor-smith-pcard-text").children[0].text);
+    lines.push(dm.querySelector(".cursor-smith-pcard-text").children[0].children.map((c) => c.text).join(""));
   }
   ok("...and each roll's line is never the last roll's", lines.every((l, i) => T.SCRIPT_LINES.includes(l) && (i === 0 || l !== lines[i - 1])), lines);
 }

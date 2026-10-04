@@ -1051,16 +1051,18 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
 .cursor-smith-roll-stage {
   position: relative;
   width: 100%;
-  height: 76px;
+  height: 132px;
   overflow: hidden;
   border-radius: var(--input-radius, 8px);
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
 }
+/* The text low in the box: what rises off it (fire, fireworks, popped
+   letters) has room before the edge. */
 .cursor-smith-roll-stage .cursor-smith-roll-demo {
   position: absolute;
   left: 22px;
-  top: 50%;
+  top: 70%;
   margin: 0;
   transform: translateY(-50%);
   transform-origin: left center;
@@ -1068,6 +1070,13 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
 /* The sentence's unwritten half: in place, unseen. */
 .cursor-smith-roll-unwritten {
   visibility: hidden;
+}
+/* The preview's letters: one element each, for Typewriter's ink (a stamp
+   scales the letter in place). */
+.cursor-smith-roll-char {
+  display: inline-block;
+  white-space: pre;
+  transform-origin: 50% 70%;
 }
 /* A popped letter: the particle's box, sized by its letter. */
 .cursor-smith-pcard-particle.is-letter {

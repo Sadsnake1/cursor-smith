@@ -98,6 +98,12 @@ const HOLD_END_MS = 650;
 const HOLD_START_MS = 450;
 // Particles per card, at most.
 const POOL = 18;
+// The preview's Hot-head: its grid square (the engine's font size over
+// HOT_PX_DIVISOR, at the demo's 12px) and its block shapes, biggest first -
+// fire.ts's HOT_BLOCK_SHAPES, the notched ones left out (an element is a
+// rectangle) - as [width, height] in squares.
+const FIRE_UNIT = 2.6;
+const FIRE_SHAPES: [number, number][] = [[2, 4], [3, 3], [2, 3], [3, 2], [1, 4], [2, 2], [1, 3], [3, 1], [2, 1], [1, 2], [1, 1]];
 // How many passes over the name the card in use plays before it rests.
 export const DEMO_CYCLES = 2;
 
@@ -386,6 +392,16 @@ interface Particle {
   color: string;
   // A pull down, px/s² (a popped letter tumbling); 0 for the rest.
   g: number;
+  // The preview's particles that move and draw as the engine's do (the
+  // rest are plain fading pixels): a thrown letter, a risen one, an
+  // evaporating one, an x over a deleted letter, a Hot-head chunk or spark,
+  // a firework shell or spark.
+  kind?: "letter" | "rise" | "evap" | "xout" | "fire" | "spark" | "shell" | "burst";
+  rot?: number;
+  shape0?: number;
+  phase?: number;
+  delay?: number;
+  colors?: string[];
 }
 
 // The caret's fixed look, from the Appearance settings, computed once.
@@ -434,6 +450,15 @@ interface Demo {
   painted: string;
   // The line being played, for the next one to differ.
   line: string;
+  // The preview's letters, one element each (Typewriter's ink is per
+  // letter), with when each was typed; Hot-head's burning marks (where
+  // letters were typed, where the caret landed); the fire's emission
+  // carried over between frames; the last key's kind (the carriage
+  // advance is a typed letter's, not Backspace's).
+  chars: { el: HTMLElement; ch: string; t: number; wet: boolean }[];
+  burns: { x: number; t: number }[];
+  fireAcc: number;
+  keyKind: "type" | "back";
   poolMax: number;
   scaled: boolean;
   keyT: number;
@@ -524,7 +549,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, poolMax: script ? 64 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -577,12 +602,16 @@ export class DemoStrip {
         const before = d.state.target;
         stepScript(d.state, d.look, dt, now, () => this.nextLine(d));
         if (d.state.target !== before) this.onMove(d, before, now);
+        // A jump lands (two letters or more, the engine's jump): Hot-head
+        // flares where the caret came down.
+        if (Math.abs(d.state.target - before) >= 2 && d.state.phase === "jump" && d.look.hotHead) d.burns.push({ x: d.state.target, t: now });
         for (const ev of d.state.events) {
           if (ev.do === "type") this.onType(d, ev.at, ev.ch, now);
-          else if (ev.do === "back") this.onBack(d, ev.at, now);
-          else this.onClear(d, ev.at, now);
+          else if (ev.do === "back") this.onBack(d, ev.at, ev.ch, now);
+          else this.onClear(d, d.painted, now);
         }
         d.state.events.length = 0;
+        if (d.look.hotHead) this.burn(d, dt, now);
         this.emit(d, dt, now);
       } else if (!d.done) {
         const before = d.state.target;
@@ -633,16 +662,102 @@ export class DemoStrip {
 
   // A particle from the pool, or none when the card has its share. With
   // `char`, a letter (a popped one) instead of a pixel, pulled down by `g`.
-  private spawn(d: Demo, x: number, y: number, vx: number, vy: number, life: number, size: number, color: string, now: number, char = "", g = 0) {
-    if (d.particles.length >= d.poolMax) return;
+  private spawn(d: Demo, x: number, y: number, vx: number, vy: number, life: number, size: number, color: string, now: number, char = "", g = 0, kind?: Particle["kind"]): Particle | null {
+    if (d.particles.length >= d.poolMax) return null;
     let el = d.pool.pop() ?? null;
     if (!el) el = d.el.createSpan({ cls: "cursor-smith-pcard-particle", attr: { "aria-hidden": "true" } });
     el.setText(char);
     el.toggleClass("is-letter", !!char);
     el.setCssStyles(char
-      ? { width: "auto", height: "auto", backgroundColor: "transparent", color, opacity: "1" }
-      : { width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1" });
-    d.particles.push({ el, x, y, vx, vy, t0: now, life, size, color, g });
+      ? { width: "auto", height: "auto", backgroundColor: "transparent", color, opacity: "1", fontSize: "", filter: "" }
+      : { width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1", fontSize: "", filter: "" });
+    const part: Particle = { el, x, y, vx, vy, t0: now, life, size, color, g, kind };
+    d.particles.push(part);
+    return part;
+  }
+
+  // --- The preview's effects, as the engine's (1.7.7) -------------------
+  // The demo's letters are 12px where an editor's are about 16: the
+  // engine's distances and speeds are taken at three quarters.
+
+  // A color with Rainbow's sweep (Pop effects), or the cursor's.
+  private popColor(d: Demo): string {
+    if (!d.look.popRainbow) return d.color;
+    d.hue = (d.hue + 37) % 360;
+    return `hsl(${d.hue.toFixed(0)}, 85%, 60%)`;
+  }
+
+  // Hot-head (effects-fire.ts, fire.ts): the letters just typed burn - the
+  // fire lit at the tops of the glyphs along the last few letters (Trail
+  // over text) and where a jump lands, a kick up within a narrow cone,
+  // buoyant, swaying a little; chunks of pixels (the engine's block
+  // shapes, rectangles here) breaking down as they age; three colors from
+  // the fire's ramp down to the cursor's own; a spark with each chunk.
+  private burn(d: Demo, dt: number, now: number) {
+    const look = d.look;
+    const linger = 1100;
+    const keep = 1 + Math.round((look.hotHeadTrail ?? 6) * 0.6);
+    d.burns = d.burns.filter((b) => now - b.t < linger).slice(-keep - 2);
+    if (!d.burns.length) return;
+    const weights = d.burns.map((b) => Math.max(0, 1 - (now - b.t) / linger));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (sum <= 0) return;
+    d.fireAcc += (dt / 1000) * 125 * 0.75 * (look.hotHeadQuantity ?? 1) * Math.min(1.6, 0.45 + 0.55 * sum);
+    const cw = d.stepPx || 7;
+    const fade = look.hotHeadFade ?? 620;
+    const heightMul = (look.hotHeadHeight ?? 0.55) / 0.55;
+    const spread = (look.hotHeadSpread ?? 4) * 0.1 * cw;
+    const right = (d.state.buffer.length + 0.5) * cw;
+    for (; d.fireAcc >= 1; d.fireAcc--) {
+      let r = Math.random() * sum, bi = 0;
+      while (bi < d.burns.length - 1 && (r -= weights[bi]) > 0) bi++;
+      const b = d.burns[bi];
+      const x = (b.x + Math.random()) * cw + (Math.random() - 0.5) * spread;
+      if (x < -cw * 0.5 || x > right) continue;
+      const y = 6 + (0.02 - Math.random() * 0.09) * 22;
+      const mag = (12 + 30 * Math.sqrt(Math.random())) * heightMul;
+      const ang = (Math.random() * 2 - 1) * 0.45;
+      const life0 = fade * (0.25 + 0.75 * Math.pow(Math.random(), 2.2));
+      const share = life0 / fade;
+      const shape0 = Math.max(0, Math.min(FIRE_SHAPES.length - 1, Math.round((1 - share) * (FIRE_SHAPES.length - 1) + (Math.random() - 0.5) * 3)));
+      const f = this.spawn(d, x, y, Math.sin(ang) * mag, -Math.cos(ang) * mag, life0, FIRE_UNIT, d.color, now, "", -40 * heightMul, "fire");
+      if (f) { f.shape0 = shape0; f.phase = Math.random() * Math.PI * 2; }
+      const sp = this.spawn(d, x, y, Math.sin(ang) * mag * 0.5, -Math.cos(ang) * mag * 1.9 - 4, life0 * 0.6, Math.max(1, FIRE_UNIT * 0.85), d.color, now, "", -40 * heightMul * 1.9, "spark");
+      if (sp) sp.phase = Math.random() * Math.PI * 2;
+    }
+  }
+
+  // Fire's color at a temperature (1 fresh .. 0 spent): three steps up the
+  // engine's ramp - the cursor's own color, amber, orange - never past
+  // half of it; Fire in cursor color keeps the cursor's.
+  private fireColor(d: Demo, temp: number): string {
+    if (d.look.hotHeadFlat) return d.color;
+    const q = Math.round(Math.max(0, Math.min(1, Math.pow(temp, 0.55))) * 3) / 3;
+    const pos = q * 0.5;
+    const stops: [number, number[]][] = [[0, hexToRgbTuple(d.color.startsWith("#") ? d.color : "#ff8000")], [0.12, [255, 187, 0]], [0.42, [255, 128, 0]], [0.72, [255, 61, 13]]];
+    let i = 0;
+    while (i < stops.length - 2 && pos > stops[i + 1][0]) i++;
+    const [p0, c0] = stops[i], [p1, c1] = stops[i + 1];
+    const f = Math.max(0, Math.min(1, (pos - p0) / (p1 - p0)));
+    return rgbTupleToHex([0, 1, 2].map((k) => Math.round(c0[k] + (c1[k] - c0[k]) * f)));
+  }
+
+  // Fireworks (effects-pops.ts): a shell from the caret up above the line,
+  // then a burst - sparks out and falling under gravity, twinkling out.
+  private firework(d: Demo, x: number, now: number) {
+    const look = d.look;
+    const colors = look.popRainbow ? [this.popColor(d), this.popColor(d), this.popColor(d)] : [d.color, d.color];
+    const shell = this.spawn(d, x, 2, 0, -(22 * 1.1) / 0.26, 260, 2, colors[0], now, "", 0, "shell");
+    if (shell) { shell.colors = colors; shell.delay = Math.max(0.4, Math.min(3, look.fireworksQuantity ?? 1)); }
+  }
+
+  private burst(d: Demo, x: number, y: number, colors: string[], qty: number, now: number) {
+    const n = Math.round(10 * qty);
+    for (let j = 0; j < n; j++) {
+      const a = (j / n) * Math.PI * 2 + Math.random() * 0.4;
+      const v = 28 + Math.random() * 30;
+      this.spawn(d, x, y, Math.cos(a) * v, Math.sin(a) * v - 12, 620 * (0.7 + Math.random() * 0.3), 2, colors[j % colors.length], now, "", 315, "burst");
+    }
   }
 
   // The preview, a letter written: it pops out of the caret (Popping
@@ -651,49 +766,68 @@ export class DemoStrip {
     const look = d.look;
     const x = i * d.stepPx;
     d.keyT = now;
-    const color = () => {
-      if (!look.popRainbow) return d.color;
-      d.hue = (d.hue + 37) % 360;
-      return `hsl(${d.hue.toFixed(0)}, 90%, 62%)`;
-    };
-    if (look.popEffects && look.popLetters && ch !== " ") {
-      if (look.popLettersRise) this.spawn(d, x, -2, 0, -26, 700, 0, color(), now, ch);
-      else this.spawn(d, x, -2, (Math.random() - 0.5) * 60, -(40 + Math.random() * 30), 800, 0, color(), now, ch, 160);
-    }
-    if (look.popEffects && look.fireworks && ch === " ") {
-      const k = Math.round(8 * Math.min(2, look.fireworksQuantity ?? 1));
-      for (let j = 0; j < k; j++) {
-        const a = (j / k) * Math.PI * 2;
-        const v = 30 + Math.random() * 20;
-        this.spawn(d, x, -6, Math.cos(a) * v, Math.sin(a) * v - 10, 600, 2, color(), now);
+    d.keyKind = "type";
+    if (look.hotHead) d.burns.push({ x: i, t: now });
+    // Popping letters: thrown up and spinning, falling back (0.45 s), or
+    // risen straight up and faded (0.65 s).
+    if (look.popEffects && look.popLetters && ch.trim()) {
+      if (look.popLettersRise) {
+        const pr = this.spawn(d, x, 4, 0, 0, 650, 0, this.popColor(d), now, ch, 0, "rise");
+        if (pr) pr.el.setCssStyles({ fontSize: "11.4px" });
+      } else {
+        const pl = this.spawn(d, x, 4, (Math.random() - 0.5) * 90, -112 - Math.random() * 98, 450, 0, this.popColor(d), now, ch, 240, "letter");
+        if (pl) { pl.rot = (Math.random() - 0.5) * 4; pl.el.setCssStyles({ fontSize: "10.8px" }); }
       }
     }
+    if (look.popEffects && look.fireworks && ch === " ") this.firework(d, x + d.stepPx / 2, now);
   }
 
   // The preview, a typo backspaced: the letter evaporates or bursts apart,
   // as Backspace's effects do; the typewriter dips for the key.
-  private onBack(d: Demo, at: number, now: number) {
-    const look = d.look;
+  private onBack(d: Demo, at: number, ch: string, now: number) {
     d.keyT = now;
-    if (!look.popEffects || !(look.backspaceEvaporate || look.backspaceDisintegrate)) return;
-    for (let j = 0; j < 4; j++) {
-      const x = (at + Math.random()) * d.stepPx;
-      if (look.backspaceDisintegrate) this.spawn(d, x, 8, (Math.random() - 0.5) * 70, (Math.random() - 0.5) * 70, 450, 2, d.color, now);
-      else this.spawn(d, x, 8, (Math.random() - 0.5) * 8, -(14 + Math.random() * 14), 700, 2, d.color, now);
-    }
+    d.keyKind = "back";
+    if (d.look.hotHead) d.burns.push({ x: at, t: now });
+    this.deleted(d, [{ ch, at }], now);
+  }
+
+  // Letters deleted (a typo backspaced, or the line cleared), as the
+  // engine shows them: Typewriter's X-out overtypes each with an x; Pop
+  // effects' evaporation lifts each letter itself, swaying and spreading
+  // as it rises and fades (1.1 s, a little after the one before);
+  // disintegration bursts each apart in flipped colors.
+  private deleted(d: Demo, letters: { ch: string; at: number }[], now: number) {
+    const look = d.look;
+    const cw = d.stepPx || 7;
+    letters.forEach(({ ch, at }, k) => {
+      if (!ch.trim()) return;
+      const x = at * cw;
+      if (look.typewriter && look.typewriterTape) {
+        const ghost = this.spawn(d, x, 11, 0, 0, 500, 0, "var(--text-normal)", now, ch, 0, "xout");
+        if (ghost) ghost.el.setCssStyles({ opacity: "0.45" });
+        this.spawn(d, x, 11, 0, 0, 500, 0, d.color, now, "x", 0, "xout");
+      }
+      if (look.popEffects && look.backspaceEvaporate) {
+        const color = look.popRainbow ? this.popColor(d) : "var(--text-normal)";
+        const e = this.spawn(d, x, 11, 0, 0, 1100, 0, color, now, ch, 0, "evap");
+        if (e) { e.delay = k * 16; e.phase = Math.random() * Math.PI * 2; }
+      }
+      if (look.popEffects && look.backspaceDisintegrate) {
+        for (let j = 0; j < 5; j++) {
+          const a = Math.random() * Math.PI * 2, v = 30 + Math.random() * 50;
+          const b = this.spawn(d, x + Math.random() * cw, 6 + Math.random() * 10, Math.cos(a) * v, Math.sin(a) * v, 500, 2, "var(--text-normal)", now);
+          if (b) b.el.setCssStyles({ filter: "invert(1)" });
+        }
+      }
+    });
   }
 
   // The preview, the line cleared: what was deleted evaporates (rises and
   // fades) or bursts apart, as Backspace's effects do.
-  private onClear(d: Demo, was: number, now: number) {
-    const look = d.look;
-    if (!look.popEffects || !(look.backspaceEvaporate || look.backspaceDisintegrate)) return;
-    const k = Math.min(28, was);
-    for (let j = 0; j < k; j++) {
-      const x = (j / Math.max(1, k - 1)) * was * d.stepPx;
-      if (look.backspaceDisintegrate) this.spawn(d, x, 8, (Math.random() - 0.5) * 80, (Math.random() - 0.5) * 80, 550, 2, d.color, now);
-      else this.spawn(d, x, 8, (Math.random() - 0.5) * 8, -(14 + Math.random() * 14), 900, 2, d.color, now);
-    }
+  private onClear(d: Demo, text: string, now: number) {
+    // Nearest the caret (the end) first, as Backspace takes them.
+    const letters = Array.from(text).map((ch, at) => ({ ch, at })).reverse();
+    this.deleted(d, letters, now);
   }
 
   // On a keystroke (or the jump back): Pixel trail throws pixels from the
@@ -711,7 +845,7 @@ export class DemoStrip {
         this.spawn(d, x0 + Math.random() * px, 6 + Math.random() * 10, (Math.random() - 0.5) * 30 + Math.sin(ang) * g * 0.3, (Math.random() - 0.5) * 30 + Math.cos(ang) * g * 0.3, Math.min(700, look.flameTrailLifeMs ?? 400), size, d.color, now);
       }
     }
-    if (look.hotHead) {
+    if (look.hotHead && !d.script) {
       const count = Math.round(2 * (look.hotHeadQuantity ?? 1));
       for (let i = 0; i < count; i++) this.spawnFlame(d, x0 + Math.random() * px, now);
     }
@@ -731,7 +865,7 @@ export class DemoStrip {
         d.spawnAcc = 0;
         this.spawn(d, x + (Math.random() - 0.5) * 12, 12 + Math.random() * 6, (Math.random() - 0.5) * 8, -(10 + Math.random() * 12), 900, 1, d.color, now);
       }
-    } else if (look.hotHead && !resting) {
+    } else if (look.hotHead && !resting && !d.script) {
       const every = 70 / (look.hotHeadQuantity ?? 1);
       if (d.spawnAcc >= every) { d.spawnAcc = 0; this.spawnFlame(d, x + Math.random() * Math.max(2, d.stepPx - 2), now); }
     } else if (look.speedDemon && look.speedDemonSparks && st.heat > 0.6) {
@@ -754,16 +888,115 @@ export class DemoStrip {
   private moveParticles(d: Demo, dt: number, now: number) {
     const dtS = dt / 1000;
     const keep: Particle[] = [];
+    const born: (() => void)[] = [];
     for (const p of d.particles) {
-      const age = (now - p.t0) / p.life;
-      if (age >= 1) { p.el.setCssStyles({ opacity: "0" }); d.pool.push(p.el); continue; }
-      p.vy += p.g * dtS;
-      p.x += p.vx * dtS;
-      p.y += p.vy * dtS;
-      p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (1 - age).toFixed(2) });
+      const elapsed = now - p.t0 - (p.delay && p.kind === "evap" ? p.delay : 0);
+      const age = Math.max(0, elapsed / p.life);
+      if (age >= 1) {
+        p.el.setCssStyles({ opacity: "0", transform: "", width: "", height: "" });
+        if (p.kind === "shell") born.push(() => this.burst(d, p.x, p.y - 22 * 1.1, p.colors ?? [p.color], p.delay ?? 1, now));
+        d.pool.push(p.el);
+        continue;
+      }
+      const t = age;
+      if (p.kind === "letter") {
+        // The engine's throw: a straight start, gravity, a spin.
+        const e = elapsed / 1000;
+        const x = p.x + p.vx * e, y = p.y + p.vy * e + 0.5 * p.g * e * e;
+        p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) rotate(${((p.rot ?? 0) * e * 5).toFixed(2)}rad)`, opacity: (1 - t).toFixed(2) });
+      } else if (p.kind === "rise") {
+        const y = p.y - 22 * 0.9 * (1 - Math.pow(1 - t, 3));
+        p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${y.toFixed(1)}px)`, opacity: (0.7 * Math.pow(1 - t, 1.4)).toFixed(2) });
+      } else if (p.kind === "evap") {
+        if (elapsed < 0) { p.el.setCssStyles({ opacity: "0" }); keep.push(p); continue; }
+        const y = p.y - 22 * 1.2 * (1 - Math.pow(1 - t, 2));
+        const x = p.x + Math.sin((p.phase ?? 0) + t * 5) * 22 * 0.16 * t;
+        p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${(1 + 0.35 * t).toFixed(2)})`, opacity: (0.85 * (1 - t)).toFixed(2) });
+      } else if (p.kind === "xout") {
+        p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (t < 0.5 ? 1 : 1 - (t - 0.5) * 2).toFixed(2) });
+      } else if (p.kind === "fire" || p.kind === "spark") {
+        // Buoyant (g is negative), damped, swaying more as it climbs.
+        p.vy += p.g * dtS;
+        p.vx *= Math.pow(0.8, dt / 17);
+        p.x += p.vx * dtS;
+        p.y += p.vy * dtS;
+        const sway = Math.sin((p.phase ?? 0) + (elapsed / 1000) * 1.3 * Math.PI * 2) * 0.3 * (d.stepPx || 7) * Math.min(1, elapsed / 260);
+        let w = p.size, h = p.size;
+        if (p.kind === "fire") {
+          const i0 = p.shape0 ?? 0;
+          const idx = Math.min(FIRE_SHAPES.length - 1, i0 + Math.floor((FIRE_SHAPES.length - 1 - i0) * Math.pow(t, 1.6)));
+          const [sw, sh] = t < 0.78 ? FIRE_SHAPES[idx] : [1, 1];
+          w = sw * FIRE_UNIT; h = sh * FIRE_UNIT;
+        }
+        const alpha = (d.look.hotHeadOpacity ?? 1) * (0.45 + 0.55 * (Math.round((1 - t) * 3) / 3));
+        p.el.setCssStyles({
+          width: `${w.toFixed(1)}px`, height: `${h.toFixed(1)}px`,
+          backgroundColor: this.fireColor(d, 1 - t),
+          transform: `translate(${(p.x + sway).toFixed(1)}px, ${(p.y - h).toFixed(1)}px)`,
+          opacity: alpha.toFixed(2),
+        });
+      } else if (p.kind === "shell") {
+        // Up, slowing, to burst at the top.
+        const y = p.y - 22 * 1.1 * (1 - Math.pow(1 - t, 2));
+        p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${y.toFixed(1)}px)`, opacity: "1" });
+      } else {
+        p.vy += p.g * dtS;
+        p.x += p.vx * dtS;
+        p.y += p.vy * dtS;
+        // A firework's spark twinkles out over its last part.
+        const twinkle = p.kind === "burst" && t > 0.42 ? (Math.random() < 0.3 ? 0.25 : 1) : 1;
+        p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: ((p.kind === "burst" ? 0.9 : 1) * (1 - t) * twinkle).toFixed(2) });
+      }
       keep.push(p);
     }
     d.particles = keep;
+    for (const b of born) b();
+  }
+
+  // The preview's letters: kept in step with the text (the common start
+  // kept, the rest made again), then Typewriter's ink on each - the Ink
+  // stamp on the letter just typed (bigger and bolder, settling), Fresh ink
+  // on the ones before it (the cursor's color drying into the text's, or
+  // bolder settling with Keep text color).
+  private paintText(d: Demo, text: string, now: number) {
+    if (!d.written) return;
+    if (d.painted !== text) {
+      let k = 0;
+      while (k < d.chars.length && k < text.length && d.chars[k].ch === text[k]) k++;
+      for (const c of d.chars.splice(k)) c.el.remove();
+      for (const ch of text.slice(k)) {
+        const el = d.written.createSpan({ cls: "cursor-smith-roll-char", text: ch });
+        d.chars.push({ el, ch, t: now, wet: true });
+      }
+      d.painted = text;
+      d.innerWritten?.setText(text);
+      if (d.stepPx) { d.rest?.setText(""); d.innerRest?.setText(""); }
+    }
+    const look = d.look;
+    const tw = !!look.typewriter;
+    const inkMs = look.typewriterInkMs ?? 400, freshMs = look.typewriterFreshInkMs ?? 1500;
+    const last = d.chars[d.chars.length - 1];
+    for (const c of d.chars) {
+      if (!c.wet) continue;
+      const age = now - c.t;
+      const st: Record<string, string> = { transform: "", fontWeight: "", color: "" };
+      let wet = false;
+      if (tw && look.typewriterFreshInk && age < freshMs) {
+        wet = true;
+        const f = 1 - age / freshMs;
+        if (look.typewriterFreshInkText) st.fontWeight = f > 0.3 ? "800" : "";
+        else st.color = `color-mix(in srgb, ${d.color} ${Math.round(100 * f * (look.typewriterFreshInkStrength ?? 0.8))}%, var(--text-normal))`;
+      }
+      if (tw && look.typewriterInk && c === last && age < inkMs) {
+        wet = true;
+        const k = age / inkMs;
+        const size = look.typewriterInkSize ?? 1.3;
+        st.transform = `scale(${(size - (size - 1) * (1 - Math.pow(1 - k, 3))).toFixed(3)})`;
+        st.fontWeight = "800";
+      }
+      c.el.setCssStyles(st);
+      c.wet = wet;
+    }
   }
 
   // Puts the caret (and the ghosts) where the state says. `cold` is 1 - heat.
@@ -780,23 +1013,23 @@ export class DemoStrip {
     // custom ramp flattens a gradient, the demo leaves it be).
     const heated = cold < 1 && !d.shape.gradient;
     const color = heated ? heatColor(d.color, d.heatStops, 1 - cold) : d.shape.fill;
-    // The preview's text, written so far (typos and all). The unwritten
-    // half only ever held the first line, to measure the letters by.
-    if (d.script && d.painted !== s.buffer) {
-      d.painted = s.buffer;
-      d.written?.setText(s.buffer);
-      d.innerWritten?.setText(s.buffer);
-      if (d.stepPx) { d.rest?.setText(""); d.innerRest?.setText(""); }
-    }
+    // The preview's text, written so far (typos and all), a letter an
+    // element; the unwritten half only ever held the first line, to measure
+    // the letters by.
+    if (d.script) this.paintText(d, s.buffer, this.last);
     // The typewriter's dip: down and back over the strike's length, after
     // each letter written.
-    let dip = 0;
+    let dip = 0, advance = 0;
     if (d.script && d.look.typewriter && d.look.typewriterSpring) {
       const k = (this.last - d.keyT) / Math.max(60, d.look.typewriterStrikeMs ?? 240);
       if (k >= 0 && k < 1) dip = Math.sin(Math.PI * k) * ((d.look.typewriterDepth ?? 18) / 100) * 12;
     }
+    if (d.script && d.look.typewriter && d.look.typewriterAdvance && d.keyKind === "type") {
+      const k = (this.last - d.keyT) / Math.max(40, d.look.typewriterAdvanceMs ?? 150);
+      if (k >= 0 && k < 1) advance = Math.sin(Math.PI * k) * (d.look.typewriterAdvanceCw ?? 0.25) * px;
+    }
     const styles: Record<string, string> = {
-      transform: dip ? `translate(${from.toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`,
+      transform: dip || advance ? `translate(${(from + advance).toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`,
       width: `${width.toFixed(2)}px`,
       opacity: String(d.shape.alphaScale * alpha),
     };

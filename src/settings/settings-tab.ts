@@ -8,7 +8,7 @@ import { soundMachine } from "../sound/sound";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
 import { readableGlyphColor } from "../util/color";
 import { DemoStrip } from "./demo";
-import { rollAllowed } from "./randomize";
+import { ROLL_TOGGLES, rollAllowed } from "./randomize";
 import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "../types";
 
 // The effects, in the order the Effects page lists them: the master key,
@@ -1010,11 +1010,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     items.push(this.row("Include sounds", "A roll picks a sound too: a typewriter, a keyboard, or a horse. Off rolls a silent cursor.", (s) => {
       s.addToggle((t) => t.setValue(!!plugin.settings.rollSounds).onChange(async (v) => { plugin.settings.rollSounds = v; await plugin.saveSettings(); }));
     }));
-    // A switch per effect: which ones a roll may pick. Each with the Effects
-    // page's name and icon; out of settings search (the Effects page's rows
-    // carry the same names). The torch off until switched on.
+    // A switch per effect a roll may pick (not the torch or the bracket
+    // tether: never rolled). Each with the Effects page's name and icon; out
+    // of settings search (the Effects page's rows carry the same names).
     items.push(this.subheadingRow("Effects it can roll"));
-    for (const e of RAIL_EFFECTS) {
+    for (const e of RAIL_EFFECTS.filter((x) => ROLL_TOGGLES.includes(x.key))) {
       const def = this.row(e.name, this.iconDesc(e.icon, ""), (s) => {
         s.addToggle((t) => t.setValue(rollAllowed(plugin.settings.rollEffects, e.key)).onChange(async (v) => {
           plugin.settings.rollEffects = Object.assign({}, plugin.settings.rollEffects, { [e.key]: v });
@@ -1026,8 +1026,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     }
     return this.page("Randomizer", "dices", "Roll a whole new cursor, calm or full chaos.", [this.section("Randomizer", items)],
       () => {
-        const out = RAIL_EFFECTS.filter((e) => !rollAllowed(plugin.settings.rollEffects, e.key)).length;
-        return `Chaos ${plugin.settings.rollChaos}` + (plugin.settings.rollSounds ? " · sounds" : "") + (out > 1 ? ` · ${RAIL_EFFECTS.length - out} effects` : "");
+        const out = ROLL_TOGGLES.filter((k) => !rollAllowed(plugin.settings.rollEffects, k)).length;
+        return `Chaos ${plugin.settings.rollChaos}` + (plugin.settings.rollSounds ? " · sounds" : "") + (out ? ` · ${ROLL_TOGGLES.length - out} effects` : "");
       });
   }
 

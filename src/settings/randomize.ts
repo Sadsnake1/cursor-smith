@@ -8,12 +8,12 @@
 //   - Motion: how likely gliding, the smear and the trails are, and how far
 //     they move.
 //   - Sounds: whether the roll picks a sound too; off, the roll is silent.
-//   - A switch per effect: which ones a roll may pick (all of them but the
-//     torch unless told otherwise).
+//   - A switch per effect: which ones a roll may pick (all on by default).
 //
-// A roll is every look key but the torch's settings: the torch darkens the
-// whole window, which is no cursor of anyone's choosing, so it is rolled
-// only when its switch is on - and then it is lit as its settings are. Values come from the settings' own ranges, so
+// A roll is every look key but the torch's settings. Two effects are never
+// rolled (the user took their switches out): the torch, which darkens the
+// whole window - no cursor of anyone's choosing - and the bracket tether, a
+// line under brackets a random cursor would rarely show. Values come from the settings' own ranges, so
 // a rolled cursor is one the panel could have made. Pure and seedable (the
 // tests roll with a seed); the plugin applies it (library.ts, rollCursor).
 import { DEFAULT_SETTINGS, LOOK_KEYS } from "./settings";
@@ -31,26 +31,26 @@ export interface RollOptions {
   allow?: Partial<Record<string, boolean>>;
 }
 
-// The effects a roll chooses among - the Effects rail's, but the torch
-// (never rolled), Sounds (the switch) and the smear (Motion's).
+// The effects a roll chooses among - the Effects rail's, but the torch and
+// the bracket tether (never rolled) and the smear (Motion's).
 export const ROLL_EFFECTS: (keyof Look)[] = [
-  "popEffects", "typewriter", "flameTrail", "stardustEnabled", "bracketTether",
+  "popEffects", "typewriter", "flameTrail", "stardustEnabled",
   "energyEffect", "crtEffect", "speedDemon", "hotHead",
 ];
 
 // The effects a roll can be told to leave out, in the Effects page's
-// order: the nine, Motion smear (Motion's) and the torch (out unless let in).
+// order: the eight and Motion smear (Motion's).
 export const ROLL_TOGGLES: (keyof Look)[] = [
-  "popEffects", "typewriter", "flameTrail", "stardustEnabled", "bracketTether", "smear",
-  "energyEffect", "crtEffect", "speedDemon", "hotHead", "torchEffect",
+  "popEffects", "typewriter", "flameTrail", "stardustEnabled", "smear",
+  "energyEffect", "crtEffect", "speedDemon", "hotHead",
 ];
 export function rollAllowed(allow: Partial<Record<string, boolean>> | null | undefined, key: string): boolean {
+  if (!ROLL_TOGGLES.includes(key as keyof Look)) return false;
   const v = allow ? allow[key] : undefined;
-  return v === undefined ? key !== "torchEffect" : !!v;
+  return v === undefined ? true : !!v;
 }
 
-// The torch's keys: a roll leaves them alone (the torch itself off, unless
-// it is let in).
+// The torch's keys: a roll leaves them alone (the torch itself off).
 const TORCH_KEYS = new Set<string>(["torchEffect", "overlaySpareSidebars", "overlayFollowMode", "overlayRadius", "overlayDarkness",
   "overlayIntensity", "overlayColor", "overlayFlicker", "overlaySpeed", "overlayBlinkSync", "overlayBlinkDepth", "overlayFlickerAmount"]);
 const SOUND_KEYS = new Set<string>(["typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell"]);
@@ -88,7 +88,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
   for (const k of LOOK_KEYS) if (!TORCH_KEYS.has(k) && !SOUND_KEYS.has(k)) out[k] = defaults[k];
   out.torchEffect = false;
-  for (const k of [...ROLL_EFFECTS, "smear", "popLetters", "glow"]) out[k] = false;
+  for (const k of [...ROLL_EFFECTS, "smear", "popLetters", "glow", "bracketTether"]) out[k] = false;
   const look = out as Partial<Look>;
 
   // Shape.
@@ -136,7 +136,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
 
   // Effects: of the ones let in, one at Chaos 0, all of them at 100 (none
   // let in: none).
-  const pool: (keyof Look)[] = [...ROLL_EFFECTS, "torchEffect"].filter((k) => allowed(k)) as (keyof Look)[];
+  const pool: (keyof Look)[] = ROLL_EFFECTS.filter((k) => allowed(k));
   const max = pool.length;
   const n = !max ? 0 : full ? max : Math.max(1, Math.min(max, Math.round(1 + chaos * (max - 1) + (rand() - 0.5) * 1.6 * Math.min(1, chaos * 4))));
   const order = pool.slice();
@@ -189,7 +189,6 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
     look.stardustRate = level(0.6, 3, 0.1);
     look.stardustDelayMs = any(750, 3000, 250);
   }
-  if (on.has("bracketTether")) look.bracketTetherStrength = level(0.3, 1, 0.05);
   if (on.has("energyEffect")) {
     look.energySpeed = any(0.6, 2.5, 0.1);
     look.energyAurora = gradient && chance(0.6);

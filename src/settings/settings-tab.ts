@@ -1584,9 +1584,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // it here): the calm counterpart of the burst above it, with Backspace
     // or Delete - the letters rise and fade.
     effects.push(toggle("Backspace evaporation", "Letters you delete, with Backspace or Delete, rise and fade away.", "backspaceEvaporate", { depth: 1, gate: true, when: pop }));
-    // Back-man (1.7.7): the Box cursor turns into a little pixel creature
+    // Back-man (1.7.7): the Box cursor turns into a little creature
     // that eats what Backspace and Delete take. A Box's only.
-    effects.push(toggle("Back-man", "Backspace and Delete turn the Box cursor into a hungry pixel creature that eats the letters.", "backMan",
+    effects.push(toggle("Back-man", "Backspace and Delete turn the Box cursor into a hungry little creature that bends as it eats the letters.", "backMan",
       { depth: 1, gate: true, when: pop, needs: { when: isStyle("Box"), hint: "Needs the Box cursor, in Appearance." } }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));

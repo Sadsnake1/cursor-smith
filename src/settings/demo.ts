@@ -54,7 +54,7 @@ import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
-import { BACKMAN_CHOMP_MS, BACKMAN_HOLD_MS, BACKMAN_LEAN, backManShape } from "../effects/effects-backman";
+import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_CHOMP_MS, BACKMAN_GROW, BACKMAN_HOLD_MS, backManShape, backManSpring } from "../effects/effects-backman";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -545,8 +545,10 @@ interface Demo {
   geo: Geometry | null;
   keyHeavy: boolean;
   breath: number;
-  // Back-man (effects-backman.ts): whether the caret wears it now (to put
-  // the box back once).
+  // Back-man (effects-backman.ts): its last bite, its bend's spring, and
+  // whether the caret wears it now (to put the box back once).
+  bmT: number;
+  bm: { bend: number; v: number; at: number };
   bmOn: boolean;
   burns: { x: number; t: number }[];
   fireAcc: number;
@@ -656,7 +658,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmT: -1e9, bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -900,6 +902,12 @@ export class DemoStrip {
   // The preview, a typo backspaced: the letter evaporates or bursts apart,
   // as Backspace's effects do; the typewriter dips for the key.
   private onBack(d: Demo, at: number, ch: string, now: number) {
+    // Back-man's bite kicks its bend leftward, where it eats.
+    if (d.look.popEffects && d.look.backMan && d.style === "box") {
+      if (now > d.bm.at) { backManSpring(d.bm, (now - d.bm.at) / 1000); d.bm.at = now; }
+      d.bm.v -= BACKMAN_BEND_KICK;
+      d.bmT = now;
+    }
     d.keyT = now;
     d.keyKind = "back";
     d.keyHeavy = false;
@@ -1188,36 +1196,52 @@ export class DemoStrip {
       styles.top = `${(d.style === "line" ? g.lineTop : d.style === "underline" ? g.top + g.h - g.ulH : g.top).toFixed(2)}px`;
     }
     // Back-man, as the engine draws it (drawBackMan): one bite per letter,
-    // the mouth toward it (Backspace's: left), leaning into the bite about
-    // its bottom edge. Filled, the box cut to the creature's outline with
-    // its eye a hole (even-odd: the background shows); hollow, its outline
-    // drawn instead of the box's border, no eye.
-    const bmSince = this.last - d.keyT;
-    const bm = !!(look.popEffects && look.backMan && d.style === "box" && d.keyKind === "back" && bmSince >= 0 && bmSince < BACKMAN_HOLD_MS && d.geo);
+    // the mouth toward it (Backspace's: left), its head and feet the box's,
+    // its sides bent in a V on the bend's spring (on past the bites while it
+    // settles) and swelling while it eats. The caret is widened on both
+    // sides for the bend to show; filled, it is cut to the creature's
+    // outline; hollow, the outline is drawn instead of the box's border.
+    let bm: { open: number; bend: number; grow: number } | null = null;
+    if (look.popEffects && look.backMan && d.style === "box" && d.geo) {
+      const b = d.bm;
+      if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.at = this.last; }
+      // Its bite runs on through a letter typed straight after, as the
+      // engine's does.
+      const since = this.last - d.bmT;
+      const eating = since >= 0 && since < BACKMAN_HOLD_MS;
+      if (eating || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) {
+        bm = {
+          open: eating && since < BACKMAN_CHOMP_MS ? Math.sin((Math.PI * since) / BACKMAN_CHOMP_MS) : 0,
+          bend: b.bend,
+          grow: eating ? BACKMAN_GROW * Math.sqrt(1 - since / BACKMAN_HOLD_MS) : 0,
+        };
+      }
+    }
     if (bm && d.geo) {
-      const open = bmSince < BACKMAN_CHOMP_MS ? Math.sin((Math.PI * bmSince) / BACKMAN_CHOMP_MS) : 0;
-      const { body, eye } = backManShape(open, -1);
-      const lean = Math.pow(1 - bmSince / BACKMAN_HOLD_MS, 2);
-      const pct = ([x, y]: [number, number]) => (x * 100).toFixed(1) + "% " + (y * 100).toFixed(1) + "%";
-      Object.assign(styles, { transformOrigin: "50% 100%", transform: styles.transform + " skewX(" + Math.atan(BACKMAN_LEAN * lean).toFixed(3) + "rad)" });
+      const body = backManShape(bm.open, -1, bm.bend, bm.grow);
+      const m = Math.ceil((BACKMAN_BEND_MAX + BACKMAN_GROW) * width) + 1;
+      const wide = width + 2 * m, high = parseFloat(styles.height) || d.geo.h;
+      Object.assign(styles, { width: `${wide.toFixed(2)}px`, transform: `${styles.transform} translateX(${-m}px)` });
       if (d.shape.hollowWidth) {
-        const pts = body.map(([x, y]) => (x * 100).toFixed(1) + "," + (y * 100).toFixed(1)).join(" ");
-        const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'><polygon points='" + pts +
-          "' fill='none' stroke='" + d.shape.fill + "' stroke-width='" + d.geo.outline.toFixed(2) + "' vector-effect='non-scaling-stroke'/></svg>";
-        Object.assign(styles, { borderColor: "transparent", borderImage: "none", backgroundImage: 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")', backgroundSize: "100% 100%" });
+        const sw = d.geo.outline;
+        const pts = body.map(([x, y]) => (m + sw / 2 + x * (width - sw)).toFixed(2) + "," + (sw / 2 + y * (high - sw)).toFixed(2)).join(" ");
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${wide.toFixed(2)} ${high.toFixed(2)}' preserveAspectRatio='none'><polygon points='${pts}' fill='none' stroke='${d.shape.fill}' stroke-width='${sw.toFixed(2)}' stroke-linejoin='miter'/></svg>`;
+        Object.assign(styles, {
+          borderColor: "transparent", borderImage: "none", backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
+          backgroundSize: "100% 100%", backgroundOrigin: "border-box", backgroundRepeat: "no-repeat",
+        });
       } else {
-        const hole: [number, number][] = [[eye.x, eye.y], [eye.x + eye.w, eye.y], [eye.x + eye.w, eye.y + eye.h], [eye.x, eye.y + eye.h], [eye.x, eye.y]];
-        styles.clipPath = "polygon(evenodd, " + [...body, body[0], ...hole, body[0]].map(pct).join(", ") + ")";
+        styles.clipPath = "polygon(" + body.map(([x, y]) => (m + x * width).toFixed(2) + "px " + (y * 100).toFixed(1) + "%").join(", ") + ")";
       }
       d.bmOn = true;
     } else if (d.bmOn) {
-      Object.assign(styles, { clipPath: "", transformOrigin: "" });
+      Object.assign(styles, { clipPath: "", backgroundOrigin: "", backgroundRepeat: "" });
       if (d.shape.hollowWidth) Object.assign(styles, { borderColor: d.shape.fill, borderImage: d.shape.gradient ? d.shape.gradient + " 1" : "", backgroundImage: "", backgroundSize: "" });
       d.bmOn = false;
     }
     d.caret.setCssStyles(styles);
     // The letter copy inside a Box stays over the real letters: it is
-    // moved back by the caret's own offset. Back-man has a face instead.
+    // moved back by the caret's own offset; hidden while Back-man eats.
     if (d.inner) d.inner.setCssStyles({ transform: `translateX(${(-from).toFixed(2)}px)`, visibility: bm ? "hidden" : "" });
     // Ghosts: newest brightest.
     const fade = d.look.trailFadeMs ?? 300;

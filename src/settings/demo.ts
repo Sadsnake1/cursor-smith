@@ -161,6 +161,9 @@ export const SCRIPT_LINES = [
   "CURSOR GOES BRRRRRRRRRRRR",
   "Wingardium leviosaaaaaaaaaah",
   "Don't forget to back up your Vault!",
+  "Earth is amazing!",
+  "Will you marry me? <3",
+  "I think old_Joe tried to say something",
 ];
 export const SCRIPT_MAX = 44;
 

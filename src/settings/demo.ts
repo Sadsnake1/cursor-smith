@@ -33,10 +33,11 @@
 //
 // The Randomizer's preview (1.7.7) is the same demo, bigger, on a script of
 // its own (scriptFor, stepScript): a line picked at random from
-// SCRIPT_LINES, typed fast, a typo now and then caught and backspaced, then
-// a little play with the cursor - quick jumps word to word, a few steps
-// letter by letter - then cleared and the next line, for as long as the
-// page is open; with what a roll is most about added on top: letters
+// SCRIPT_LINES - one per roll (the user: "one line per randomize click"),
+// never the last roll's - typed fast, a typo now and then caught and
+// backspaced, then a little play with the cursor - quick jumps word to
+// word, a few steps letter by letter - then cleared and typed again (new
+// typos, new play), for as long as the page is open; with what a roll is most about added on top: letters
 // popping out, fireworks on Space, the typewriter's dip, what is deleted
 // evaporating.
 //
@@ -130,8 +131,8 @@ export function initialState(now: number): DemoState {
   return { target: 0, lead: 0, trail: 0, phase: "type", phaseMs: 0, lastKeyMs: now, heat: 0, ghosts: [], buffer: "", queue: [], wait: 0, events: [] };
 }
 
-// The preview's lines: one at random each time round, never the same twice
-// running. At most SCRIPT_MAX letters, so the text keeps one size (a
+// The preview's lines: one at random for each roll, never the last
+// roll's. At most SCRIPT_MAX letters, so the text keeps one size (a
 // 50-letter countdown made all of it smaller; the user had it shortened).
 export const SCRIPT_LINES = [
   "The quick brown fox... you know the rest.",
@@ -448,6 +449,8 @@ export class DemoStrip {
   // The pill's wait for its page to come back (a slow poll, not a frame
   // loop spinning for nothing).
   private poll = 0;
+  // The preview's line for the last roll: the next roll's is another.
+  private lastLine = "";
 
   // Every demo let go, the loop stopped (the pill's, before its next one).
   reset() {
@@ -464,9 +467,13 @@ export class DemoStrip {
   // Builds the demo into `host` and starts it. `color` is the preset's
   // color for the current theme; `heatStops` its four heat stops for it.
   add(host: HTMLElement, name: string, look: Partial<Look>, color: string, heatStops: string[], gradientStops: string[], reduced: boolean, play: boolean, script = false) {
-    // The preview: its first line, at random (the rest are picked as it
-    // plays); the line is also what the letters are measured on.
-    if (script) name = SCRIPT_LINES[Math.floor(Math.random() * SCRIPT_LINES.length)];
+    // The preview: its line, at random but not the last roll's; also what
+    // the letters are measured on.
+    if (script) {
+      do name = SCRIPT_LINES[Math.floor(Math.random() * SCRIPT_LINES.length)];
+      while (name === this.lastLine && SCRIPT_LINES.length > 1);
+      this.lastLine = name;
+    }
     const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" + (script ? " cursor-smith-roll-demo" : "") });
     const text = demo.createSpan({ cls: "cursor-smith-pcard-text cursor-smith-pcard-name", text: script ? "" : name });
     // The pill's sentence in two halves, the unwritten one invisible: the
@@ -607,12 +614,10 @@ export class DemoStrip {
     }
   };
 
-  // The preview's next line: any but the one just played, and its script.
+  // The preview's line again, with a new script (other typos, other play):
+  // the next line waits for the next roll.
   private nextLine(d: Demo): ScriptAction[] {
-    let line = d.line;
-    for (let i = 0; i < 8 && line === d.line; i++) line = SCRIPT_LINES[Math.floor(Math.random() * SCRIPT_LINES.length)];
-    d.line = line;
-    return scriptFor(line, Math.random);
+    return scriptFor(d.line, Math.random);
   }
 
   // The preview: scaled to fill its stage, left of center (once, with the

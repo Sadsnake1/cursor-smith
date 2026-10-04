@@ -208,9 +208,32 @@ section("Randomizer: the pill's demo waits while its page is away");
   // being typed) or is cleared for the next (it was done) - either way the
   // text changes. (A short line can be done by the time it went away.)
   ok("back: it plays on from where it was (the preview's cursor keeps going)", run(7000) && written() !== at, [at, written()]);
+  // One line per roll: the same line again after it is cleared.
+  // Typos never touch a line's first three letters: after each clear, the
+  // text typed again starts as the line does.
+  const texts = [];
+  for (let i = 0; i < 1600; i++) { run(16); if (texts[texts.length - 1] !== written()) texts.push(written()); }
+  const full = texts.filter((w) => T.SCRIPT_LINES.includes(w));
+  const line = full[0];
+  const clears = texts.map((w, i) => (w === "" && i > 0 ? i : -1)).filter((i) => i > 0);
+  const after = clears.map((i) => texts.slice(i + 1).find((w) => w.length >= 3)).filter(Boolean);
+  ok("one line per roll: cleared, it is typed again - the same line, not another",
+     !!line && new Set(full).size === 1 && after.length >= 1 && after.every((w) => w.slice(0, 3) === line.slice(0, 3)), [line, clears.length, after]);
   strip.reset();
   run(16);
   ok("reset lets it go: the loop stops", frames.length === 0 && timers.length === 0);
+  // The next roll: another line.
+  const stage2 = makeEl("div");
+  stage2.ownerDocument = doc;
+  stage2.clientWidth = 700;
+  const lines = [];
+  for (let k = 0; k < 12; k++) {
+    strip.reset();
+    strip.add(stage2, "", { cursorStyle: "Box", blinkingEnabled: false }, "#ff3366", [], [], true, true, true);
+    const dm = stage2.children[stage2.children.length - 1];
+    lines.push(dm.querySelector(".cursor-smith-pcard-text").children[0].text);
+  }
+  ok("...and each roll's line is never the last roll's", lines.every((l, i) => T.SCRIPT_LINES.includes(l) && (i === 0 || l !== lines[i - 1])), lines);
 }
 
 section("Randomizer: the preview's script");

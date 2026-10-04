@@ -158,6 +158,9 @@ export const SCRIPT_LINES = [
   "Deleting Vault in 3...2...1...0.4999999",
   "You can never have too many cursors...",
   "The cake is a lie.",
+  "CURSOR GOES BRRRRRRRRRRRR",
+  "Wingardium leviosaaaaaaaaaah",
+  "Don't forget to back up your Vault!",
 ];
 export const SCRIPT_MAX = 44;
 

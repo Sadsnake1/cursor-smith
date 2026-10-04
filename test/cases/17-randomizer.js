@@ -204,7 +204,10 @@ section("Randomizer: the pill's demo waits while its page is away");
   ok("...still away at the look: it waits again", frames.length === 1 && (run(16), frames.length === 0 && timers.length === 1));
   demo.isConnected = true;
   timers.shift()();
-  ok("back: it plays on from where it was (the pill's cursor keeps going)", run(1000) && written().length > at.length, [at.length, written().length]);
+  // On from where it was: within a few seconds the line grows (it was
+  // being typed) or is cleared for the next (it was done) - either way the
+  // text changes. (A short line can be done by the time it went away.)
+  ok("back: it plays on from where it was (the preview's cursor keeps going)", run(7000) && written() !== at, [at, written()]);
   strip.reset();
   run(16);
   ok("reset lets it go: the loop stops", frames.length === 0 && timers.length === 0);

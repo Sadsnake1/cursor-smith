@@ -170,6 +170,7 @@ export const SCRIPT_LINES = [
   "Loading creativity... 3%",
   "404: Words not found.",
   "Get me outta hereeee",
+  "Your cursor is in another castle",
 ];
 export const SCRIPT_MAX = 44;
 

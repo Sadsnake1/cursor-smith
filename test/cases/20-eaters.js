@@ -158,7 +158,9 @@ section("The combos: the letters' effect where the eater is done with them");
     calls.length = 0;
     sh.drawShreds(ctx, 91, pose, now + T.SHRED_FEED_MS + 20);
     sh.drawShreds(ctx, 91, pose, now + T.SHRED_FEED_MS + 60);
-    ok("...all through: it breaks into pixels past the cut, once, its ribbons gone", sh.fired.length === 1 && sh.fired[0][0] === "burst" && sh.fired[0][1] === 91 - 9 - 1 && !calls.some((c) => c[0] === "fillText"), sh.fired);
+    // A cross-cut shredder: the letter's own bits, not Burst's pixels apart
+    // from it.
+    ok("...all through: each ribbon breaks into its bits (the letter's own pieces), no pixels played apart", sh.fired.length === 0 && calls.filter((c) => c[0] === "fillText").length === 2 * T.SHRED_RIBBONS * T.SHRED_CROSS && calls.filter((c) => c[0] === "clip").length === 2 * T.SHRED_RIBBONS * T.SHRED_CROSS, sh.fired);
   } finally {
     performance.now = realNow;
   }

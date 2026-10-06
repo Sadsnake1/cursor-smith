@@ -38,6 +38,18 @@ section("Shredder: the blades and the ribbons");
   const drops = mid.map((m) => m[5] + m[1] * 95.5);
   ok("...falling: each at its own pace, swayed, tilted and twisted, not one block", new Set(drops.map((v) => v.toFixed(2))).size === 5 && mid.some((m) => Math.abs(m[3]) < 0.95) && mid.some((m) => Math.abs(m[2]) > 0.01) && mid.every((m) => Number.isFinite(m[4]) && Number.isFinite(m[5])), drops);
   ok("...the same ribbon the same way every frame", JSON.stringify(ribbonsAt(400)) === JSON.stringify(ribbonsAt(400)));
+  // Burst: a cross-cut shredder ("the strips break into small square bits
+  // that scatter").
+  ok("all through: at the feed's end, or SHRED_RUSH_MS after the key that hurried it", T.shredThrough(l) === T.SHRED_FEED_MS && T.shredThrough({ ...l, rush: 30 }) === 30 + T.SHRED_RUSH_MS);
+  const tb = T.shredThrough(l);
+  const ribbon = T.shredRibbon(l, 1, 100, T.shredFeed(l, 100, tb), tb);
+  const chips0 = [0, 1].map((c) => T.shredChip(l, 1, c, 100, tb));
+  ok("breaking: each bit starts as its ribbon was (no jump), its rect a piece of the letter across it", chips0.every((ch) => ch.m.every((v, k) => Math.abs(v - ribbon[k]) < 1e-9) && ch.alpha === 1) && chips0[0].rect[0] === 100 - 1 - 9 && chips0[1].rect[0] === 100 - 1 - 9 + 9 / T.SHRED_CROSS && chips0[0].rect[2] === 9 / T.SHRED_CROSS && Math.abs(chips0[0].rect[3] - 24 / T.SHRED_RIBBONS) < 1e-9);
+  const mid0 = (ch) => { const [x, y, w, h] = ch.rect, cx = x + w / 2, cy = y + h / 2; return [ch.m[0] * cx + ch.m[2] * cy + ch.m[4], ch.m[1] * cx + ch.m[3] * cy + ch.m[5]]; };
+  const chipsAt = (t) => { const out = []; for (let i = 0; i < T.SHRED_RIBBONS; i++) for (let c = 0; c < T.SHRED_CROSS; c++) out.push(T.shredChip(l, i, c, 100, t)); return out; };
+  const a0 = chipsAt(tb).map(mid0), a1 = chipsAt(tb + 150).map(mid0);
+  ok("...then scattered: every bit away from the cut, each its own way, tumbling", a1.every(([x], k) => x < a0[k][0]) && new Set(a1.map(([x, y]) => x.toFixed(1) + "," + y.toFixed(1))).size === a1.length && chipsAt(tb + 150).some((ch) => Math.abs(ch.m[1] - ribbon[1]) > 0.05));
+  ok("...pulled down and faded out over SHRED_FALL_MS", chipsAt(tb + 300).every((ch, k) => mid0(ch)[1] > mid0(chipsAt(tb + 150)[k])[1] - 30) && chipsAt(tb + T.SHRED_FALL_MS).every((ch) => ch.alpha === 0) && chipsAt(tb + 100).every((ch) => ch.alpha > 0.7));
 }
 
 section("Portal: straight through");
@@ -210,4 +222,20 @@ section("Shredder and Vacuum: drawn");
   calls.length = 0;
   T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: [{ ...h, cx: 104.5 - 18 }] }, T.HOLE_FALL_MS / 2);
   ok("...but never back under letters behind it (typed over again: a long bar under the new ones)", calls.some((c) => c[0] === "rect" && c.slice(1).join() === "100,22,9,2"));
+}
+
+section("Shredder and Burst: the bits' cost");
+{
+  // A held key keeps about 13 letters breaking at once: their bits are
+  // drawn for the newest SHRED_CHIP_LETTERS only.
+  const calls = [];
+  const ctx = new Proxy({}, {
+    get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }),
+    set: (o, k, v) => { o[k] = v; return true; },
+  });
+  const plugin = { _markDirty() {}, look: { popEffects: true, backspaceDisintegrate: true }, _drawShredChips: T.EngineProto._drawShredChips };
+  const letters = Array.from({ length: 13 }, (_, k) => ({ char: "a", x: 100, w: 9, top: 0, h: 24, font: "16px x", color: "#ddd", t0: k * 33 }));
+  const now = 12 * 33 + T.SHRED_FEED_MS + 5;
+  T.EngineProto.drawShreds.call(plugin, ctx, 100, { dash: 1, jolt: 0, letters }, now);
+  ok("13 letters breaking: the bits of the newest SHRED_CHIP_LETTERS drawn", calls.filter((c) => c[0] === "fillText").length === T.SHRED_CHIP_LETTERS * T.SHRED_RIBBONS * T.SHRED_CROSS, calls.filter((c) => c[0] === "fillText").length);
 }

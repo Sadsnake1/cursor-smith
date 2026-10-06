@@ -158,6 +158,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare shredMoving: EffectsMethods["shredMoving"];
   declare drawShreds: EffectsMethods["drawShreds"];
   declare drawShredLine: EffectsMethods["drawShredLine"];
+  declare _drawShredChips: EffectsMethods["_drawShredChips"];
   declare _holeOn: EffectsMethods["_holeOn"];
   declare _holeBite: EffectsMethods["_holeBite"];
   declare spawnHoleMeal: EffectsMethods["spawnHoleMeal"];

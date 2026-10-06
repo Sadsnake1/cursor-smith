@@ -60,11 +60,12 @@ import { hsvToRgb, capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex }
 import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, BACKMAN_SLIDE_MS, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
+import type { ShredLetter } from "../effects/effects-shredder";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
-import { SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_JOLT, SHRED_RIBBONS, SHRED_SPIN, shredDash, shredFeed, shredJolt, shredRibbon } from "../effects/effects-shredder";
+import { SHRED_CROSS, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_JOLT, SHRED_RIBBONS, SHRED_SPIN, shredChip, shredDash, shredFeed, shredJolt, shredRibbon, shredThrough } from "../effects/effects-shredder";
 import { HOLE_BURST_AT, HOLE_FALL_MS, HOLE_GLOW, HOLE_HALO, HOLE_HALO_ALPHA, HOLE_HALO_MIN, HOLE_HOLD_MS, holeFall, holeGlow, holeSpan } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
@@ -702,8 +703,10 @@ interface Particle {
   ch?: string;
   fired?: boolean;
   rot?: number;
-  // A Shredder letter hurried through by the next key (shredFeed).
+  // A Shredder letter hurried through by the next key (shredFeed); which
+  // of its ribbon's cross-cut bits it is (Burst: shredChip), or none.
   rush?: number;
+  col?: number;
   shape0?: number;
   phase?: number;
   delay?: number;
@@ -1331,9 +1334,14 @@ export class DemoStrip {
         return;
       }
       if (shred) {
+        // With Burst, each ribbon as its cross-cut bits (shredChip): one
+        // ribbon until the letter is through, then apart.
+        const cross = look.popEffects && letterChoiceOf(look) === "burst" ? SHRED_CROSS : 0;
         for (let b = -1; shredShown && k < 12 && b < SHRED_RIBBONS; b++) {
-          const part = this.spawn(d, x, LETTER_Y, 0, 0, SHRED_FEED_MS + SHRED_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "shred");
-          if (part) part.band = b;
+          for (let c = 0; c < (b >= 0 && cross ? cross : 1); c++) {
+            const part = this.spawn(d, x, LETTER_Y, 0, 0, SHRED_FEED_MS + SHRED_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "shred");
+            if (part) { part.band = b; part.col = b >= 0 && cross ? c : undefined; }
+          }
         }
         return;
       }
@@ -1476,22 +1484,24 @@ export class DemoStrip {
         const fx = d.look.popEffects ? letterChoiceOf(d.look) : "vanish";
         const f = shredFeed({ char: "", x: p.x, w: cw, top: 0, h: PREVIEW_LINE, old: {} as CaretRecord, font: "", color: "", t0: p.t0, rush: p.rush }, d.cut, now, fx === "evaporate");
         const left = p.x + f.dx, rel = d.cut - left, b = p.band ?? -1;
-        // Burst: once all through, the letter breaks into pixels (the part
-        // not through plays it; its ribbons go).
-        const popped = fx === "burst" && rel >= cw;
-        if (popped && b < 0 && !p.fired) { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", d.cut - cw - 1, 11, now)); }
         if (b < 0) {
           p.el.setCssStyles({ transform: `translate(${left.toFixed(1)}px, ${p.y.toFixed(1)}px)`, clipPath: `inset(0 0 0 ${Math.max(0, rel).toFixed(1)}px)`, opacity: rel >= cw ? "0" : "1" });
         } else {
           // The ribbon in the span's own place: the span (12 px) its row,
           // the cut `rel` across it.
           const n = SHRED_RIBBONS;
-          const m = shredRibbon({ char: p.ch ?? "", x: p.x, w: cw, top: 0, h: 12, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, b, rel, f, now).map((v) => v.toFixed(3)).join(", ");
+          const L: ShredLetter = { char: p.ch ?? "", x: p.x, w: cw, top: 0, h: 12, old: {} as CaretRecord, font: "", color: "", t0: p.t0, rush: p.rush };
+          // A cross-cut bit (Burst), its rect across the letter: apart once
+          // the letter is through.
+          const c = p.col;
+          const apart = c !== undefined && now >= shredThrough(L) ? shredChip(L, b, c, rel, now, PREVIEW_LINE) : null;
+          const m = (apart ? apart.m : shredRibbon(L, b, rel, f, now)).map((v) => v.toFixed(3)).join(", ");
+          const lo = c === undefined ? 0 : (c * cw) / SHRED_CROSS, hi = c === undefined ? cw : ((c + 1) * cw) / SHRED_CROSS;
           p.el.setCssStyles({
             transformOrigin: "0 0",
             transform: `translate(${left.toFixed(1)}px, ${p.y.toFixed(1)}px) matrix(${m})`,
-            clipPath: `inset(${((b / n) * 100 + 2).toFixed(1)}% ${Math.max(0, cw - rel).toFixed(1)}px ${(((n - 1 - b) / n) * 100 + 2).toFixed(1)}% 0)`,
-            opacity: rel <= 0 || popped ? "0" : f.alpha.toFixed(2),
+            clipPath: `inset(${((b / n) * 100 + 2).toFixed(1)}% ${Math.max(cw - rel, cw - hi).toFixed(1)}px ${(((n - 1 - b) / n) * 100 + 2).toFixed(1)}% ${lo.toFixed(1)}px)`,
+            opacity: rel <= 0 ? "0" : (apart ? apart.alpha : f.alpha).toFixed(2),
           });
         }
       } else if (p.kind === "hole") {

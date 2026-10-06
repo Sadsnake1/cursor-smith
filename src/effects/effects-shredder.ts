@@ -13,7 +13,11 @@
 // speed, swaying and twisting) and fade; when the last is through, the
 // line is whole again. A new key hurries the letters still going in
 // through (SHRED_RUSH_MS): on a held key the line moves on a letter every
-// ~33 ms and they trailed behind it. A standing line: on an Underline the
+// ~33 ms and they trailed behind it. With Burst, a cross-cut shredder: once
+// all through, each ribbon breaks into bits (SHRED_CROSS across it) that
+// scatter, tumbling, and fall (shredChip) - the letter's own pieces, in its
+// color, where Burst's pixels were played apart from it. A standing line:
+// on an Underline the
 // cursor morphs into one first (effects-eaters.ts); a Box stays a box, the
 // whole of it cut into strips.
 import type { CaretRecord, DeletedLetters } from "../types";
@@ -49,13 +53,24 @@ export const SHRED_SPIN = 6;
 export const SHRED_JOLT = 0.8;
 export const SHRED_JOLT_WORD = 1.8;
 export const SHRED_JOLT_MS = 140;
+// Burst's cross-cut: each ribbon broken into this many bits across (about
+// square: a letter's width over two, a row's height over five); how fast
+// they scatter (px a second, at a 24 px row) and tumble (radians a
+// second, at most).
+export const SHRED_CROSS = 2;
+export const SHRED_SCATTER = 90;
+export const SHRED_TUMBLE = 9;
+// The most letters drawn as bits at once (10 bits each): a held key keeps
+// about 13 breaking, 200 clipped letters a frame (~0.8 ms on a desktop,
+// three times that on a phone) - the oldest, mostly faded, go first. As
+// many as the ribbons drew before.
+export const SHRED_CHIP_LETTERS = 10;
 const MEAL_MAX = 12;
 
 // A letter going through: its cell (x, w) and row (top, h), its font and
 // color, when it set off.
-// popped: burst into pixels (Burst), its ribbons no more.
 // rush: when the next key hurried it through.
-export interface ShredLetter { char: string; x: number; w: number; top: number; h: number; old: CaretRecord; font: string; color: string; t0: number; popped?: boolean; rush?: number }
+export interface ShredLetter { char: string; x: number; w: number; top: number; h: number; old: CaretRecord; font: string; color: string; t0: number; rush?: number }
 // t0: when this run of cutting began; t: its last key; jolt: the last
 // bite's jolt (when, how hard).
 export interface ShredState { t0: number; t: number; letters: ShredLetter[]; jolt?: { t: number; amp: number } }
@@ -152,6 +167,46 @@ export function shredRibbon(l: ShredLetter, i: number, cut: number, f: { dy: num
   return [ra + rc * a, rb + rd * a, rc, rd, re - rc * a * cut, rf - rd * a * cut];
 }
 
+type Mat = [number, number, number, number, number, number];
+// A then B's transform as one (B first, as canvas's transform() stacks).
+const mul = (A: Mat, B: Mat): Mat => [
+  A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1],
+  A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3],
+  A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5],
+];
+
+// When a letter is all through the cut: the feed's end, or sooner if the
+// next key hurried it. Pure.
+export function shredThrough(l: ShredLetter): number {
+  return l.rush !== undefined ? Math.min(l.t0 + SHRED_FEED_MS, l.rush + SHRED_RUSH_MS) : l.t0 + SHRED_FEED_MS;
+}
+
+// Bit `c` (across) of ribbon `i` of a letter cut through at `cut`, at
+// `now` past shredThrough: the ribbon as it was when the letter got
+// through (shredRibbon), then thrown out on its own - away from the cut,
+// mostly up a little, pulled down as the ribbons are - and tumbling about
+// its own middle; and how seen (fading over SHRED_FALL_MS). Its rect on
+// the letter: across from cut - 1 - w + c w / SHRED_CROSS, a SHRED_CROSS-th
+// of it wide; its ribbon's band down. `fallH`: the row its fall is paced
+// by, when not its own (the settings preview's letters stand in a smaller
+// box than their row). Pure.
+export function shredChip(l: ShredLetter, i: number, c: number, cut: number, now: number, fallH = l.h) {
+  const tb = shredThrough(l);
+  const at = shredFeed(fallH === l.h ? l : { ...l, h: fallH }, cut, tb);
+  const M = shredRibbon(l, i, cut, at, tb);
+  const band = l.h / SHRED_RIBBONS, bw = l.w / SHRED_CROSS;
+  const x = cut - 1 - l.w + (c + 0.5) * bw, y = l.top + (i + 0.5) * band;
+  const px = M[0] * x + M[2] * y + M[4], py = M[1] * x + M[3] * y + M[5];
+  const k1 = ribbonSeed(l, 11 + i * SHRED_CROSS + c), k2 = ribbonSeed(l, 41 + i * SHRED_CROSS + c), k3 = ribbonSeed(l, 71 + i * SHRED_CROSS + c);
+  const t = Math.max(0, now - tb) / 1000, sc = fallH / 24;
+  const vx = -(0.25 + 0.75 * k1) * SHRED_SCATTER * sc, vy = (-0.8 + 0.9 * k2) * SHRED_SCATTER * sc;
+  const th = (2 * k3 - 1) * SHRED_TUMBLE * t, cos = Math.cos(th), sin = Math.sin(th);
+  const ox = px + vx * t, oy = py + vy * t + 0.5 * (12 * fallH) * t * t;
+  // Moved to (ox, oy) and turned there: T(o) R(th) T(-p), after M.
+  const R: Mat = [cos, sin, -sin, cos, ox - (cos * px - sin * py), oy - (sin * px + cos * py)];
+  return { m: mul(R, M), alpha: 1 - clamp01((now - tb) / SHRED_FALL_MS), rect: [cut - 1 - l.w + c * bw, l.top + i * band, bw, band] as [number, number, number, number] };
+}
+
 export const effectsShredderMethods = {
   // On for the look showing: Pop effects and Shredder the "When you delete"
   // choice - on any cursor (effects-eaters.ts morphs it into a line).
@@ -213,14 +268,18 @@ export const effectsShredderMethods = {
   // fanning out from the cut, then fluttering down (shredRibbon) and
   // fading. In the text's color, the glow kept off them.
   drawShreds(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, cut: number, pose: ShredPose, now: number) {
-    // The letters' effect: Burst breaks a letter into pixels once it is all
-    // through; Evaporate sends its ribbons up instead of down.
+    // The letters' effect: Burst cross-cuts a letter into bits once it is
+    // all through; Evaporate sends its ribbons up instead of down.
     const fx = this.look.popEffects ? letterChoiceOf(this.look) : "vanish";
+    // The oldest broken letters past SHRED_CHIP_LETTERS, gone (the letters
+    // are oldest first).
+    let skip = fx === "burst" ? pose.letters.filter((l) => now >= shredThrough(l) && now - l.t0 < SHRED_FEED_MS + SHRED_FALL_MS).length - SHRED_CHIP_LETTERS : 0;
     for (const l of pose.letters) {
       const f = shredFeed(l, cut, now, fx === "evaporate");
       if (f.done) continue;
-      if (fx === "burst" && now - l.t0 >= SHRED_FEED_MS) {
-        if (!l.popped) { l.popped = true; this._eatenLetterFx(l.char, l.w, l.old, cut - l.w - 1, l.top); }
+      if (fx === "burst" && now >= shredThrough(l)) {
+        if (skip-- > 0) continue;
+        this._drawShredChips(ctx, l, cut, now);
         continue;
       }
       const cx = l.x + l.w / 2 + f.dx, cy = l.top + l.h / 2;
@@ -266,6 +325,41 @@ export const effectsShredderMethods = {
       const drop = Math.abs(f.dy) * (1 + SHRED_FALL_SPREAD);
       this._markDirty(cut - far - l.w - 2, l.top - l.h - fan - l.w - (f.dy < 0 ? drop : 0), 2 * far + 2 * l.w + 4, 3 * l.h + 2 * fan + 2 * l.w + drop);
     }
+  },
+
+  // A letter's cross-cut bits (Burst), each its piece of the letter -
+  // drawn where it lies, clipped to its rect - and the room they may take,
+  // marked for the next clear.
+  _drawShredChips(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, l: ShredLetter, cut: number, now: number) {
+    const cx = cut - 1 - l.w / 2, cy = l.top + l.h / 2;
+    let alpha = 1;
+    for (let i = 0; i < SHRED_RIBBONS; i++) {
+      for (let c = 0; c < SHRED_CROSS; c++) {
+        const ch = shredChip(l, i, c, cut, now);
+        alpha = ch.alpha;
+        if (ch.alpha <= 0.01) continue;
+        ctx.save();
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = "transparent";
+        ctx.globalAlpha *= ch.alpha;
+        ctx.transform(ch.m[0], ch.m[1], ch.m[2], ch.m[3], ch.m[4], ch.m[5]);
+        ctx.beginPath();
+        ctx.rect(ch.rect[0], ch.rect[1] + 0.35, ch.rect[2], ch.rect[3] - 0.7);
+        ctx.clip();
+        ctx.font = l.font;
+        ctx.fillStyle = l.color;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(l.char, cx, cy);
+        ctx.restore();
+      }
+    }
+    if (alpha <= 0.01) return;
+    // Thrown up to SHRED_SCATTER a second left and up, pulled down after,
+    // over SHRED_FALL_MS; the ribbons' fan and fall before that.
+    const sc = l.h / 24, t = SHRED_FALL_MS / 1000;
+    const out = SHRED_SCATTER * sc * t + 4 * l.h, down = 0.5 * 12 * l.h * (t + (SHRED_FEED_MS / 1000)) ** 2 + 2 * l.h;
+    this._markDirty(cut - out - l.w - 2, l.top - out, out + 2 * l.w + 4, out + down + l.h);
   },
 
   // The Line as blades, in its rect (x, y, w, h) and its own paint: the

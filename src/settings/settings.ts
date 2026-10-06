@@ -227,6 +227,12 @@ export const DEFAULT_SETTINGS = {
   // Backspace and Delete (1.7.7): while deleting, the cursor and every
   // effect in their opposite colors (effects-caps.ts).
   deleteInvert: false,
+  // When Hot-head, Pixel trail and Signal glitch go (1.7.7): typing,
+  // deleting or both ("both" what they did before); the glitch on jumps,
+  // deleting or both ("jumps" what it did before).
+  hotHeadWhen: "both",
+  flameTrailWhen: "both",
+  crtGlitchWhen: "jumps",
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing
   // setup (and a fresh install) keeps exactly the look it had.
@@ -454,6 +460,14 @@ export type EaterChoice = "none" | "backman" | "shredder" | "rabbithole";
 export type LetterChoice = "vanish" | "burst" | "evaporate";
 export const EATER_KEYS: [Exclude<EaterChoice, "none">, keyof Look][] = [["backman", "backMan"], ["shredder", "shredder"], ["rabbithole", "rabbitHole"]];
 export const LETTER_KEYS: [Exclude<LetterChoice, "vanish">, keyof Look][] = [["evaporate", "backspaceEvaporate"], ["burst", "backspaceDisintegrate"]];
+// When an effect goes (hotHeadWhen, flameTrailWhen; crtGlitchWhen's
+// "jumps" counts as "typing"): whether it may at a moment that is a delete
+// (`deleting`) or not. Pure.
+export type EffectWhen = "both" | "typing" | "deleting" | "jumps";
+export function whenAllows(when: string | undefined, deleting: boolean): boolean {
+  return when === "deleting" ? deleting : when === "typing" || when === "jumps" ? !deleting : true;
+}
+
 export function eaterChoiceOf(look: Partial<Look>): EaterChoice {
   for (const [choice, key] of EATER_KEYS) if (look[key]) return choice;
   return "none";
@@ -575,6 +589,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "capsLookCapsLock", "capsLookShift", "capsLookInvert", "capsLookGrow",
   // Backspace and Delete's inverted colors (1.7.7). Appended, off by default.
   "deleteInvert",
+  // When Hot-head, Pixel trail and Signal glitch go (1.7.7). Appended.
+  "hotHeadWhen", "flameTrailWhen", "crtGlitchWhen",
 ];
 
 // ---------------------------------------------------------------------------

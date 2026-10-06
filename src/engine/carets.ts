@@ -9,7 +9,7 @@
 // the active point, the glide (updateSmoothCursor) and the commit of a
 // move.
 
-import { letterChoiceOf } from "../settings/settings";
+import { letterChoiceOf, whenAllows } from "../settings/settings";
 import {
   CATCHUP_BOOST_RATE,
   JUMP_TRAIL_MIN_DIST,
@@ -839,15 +839,19 @@ export const caretsMethods = {
         letterChoiceOf(this.look) === "burst" &&
         this._deletePending &&
         now - this._deletePending < 250);
+      // This move a deletion's (the same test): what "When" reads - Pixel
+      // trail's, Signal glitch's, Hot-head's flare.
+      const deleted = !!(this._deletePending && now - this._deletePending < 250);
+      const trailOk = whenAllows(this.look.flameTrailWhen, deleted);
       // Along the deleted letters when they could be read; where the caret
       // stood otherwise - a secondary caret, a text box, a selection too
-      // long to lay out.
-      if (!(disintegrate && burstAlong)) this.spawnFlamePixels(this.lastActive, disintegrate);
+      // long to lay out. The trail's own puff only when it trails then.
+      if (!(disintegrate && burstAlong) && (disintegrate || trailOk)) this.spawnFlamePixels(this.lastActive, disintegrate);
       // Trail On Jump: if this move was a genuine leap (not typing/arrowing) and
       // wasn't a deletion burst, lay puffs along the path the caret skipped so a
       // jump leaves a streak rather than a lone puff at the origin. Uses `caret`
       // (destination) and `lastActive` (origin) to span the gap.
-      if (this.look.flameTrailOnJump && !disintegrate) {
+      if (this.look.flameTrailOnJump && !disintegrate && trailOk) {
         this.spawnJumpTrail(this.lastActive, caret);
       }
       this._deletePending = 0;
@@ -857,7 +861,11 @@ export const caretsMethods = {
       // across a wrap is still a jump visually. Placed before the thunderbolt
       // so an Enter-driven strike and a glitch can coexist on the same move.
       if (this.look.crtEffect && this.look.crtGlitch) {
-        this.spawnGlitch(this.lastActive, caret);
+        // Glitches on (crtGlitchWhen): jumps, as it always did; deleting,
+        // every deletion breaking it up (a held key keeps it breaking).
+        const gw = this.look.crtGlitchWhen || "jumps";
+        if (gw !== "deleting") this.spawnGlitch(this.lastActive, caret);
+        if (gw !== "jumps" && deleted) this.spawnGlitch(this.lastActive, caret, true);
       }
       // Hot-Head, same test again: a jump puts the caret in fire for a moment
       // (the "engulfed" state maybeSpawnHotHead feeds). Decided here, on the
@@ -865,7 +873,7 @@ export const caretsMethods = {
       // Smooth Movement the drawn caret eases across a jump and never covers
       // JUMP_TRAIL_MIN_DIST in one frame, and a scroll shift - which does -
       // has already been filtered out above this block.
-      if (this.styleFor("hotHead")
+      if (this.styleFor("hotHead") && whenAllows(this.look.hotHeadWhen, deleted)
           && Math.hypot(caret.x - this.lastActive.x, caret.top - this.lastActive.top) >= JUMP_TRAIL_MIN_DIST) {
         this._hotEngulfUntil = now + HOT_ENGULF_MS;
         this._hotActiveT = now;

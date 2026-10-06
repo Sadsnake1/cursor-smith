@@ -98,12 +98,21 @@ export const effectsCapsMethods = {
 
   // A Backspace or Delete (plugin.ts: the key, or the input event where
   // keys are not reported): the flip on, for DELETE_INVERT_MS from now.
+  // The moment is kept whatever the setting: the effects' "When" reads it
+  // (_deleting).
   _deleteFlip(this: CursorSmithPlugin) {
     const now = performance.now();
-    if (!this.look.deleteInvert) return;
-    if (!(now - this._deleteT < DELETE_INVERT_MS)) this._capsChangeT = now;
+    const was = now - this._deleteT < DELETE_INVERT_MS;
     this._deleteT = now;
+    if (!this.look.deleteInvert) return;
+    if (!was) this._capsChangeT = now;
     this._markActivity("key");
+  },
+
+  // Whether `now` is a moment of deleting: within DELETE_INVERT_MS of the
+  // last Backspace or Delete (a held key repeats inside it).
+  _deleting(this: CursorSmithPlugin, now: number): boolean {
+    return now - this._deleteT < DELETE_INVERT_MS;
   },
 
   // The window losing focus: a Shift held through Alt+Tab never sends its
@@ -214,6 +223,11 @@ export const effectsCapsMethods = {
   _capsCanvas(this: CursorSmithPlugin, now: number) {
     const el = this.canvas;
     if (!el) return;
+    // The torch's two layers too ("torch too": its own canvases, the glow's
+    // warm light turning with the rest; the darkness, black, stays), read
+    // off their own style - they are rebuilt on their own schedule.
+    const turn = this._capsFilter;
+    for (const t of [this.overlay, this.glowEl]) if (t && t.style.filter !== turn) t.style.filter = turn;
     // Both channels advanced every frame drawn: the grow's too, which only
     // the painters read - with Grow off it would never settle, and the frame
     // governor would keep the loop hot for it (capsMoving).
@@ -223,6 +237,7 @@ export const effectsCapsMethods = {
     if (this._capsFilter === want) return;
     this._capsFilter = want;
     el.style.filter = want;
+    for (const t of [this.overlay, this.glowEl]) if (t) t.style.filter = want;
   },
 
   // Grows what is painted next - the cursor in its rect (x, y, w, h), a

@@ -986,7 +986,7 @@ export const engineMethods = {
       // pool empties the loop would judge the frame static, drop to the
       // idle heartbeat, and the next spawn would arrive as one
       // lumpy burst instead of a steady flame.
-      (!!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT)) ||
+      (!!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) && this._hotLit(this.hotBurns)) ||
       // Same reasoning: a bolt is aged and expired inside its draw call,
       // so a skipped frame would leave one frozen on screen.
       (this.thunderbolts && this.thunderbolts.length > 0) ||
@@ -1027,7 +1027,7 @@ export const engineMethods = {
         (crt && c.trail && c.trail.length > 0) ||
         (!!c.glitch && (nowT - c.glitch.start) < c.glitch.dur) ||
         // Hot-head feeding on a secondary, same test as the primary's above.
-        (!!this.styleFor("hotHead") && !!c.animActive && this._hotFeedingAt(c._hotActiveT, nowT)))) ||
+        (!!this.styleFor("hotHead") && !!c.animActive && this._hotFeedingAt(c._hotActiveT, nowT) && this._hotLit(c.hotBurns)))) ||
       // Precise: the spring reports whether any corner is still off its
       // target or carrying velocity. This used to be a 1200ms window
       // after the last motion, which was a workaround for a timestamp

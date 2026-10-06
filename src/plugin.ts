@@ -179,6 +179,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare capsAmount: EffectsMethods["capsAmount"];
   declare capsMoving: EffectsMethods["capsMoving"];
   declare _deleteFlip: EffectsMethods["_deleteFlip"];
+  declare _deleting: EffectsMethods["_deleting"];
   declare _flipWanted: EffectsMethods["_flipWanted"];
   declare flipAmount: EffectsMethods["flipAmount"];
   declare _capsFlip: EffectsMethods["_capsFlip"];
@@ -200,6 +201,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare updateHotHeadInertia: EffectsMethods["updateHotHeadInertia"];
   declare hotHeadFeeding: EffectsMethods["hotHeadFeeding"];
   declare _hotFeedingAt: EffectsMethods["_hotFeedingAt"];
+  declare _hotLit: EffectsMethods["_hotLit"];
   declare maybeSpawnHotHead: EffectsMethods["maybeSpawnHotHead"];
   declare maybeSpawnSpeedDemonSparks: EffectsMethods["maybeSpawnSpeedDemonSparks"];
   declare stardustArmed: EffectsMethods["stardustArmed"];

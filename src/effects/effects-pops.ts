@@ -340,17 +340,19 @@ export const effectsPopsMethods = {
   // unreadable and a genuine photosensitivity concern. A jump (click, search
   // result, Vim motion, fold toggle) is rare enough that a ~200ms break-up
   // reads as punctuation on the movement instead of ambient noise.
-  spawnGlitch(this: CursorSmithPlugin, from: CaretRecord, to: CaretRecord) {
+  // `deleted`: a deletion's move, which glitches whatever its length
+  // (Glitches on: deleting), gently when it is short.
+  spawnGlitch(this: CursorSmithPlugin, from: CaretRecord, to: CaretRecord, deleted = false) {
     if (!from || !to) return;
     const dist = Math.hypot(to.x - from.x, to.top - from.top);
     // Same threshold the jump trail uses, so "what is a jump" has one answer.
-    if (dist < JUMP_TRAIL_MIN_DIST) return;
+    if (dist < JUMP_TRAIL_MIN_DIST && !deleted) return;
 
     const dur = Math.max(60, Math.min(600, this.look.crtGlitchMs ?? 220));
     // Longer leaps break up harder, but with a ceiling: without the clamp a
     // click from the top to the bottom of a long note produced slices thrown
     // most of a pane's width away, which stops reading as a cursor at all.
-    const reach = Math.min(2.2, 0.7 + dist / 420);
+    const reach = dist < JUMP_TRAIL_MIN_DIST ? 0.8 : Math.min(2.2, 0.7 + dist / 420);
 
     // A second jump mid-burst REPLACES the current one rather than stacking or
     // being ignored: rapid clicking should re-break the cursor each time, and

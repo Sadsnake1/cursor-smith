@@ -249,9 +249,65 @@ section("Backspace and Delete: the colors inverted while deleting");
   e.settings.deleteInvert = false;
   e._deleteT = -1e9;
   e._deleteFlip();
-  ok("off: a delete flips nothing", !e._flipWanted(performance.now()) && e._deleteT === -1e9);
+  ok("off: a delete flips nothing (its moment kept, for the effects' When)", !e._flipWanted(performance.now()) && e._deleteT > 0 && e._deleting(performance.now()));
   const src = fs.readFileSync(srcPath("plugin.ts"), "utf8");
   ok("both the Backspace and Delete keys and the input events where keys are not reported flip it", (src.match(/this\._deleteFlip\(\);/g) || []).length === 2);
   ok("the eaters keep no flip of their own (the canvas's covers them)", !/ctx\.filter/.test(fs.readFileSync(srcPath("effects-eaters.ts"), "utf8")) && !T.LOOK_KEYS.includes("eaterInvert"));
   ok("the preview flips on its deletes", /d\.delUntil = now \+ DELETE_INVERT_MS/.test(fs.readFileSync(srcPath("demo.ts"), "utf8")));
+}
+
+section("When: typing, deleting or both (Hot-head, Pixel trail, Signal glitch)");
+{
+  ok("look keys, appended; as before by default (Hot-head and Pixel trail both, the glitch on jumps)", T.LOOK_KEYS.slice(T.LOOK_KEYS.indexOf("hotHeadWhen"), T.LOOK_KEYS.indexOf("hotHeadWhen") + 3).join() === "hotHeadWhen,flameTrailWhen,crtGlitchWhen" && T.LOOK_KEYS.indexOf("hotHeadWhen") > T.LOOK_KEYS.indexOf("deleteInvert") &&
+     T.DEFAULT_SETTINGS.hotHeadWhen === "both" && T.DEFAULT_SETTINGS.flameTrailWhen === "both" && T.DEFAULT_SETTINGS.crtGlitchWhen === "jumps");
+  ok("what each choice allows", T.whenAllows("both", true) && T.whenAllows("both", false) && T.whenAllows(undefined, true) && T.whenAllows("typing", false) && !T.whenAllows("typing", true) &&
+     T.whenAllows("deleting", true) && !T.whenAllows("deleting", false) && T.whenAllows("jumps", false) && !T.whenAllows("jumps", true));
+  const rows = renderPanel({ hotHead: true, flameTrail: true, crtEffect: true, crtGlitch: true });
+  const under = (name, parent) => { const i = rows.findIndex((x) => x.name === name); return i > rows.findIndex((x) => x.name === parent) && (!rows[i].def.visible || rows[i].def.visible()); };
+  ok("a dropdown under each: Burns while (Hot-head), Trails while (Pixel trail), Glitches on (Signal glitch)", under("Burns while", "Hot-head") && under("Trails while", "Pixel trail") && under("Glitches on", "Signal glitch"));
+
+  // Hot-head: marks laid only when its When allows.
+  const hh = (when, deleting) => {
+    const e = makeEngine({ hotHead: true, hotHeadWhen: when });
+    e.hotSyncScroll = () => {};
+    const at = (x) => ({ x, top: 40, w: 9, h: 24, actualCharWidth: 9, rowLeft: 0, rowRight: 500, fontSize: 16 });
+    e._deleteT = deleting ? performance.now() : -1e9;
+    e.animActive = e.lastActive = at(100);
+    e.updateHotHeadInertia();
+    e.animActive = e.lastActive = at(91);
+    e.updateHotHeadInertia();
+    return (e.hotBurns || []).length;
+  };
+  ok("Hot-head burning while deleting: marks laid as the caret goes back over what it deletes, none as it types", hh("deleting", true) > 0 && hh("deleting", false) === 0);
+  ok("...burning while typing: the other way round; both: either", hh("typing", false) > 0 && hh("typing", true) === 0 && hh("both", true) > 0 && hh("both", false) > 0);
+  const lit = makeEngine({ hotHead: true, hotHeadWhen: "deleting" });
+  ok("...and the loop not held hot for it with nothing alight", lit._hotLit([]) === false && lit._hotLit([{}]) === true && makeEngine({ hotHead: true })._hotLit([]) === true);
+
+  // Signal glitch: a deletion's short move breaks it up, gently.
+  const g = makeEngine({ crtEffect: true, crtGlitch: true });
+  const from = { x: 100, top: 40, w: 9, h: 24 }, to = { x: 91, top: 40, w: 9, h: 24 };
+  g.spawnGlitch(from, to);
+  ok("Signal glitch: a short move is no jump", !g.glitch);
+  g.spawnGlitch(from, to, true);
+  ok("...but a deletion's glitches it, gently", !!g.glitch && g.glitch.reach === 0.8);
+  const src = fs.readFileSync(srcPath("carets.ts"), "utf8");
+  ok("the committed move: the trail's puff and its jump trail by Trails while, the glitch by Glitches on, Hot-head's flare by Burns while",
+     /\(disintegrate \|\| trailOk\)/.test(src) && /flameTrailOnJump && !disintegrate && trailOk/.test(src) && /gw !== "deleting"/.test(src) && /gw !== "jumps" && deleted/.test(src) && /whenAllows\(this\.look\.hotHeadWhen, deleted\)/.test(src));
+}
+
+section("The torch flips with the rest");
+{
+  const e = makeEngine({ deleteInvert: true });
+  e.canvas = { style: {} };
+  e.overlay = { style: { filter: "" } };
+  e.glowEl = { style: { filter: "" } };
+  e._markActivity = () => {};
+  e._flip = { amt: 0, at: performance.now() - 10000, on: false };
+  e._deleteFlip();
+  e.flipAmount(e._deleteT + 200);
+  e._capsCanvas(e._deleteT + 200);
+  ok("the torch's darkness and glow turned with the cursor's canvas", e.canvas.style.filter === "hue-rotate(180deg)" && e.overlay.style.filter === "hue-rotate(180deg)" && e.glowEl.style.filter === "hue-rotate(180deg)");
+  e.glowEl = { style: { filter: "" } };
+  e._capsCanvas(e._deleteT + 210);
+  ok("...a glow layer rebuilt meanwhile catches up on the next frame", e.glowEl.style.filter === "hue-rotate(180deg)");
 }

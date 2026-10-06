@@ -16,6 +16,9 @@ import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEf
 // the name and description of the entry, and its Lucide icon.
 // The icons are Lucide's, by name, drawn by Obsidian's setIcon; the torch's
 // is registered by the plugin at load (CANDLE_ICON in plugin.ts).
+// When an effect goes (whenAllows): the dropdown's choices.
+const WHEN_NAMES: Record<string, string> = { both: "Typing and deleting", typing: "Typing", deleting: "Deleting" };
+
 const RAIL_EFFECTS: RailEffect[] = [
   { key: "popEffects", name: "Pop effects", icon: "party-popper", desc: "Letters, lightning and fireworks thrown off as you type." },
   { key: "typewriter", name: "Typewriter", icon: "keyboard", desc: "The cursor strikes like a typewriter key: a springy dip, ink, the carriage." },
@@ -1664,6 +1667,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const showTrail = shown("flameTrail");
     effects.push(toggle("Pixel trail", "A puff of colored pixels wherever the cursor has just been.", "flameTrail", { gate: true, when: showTrail }));
     const trail = all(showTrail, on("flameTrail"));
+    effects.push(dropdown("Trails while", "Typing, deleting, or both.", "flameTrailWhen", WHEN_NAMES, { depth: 1, value: get("flameTrailWhen") || "both", when: trail }));
     effects.push(slider("Pixel density", "How many pixels the trail sheds. 0 hides them entirely.", "flameTrailDensity", [0, 3, 0.1], { depth: 1, fallback: 1, when: trail }));
     effects.push(toggle("Trail on jump", "Lays pixels along the whole path of a jump, not just at the start.", "flameTrailOnJump", { depth: 1, when: trail }));
     effects.push(slider("Pixel lifetime", "How long each pixel lasts before it fades out, in milliseconds.", "flameTrailLifeMs", [100, 2000, 50], { depth: 1, fallback: 400, when: trail }));
@@ -1720,6 +1724,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Gradient trail", "Runs the cursor's gradient along the streak, newest ghost to oldest.", "crtNeonGradient", { depth: 2, when: all(crt, on("crtNeon")), needs: needsGradient }));
     effects.push(toggle("Signal glitch", "Long jumps break up like a mistracked video signal.", "crtGlitch", { depth: 1, gate: true, when: crt }));
     const glitch = all(crt, on("crtGlitch"));
+    effects.push(dropdown("Glitches on", "Jumps, deleting, or both.", "crtGlitchWhen", { jumps: "Jumps", deleting: "Deleting", both: "Jumps and deleting" }, { depth: 2, value: get("crtGlitchWhen") || "jumps", when: glitch }));
     effects.push(slider("Break-up", "How far the slices are thrown and how much the cursor's shape warps.", "crtGlitchStrength", [0.2, 2.5, 0.1], { depth: 2, fallback: 1, when: glitch }));
     effects.push(slider("Color split", "How far the color channels separate. 0 only tears the shape.", "crtGlitchAberration", [0, 3, 0.1], { depth: 2, fallback: 1, when: glitch }));
     effects.push(slider("Duration", "How long each burst lasts, in milliseconds.", "crtGlitchMs", [60, 600, 10], { depth: 2, fallback: 220, when: glitch }));
@@ -1749,6 +1754,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const showHot = shown("hotHead");
     effects.push(toggle("Hot-head", "Sets the text you're working on alight.", "hotHead", { gate: true, when: showHot }));
     const hot = all(showHot, on("hotHead"));
+    effects.push(dropdown("Burns while", "Typing, deleting, or both.", "hotHeadWhen", WHEN_NAMES, { depth: 1, value: get("hotHeadWhen") || "both", when: hot }));
     effects.push(slider("Fire quantity", "How much fire. 0 puts it out.", "hotHeadQuantity", [0, 3, 0.1], { depth: 1, fallback: 1, when: hot }));
     effects.push(slider("Fire spread", "How many characters around the cursor catch. 0 burns only its own column.", "hotHeadSpread", [0, 14, 1], { depth: 1, fallback: 4, when: hot }));
     effects.push(slider("Trail over text", "Fire left along the path. 0 keeps it where the cursor stops.", "hotHeadTrail", [0, 30, 1], { depth: 1, fallback: 6, when: hot }));

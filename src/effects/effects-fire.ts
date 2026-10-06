@@ -67,6 +67,7 @@ import {
 import { easeInOutSine } from "../util/motion";
 import type CursorSmithPlugin from "../plugin";
 import type { Ember } from "../types";
+import { whenAllows } from "../settings/settings";
 
 // A start kick of `mag`, up within HOT_START_CONE of straight up, and a sway
 // of its own (see drawHotHead). Nothing of the caret's velocity: fire rises
@@ -218,7 +219,10 @@ export const effectsFireMethods = {
     // one is also poked by scrolling and focus changes, and neither of those
     // should count as working on the text. The threshold ignores the last
     // sub-pixel crawl of a smooth-motion glide settling onto its target.
-    if (Math.abs(cx - this._hotPrev.x) > 0.5 || Math.abs(cy - this._hotPrev.y) > 0.5) {
+    // Burns while (hotHeadWhen): typing, deleting or both - outside it the
+    // caret is followed but lights nothing, and what is alight burns down.
+    const allowed = whenAllows(this.look.hotHeadWhen, this._deleting(now));
+    if (allowed && (Math.abs(cx - this._hotPrev.x) > 0.5 || Math.abs(cy - this._hotPrev.y) > 0.5)) {
       this._hotActiveT = now;
     }
     const prevX = this._hotPrev.x, prevY = this._hotPrev.y;
@@ -226,6 +230,7 @@ export const effectsFireMethods = {
     this._hotPrev.y = cy;
     this._hotPrev.t = now;
     if (!this._hotEmitFrom) this._hotEmitFrom = { x: cx, y: cy };
+    if (!allowed) { this._hotPrev.row = undefined; return; }
 
     if (!this.hotBurns) this.hotBurns = [];
     // Refresh the mark under the caret, or lay a new one. Marks within half a
@@ -303,6 +308,15 @@ export const effectsFireMethods = {
   // enough to count as working. Shared by the emitter and the frame governor:
   // the governor has to agree, or a fire that has burnt out would still pin the
   // render loop at full rate forever on the grounds that the effect is enabled.
+  // Whether there is anything alight to feed: always, burning on typing and
+  // deleting both (the caret's own mark is topped up every frame); with
+  // "Burns while" one of the two, only while marks are left - else the loop
+  // would be held hot with nothing to draw. A pure read.
+  _hotLit(this: CursorSmithPlugin, burns: unknown[] | undefined): boolean {
+    const w = this.look.hotHeadWhen;
+    return (w !== "typing" && w !== "deleting") || !!(burns && burns.length);
+  },
+
   hotHeadFeeding(this: CursorSmithPlugin, nowT: number): boolean {
     return this._hotFeedingAt(this._hotActiveT, nowT);
   },

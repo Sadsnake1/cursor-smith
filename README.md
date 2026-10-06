@@ -49,14 +49,14 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 | **Pop effects** | Letters pop out as you type, or rise straight up and fade. When you delete, your cursor can eat the letters, whatever its shape: it turns into Back-man, a hungry little creature with a big square eye that gulps each letter down, a Shredder that cuts them into ribbons, or a Vacuum that sucks them in. The letters can burst apart or evaporate, on their own or together with the eater: crumbs fly from Back-man's mouth, a ghost floats back up out of the Vacuum. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Sounds** | Real typewriters, mechanical keyboards, a kalimba and an actual horse as you type, each with its own Space, Backspace and Enter. |
-| **Pixel trail** | A puff of pixels wherever the cursor has just been. |
+| **Pixel trail** | A puff of pixels wherever the cursor has just been, while you type, delete, or both. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
 | **Motion smear** | The cursor stretches as it moves and snaps back when it arrives. |
 | **Energy beam** | A pulse of light along the cursor; an aurora with a gradient. |
-| **CRT effects** | Phosphor ghosts behind the cursor, neon and glitch options. |
+| **CRT effects** | Phosphor ghosts behind the cursor, neon and glitch options; the glitch on jumps, deletes, or both. |
 | **Speed demon** | Heats from gray to white-hot as you type, throwing sparks. |
-| **Hot-head** | Sets the text you're working on alight, in pixel-art flames. |
+| **Hot-head** | Sets the text you're working on alight, in pixel-art flames, while you type, delete, or both. |
 | **Torch spotlight** | Darkens everything except a pool of warm light around the cursor. |
 
 Some of them unlock extra options together. Try Blinking with the Torch.

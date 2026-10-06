@@ -180,6 +180,9 @@ export interface Look {
   capsLookInvert: boolean;
   capsLookGrow: boolean;
   deleteInvert: boolean;
+  hotHeadWhen: string;
+  flameTrailWhen: string;
+  crtGlitchWhen: string;
   boxHollow: boolean;
   boxHollowWidth: number;
   underlineWidthPx: number;

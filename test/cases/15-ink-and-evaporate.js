@@ -417,7 +417,7 @@ section("Backspace disintegration: along the letters, both ways");
   ok("the note is kept for the burst alone", keep._deletionDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);
   const carets = require("fs").readFileSync(srcPath("carets.ts"), "utf8");
   ok("a commit makes the one burst where the caret stood only when the letters did not get it",
-     carets.includes("if (!(disintegrate && burstAlong)) this.spawnFlamePixels(this.lastActive, disintegrate);"));
+     carets.includes("if (!(disintegrate && burstAlong) && (disintegrate || trailOk)) this.spawnFlamePixels(this.lastActive, disintegrate);"));
 }
 
 // ---------------------------------------------------------------------------

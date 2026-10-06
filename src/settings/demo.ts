@@ -585,9 +585,6 @@ interface Demo {
   // shown as far as it has been typed - then rests; and whether it has.
   card: boolean;
   cardPlayed: boolean;
-  // The torch's darkness over the demo, its pool of light on the caret
-  // (a preset with the torch), or null.
-  torch: HTMLElement | null;
   name: string;
   written: HTMLElement | null;
   rest: HTMLElement | null;
@@ -688,10 +685,6 @@ export class DemoStrip {
     }
     const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" + (script ? " cursor-smith-roll-demo" : "") });
     const text = demo.createSpan({ cls: "cursor-smith-pcard-text cursor-smith-pcard-name", text: script ? "" : name });
-    // The torch (a preset with it): the demo darkened, a pool of light on
-    // the caret ("if the demo pill has torch crt darken the demo pill"),
-    // under the caret and its effects as the real torch is.
-    const torch = look.torchEffect ? demo.createSpan({ cls: "cursor-smith-pcard-torch", attr: { "aria-hidden": "true" } }) : null;
     // The pill's sentence in two halves, the unwritten one invisible: the
     // letters keep their places (and the measure its width) as they appear.
     const written = script ? text.createSpan({ text: "" }) : null;
@@ -754,7 +747,7 @@ export class DemoStrip {
       if (script) { innerWritten = inner.createSpan({ text: "" }); innerRest = inner.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }); }
     }
     const d: Demo = {
-      el: demo, shape, card: !script && play && !reduced, cardPlayed: false, torch, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
+      el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
       script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
@@ -1370,16 +1363,6 @@ export class DemoStrip {
     // Line thickness, as the engine's; the cards' a hair under a letter.
     const base = d.style === "line" ? (d.geo ? d.geo.lineW : d.shape.thick) : d.geo ? px : Math.max(1, px - 1);
     const width = base + stretch;
-    // The torch: dark but for a pool of light on the caret, the preset's
-    // darkness and its light's color, the pool scaled to the demo.
-    if (d.torch) {
-      const look = d.look;
-      const r = Math.max(10, Math.min(40, (look.overlayRadius ?? 250) * 0.09));
-      const [lr, lg, lb] = hexToRgbTuple(look.overlayColor || "#ff963c");
-      const glow = `rgba(${lr}, ${lg}, ${lb}, ${(0.35 * Math.max(0, Math.min(1, look.overlayIntensity ?? 0.5))).toFixed(2)})`;
-      const dark = Math.max(0, Math.min(1, look.overlayDarkness ?? 0.92)).toFixed(2);
-      d.torch.setCssStyles({ background: `radial-gradient(circle ${r.toFixed(1)}px at ${(from + width / 2).toFixed(1)}px 50%, ${glow} 0%, transparent 55%, rgba(0, 0, 0, ${dark}) 100%)` });
-    }
     // Heat warms a flat fill; a gradient keeps its colors (as the engine's
     // custom ramp flattens a gradient, the demo leaves it be).
     const heated = cold < 1 && !d.shape.gradient;

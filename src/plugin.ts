@@ -171,6 +171,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare _eatenLetterFx: EffectsMethods["_eatenLetterFx"];
   declare _capsKey: EffectsMethods["_capsKey"];
   declare _capsBlur: EffectsMethods["_capsBlur"];
+  declare _capsChanged: EffectsMethods["_capsChanged"];
+  declare _capsSig: EffectsMethods["_capsSig"];
   declare _capsPointer: EffectsMethods["_capsPointer"];
   declare _capsCanvas: EffectsMethods["_capsCanvas"];
   declare _capsWanted: EffectsMethods["_capsWanted"];
@@ -676,7 +678,9 @@ export default class CursorSmithPlugin extends Plugin {
   // eased amount, Obsidian's accent as last read.
   _capsOn = false;
   _shiftHeld = false;
-  _caps: { amt: number; at: number } | null = null;
+  _caps: { amt: number; at: number; on: boolean } | null = null;
+  // When the keys last changed (the ease starts there).
+  _capsChangeT = 0;
   _capsAccentCache: { hex: string; t: number } | null = null;
   // The hue turn last written on the canvas (_capsCanvas).
   _capsFilter = "";

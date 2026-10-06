@@ -52,6 +52,15 @@ export const effectsCapsMethods = {
     if (k.caps === this._capsOn && k.shift === this._shiftHeld) return;
     this._capsOn = k.caps;
     this._shiftHeld = k.shift;
+    this._capsChanged();
+  },
+
+  // The keys changed: when (the ease starts there, not at the last frame
+  // drawn - after a while idle that was a jump straight to the end, which
+  // the frame governor took for nothing moving, and the frame went
+  // unpainted: Shift could not be tapped), and a frame.
+  _capsChanged(this: CursorSmithPlugin) {
+    this._capsChangeT = performance.now();
     this._markActivity("key");
   },
 
@@ -62,13 +71,15 @@ export const effectsCapsMethods = {
     const caps = !!e.getModifierState("CapsLock");
     if (caps === this._capsOn) return;
     this._capsOn = caps;
-    this._markActivity("key");
+    this._capsChanged();
   },
 
   // The window losing focus: a Shift held through Alt+Tab never sends its
   // keyup here.
   _capsBlur(this: CursorSmithPlugin) {
+    if (!this._shiftHeld) return;
     this._shiftHeld = false;
+    this._capsChanged();
   },
 
   // Whether the look is wanted now: the setting on, on a desktop, and Caps
@@ -81,18 +92,31 @@ export const effectsCapsMethods = {
     return !mode || mode === "insert" || mode === "replace";
   },
 
-  // How far the look is in at `now` (0 none, 1 all), eased.
+  // How far the look is in at `now` (0 none, 1 all), eased: toward what
+  // was wanted until the keys changed, toward what is wanted since.
   capsAmount(this: CursorSmithPlugin, now: number): number {
-    const s = this._caps || (this._caps = { amt: 0, at: now });
+    const s = this._caps || (this._caps = { amt: 0, at: now, on: false });
     const on = this._capsWanted();
+    if (on !== s.on) {
+      const t = Math.min(now, Math.max(s.at, this._capsChangeT));
+      if (t > s.at) { s.amt = capsEase(s.amt, s.on, t - s.at); s.at = t; }
+      s.on = on;
+    }
     if (now > s.at) { s.amt = capsEase(s.amt, on, now - s.at); s.at = now; }
     return s.amt;
   },
 
   // Whether it is still easing (the frame governor keeps the frames coming).
-  capsMoving(this: CursorSmithPlugin, now: number): boolean {
-    const a = this.capsAmount(now);
-    return a !== (this._capsWanted() ? 1 : 0);
+  // A pure read, as the governor's must be: the amount as last drawn, against
+  // what is wanted now.
+  capsMoving(this: CursorSmithPlugin, _now: number): boolean {
+    return (this._caps ? this._caps.amt : 0) !== (this._capsWanted() ? 1 : 0);
+  },
+
+  // The look's part of a static frame's signature (_frameSignature): wanted
+  // or not, and how far in as last drawn.
+  _capsSig(this: CursorSmithPlugin): string {
+    return (this._capsWanted() ? "C" : "c") + Math.round((this._caps ? this._caps.amt : 0) * 100);
   },
 
   // A color the cursor is painted in, as far as the look is in: a white or

@@ -97,6 +97,22 @@ section("Vacuum: the U");
 
 section("Caps Lock and Shift");
 {
+  {
+    // Shift tapped after ten seconds idle: the last frame drawn long ago.
+    const t = makeEngine({ capsLook: true, cursorStyle: "Line" });
+    t.lookVimMode = () => null;
+    t._markActivity = () => {};
+    const t0 = performance.now();
+    t._caps = { amt: 0, at: t0 - 10000, on: false };
+    const before = t._capsSig();
+    t._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
+    ok("Shift tapped after a while idle: the governor sees it moving, and a static frame is not the same frame", t.capsMoving(t0) === true && t._capsSig() !== before);
+    const a = t.capsAmount(t._capsChangeT + 16);
+    ok("...the ease starts at the key, not at the last frame drawn (no jump to the end)", a > 0.2 && a < 0.8, a);
+    t._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
+    const b = t.capsAmount(t._capsChangeT + 16);
+    ok("...and let go, eases back out from there: it can be tapped again and again", b < a && b > 0 && t.capsMoving(t._capsChangeT + 16) === true, b);
+  }
   ok("the keys: Caps Lock on, Shift on its own (with Ctrl, Alt or Cmd a shortcut)", T.capsKeys({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: (k) => k === "CapsLock" }).caps === true &&
      T.capsKeys({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false }).shift === true && T.capsKeys({ shiftKey: true, ctrlKey: true, altKey: false, metaKey: false }).shift === false && T.capsKeys({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: true }).shift === false);
   ok("eased: most of the way in 80 ms, all the way after, back out the same", T.capsEase(0, true, 80) > 0.9 && T.capsEase(0, true, 200) === 1 && T.capsEase(1, false, 200) === 0 && T.capsEase(0, true, 10) < 0.5);
@@ -113,7 +129,9 @@ section("Caps Lock and Shift");
   delete e.getActiveColor;
   e._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   ok("Shift held: wanted", e._capsWanted() === true);
-  e._caps = { amt: 0, at: performance.now() - 500 };
+  // Half a second on: the key pressed then, the look out until then.
+  e._capsChangeT = performance.now() - 500;
+  e._caps = { amt: 0, at: e._capsChangeT, on: false };
   e._capsCanvas(performance.now());
   ok("...the whole canvas's hue turned half the wheel: the cursor and every effect on it flip", e.canvas.style.filter === "hue-rotate(180deg)", e.canvas.style.filter);
   ok("...a white cursor painted so it shows as the accent (and its glow and trail, which read it)", e.getBaseColor() === T.hueTurn("#7f6df2", 180) && e.getActiveColor() === e.getBaseColor(), e.getBaseColor());
@@ -128,7 +146,7 @@ section("Caps Lock and Shift");
   ok("...grown from its foot", ops.length === 3 && ops[0][1] === 50 && ops[0][2] === 80 && ops[1][1] === 1 + T.CAPS_GROW && ops[1][2] === 1 + T.CAPS_GROW && ops[2][1] === -50);
   e._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   ok("Shift let go: easing out, the frames kept coming until it is out", e._capsWanted() === false && e.capsMoving(performance.now()) === true);
-  e._caps.at = performance.now() - 500;
+  e._capsChangeT = e._caps.at = performance.now() - 500;
   e._capsCanvas(performance.now());
   ok("...then the cursor as it was, the canvas unturned", e.getBaseColor() === "#ffffff" && e.capsMoving(performance.now()) === false && e.canvas.style.filter === "");
   e._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });

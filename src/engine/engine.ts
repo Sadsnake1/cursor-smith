@@ -1114,7 +1114,8 @@ export const engineMethods = {
   // shape and glyph to the half-pixel, the plain secondaries, the tether,
   // the full secondaries and the smear quad (a spring with its own state;
   // it keeps deforming after the caret has stopped, and without it here a
-  // settled frame stranded a stretched ghost on screen).
+  // settled frame stranded a stretched ghost on screen), and Caps Lock and
+  // Shift's look (a tap of Shift changes nothing else).
   _frameSignature(this: CursorSmithPlugin, vimMode: string | null, blinkBucket: number): string {
     const la = this.lastActive;
     const isDark = this.canvas
@@ -1133,7 +1134,7 @@ export const engineMethods = {
       vimMode, this._lookGen | 0, blinkBucket, isDark,
       la ? Math.round(la.x * 2) + "," + Math.round(la.top * 2) + "," +
            Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
-      sec, bt, this._secondariesSig(), this._smearSig(),
+      sec, bt, this._secondariesSig(), this._smearSig(), this._capsSig(),
     ].join("|");
   },
 

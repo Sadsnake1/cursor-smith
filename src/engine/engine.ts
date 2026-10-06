@@ -1163,11 +1163,13 @@ export const engineMethods = {
   },
 
   // Every effect laid on the text, moved by (dx, dy): the pixels, the fire
-  // and its burn marks, the CRT ghosts, stardust, the letters thrown off,
-  // fireworks and bolts, the carriage return, the evaporating letters - each
-  // caret's own too (a secondary's in its bundle), and where the fire last
-  // saw its caret, so a scroll is not taken for a move. What is pinned to the
+  // and its burn marks, stardust, the letters thrown off, fireworks and
+  // bolts, the carriage return, the evaporating letters - each caret's own
+  // too (a secondary's in its bundle), and where the fire last saw its
+  // caret, so a scroll is not taken for a move. What is pinned to the
   // document (the ink, the X-out, the tether) is measured from it anyway.
+  // Not the CRT ghosts: updateActivePoint carries them with the caret on
+  // any scroll or layout shift already, and moved twice they ran ahead.
   _shiftEffects(this: CursorSmithPlugin, dx: number, dy: number) {
     const pt = (p: { x: number; y: number; row?: number } | null | undefined) => {
       if (!p) return;
@@ -1188,8 +1190,7 @@ export const engineMethods = {
     }
     for (const r of this.typeReturns || []) { r.x0 += dx; r.xs += dx; r.y += dy; }
     for (const g of this.evaporateGlyphs || []) { g.x += dx; g.top += dy; }
-    const own = (s: Pick<CursorSmithPlugin, "trail" | "hotBurns" | "_hotPrev" | "_hotEmitFrom">) => {
-      for (const p of s.trail || []) pt(p);
+    const own = (s: Pick<CursorSmithPlugin, "hotBurns" | "_hotPrev" | "_hotEmitFrom">) => {
       for (const b of s.hotBurns || []) {
         pt(b);
         if (b.rowLeft != null) b.rowLeft += dx;

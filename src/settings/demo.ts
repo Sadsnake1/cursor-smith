@@ -222,7 +222,7 @@ export const SCRIPT_LINES = [
   "NEW Achievement! Cursor changed 50 times!!!",
   "Dangerous to type alone. Let me go with you!",
   "pick me, pick meeee",
-  "Calculating...there are 10^254 cursors...",
+  "Calculating...10^254 cursor choices...",
 ];
 export const SCRIPT_MAX = 44;
 

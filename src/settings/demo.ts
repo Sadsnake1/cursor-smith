@@ -215,6 +215,13 @@ export const SCRIPT_LINES = [
   "Am I a Cursor or Caret?",
   "One Cursor to Rule Them ALL",
   "way too maaaaaany options",
+  "I blink, therefore I am.",
+  "It's just a cursor.",
+  "Careful, this caret is hot.",
+  "Your daily note is getting lonely.",
+  "NEW Achievement! Cursor changed 50 times!!!",
+  "Dangerous to type alone. Let me go with you!",
+  "pick me, pick meeee",
 ];
 export const SCRIPT_MAX = 44;
 

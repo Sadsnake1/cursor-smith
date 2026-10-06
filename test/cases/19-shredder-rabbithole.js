@@ -13,11 +13,31 @@ section("Shredder: the blades and the ribbons");
   const whole = T.shredBlades(0, 2, 24, 0), cut = T.shredBlades(1, 2, 24, 0);
   const covered = (b) => b.reduce((n, [, , len]) => n + len, 0);
   ok("whole: the blades meet, the line's full height, not a hair aside", Math.abs(covered(whole) - 24) < 1e-9 && whole.every(([dx]) => dx === 0));
-  ok("cut: six blades with gaps between, buzzing a little sideways", cut.length === 6 && covered(cut) < 0.65 * 24 && covered(cut) > 0.5 * 24 && cut.some(([dx]) => Math.abs(dx) > 0.1) && cut.every(([dx]) => Math.abs(dx) <= 0.7));
+  ok("cut: six blades with gaps between", cut.length === 6 && covered(cut) < 0.65 * 24 && covered(cut) > 0.5 * 24 && cut.every(([dx]) => dx === 0));
+  // "Spinning blades": the gaps run down the line, a blade out at the foot
+  // back in at the top; the line jolts at a bite, every other blade less.
+  const later = T.shredBlades(1, 2, 24, 100);
+  ok("...turning: a moment later the blades have run down the line, inside it, as much of it cut", later[0][1] === 0 && later.every(([, top, len]) => top >= 0 && top + len <= 24 + 1e-9) && Math.abs(covered(later) - covered(cut)) < 1e-9 && later.some(([, top]) => cut.every(([, t]) => Math.abs(t - top) > 0.1)));
+  const shook = T.shredBlades(1, 2, 24, 0, 1);
+  ok("...jolted: aside, every other blade less (they chatter)", shook.every(([dx]) => dx === 1 || dx === 0.6) && shook.some(([dx]) => dx === 1) && shook.some(([dx]) => dx === 0.6));
+  ok("the jolt: none before, a shake aside, gone by SHRED_JOLT_MS; a word's harder", T.shredJolt(-1, 1) === 0 && Math.abs(T.shredJolt(13, T.SHRED_JOLT)) > 0.3 && T.shredJolt(T.SHRED_JOLT_MS, 1) === 0 && T.SHRED_JOLT_WORD > T.SHRED_JOLT);
   const l = { char: "a", x: 100, w: 9, top: 0, h: 24, font: "16px x", color: "#ddd", t0: 0 };
   const start = T.shredFeed(l, 100, 0), end = T.shredFeed(l, 100, T.SHRED_FEED_MS), gone = T.shredFeed(l, 100, T.SHRED_FEED_MS + T.SHRED_FALL_MS);
   ok("a letter: from where it stood, through the cut to a pixel past it", start.dx === 0 && Math.abs(end.dx - -10) < 1e-9);
   ok("...its ribbons falling and fading after, then gone", start.dy === 0 && end.dy > 0 && end.alpha === 1 && T.shredFeed(l, 100, T.SHRED_FEED_MS + T.SHRED_FALL_MS / 2).alpha < 0.6 && gone.done);
+  // A held key: the line moves on a letter every ~33 ms and the letters
+  // still going in trailed behind it.
+  const rushed = { ...l, rush: 30 };
+  ok("hurried by the next key: through SHRED_RUSH_MS after it, from where it was (no jump)", Math.abs(T.shredFeed(rushed, 100, 30).dx - T.shredFeed(l, 100, 30).dx) < 1e-9 && Math.abs(T.shredFeed(rushed, 100, 30 + T.SHRED_RUSH_MS).dx - -10) < 1e-9 && T.shredFeed(l, 100, 30 + T.SHRED_RUSH_MS).dx > -10);
+  // "Strips that flutter down": each ribbon its own way.
+  const at = (f) => T.shredFeed(l, 100, f);
+  const still = [0, 1, 2, 3, 4].map((i) => T.shredRibbon(l, i, 100, at(30), 30));
+  ok("a ribbon not falling yet: only the fan (sheared about the cut, the middle one not at all)", still.every((m, i) => Math.abs(m[0] - 1) < 1e-9 && Math.abs(m[2]) < 1e-9 && Math.abs(m[3] - 1) < 1e-9 && Math.abs(m[1] - -(i - 2) * T.SHRED_FAN) < 1e-9) && Math.abs(still[2][5]) < 1e-9);
+  const ribbonsAt = (t) => [0, 1, 2, 3, 4].map((i) => T.shredRibbon(l, i, 100, at(t), t));
+  const mid = ribbonsAt(T.SHRED_FEED_MS + 100);
+  const drops = mid.map((m) => m[5] + m[1] * 95.5);
+  ok("...falling: each at its own pace, swayed, tilted and twisted, not one block", new Set(drops.map((v) => v.toFixed(2))).size === 5 && mid.some((m) => Math.abs(m[3]) < 0.95) && mid.some((m) => Math.abs(m[2]) > 0.01) && mid.every((m) => Number.isFinite(m[4]) && Number.isFinite(m[5])), drops);
+  ok("...the same ribbon the same way every frame", JSON.stringify(ribbonsAt(400)) === JSON.stringify(ribbonsAt(400)));
 }
 
 section("Portal: straight through");

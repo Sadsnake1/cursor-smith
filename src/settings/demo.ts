@@ -64,7 +64,7 @@ import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effec
 import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
-import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
+import { SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_JOLT, SHRED_RIBBONS, SHRED_SPIN, shredDash, shredFeed, shredJolt, shredRibbon } from "../effects/effects-shredder";
 import { HOLE_BURST_AT, HOLE_FALL_MS, HOLE_GLOW, HOLE_HALO, HOLE_HALO_ALPHA, HOLE_HALO_MIN, HOLE_HOLD_MS, holeFall, holeGlow, holeSpan } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
@@ -702,6 +702,8 @@ interface Particle {
   ch?: string;
   fired?: boolean;
   rot?: number;
+  // A Shredder letter hurried through by the next key (shredFeed).
+  rush?: number;
   shape0?: number;
   phase?: number;
   delay?: number;
@@ -1290,7 +1292,11 @@ export class DemoStrip {
       for (const p of d.particles) if (p.kind === "meal") p.life = Math.min(p.life, Math.max(1, now - p.t0));
     }
     // Shredder's blades out (a Line's), Rabbit hole open (an Underline's).
-    if (eatKind === "shredder") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
+    if (eatKind === "shredder") {
+      d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
+      // The letters still going in hurried through (the engine's).
+      for (const q of d.particles) if (q.kind === "shred" && q.rush === undefined && now - q.t0 < SHRED_FEED_MS) q.rush = now;
+    }
     if (eatKind === "rabbithole") d.holeRun = { at: now };
     d.keyT = now;
     d.keyKind = "back";
@@ -1437,10 +1443,7 @@ export class DemoStrip {
           const cw = d.stepPx || 7, up = letterChoiceOf(d.look) === "evaporate";
           born.push(() => this.afterEaten(d, p.ch ?? "", d.bmMouth - cw / 2, up ? 1 : 11, now));
         }
-        if (p.kind === "hole" && !p.fired && letterChoiceOf(d.look) === "evaporate") {
-          const cw = d.stepPx || 7;
-          born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 11, now));
-        }
+        if (p.kind === "hole" && !p.fired && letterChoiceOf(d.look) === "evaporate") born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 11, now));
         d.pool.push(p.el);
         continue;
       }
@@ -1466,11 +1469,12 @@ export class DemoStrip {
         p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${p.y.toFixed(1)}px) scale(${Math.max(0.05, 1 - 0.8 * e).toFixed(2)})`, opacity: "1" });
       } else if (p.kind === "shred") {
         // Through the cut (d.cut): the part not through whole, each ribbon
-        // a band of the letter, sheared about the cut so they fan out,
-        // falling and fading as the engine's (shredFeed).
+        // a band of the letter, sheared about the cut so they fan out, then
+        // fluttering down and fading, as the engine's (shredFeed,
+        // shredRibbon).
         const cw = d.stepPx || 7;
         const fx = d.look.popEffects ? letterChoiceOf(d.look) : "vanish";
-        const f = shredFeed({ char: "", x: p.x, w: cw, top: 0, h: PREVIEW_LINE, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, d.cut, now, fx === "evaporate");
+        const f = shredFeed({ char: "", x: p.x, w: cw, top: 0, h: PREVIEW_LINE, old: {} as CaretRecord, font: "", color: "", t0: p.t0, rush: p.rush }, d.cut, now, fx === "evaporate");
         const left = p.x + f.dx, rel = d.cut - left, b = p.band ?? -1;
         // Burst: once all through, the letter breaks into pixels (the part
         // not through plays it; its ribbons go).
@@ -1479,10 +1483,13 @@ export class DemoStrip {
         if (b < 0) {
           p.el.setCssStyles({ transform: `translate(${left.toFixed(1)}px, ${p.y.toFixed(1)}px)`, clipPath: `inset(0 0 0 ${Math.max(0, rel).toFixed(1)}px)`, opacity: rel >= cw ? "0" : "1" });
         } else {
-          const n = SHRED_RIBBONS, a = -(b - (n - 1) / 2) * SHRED_FAN;
+          // The ribbon in the span's own place: the span (12 px) its row,
+          // the cut `rel` across it.
+          const n = SHRED_RIBBONS;
+          const m = shredRibbon({ char: p.ch ?? "", x: p.x, w: cw, top: 0, h: 12, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, b, rel, f, now).map((v) => v.toFixed(3)).join(", ");
           p.el.setCssStyles({
-            transformOrigin: `${rel.toFixed(1)}px 50%`,
-            transform: `translate(${left.toFixed(1)}px, ${(p.y + f.dy).toFixed(1)}px) skewY(${Math.atan(a).toFixed(3)}rad)`,
+            transformOrigin: "0 0",
+            transform: `translate(${left.toFixed(1)}px, ${p.y.toFixed(1)}px) matrix(${m})`,
             clipPath: `inset(${((b / n) * 100 + 2).toFixed(1)}% ${Math.max(0, cw - rel).toFixed(1)}px ${(((n - 1 - b) / n) * 100 + 2).toFixed(1)}% 0)`,
             opacity: rel <= 0 || popped ? "0" : f.alpha.toFixed(2),
           });
@@ -1803,8 +1810,9 @@ export class DemoStrip {
       d.bmOn = false;
     }
     // Shredder (a Line's) and Rabbit hole (an Underline's), as the engine
-    // draws them: the line as blades, buzzing; the bar still, lit while a
-    // letter goes through it.
+    // draws them: the line as blades, turning (their gaps running down it)
+    // and jolting at each bite; the bar still, lit while a letter goes
+    // through it.
     const n2 = (v: number) => v.toFixed(2);
     let eat: "" | "shred" | "hole" = "";
     if (eatKind === "shredder" && d.shredRun && d.geo) {
@@ -1814,9 +1822,10 @@ export class DemoStrip {
       if (dash > 0.01) {
         const lh = parseFloat(styles.height) || d.geo.lineH;
         const blades = Math.max(4, Math.min(8, Math.round(lh / 4))), pitch = lh / blades, len = pitch - pitch * 0.42 * dash;
+        const run = (((this.last / 1000) * SHRED_SPIN * pitch) % pitch + pitch) % pitch;
         Object.assign(styles, {
-          transform: `${styles.transform} translateX(${n2(Math.sin(this.last * 0.11) * 0.5 * dash)}px)`,
-          backgroundColor: "transparent", backgroundSize: "100% 100%",
+          transform: `${styles.transform} translateX(${n2(shredJolt(this.last - r.t, SHRED_JOLT))}px)`,
+          backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundPosition: `0 ${n2(run)}px`,
           backgroundImage: `repeating-linear-gradient(to bottom, ${color} 0px, ${color} ${n2(len)}px, transparent ${n2(len)}px, transparent ${n2(pitch)}px)`,
         });
         eat = "shred";
@@ -1849,7 +1858,7 @@ export class DemoStrip {
     d.holeGlow = 0;
     d.holeCells.length = 0;
     if (!eat && d.eatOn) {
-      Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "", boxShadow: styles.boxShadow ?? "" });
+      Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "", backgroundPosition: "", boxShadow: styles.boxShadow ?? "" });
     }
     // A Line's serifs, and an Underline's, give way while an eater has it.
     if (d.style === "line" || d.style === "underline") d.caret.toggleClass("is-shred", eatShape);

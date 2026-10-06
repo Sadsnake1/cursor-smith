@@ -164,19 +164,20 @@ section("The combos: the letters' effect where the eater is done with them");
   }
 }
 
-section("The eaters smeared with Motion smear");
+section("The eaters with Motion smear: their own size, no trail");
 {
-  ok("a look key, appended, on", T.LOOK_KEYS.indexOf("eaterSmear") > T.LOOK_KEYS.indexOf("crtGlitchWhen") && T.DEFAULT_SETTINGS.eaterSmear === true);
-  const own = { x: 100, y: 10, w: 2, h: 24 }, r = { x: 100, y: 10, w: 9, h: 24 };
+  ok("eaterSmear: still a look key (share codes count them in order), unused", T.LOOK_KEYS.indexOf("eaterSmear") > T.LOOK_KEYS.indexOf("crtGlitchWhen") && T.DEFAULT_SETTINGS.eaterSmear === true);
+  const own = { x: 100, y: 10, w: 2, h: 24 };
   // The cursor stepped left: the smear's quad trails 9 px to the right of it.
   const q = { tl: { x: 100, y: 10 }, tr: { x: 111, y: 10 }, br: { x: 111, y: 34 }, bl: { x: 100, y: 34 } };
   // drawEater, the painters stubbed: the rect each is handed, what was
-  // filled at what alpha, and what was marked for the next clear.
-  const run = (over, kind = "shredder") => {
-    const e = makeEngine({ popEffects: true, [kind === "backman" ? "backMan" : "shredder"]: true, smear: true, ...over });
+  // filled, and what was marked for the next clear.
+  const run = (over, kind) => {
+    const e = makeEngine({ popEffects: true, [kind === "backman" ? "backMan" : kind === "shredder" ? "shredder" : "rabbitHole"]: true, smear: true, ...over });
     e._eaterNow = () => ({ kind, back: false, m: 1 });
     e.styleFor = (k) => (k === "cursorStyle" ? "Box" : e.look[k]);
     e.shredPose = () => ({ dash: 1, letters: [] });
+    e.holePose = () => ({ sag: 0, r2: 0, r3: 0, landT: -1e9, letters: [] });
     e.drawShreds = () => {};
     e.animActive = { x: 100, top: 10, w: 2, h: 24, actualCharWidth: 9 };
     e.smearCorners = () => q;
@@ -184,45 +185,18 @@ section("The eaters smeared with Motion smear");
     let got = null;
     e.drawBackMan = (c, x, y, w, h) => { got = { x, y, w, h }; };
     e.drawShredLine = (c, x, y, w, h) => { got = { x, y, w, h }; };
+    e.drawHole = (c, x, y, w, h) => { got = { x, y, w, h }; };
     e.dirty = [];
     const ctx = makePathCtx();
     e.drawEater(ctx, own, 100, "#f80", 0, 0, 1000);
     return Object.assign(got, { ops: ctx.ops, dirty: e.dirty });
   };
-  const on = run({}), off = run({ eaterSmear: false });
-  ok("with Motion smear on: the eater its own size, never stretched ('too big with smear on, just make it have the trail')", on.w === off.w && on.x === off.x && on.w === r.w, [on, off]);
-  // The trail: fillRect slices from the eater's right edge (109) out as far
-  // as the smear reaches past the cursor's box (9 px past 102), the freshest
-  // the strongest.
-  const slices = on.ops.filter((o) => o.op === "fillRect");
-  ok("...and its trail: a streak in its own height from its edge out to where it has been (the smear's reach past the cursor), ('a smear trail')",
-     slices.length >= 3 && Math.abs(slices[0].x - 109) < 1e-9 && slices.every((s) => s.y === 10 && s.h === 24) && Math.abs(slices[slices.length - 1].x + slices[slices.length - 1].w - 118.25) < 1e-6 && !off.ops.some((o) => o.op === "fillRect"), slices);
-  ok("...each stretch fading with how long ago the eater was there: EATER_TRAIL_ALPHA just now, nothing EATER_TRAIL_MS ago", Math.abs(T.eaterTrailAlpha(0) - T.EATER_TRAIL_ALPHA) < 1e-9 && T.eaterTrailAlpha(T.EATER_TRAIL_MS) === 0 && T.eaterTrailAlpha(Infinity) === 0 && T.eaterTrailAlpha(200) < T.eaterTrailAlpha(50));
-  // The path's rules, on a Vacuum's floor (3 px high) where the cursor's own
-  // box is 17 wide and the eater 9.
-  const floor = { x: 100, y: 31, w: 9, h: 3 }, wide = { x: 100, y: 10, w: 17, h: 24 };
-  const mov = { tl: { x: 100, y: 10 }, tr: { x: 140, y: 10 }, br: { x: 140, y: 34 }, bl: { x: 100, y: 34 } };
-  ok("a frame of its path: its own stretch, widened by the smear's reach past the cursor's box", JSON.stringify(T.eaterPathPoint(floor, wide, mov, 5)) === JSON.stringify({ t: 5, x0: 100, x1: 109 + 23 }));
-  const still = { tl: { x: 100, y: 10 }, tr: { x: 117, y: 10 }, br: { x: 117, y: 34 }, bl: { x: 100, y: 34 } };
-  ok("...at rest, no wider than itself (no ghost of the cursor's box)", JSON.stringify(T.eaterPathPoint(floor, wide, still, 5)) === JSON.stringify({ t: 5, x0: 100, x1: 109 }) && T.eaterTrailRuns(floor, [T.eaterPathPoint(floor, wide, still, 5)], 10, 72).length === 0);
-  const join = { tl: { x: 100, y: 10 }, tr: { x: 400, y: 10 }, br: { x: 400, y: 58 }, bl: { x: 100, y: 58 } };
-  ok("...across rows, not widened at all (a Backspace joining two lines)", JSON.stringify(T.eaterPathPoint(floor, wide, join, 5)) === JSON.stringify({ t: 5, x0: 100, x1: 109 }));
-  // One slow Backspace (a phone's): the eater was a letter right of here a
-  // moment ago, and has rested since.
-  const here = { x: 100, y: 31, w: 9, h: 3 };
-  const path = [{ t: 0, x0: 109, x1: 118 }, { t: 16, x0: 100, x1: 109 }, { t: 100, x0: 100, x1: 109 }];
-  ok("one slow delete leaves a trail back to where it was, for EATER_TRAIL_MS", JSON.stringify(T.eaterTrailRuns(here, path, 150, 72)) === JSON.stringify([[109, 118, 1]]) && T.eaterTrailRuns(here, path, T.EATER_TRAIL_MS + 1, 72).length === 0);
-  ok("...fading as it ages: where it was 150 ms ago fainter than a moment ago", T.eaterPathAge(path, 113, 150) === 150 && T.eaterPathAge(path, 104, 150) === 50 && T.eaterTrailAlpha(T.eaterPathAge(path, 113, 150)) < T.eaterTrailAlpha(T.eaterPathAge(path, 104, 150)));
-  const long = [{ t: 0, x0: 300, x1: 309 }, { t: 10, x0: 100, x1: 109 }];
-  ok("...EATER_TRAIL_CW letters at most", JSON.stringify(T.eaterTrailRuns(here, long, 20, 8 * 9)) === JSON.stringify([[109, 181, 1]]) && T.EATER_TRAIL_CW === 8);
-  ok("...none with the switch off, nor without Motion smear", !run({ smear: false }).ops.some((o) => o.op === "fillRect"));
-  ok("Back-man has none: on the creature it read as a fast trail ('remove the smear from the eating creature')", !run({}, "backman").ops.some((o) => o.op === "fillRect"));
+  ok("with Motion smear on: each eater its own size, never stretched", ["backman", "shredder", "rabbithole"].every((k) => run({}, k).w === run({ smear: false }, k).w));
+  ok("...and no trail behind any of them (\"remove the smear suboption for those too\")", ["backman", "shredder", "rabbithole"].every((k) => !run({}, k).ops.some((o) => o.op === "fillRect" || o.op === "fill")));
+  const on = run({}, "backman");
   const d = on.dirty.find((m) => m.x < 100 && m.x + m.w > 109);
   ok("all it may paint marked for the next frame's clear: its rect, grown and bent past it", !!d && d.x < 100 - 9 && d.x + d.w > 109 + 9 && d.y < 10 - 9 && d.y + d.h > 34 + 9, on.dirty);
   const rows = renderPanel({ popEffects: true, shredder: true });
-  const row = rows.find((x) => x.name === "Smear");
-  ok("a setting under the eater's choice, needing Motion smear", !!row && rows.findIndex((x) => x.name === "Smear") > rows.findIndex((x) => x.name === "Cursor on delete") && rows.findIndex((x) => x.name === "Smear") < rows.findIndex((x) => x.name === "Letters on delete"));
-  const shown = (keys) => { const r = renderPanel(Object.assign({ popEffects: true }, keys)).find((x) => x.name === "Smear"); return !!r && (!r.def.visible || r.def.visible()); };
-  ok("...for the Shredder and the Portal; not for Back-man, which has no trail", shown({ shredder: true }) && shown({ rabbitHole: true }) && !shown({ backMan: true }));
-  ok("the preview leaves the trail too (not Back-man's), its eater its own size, the trail its shape", /const r = r0;\n\s*if \(look\.smear && look\.eaterSmear !== false && d\.eatM\.kind !== "backman" && !d\.eatM\.exit && stretch > 0\.5\) trail = \{ x: r0\.x \+ r0\.w, y: r0\.y, w: Math\.min\(stretch, EATER_TRAIL_CW \* px\), h: r0\.h \};/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
+  ok("no Smear setting under the eater's choice", !rows.some((x) => x.name === "Smear") && !renderPanel({ popEffects: true, rabbitHole: true }).some((x) => x.name === "Smear"));
+  ok("the preview: the eater its own size, no trail", !/eatTrail|EATER_TRAIL/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
 }

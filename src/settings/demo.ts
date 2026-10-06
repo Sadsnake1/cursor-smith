@@ -60,7 +60,7 @@ import { hsvToRgb, capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex }
 import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
-import { EATER_OUT_MS, EATER_TRAIL_ALPHA, EATER_TRAIL_CW, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
+import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
@@ -730,9 +730,6 @@ interface Demo {
   caret: HTMLElement;
   inner: HTMLElement | null;
   ghosts: HTMLElement[];
-  // The trail an eater leaves with Motion smear on (eaterSmear), made when
-  // first wanted.
-  eatTrail: HTMLElement | null;
   look: Partial<Look>;
   color: string;
   heatStops: string[];
@@ -902,7 +899,7 @@ export class DemoStrip {
       if (script) { innerWritten = inner.createSpan({ text: "" }); innerRest = inner.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }); }
     }
     const d: Demo = {
-      el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, eatTrail: null, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
+      el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
       script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, hotType: 0, hotTypeT: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
       vim: null,
     };
@@ -1729,7 +1726,6 @@ export class DemoStrip {
     // and width for the eaters below.
     const eatKind = look.popEffects ? eaterOf(eaterChoiceOf(look)) : null;
     let ex = from, ew = width, eatShape = false;
-    let trail: { x: number; y: number; w: number; h: number } | null = null;
     if (d.geo) {
       const c0 = d.bmChew;
       const live = eatKind === "backman" ? (!!c0 && !backManBite(Math.max(0, this.last - c0.c0), c0.t - c0.c0, c0.big).done) || Math.abs(d.bm.bend) >= 0.004 || Math.abs(d.bm.v) >= 0.05
@@ -1745,10 +1741,8 @@ export class DemoStrip {
         const gx = d.style === "line" ? from + lineShift : from;
         const own = { x: from, y: parseFloat(styles.top) || 0, w: width, h: parseFloat(styles.height) || 0 };
         const r0 = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH, d.style === "box"), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
-        // The eater its own size; with Motion smear on (eaterSmear), its own
-        // shape stretched behind it as a trail, as the engine's (eaterTrail).
+        // The eater its own size, no trail, as the engine's.
         const r = r0;
-        if (look.smear && look.eaterSmear !== false && d.eatM.kind !== "backman" && !d.eatM.exit && stretch > 0.5) trail = { x: r0.x + r0.w, y: r0.y, w: Math.min(stretch, EATER_TRAIL_CW * px), h: r0.h };
         ex = r.x; ew = r.w; eatShape = true;
         Object.assign(styles, { transform: `translateX(${r.x.toFixed(2)}px)`, width: `${r.w.toFixed(2)}px`, height: `${r.h.toFixed(2)}px`, top: `${r.y.toFixed(2)}px` });
         // A hollow box's border gives way to the line and the floor.
@@ -1854,14 +1848,6 @@ export class DemoStrip {
     if (d.style === "line" || d.style === "underline") d.caret.toggleClass("is-shred", eatShape);
     d.eatOn = eat;
     d.caret.setCssStyles(styles);
-    // The eater's trail (EATER_TRAIL_ALPHA of the caret), under it.
-    if (trail && !d.eatTrail) d.eatTrail = d.el.createSpan({ cls: "cursor-smith-pcard-eat-trail", attr: { "aria-hidden": "true" } });
-    if (d.eatTrail) {
-      d.eatTrail.setCssStyles(trail
-        ? { display: "", transform: `translateX(${trail.x.toFixed(2)}px)`, top: `${trail.y.toFixed(2)}px`, width: `${trail.w.toFixed(2)}px`, height: `${trail.h.toFixed(2)}px`,
-          backgroundColor: "transparent", backgroundImage: `linear-gradient(to right, ${color}, transparent)`, opacity: String(EATER_TRAIL_ALPHA * d.shape.alphaScale * alpha) }
-        : { display: "none" });
-    }
     // The letter copy inside a Box stays over the real letters: it is
     // moved back by the caret's own offset; hidden while Back-man eats.
     if (d.inner) d.inner.setCssStyles({ transform: `translateX(${(-from).toFixed(2)}px)`, visibility: eatShape ? "hidden" : "" });

@@ -370,7 +370,6 @@ export default class CursorSmithPlugin extends Plugin {
   declare _frameCaps: EngineMethods["_frameCaps"];
   declare _isAnimating: EngineMethods["_isAnimating"];
   declare _markDirty: EngineMethods["_markDirty"];
-  declare _eaterTrail: EffectsMethods["_eaterTrail"];
   declare _perfDeleteFrame: EngineMethods["_perfDeleteFrame"];
   declare _perfDeleteLine: EngineMethods["_perfDeleteLine"];
   declare _scrollCarry: EngineMethods["_scrollCarry"];

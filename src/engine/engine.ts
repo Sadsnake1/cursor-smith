@@ -1479,14 +1479,14 @@ export const engineMethods = {
     const d = perf.del;
     if (!d) return "deleting: not counted";
     const inputs = Object.entries(d.input).sort((x, y) => y[1] - x[1]).map(([t, n]) => `${t} ${n}`).join(", ") || "none";
-    return `deleting: Backspace/Delete keys ${d.key}; input events ${inputs}; delete moves ${d.moves}; frames after a delete ${d.after}, smear stretched in ${d.stretched}; eater drew ${d.eater} (trail ${d.trail})`;
+    return `deleting: Backspace/Delete keys ${d.key}; input events ${inputs}; delete moves ${d.moves}; frames after a delete ${d.after}, smear stretched in ${d.stretched}; eater drew ${d.eater}`;
   },
 
   _freshPerf(this: CursorSmithPlugin): PerfCounters {
     return {
       t0: performance.now(), ticks: 0, draws: 0, gears: {}, tickMs: 0, caretMs: 0, drawMs: 0,
       reanchors: 0, longTasks: 0, longTaskMs: 0, rafGaps: {}, rafPrev: 0, keys: 0, why: {},
-      del: { key: 0, input: {}, moves: 0, after: 0, stretched: 0, eater: 0, trail: 0 },
+      del: { key: 0, input: {}, moves: 0, after: 0, stretched: 0, eater: 0 },
     };
   },
 

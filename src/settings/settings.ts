@@ -237,6 +237,8 @@ export const DEFAULT_SETTINGS = {
   crtTrailWhen: "both",
   speedDemonWhen: "both",
   // The eaters smeared with Motion smear as they move (1.7.7): on.
+  // Unused since 1.7.7 (the eaters' trail removed: "remove the smear
+  // suboption for those too"); kept, as LOOK_KEYS' order is the share codes'.
   eaterSmear: true,
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing

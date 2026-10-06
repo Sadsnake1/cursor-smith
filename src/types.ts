@@ -65,8 +65,8 @@ export interface PerfCounters {
   // keys; every beforeinput by its inputType (a phone's keyboard deletes
   // through these); the moves a deletion made; the frames drawn within a
   // delete's window, and in how many the smear reached past the caret; the
-  // frames an eater drew, and with its trail.
-  del?: { key: number; input: Record<string, number>; moves: number; after: number; stretched: number; eater: number; trail: number };
+  // frames an eater drew.
+  del?: { key: number; input: Record<string, number>; moves: number; after: number; stretched: number; eater: number };
 }
 
 // Caret measurement caches, keyed on what invalidates them.

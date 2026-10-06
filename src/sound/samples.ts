@@ -116,7 +116,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Akko Lavender Purple, from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "akkolavender",
-    label: "Akko Lavender Purple",
+    label: "Lavenders",
     kind: "keyboard",
     onset: 0.04038,
     sounds: [["strike",0.04,0.175],["strike",0.295,0.125],["strike",0.5,0.13],["strike",0.71,0.13],["strike",0.92,0.105],["strike",1.105,0.1],["strike",1.285,0.15],["strike",1.515,0.115],["space",1.71,0.13],["back",1.92,0.14],["enter",2.14,0.15]],
@@ -125,7 +125,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // NovelKeys Cream (the original by Ryan), Mechvibes' pack (github.com/hainguyents13/mechvibes, MIT), from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "nkcream",
-    label: "NovelKeys Cream",
+    label: "Creams",
     kind: "keyboard",
     onset: 0.04169,
     sounds: [["strike",0.04,0.11],["strike",0.23,0.125],["strike",0.435,0.14],["strike",0.655,0.14],["strike",0.875,0.11],["strike",1.065,0.14],["strike",1.285,0.135],["strike",1.5,0.13],["space",1.71,0.15],["back",1.94,0.13],["enter",2.15,0.15]],
@@ -134,7 +134,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Cherry MX Red (PBT keycaps), Mechvibes' pack (github.com/hainguyents13/mechvibes, MIT), from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "mxred",
-    label: "Cherry MX Red",
+    label: "Reds",
     kind: "keyboard",
     onset: 0.043,
     sounds: [["strike",0.04,0.175],["strike",0.295,0.15762],["strike",0.53263,0.16444],["strike",0.77706,0.16237],["strike",1.01944,0.14],["strike",1.23944,0.17308],["strike",1.49252,0.1494],["strike",1.72192,0.18408],["space",1.986,0.28],["back",2.346,0.20585],["enter",2.63185,0.22]],
@@ -143,7 +143,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Cherry MX Brown (PBT keycaps), Mechvibes' pack (github.com/hainguyents13/mechvibes, MIT), from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "mxbrown",
-    label: "Cherry MX Brown",
+    label: "Browns",
     kind: "keyboard",
     onset: 0.04302,
     sounds: [["strike",0.04,0.15577],["strike",0.27577,0.18358],["strike",0.53935,0.16],["strike",0.77935,0.18483],["strike",1.04419,0.16],["strike",1.28419,0.15954],["strike",1.52373,0.17017],["strike",1.7739,0.18338],["space",2.03727,0.2],["back",2.31727,0.19896],["enter",2.59623,0.192]],
@@ -152,7 +152,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Cherry MX Blue (PBT keycaps), Mechvibes' pack (github.com/hainguyents13/mechvibes, MIT), from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "mxblue",
-    label: "Cherry MX Blue",
+    label: "Blues",
     kind: "keyboard",
     onset: 0.04321,
     sounds: [["strike",0.04,0.17],["strike",0.29,0.185],["strike",0.555,0.155],["strike",0.79,0.16475],["strike",1.03475,0.16],["strike",1.27475,0.145],["strike",1.49975,0.155],["strike",1.73475,0.165],["space",1.97975,0.235],["back",2.29475,0.225],["enter",2.59975,0.2]],
@@ -161,7 +161,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Razer Green (BlackWidow Elite), recorded by Akira, from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "razergreen",
-    label: "Razer Green",
+    label: "Greens",
     kind: "keyboard",
     onset: 0.06525,
     sounds: [["strike",0.04,0.22],["strike",0.34,0.16],["strike",0.58,0.22],["strike",0.88,0.18],["strike",1.14,0.175],["strike",1.395,0.195],["space",1.67,0.18],["back",1.93,0.19],["enter",2.2,0.245]],
@@ -170,7 +170,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // IBM buckling spring, from kbsim by Thomas Lai (github.com/tplai/kbsim), MIT
   {
     id: "buckling",
-    label: "IBM Buckling Spring",
+    label: "Buckling Springs",
     kind: "keyboard",
     onset: 0.04421,
     sounds: [["strike",0.04,0.105],["strike",0.225,0.11],["strike",0.415,0.105],["strike",0.6,0.105],["strike",0.785,0.09],["space",0.955,0.18298],["back",1.21798,0.13319],["enter",1.43117,0.1486]],
@@ -179,7 +179,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Gateron Ink Black, from kbsim by Thomas Lai (github.com/tplai/kbsim), MIT
   {
     id: "inkblack",
-    label: "Gateron Ink Black",
+    label: "Ink Blacks",
     kind: "keyboard",
     onset: 0.04227,
     sounds: [["strike",0.04,0.06546],["strike",0.18546,0.06546],["strike",0.33092,0.06546],["strike",0.47637,0.06546],["strike",0.62183,0.06546],["space",0.76729,0.14815],["back",0.99544,0.14656],["enter",1.222,0.15904]],
@@ -188,7 +188,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Durock Alpaca, from kbsim by Thomas Lai (github.com/tplai/kbsim), MIT
   {
     id: "alpaca",
-    label: "Durock Alpaca",
+    label: "Pinks",
     kind: "keyboard",
     onset: 0.04185,
     sounds: [["strike",0.04,0.07712],["strike",0.19712,0.07712],["strike",0.35425,0.07712],["strike",0.51138,0.07712],["strike",0.6685,0.07712],["space",0.82563,0.15002],["back",1.05565,0.14429],["enter",1.27994,0.15794]],

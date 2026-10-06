@@ -46,7 +46,7 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 |---|---|
 | **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete, or your cursor eats it: a Box becomes Back-man, a hungry little creature with a big square eye that gulps each letter down; a Line turns into a Shredder that cuts it into falling ribbons; an Underline opens into a Rabbit hole that swallows it. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
-| **Sounds** | Real typewriters, mechanical keyboards, a piano, chalk on a blackboard, a horse and more as you type, each with its own Space, Backspace and Enter. |
+| **Sounds** | Real typewriters, mechanical keyboards, a kalimba and an actual horse as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
 | **Stardust** | Motes drifting up from the cursor, or orbiting it like fireflies. |
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
@@ -70,8 +70,7 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 Turn on **Sounds** on its own page, pick a category, then a sound. Press play to hear it before you type.
 
 - **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
-- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown, Blue and Black, Razer Green, Thocks, IBM Buckling Spring, Topre, Gateron Ink Black, Holy Panda, Durock Alpaca, Gateron Turquoise Tealios, Kailh Box Navy, Alps SKCM Blue, Everglide Oreo, Everglide Crystal Purple. Every key sounds from where it sits on the board.
-- **Something else:** Chalk on a blackboard, a Kalimba and a Piano that turn your words into little tunes, 8-Bit, Sine Bumps, Glitch, and a Horse. Yes, a horse.
+- **Keyboards:** Akko Lavender Purple, NovelKeys Cream, Cherry MX Red, Brown and Blue, Razer Green, IBM Buckling Spring, Gateron Ink Black, Durock Alpaca, a Kalimba, and an Actual Horse. Every key sounds from where it sits on the board.
 
 Ready to annoy some people? Try it out!
 
@@ -86,7 +85,7 @@ Recordings, cut and leveled for the plugin:
 
 The Hermes 3000, L. C. Smith, Olympia, Sears Electric Twelve and Smith-Corona Corsair are public-domain recordings from Freesound.
 
-Most keyboards and the other sounds come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX, NovelKeys Cream and Everglide packs are [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. The IBM Buckling Spring, Topre, Gateron Ink Black, Holy Panda, Durock Alpaca, Gateron Turquoise Tealios, Kailh Box Navy and Alps SKCM Blue come from Thomas Lai's [kbsim](https://github.com/tplai/kbsim). All three are MIT licensed:
+Most keyboards, the Kalimba and the horse come from [OmaVibes](https://github.com/mshareef-git/omavibes) by Mohammed Shareef ([mshareef-git](https://github.com/mshareef-git)), who brought them over in [issue #46](https://github.com/Sadsnake1/cursor-smith/issues/46). Thank you! The Cherry MX and NovelKeys Cream packs were first [Mechvibes](https://github.com/hainguyents13/mechvibes)' own. The IBM Buckling Spring, Gateron Ink Black and Durock Alpaca come from Thomas Lai's [kbsim](https://github.com/tplai/kbsim). All three are MIT licensed:
 
 <details>
 <summary>MIT License (OmaVibes, Mechvibes, kbsim)</summary>

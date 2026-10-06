@@ -60,7 +60,7 @@ section("Randomizer: the dials");
      [share(still, (l) => l.smoothEnabled), share(moving, (l) => l.smoothEnabled)]);
   const loud = many({ sounds: true }, 100);
   ok("Include sounds: a sound every roll, any of them, near the default level", loud.every((l) => l.typewriterSound && T.SOUND_MACHINES.some((m) => m.id === l.typewriterSoundVoice) && l.typewriterSoundVolume >= 40 && l.typewriterSoundVolume <= 60) &&
-     new Set(loud.map((l) => T.soundMachine(l.typewriterSoundVoice).kind)).size === 3);
+     new Set(loud.map((l) => T.soundMachine(l.typewriterSoundVoice).kind)).size === new Set(T.SOUND_MACHINES.map((m) => m.kind)).size);
   ok("...off: a silent cursor, the chosen sound left as it was", many({ sounds: false }, 50).every((l) => l.typewriterSound === false && !("typewriterSoundVoice" in l)));
   ok("a pop group or a typewriter rolled always has something of its own on",
      many({ chaos: 20 }, 400).every((l) => (!l.popEffects || l.popLetters || l.backspaceDisintegrate || l.backspaceEvaporate || l.thunderstrike || l.fireworks) &&

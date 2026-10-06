@@ -17,11 +17,11 @@ section("Sounds: the machines");
   ok("ten real typewriters, the Hermes 3000 first and the default, the rest by name",
      TW.map((m) => m.label).join() === "Hermes 3000,Erika 5 (1940),IBM Selectric II,L. C. Smith (1946),Mercedes (1934),Olivetti Lettera 35,Olympia (1956),Royal Portable (1936),Sears Electric Twelve,Smith-Corona Corsair" &&
      M[0].id === "hermes3000" && T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000" && new Set(M.map((m) => m.id)).size === M.length, M.map((m) => m.label));
-  ok("then eighteen keyboards (issue #46's picks, the listening page's, then popular switches) and seven other sounds, each of a kind, the kinds in order",
-     KB.map((m) => m.label).join() === "Akko Lavender Purple,NovelKeys Cream,Cherry MX Red,Cherry MX Brown,Cherry MX Blue,Cherry MX Black,Razer Green,Thocks,IBM Buckling Spring,Topre,Gateron Ink Black,Holy Panda,Durock Alpaca,Gateron Turquoise Tealios,Kailh Box Navy,Alps SKCM Blue,Everglide Oreo,Everglide Crystal Purple" &&
-     OTHER.map((m) => m.label).join() === "Chalk,Kalimba,Piano,8-Bit,Sine Bumps,Glitch,Horse" && TW.length + KB.length + OTHER.length === M.length &&
+  ok("then eleven keyboards (the list pruned 2026-10-06, the Kalimba and the horse among them) and nothing else, the kinds in order",
+     KB.map((m) => m.label).join() === "Akko Lavender Purple,NovelKeys Cream,Cherry MX Red,Cherry MX Brown,Cherry MX Blue,Razer Green,IBM Buckling Spring,Gateron Ink Black,Durock Alpaca,Kalimba,Actual Horse" &&
+     OTHER.length === 0 && TW.length + KB.length + OTHER.length === M.length &&
      M.map((m) => m.kind).join() === [...TW, ...KB, ...OTHER].map((m) => m.kind).join(), M.map((m) => m.kind));
-  ok("...the ones that play notes are never detuned: Kalimba, Piano, 8-Bit, Sine Bumps", M.filter((m) => m.tonal).map((m) => m.id).join() === "kalimba,piano,bit8,sinebumps");
+  ok("...the one that plays notes is never detuned: the Kalimba", M.filter((m) => m.tonal).map((m) => m.id).join() === "kalimba");
   const common = (m) => {
     const bytes = new Uint8Array(T.soundBytes(m.mp3));
     const mp3 = (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) || String.fromCharCode(bytes[0], bytes[1], bytes[2]) === "ID3";
@@ -40,19 +40,19 @@ section("Sounds: the machines");
   for (const m of [...KB, ...OTHER]) {
     const takes = T.soundTakes(m);
     const all = T.KEYBOARD_ATOMS.every((n) => (takes[n] || []).length > 0) && !takes.capital && !takes.feed && !takes.bell;
-    // 8-Bit has one blip for every letter.
-    const counts = takes.strike.length >= (m.id === "bit8" ? 1 : 5) && takes.strike.length <= 8 && takes.space.length === 1 && takes.back.length === 1 && takes.enter.length === 1;
+    const counts = takes.strike.length >= 5 && takes.strike.length <= 8 && takes.space.length === 1 && takes.back.length === 1 && takes.enter.length === 1;
     const { bytes, mp3, inOrder } = common(m);
     ok(`${m.label}: its keys (5 to 8), its space bar, Backspace and Enter - no capitals, no return, no bell - in order`, all && counts && inOrder, Object.fromEntries(Object.entries(takes).map(([k, v]) => [k, v.length])));
-    // Notes ring longer, so a piano is bigger.
+    // Notes ring longer, so the Kalimba is bigger.
     const kb = m.tonal ? 96 : 64;
     ok(`...as one MP3 under ${kb} KB, its first sound inside the first take`, mp3 && bytes.length < kb * 1024 && m.onset > 0 && m.onset < m.sounds[0][1] + m.sounds[0][2], [bytes.length, m.onset]);
-    const longest = m.tonal ? 1.3 : m.kind === "keyboard" ? 0.35 : 0.45;
-    ok(`...every sound short: ${m.tonal ? "a note rings under 1.3 s" : m.kind === "keyboard" ? "a key under 0.35 s" : "under 0.45 s"}`, m.sounds.every(([, , dur]) => dur < longest), m.sounds.map((x) => x[2]));
+    // The horse's clops are its own, cut as heard: a little longer.
+    const longest = m.tonal ? 1.3 : m.id === "horse" ? 0.45 : 0.35;
+    ok(`...every sound short: ${m.tonal ? "a note rings under 1.3 s" : m.id === "horse" ? "a clop under 0.45 s" : "a key under 0.35 s"}`, m.sounds.every(([, , dur]) => dur < longest), m.sounds.map((x) => x[2]));
   }
   const total = M.reduce((n, m) => n + T.soundBytes(m.mp3).byteLength, 0);
-  ok("all twenty-eight under 1.2 MB", total < 1200 * 1024, Math.round(total / 1024) + " KB");
-  ok("the big recordings give 8 keys: fast typing repeats less", TW.filter((m) => T.soundTakes(m).strike.length === 8).length >= 3 && KB.filter((m) => T.soundTakes(m).strike.length === 8).length >= 6, M.map((m) => T.soundTakes(m).strike.length));
+  ok("all twenty-one under 800 KB", total < 800 * 1024, Math.round(total / 1024) + " KB");
+  ok("the big recordings give 8 keys: fast typing repeats less", TW.filter((m) => T.soundTakes(m).strike.length === 8).length >= 3 && KB.filter((m) => T.soundTakes(m).strike.length === 8).length >= 4, M.map((m) => T.soundTakes(m).strike.length));
   // Credits live with each machine (no NOTICE file): who recorded it, where,
   // under which licence - the CC BY recordings require it.
   // Credits are comments above each machine in samples.ts: in the source,
@@ -64,8 +64,8 @@ section("Sounds: the machines");
      credits.filter((c) => T.soundMachine(c.id).kind === "typewriter").every((c) => /freesound\.org\/s\/\d+|commons\.wikimedia\.org/.test(c.text) && /CC0|CC BY/.test(c.text)), credits);
   ok("...the keyboards and the other sounds: OmaVibes, kbsim or Mechvibes, MIT; the Mechvibes packs Mechvibes too",
      credits.filter((c) => T.soundMachine(c.id).kind !== "typewriter").every((c) => /OmaVibes by Mohammed Shareef \(github\.com\/mshareef-git\/omavibes\), MIT|kbsim by Thomas Lai \(github\.com\/tplai\/kbsim\), MIT|Mechvibes' pack \(github\.com\/hainguyents13\/mechvibes, MIT\)/.test(c.text)) &&
-     ["buckling", "topre", "inkblack", "holypanda", "alpaca", "tealios", "boxnavy", "alpsblue"].every((id) => /kbsim/.test(credits.find((c) => c.id === id).text)) &&
-     ["nkcream", "mxred", "mxbrown", "mxblue", "mxblack", "egoreo", "egpurple"].every((id) => /github\.com\/hainguyents13\/mechvibes, MIT/.test(credits.find((c) => c.id === id).text)));
+     ["buckling", "inkblack", "alpaca"].every((id) => /kbsim/.test(credits.find((c) => c.id === id).text)) &&
+     ["nkcream", "mxred", "mxbrown", "mxblue"].every((id) => /github\.com\/hainguyents13\/mechvibes, MIT/.test(credits.find((c) => c.id === id).text)));
   ok("...the CC BY ones by name", credits.filter((c) => /CC BY/.test(c.text)).every((c) => /recorded by \S+/.test(c.text)) && credits.filter((c) => /CC BY/.test(c.text)).length >= 4);
   // The README credits the CC BY recordings - author, link, licence.
   const readme = fs.readFileSync(path.join(__dirname, "..", "..", "README.md"), "utf8");
@@ -350,11 +350,11 @@ section("Sounds: the settings");
   ok("...a keyboard chosen: no Bell (a typewriter's)", visible(row(kb, "Sound")) && visible(row(kb, "Volume")) && !visible(row(kb, "Bell")));
   // The Category: the kind of the sound chosen; the Sound list that kind's.
   const cat = row(kb, "Category").dropdowns[0], snd = row(kb, "Sound").dropdowns[0];
-  ok("Category: the chosen sound's kind, of the three", cat._value === "keyboard" && Object.keys(cat._options).join() === "typewriter,keyboard,other");
+  ok("Category: the chosen sound's kind, of the two there are sounds of", cat._value === "keyboard" && Object.keys(cat._options).join() === "typewriter,keyboard");
   ok("...and Sound lists that kind's only (no scrolling through 28)", Object.keys(snd._options).join() === T.SOUND_MACHINES.filter((m) => m.kind === "keyboard").map((m) => m.id).join() && snd._value === "nkcream", Object.keys(snd._options));
   const updates = kb.tab.updates;
-  cat._change("other");
-  ok("...a kind picked: its first sound, and the rows rebuilt with its list", kb.settings.typewriterSoundVoice === "chalk" && kb.tab.updates === updates + 1);
+  cat._change("typewriter");
+  ok("...a kind picked: its first sound, and the rows rebuilt with its list", kb.settings.typewriterSoundVoice === "hermes3000" && kb.tab.updates === updates + 1);
   const tw = panel({ typewriter: true, typewriterSound: false });
   ok("Typewriter on, Sounds off: no sound rows under Typewriter", row(tw, "Carriage advance").def.visible() && !row(tw, "Sound").def.visible() && !row(tw, "Volume").def.visible() && !row(tw, "Bell").def.visible());
 }

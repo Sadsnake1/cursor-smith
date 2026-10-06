@@ -1785,8 +1785,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const kindOf = (): SoundKind => soundMachine(get("typewriterSoundVoice")).kind;
     // A kind picked: its first sound, and the Sound list rebuilt with that
     // kind's (a rebuild: the list's options change, not just what shows).
-    const SOUND_KINDS: Record<SoundKind, string> = { typewriter: "Typewriters", keyboard: "Keyboards", other: "Something else" };
-    sounds.push(row("Category", "Typewriters, mechanical keyboards, or something else.", (s) => {
+    // Only the kinds there are sounds of (none of "something else" since
+    // the list was pruned to typewriters and keyboards, 2026-10-06).
+    const KIND_NAMES: Record<SoundKind, string> = { typewriter: "Typewriters", keyboard: "Keyboards", other: "Something else" };
+    const SOUND_KINDS = Object.fromEntries(Object.entries(KIND_NAMES).filter(([k]) => SOUND_MACHINES.some((m) => m.kind === k)));
+    sounds.push(row("Category", "Typewriters or keyboards.", (s) => {
       s.addDropdown((d) => d.addOptions(SOUND_KINDS).setValue(kindOf()).onChange((k) => {
         const first = SOUND_MACHINES.find((m) => m.kind === k);
         if (first) void rebuild("typewriterSoundVoice")(first.id);

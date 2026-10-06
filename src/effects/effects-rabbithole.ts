@@ -3,27 +3,31 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Pop effects' Rabbit hole (1.7.7, asked as "Portal. It sucks the letters
-// in or something like that. Find a better name"): the Underline cursor -
-// the floor under the letter - is a little trampoline. A letter Backspace
-// or Delete takes drops onto it and squashes as it lands; the floor sags
-// under it into a shallow dip ("dont make the cursor a circle, make it
-// curved concave just a bit"; it was a dark ellipse for a day) and pulls it
-// through, out of sight; then the floor springs back up past straight and
-// wobbles to rest. A floor: on a Box or a Line the cursor morphs into one
+// Pop effects' Vacuum (1.7.7; asked as "Portal. It sucks the letters in",
+// named Rabbit hole, renamed when "it does not look like a rabbit hole" -
+// the code keeps the old names, rabbitHole and hole*, as the saved
+// settings do): the Underline cursor - the floor under the letter - sucks
+// the letters Backspace or Delete takes down into it. A letter is pulled
+// down, faster and faster, stretching tall and thin toward it (no streaks:
+// the user's word); the floor dips in one quick pull as the letter goes in
+// - a shallow dip ("dont make the cursor a circle, make it curved concave
+// just a bit"; a dark ellipse for a day) - and it goes through, thinner,
+// out of sight; then the floor springs back up past straight and wobbles
+// to rest. A floor: on a Box or a Line the cursor morphs into one
 // first (effects-eaters.ts).
 import type { CaretRecord, DeletedLetters } from "../types";
 import { letterChoiceOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
 
-// A letter's way down: the drop onto the floor (to LAND of the way), the
-// squash as it lands (to SINK), the pull through (to the end).
+// A letter's way in: pulled down to the floor (to LAND of the way), then
+// through it (to the end) - SINK, where it starts going through, is LAND.
 export const HOLE_FALL_MS = 420;
-const LAND = 0.4, SINK = 0.6;
-// How far the floor sags under a letter (a letter's width - "just a bit"),
-// how much a letter squashes as it lands.
+const LAND = 0.55, SINK = LAND;
+// How far the floor dips as it pulls a letter in (a letter's width - "just
+// a bit"), how much taller a letter is stretched by the pull (it goes
+// thinner as much).
 export const HOLE_SAG = 0.3;
-export const HOLE_SQUASH = 0.45;
+export const HOLE_STRETCH = 0.5;
 // The floor's spring: its frequency (Hz) and damping ratio (0.3: it springs
 // back past straight and wobbles), the kick a landing gives it and a key's
 // tap (letter widths a second).
@@ -59,29 +63,27 @@ export function holeSpring(s: { sag: number; v: number }, dt: number, target: nu
 }
 
 // A letter at `now`, the floor's middle at (fx, fy) (its top edge, where it
-// dips deepest): where its foot is (x, foot), how it is squashed (sx, sy),
-// shrunk (k) and turned, how seen (alpha), which part of its way it is on
-// (0 dropping, 1 landing, 2 going through) and whether it is gone. It drops
-// onto the floor, squashes flat and springs back as it lands, then sinks
-// through, turning a little. Pure.
+// dips deepest): where its foot is (x, foot), how it is stretched (sx, sy,
+// about its foot), shrunk (k) and turned (rot, none: the pull is straight),
+// how seen (alpha), which part of its way it is on (0 pulled down, 2 going
+// through) and whether it is gone. Pulled down faster and faster, it
+// stretches tall and thin toward the floor; then it goes through, thinner
+// still, its top past the floor by the end. Pure.
 export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
   const u = clamp01((now - l.t0) / HOLE_FALL_MS);
   const foot0 = l.cy + l.half;
   if (u < LAND) {
-    const e = (u / LAND) * (u / LAND);
-    return { x: l.cx + (fx - l.cx) * e, foot: foot0 + (fy - foot0) * e, sx: 1, sy: 1, k: 1, rot: 0, alpha: 1, phase: 0, done: false };
-  }
-  if (u < SINK) {
-    const s = Math.sin((Math.PI * (u - LAND)) / (SINK - LAND)) * HOLE_SQUASH;
-    return { x: fx, foot: fy, sx: 1 + 0.6 * s, sy: 1 - s, k: 1, rot: 0, alpha: 1, phase: 1, done: false };
+    const e = Math.pow(u / LAND, 3);
+    return { x: l.cx + (fx - l.cx) * e, foot: foot0 + (fy - foot0) * e, sx: 1 - 0.4 * e, sy: 1 + HOLE_STRETCH * e, k: 1, rot: 0, alpha: 1, phase: 0, done: false };
   }
   const c = (u - SINK) / (1 - SINK);
-  return { x: fx, foot: fy + 2.4 * l.half * Math.pow(c, 1.5), sx: 1, sy: 1, k: 1 - 0.4 * c, rot: 0.6 * Math.PI * c * c, alpha: 1, phase: 2, done: u >= 1 };
+  const sx = 0.6 - 0.35 * c, sy = 1 + HOLE_STRETCH + 0.4 * c, k = 1 - 0.2 * c;
+  return { x: fx, foot: fy + 2 * l.half * sy * k * Math.pow(c, 1.2) + 1, sx, sy, k, rot: 0, alpha: 1, phase: 2, done: u >= 1 };
 }
 
 export const effectsRabbitHoleMethods = {
-  // On for the look showing: Pop effects and Rabbit hole the "When you
-  // delete" choice - on any cursor (effects-eaters.ts morphs it into a floor).
+  // On for the look showing: Pop effects and Vacuum the cursor's choice on
+  // delete - on any cursor (effects-eaters.ts morphs it into a floor).
   _holeOn(this: CursorSmithPlugin): boolean {
     return this._eaterOn() === "rabbithole";
   },
@@ -125,7 +127,7 @@ export const effectsRabbitHoleMethods = {
     const s = this._hole;
     if (!s || !this._holeOn()) return null;
     // The letters' effect: Burst as a splash of pixels out of the dip as a
-    // letter goes through, Evaporate as its ghost floating back up out of it.
+    // letter goes in, Evaporate as its ghost floating back up out of it.
     const fx = this.look.popEffects ? letterChoiceOf(this.look) : "vanish";
     for (const l of s.letters) {
       const u = (now - l.t0) / HOLE_FALL_MS;

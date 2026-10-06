@@ -1574,14 +1574,14 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       "popLettersRise", { depth: 2, when: all(pop, on("popLetters")) }));
     // What Backspace and Delete do (1.7.7): two choices, one of each, every
     // pair working together ("combine backman with desintegrator and such
-    // combos") - the cursor's (an eater: Back-man, Shredder, Rabbit hole, on
+    // combos") - the cursor's (an eater: Back-man, Shredder, Vacuum, on
     // any cursor; effects-eaters.ts morphs it into the eater's shape) and the
     // letters' (burst, evaporate, or just gone; with an eater, played where
     // it is done with them). Kept in the five switches they replaced, one of
     // each set on (eaterChoiceOf, letterChoiceOf), so saved looks, presets
     // and share codes read as they did. Next to Popping letters: the pair
     // that fires per character, one for adding and one for removing.
-    const EATER_NAMES: Record<EaterChoice, string> = { none: "Nothing", backman: "Back-man", shredder: "Shredder", rabbithole: "Rabbit hole" };
+    const EATER_NAMES: Record<EaterChoice, string> = { none: "Nothing", backman: "Back-man", shredder: "Shredder", rabbithole: "Vacuum" };
     const LETTER_NAMES: Record<LetterChoice, string> = { vanish: "None", burst: "Burst", evaporate: "Evaporate" };
     for (const [, key] of [...EATER_KEYS, ...LETTER_KEYS]) { owns(key); gates.add(key); }
     const lookNow = () => ({ backMan: !!get("backMan"), shredder: !!get("shredder"), rabbitHole: !!get("rabbitHole"), backspaceEvaporate: !!get("backspaceEvaporate"), backspaceDisintegrate: !!get("backspaceDisintegrate") });

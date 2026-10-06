@@ -1,4 +1,4 @@
-// Pop effects' Shredder (a Line's) and Rabbit hole (an Underline's), 1.7.7:
+// Pop effects' Shredder (a Line's) and Vacuum (an Underline's), 1.7.7:
 // what Backspace and Delete take, cut into ribbons by the Line broken into
 // blades, or dropped onto the Underline - a little trampoline - squashing,
 // and pulled through as it sags, the floor springing back after. The pure
@@ -21,14 +21,14 @@ section("Shredder: the blades and the ribbons");
   ok("...its ribbons falling and fading after, then gone", start.dy === 0 && end.dy > 0 && end.alpha === 1 && T.shredFeed(l, 100, T.SHRED_FEED_MS + T.SHRED_FALL_MS / 2).alpha < 0.6 && gone.done);
 }
 
-section("Rabbit hole: the drop, the squash, the pull, the bounce");
+section("Vacuum: the pull, the stretch, the bounce");
 {
   const l = { char: "a", cx: 104.5, cy: 10, half: 4.8, font: "16px x", color: "#ddd", t0: 0, landed: false };
   const F = T.HOLE_FALL_MS, at = (f) => T.holeFall(l, 104.5, 22, f * F);
-  const start = at(0), dropping = at(0.2), landing = at(0.5), through = at(0.8), gone = at(1);
-  ok("a letter drops from where it stood onto the floor, whole, faster and faster", start.foot === 14.8 && start.sx === 1 && start.sy === 1 && start.phase === 0 && dropping.foot > 14.8 && dropping.foot - 14.8 < (22 - 14.8) / 2);
-  ok("...squashes flat as it lands, on the floor", landing.phase === 1 && landing.foot === 22 && landing.sy < 1 - 0.8 * T.HOLE_SQUASH && landing.sx > 1.2);
-  ok("...then goes through it, turning a little, its top past the floor by the end", through.phase === 2 && through.foot > 22 && through.rot > 0 && gone.done && gone.foot - 2 * l.half * gone.k > 22);
+  const start = at(0), pulling = at(0.25), near = at(0.5), through = at(0.8), gone = at(1);
+  ok("a letter is pulled down from where it stood, faster and faster", start.foot === 14.8 && start.sx === 1 && start.sy === 1 && start.phase === 0 && pulling.foot > 14.8 && pulling.foot - 14.8 < (22 - 14.8) / 4 && near.foot - pulling.foot > pulling.foot - 14.8);
+  ok("...stretching tall and thin toward the floor (about its foot)", near.phase === 0 && near.sy > 1.3 && near.sx < 0.8 && pulling.sy > 1 && pulling.sy < near.sy);
+  ok("...then through it, thinner still, straight (no turn), its top past the floor by the end", through.phase === 2 && through.foot > 22 && through.sx < near.sx && through.rot === 0 && gone.done && gone.foot - 2 * l.half * gone.sy * gone.k > 22);
   const sp = { sag: 0, v: 0 };
   let low = 0;
   for (let k = 0; k < 30; k++) { T.holeSpring(sp, 1 / 60, T.HOLE_SAG); low = Math.max(low, sp.sag); }
@@ -40,7 +40,7 @@ section("Rabbit hole: the drop, the squash, the pull, the bounce");
   ok("...and settles", Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05, sp);
 }
 
-section("Shredder and Rabbit hole: the runs");
+section("Shredder and Vacuum: the runs");
 {
   const realNow = performance.now;
   let now = 1000;
@@ -74,9 +74,9 @@ section("Shredder and Rabbit hole: the runs");
     ul.spawnHoleMeal({ letters: [{ char: "b", x: 200, w: 9 }], forward: false, old: { top: 0, h: 24, textColor: "#eee", fontSize: 16 } });
     let q = ul.holePose(now);
     ok("Backspace on an Underline: a light tap, the letter dropping from the middle of its cell", !!q && q.letters.length === 1 && q.letters[0].cx === 204.5 && q.letters[0].cy === 12 && q.letters[0].half === 4.8);
-    now += 0.5 * T.HOLE_FALL_MS;
+    now += 0.6 * T.HOLE_FALL_MS;
     q = ul.holePose(now);
-    ok("...landed: the floor kicked and sagging under it", q.letters[0].landed && q.sag > 0.1, q.sag);
+    ok("...reaching the floor: the floor pulls (kicked) and dips under it", q.letters[0].landed && q.sag > 0.1, q.sag);
     let up = 0;
     for (let k = 0; k < 40 && ul._hole; k++) { now += 16; const r = ul.holePose(now); if (r) up = Math.min(up, r.sag); }
     ok("...gone through: the floor springs back up past straight", up < -0.02, up);
@@ -91,7 +91,7 @@ section("Shredder and Rabbit hole: the runs");
   }
 }
 
-section("Shredder and Rabbit hole: they have the letters");
+section("Shredder and Vacuum: they have the letters");
 {
   const mk = (style, keys) => {
     const e = makeEngine({ cursorStyle: style, popEffects: true, backspaceEvaporate: true, backspaceDisintegrate: true, ...keys });
@@ -111,18 +111,18 @@ section("Shredder and Rabbit hole: they have the letters");
   ok("...Shredded letters off: the blades alone - the letters simply gone, still not evaporating", bare._deletionFx({}, {}) === true && bare._shred.letters.length === 0 && bare.evaporateGlyphs.length === 0);
   const ul = mk("Underline", { rabbitHole: true });
   ul._holeBite();
-  ok("...and Rabbit hole", ul._deletionFx({}, {}) === true && ul._hole.letters.length === 1 && ul.evaporateGlyphs.length === 0);
+  ok("...and Vacuum", ul._deletionFx({}, {}) === true && ul._hole.letters.length === 1 && ul.evaporateGlyphs.length === 0);
   const both = mk("Underline", { shredder: true, rabbitHole: true });
   both._shredBite(); both._holeBite();
   both._deletionFx({}, {});
   ok("...one at a time: a look with two on (saved before) is the first of them - Shredder, on an Underline too", both._shred.letters.length === 1 && !both._hole && both.evaporateGlyphs.length === 0);
 }
 
-section("Shredder and Rabbit hole: the settings");
+section("Shredder and Vacuum: the settings");
 {
   ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-3).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
   const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "Cursor on delete").dropdowns[0];
-  ok("choices of \"Cursor on delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Rabbit hole");
+  ok("choices of \"Cursor on delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Vacuum");
   const on = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });
   const sub = on.find((r) => r.name === "Shredded letters");
   ok("Shredded letters: under the choice, shown with Shredder chosen, on any cursor", !!sub && on.findIndex((r) => r.name === "Shredded letters") === on.findIndex((r) => r.name === "Cursor on delete") + 1 && sub.def.visible() && on.cardKeys.Effects.includes("shredderLetters"));
@@ -132,7 +132,7 @@ section("Shredder and Rabbit hole: the settings");
   ok("the Randomizer rolls each sometimes, on any cursor, one choice at a time", rolls.some((l) => l.shredder && l.cursorStyle !== "Line") && rolls.some((l) => l.rabbitHole && l.cursorStyle !== "Underline") && rolls.every((l) => ["backMan", "shredder", "rabbitHole"].filter((k) => l[k]).length <= 1 && ["backspaceEvaporate", "backspaceDisintegrate"].filter((k) => l[k]).length <= 1) && rolls.some((l) => l.backMan && l.backspaceDisintegrate));
 }
 
-section("Shredder and Rabbit hole: drawn");
+section("Shredder and Vacuum: drawn");
 {
   const calls = [];
   const ctx = new Proxy({}, {
@@ -150,7 +150,7 @@ section("Shredder and Rabbit hole: drawn");
   const h = { char: "b", cx: 104.5, cy: 10, half: 4.8, font: "16px x", color: "#ddd", t0: 0, landed: true };
   T.EngineProto.drawHole.call(plugin, ctx, 100, 22, 9, 2, "#f80", { sag: T.HOLE_SAG, letters: [h] }, T.HOLE_FALL_MS / 2);
   const kinds = calls.filter((c) => ["fill", "stroke", "fillText", "clip"].includes(c[0])).map((c) => c[0]).join();
-  ok("the Underline sagging: the letter (squashed on it), clipped to above the bar, then the bar - no hole, no circle", kinds === "clip,fillText,stroke" && !calls.some((c) => c[0] === "ellipse" || c[0] === "arc") && calls.some((c) => c[0] === "scale" && c[2] < c[1]), kinds);
+  ok("the Underline dipping: the letter (stretched as it is pulled), clipped to above the bar, then the bar - no hole, no circle", kinds === "clip,fillText,stroke" && !calls.some((c) => c[0] === "ellipse" || c[0] === "arc") && calls.some((c) => c[0] === "scale" && c[2] > c[1]), kinds);
   const bend = calls.filter((c) => c[0] === "quadraticCurveTo").pop();
   ok("...the bar a shallow curve: its ends where they were, its middle down a little, at its thickness in its paint",
      !!bend && bend[3] === 109 && bend[4] === 23 && bend[2] > 23 && bend[2] - 23 <= 2 * 0.35 * 9 && calls.some((c) => c[0] === "set lineWidth" && c[1] === 2) && calls.some((c) => c[0] === "set strokeStyle" && c[1] === "#f80"));

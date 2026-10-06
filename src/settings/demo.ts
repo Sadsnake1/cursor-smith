@@ -1148,10 +1148,11 @@ export class DemoStrip {
           });
         }
       } else if (p.kind === "hole") {
-        // Dropped onto the floor (d.holeAt, its middle's top edge),
-        // squashed as it lands - the floor kicked, and weighed down while
-        // it is on it - then through, as the engine's (holeFall). The
-        // span's foot (its baseline) is 9.6 px down, its middle 6.
+        // Pulled down to the floor (d.holeAt, its middle's top edge),
+        // stretching tall and thin - the floor kicked, and dipping while
+        // it goes in - then through, fading as it goes (no clip here), as
+        // the engine's (holeFall). The span's foot (its baseline) is 9.6 px
+        // down, its middle 6.
         const cw = d.stepPx || 7;
         const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0, landed: !!p.landed }, d.holeAt[0], d.holeAt[1], now);
         if (f.phase === 2 && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", d.holeAt[0] - cw / 2, 15, now)); }
@@ -1162,7 +1163,7 @@ export class DemoStrip {
         p.el.setCssStyles({
           transformOrigin: "50% 80%",
           transform: `translate(${(f.x - cw / 2).toFixed(1)}px, ${(f.foot - 9.6).toFixed(1)}px) rotate(${f.rot.toFixed(2)}rad) scale(${(f.sx * f.k).toFixed(2)}, ${(f.sy * f.k).toFixed(2)})`,
-          opacity: f.done ? "0" : f.phase === 2 ? Math.max(0, (f.k - 0.6) / 0.4).toFixed(2) : "1",
+          opacity: f.done ? "0" : f.phase === 2 ? Math.max(0, (f.k - 0.8) / 0.2).toFixed(2) : "1",
         });
       } else if (p.kind === "xout") {
         p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (t < 0.5 ? 1 : 1 - (t - 0.5) * 2).toFixed(2) });

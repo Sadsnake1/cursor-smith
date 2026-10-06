@@ -1,5 +1,5 @@
 // On delete (1.7.7): two choices - the cursor's (Nothing, Back-man,
-// Shredder, Rabbit hole) and the letters' (None, Burst, Evaporate),
+// Shredder, Vacuum) and the letters' (None, Burst, Evaporate),
 // every pair working together - kept in the five switches they replaced
 // (eaterChoiceOf, letterChoiceOf); the eaters on any cursor (the cursor
 // morphs from its own shape into its eater's and back); and the combos (the
@@ -24,7 +24,7 @@ section("The eaters' shapes and the morph");
   const box = form("backman"), line = form("shredder"), floor = form("rabbithole");
   ok("Back-man: the letter's box", box.x === 100 && box.y === 10 && box.w === 9 && box.h === 24);
   ok("Shredder: the line, centered on the gap", line.x === 99 && line.w === 2 && line.y === 10 && line.h === 24);
-  ok("Rabbit hole: the floor, at the row's foot", floor.x === 100 && floor.w === 9 && floor.y === 32 && floor.h === 2);
+  ok("Vacuum: the floor, at the row's foot", floor.x === 100 && floor.w === 9 && floor.y === 32 && floor.h === 2);
   const mid = T.lerpRect(line, box, 0.5);
   ok("a shape between two: halfway", mid.x === 99.5 && mid.w === 5.5 && mid.h === 24);
   ok("the way in: fast, eased, all the way by its end", T.eaterMorph(0, -1) === 0 && T.eaterMorph(T.EATER_IN_MS / 3, -1) > 0.6 && T.eaterMorph(T.EATER_IN_MS, -1) === 1);
@@ -132,7 +132,7 @@ section("The combos: the letters' effect where the eater is done with them");
     hole.spawnHoleMeal(deleted);
     hole._hole.floor = { x: 95, y: 24 };
     hole.holePose(now + 0.3 * T.HOLE_FALL_MS);
-    ok("Rabbit hole and Burst: nothing while it drops", hole.fired.length === 0);
+    ok("Vacuum and Burst: nothing while it drops", hole.fired.length === 0);
     hole.holePose(now + 0.7 * T.HOLE_FALL_MS);
     hole.holePose(now + 0.8 * T.HOLE_FALL_MS);
     ok("...a splash out of the dip as it goes through, once", hole.fired.length === 1 && hole.fired[0][0] === "burst" && hole.fired[0][1] === 95 - 4.5, hole.fired);
@@ -140,7 +140,7 @@ section("The combos: the letters' effect where the eater is done with them");
     holeEv._holeBite();
     holeEv.spawnHoleMeal(deleted);
     holeEv.holePose(now + 0.7 * T.HOLE_FALL_MS);
-    ok("Rabbit hole and Evaporate: not as it goes through...", holeEv.fired.length === 0);
+    ok("Vacuum and Evaporate: not as it goes through...", holeEv.fired.length === 0);
     holeEv.holePose(now + T.HOLE_FALL_MS + 5);
     ok("...but once gone, its ghost floating back up out of the hole", holeEv.fired.length === 1 && holeEv.fired[0][0] === "evaporate");
 

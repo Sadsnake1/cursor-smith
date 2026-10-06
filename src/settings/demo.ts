@@ -284,7 +284,7 @@ export const VIM_LINES = [
   "Yank it, put it, love it.",
   "ciw: change it, whatever it was.",
   "Real writers use :q!",
-  "u u u u u. Undo my whole life.",
+  "uuuuuuuuuuuuuuuuuuuu. Undo my whole life.",
   "Visual mode: see what you did there.",
   "Replace mode is my love language.",
   "gg to the top, G to the bottom.",

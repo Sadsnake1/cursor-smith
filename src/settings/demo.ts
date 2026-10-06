@@ -223,6 +223,7 @@ export const SCRIPT_LINES = [
   "Dangerous to type alone. Let me go with you!",
   "pick me, pick meeee",
   "Calculating...10^254 cursor choices...",
+  "Smoooooooooooooooooooking!",
 ];
 export const SCRIPT_MAX = 44;
 

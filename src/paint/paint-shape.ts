@@ -416,9 +416,7 @@ export const paintShapeMethods = {
     // Line + serifs = classic I-beam. Only for the Line style: an underline
     // is already a horizontal bar, so capping it with two more reads as a
     // stack of lines rather than a glyph.
-    // Back-man (effects-backman.ts): a Line chomping is a beak, no serifs.
-    const bm = isUnderline ? null : this.backManPose(now);
-    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen && !bm;
+    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
     const serifs = wantSerifs ? this.serifQuads(active, rx, rw, ry, rh) : null;
 
     if (gsGen) {
@@ -436,11 +434,6 @@ export const paintShapeMethods = {
         pw = Math.max(rx + rw, serifs.right) - px;
       }
       ctx.fillStyle = this._bodyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
-      if (bm) {
-        this.drawBackManLine(ctx, rx, ry, rw, rh, active.actualCharWidth || 8, ctx.fillStyle, bm);
-        ctx.restore();
-        return;
-      }
 
       // Stem and serifs go into ONE path and take ONE fill.
       //

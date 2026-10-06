@@ -487,12 +487,6 @@ button.cursor-smith-pcard-use:hover {
 .cursor-smith-pcard-caret-line.is-serif::after {
   bottom: 0;
 }
-/* Back-man's beak (demo.ts) is drawn in the caret's background: the
-   serifs give way to it. */
-.cursor-smith-pcard-caret-line.is-chomp::before,
-.cursor-smith-pcard-caret-line.is-chomp::after {
-  display: none;
-}
 .cursor-smith-pcard-caret-underline {
   top: 16px;
   height: 2px;

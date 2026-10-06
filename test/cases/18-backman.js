@@ -5,9 +5,8 @@
 // front swelling, then the back, the eye squinting happily), its head and
 // feet the box's (rounded as the box is), its sides bent in a V on a
 // spring; a held key chewed at its own steady pace, a word or a selection
-// one big bite; a Line chomps like a beak. The outline (backManShape,
-// backManOutline), the eye (backManEye), the beak (backManBeak), the bite
-// and the chewing (backManBite, backManChew, backManDown), the spring
+// one big bite. A Box's only. The outline (backManShape, backManOutline),
+// the eye (backManEye), the bite and the chewing (backManBite, backManChew, backManDown), the spring
 // (backManSpring), the bites and the pose, the meal, the setting, the
 // drawing.
 // One of the files test/test.js runs in order; see test/lib.js.
@@ -109,21 +108,6 @@ section("Back-man: chewing at its own pace");
   ok("a letter set off is down when the chomp it fell in shuts (the next, when that one is nearly shut)", T.backManDown({ c0: 0, big: false }, 30) === CH && T.backManDown({ c0: 0, big: false }, 120) === 2 * CH);
 }
 
-section("Back-man: the Line's beak");
-{
-  const w = 2, h = 24, cw = 9;
-  const shut = T.backManBeak(0, -1, 0, -1, w, h, cw), open = T.backManBeak(1, -1, 0, -1, w, h, cw);
-  ok("shut: the line itself - its top and foot where they are, the hinge at its middle", shut.top[0] === 1 && Math.abs(shut.top[1]) < 1e-9 && shut.foot[0] === 1 && Math.abs(shut.foot[1] - h) < 1e-9 && shut.hinge[0] === 1 && shut.hinge[1] === h / 2 && !shut.lump);
-  ok("open (Backspace): both halves swung left about the hinge, reaching about a letter over", open.top[0] < -0.6 * cw && open.foot[0] < -0.6 * cw && Math.abs(open.top[0] - open.foot[0]) < 1e-9 && open.top[1] > 0 && open.foot[1] < h);
-  ok("...each half still half the line long (it turns, it does not stretch)", Math.abs(Math.hypot(open.top[0] - 1, open.top[1] - h / 2) - h / 2) < 1e-9);
-  const del = T.backManBeak(1, 1, 0, -1, w, h, cw);
-  ok("Delete: it opens to the right", del.top[0] > 1 + 0.6 * cw && del.foot[0] > 1 + 0.6 * cw);
-  const bent = T.backManBeak(0, -1, -0.4, -1, w, h, cw);
-  ok("bent: the hinge moves (a V from the middle), the top and the foot stay", Math.abs(bent.hinge[0] - (1 - 0.4 * cw)) < 1e-9 && Math.abs(bent.top[0] - 1) < 1e-9 && Math.abs(bent.foot[0] - 1) < 1e-9 && Math.abs(bent.top[1]) < 1e-9);
-  const g1 = T.backManBeak(0, -1, 0, 0.25, w, h, cw), g2 = T.backManBeak(0, -1, 0, 0.75, w, h, cw), g3 = T.backManBeak(0, -1, 0, 0.5, w, h, cw);
-  ok("the gulp: a lump going down the lower half, swelling then going", !!g1.lump && !!g2.lump && g2.lump.y > g1.lump.y && g1.lump.y > h / 2 && g3.lump.rx > g1.lump.rx && g3.lump.rx > w / 2);
-}
-
 section("Back-man: the spring");
 
 section("Back-man: the spring");
@@ -185,7 +169,7 @@ section("Back-man: the bites");
     const line = makeEngine({ cursorStyle: "Line", popEffects: true, backMan: true });
     line.styleFor = (k) => line.look[k];
     line._backManBite(-1);
-    ok("a Line chomps too", !!line.backManPose(now));
+    ok("a Line cursor stays a Line", line.backManPose(now) === null);
     const under = makeEngine({ cursorStyle: "Underline", popEffects: true, backMan: true });
     under.styleFor = (k) => under.look[k];
     under._backManBite(-1);
@@ -217,14 +201,13 @@ section("Back-man: the setting");
   const i = rows.findIndex((r) => r.name === "Back-man");
   const row = rows[i];
   ok("a switch under Pop effects, after the Backspace ones", !!row && row.toggles.length === 1 && i > rows.findIndex((r) => r.name === "Backspace evaporation") && i < rows.findIndex((r) => r.name === "Thunderstrike") && rows.cardKeys.Effects.includes("backMan"));
-  const ulRows = renderPanel({ popEffects: true, cursorStyle: "Underline" });
-  const ur = ulRows.find((r) => r.name === "Back-man");
-  const hint = ur && ur.descEl.querySelector(".cursor-smith-needs-hint");
-  ok("...shown but disabled on an Underline, with the hint that it needs the Box or the Line", !!ur && ur.settingEl.classes.includes("cursor-smith-needs") && !!hint && /Box or Line cursor/.test(hint.text || ""), hint && hint.text);
-  const lr = renderPanel({ popEffects: true, cursorStyle: "Line" }).find((r) => r.name === "Back-man");
-  ok("...and not on a Box or a Line", !row.settingEl.classes.includes("cursor-smith-needs") && !!lr && !lr.settingEl.classes.includes("cursor-smith-needs"));
+  const lineRows = renderPanel({ popEffects: true, cursorStyle: "Line" });
+  const lr = lineRows.find((r) => r.name === "Back-man");
+  const hint = lr && lr.descEl.querySelector(".cursor-smith-needs-hint");
+  ok("...shown but disabled on a Line, with the hint that it needs the Box cursor", !!lr && lr.settingEl.classes.includes("cursor-smith-needs") && !!hint && /Box cursor/.test(hint.text || ""), hint && hint.text);
+  ok("...and not on a Box", !row.settingEl.classes.includes("cursor-smith-needs"));
   const rolls = Array.from({ length: 300 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50, sounds: false }, T.seededRandom(500 + k)));
-  ok("the Randomizer rolls it sometimes, on a Box or a Line only", rolls.some((l) => l.backMan && l.cursorStyle === "Box") && rolls.some((l) => l.backMan && l.cursorStyle === "Line") && rolls.every((l) => !l.backMan || l.cursorStyle === "Box" || l.cursorStyle === "Line"));
+  ok("the Randomizer rolls it sometimes, on a Box only", rolls.some((l) => l.backMan) && rolls.every((l) => !l.backMan || l.cursorStyle === "Box"));
 }
 
 section("Back-man: the meal");
@@ -300,24 +283,4 @@ section("Back-man: drawn");
   const text = calls.findIndex((c) => c[0] === "fillText" && c[1] === "a");
   ok("a letter going in: drawn before the body (under it: seen in the mouth, gone behind the jaws), shrunk, in the text's color",
      text >= 0 && text < calls.findIndex((c) => c[0] === "fill") && calls.some((c) => c[0] === "scale" && c[1] < 1) && at("fillStyle", "#dddddd") >= 0);
-}
-
-section("Back-man: the Line drawn");
-{
-  const calls = [];
-  const ctx = new Proxy({}, {
-    get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }),
-    set: (o, k, v) => { o[k] = v; calls.push(["set " + String(k), v]); return true; },
-  });
-  const plugin = { _markDirty() {}, _drawBackManMeal: T.EngineProto._drawBackManMeal };
-  const pose = { open: 1, dir: -1, bend: 0, front: 0, back: 0, squint: 0, g: -1 };
-  T.EngineProto.drawBackManLine.call(plugin, ctx, 100, 10, 2, 24, 9, "#ff8800", pose);
-  const move = calls.find((c) => c[0] === "moveTo"), lines = calls.filter((c) => c[0] === "lineTo");
-  ok("open: the beak, one stroke at the line's thickness - the top, the hinge at the middle, the foot", calls.some((c) => c[0] === "stroke") && calls.some((c) => c[0] === "set lineWidth" && c[1] === 2) && !!move && lines.length === 2 && lines[0][1] === 101 && lines[0][2] === 22);
-  ok("...both ends reaching left, toward the letter Backspace eats", move[1] < 95 && lines[1][1] < 95);
-  ok("...no lump yet", !calls.some((c) => c[0] === "ellipse"));
-  calls.length = 0;
-  T.EngineProto.drawBackManLine.call(plugin, ctx, 100, 10, 2, 24, 9, "#ff8800", { ...pose, open: 0, g: 0.5 });
-  const lump = calls.find((c) => c[0] === "ellipse");
-  ok("gulping: the lump on the lower half, wider than the line", !!lump && lump[2] > 22 && lump[2] < 34 && lump[3] > 1);
 }

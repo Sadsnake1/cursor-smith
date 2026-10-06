@@ -54,7 +54,7 @@ import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
-import { BACKMAN_BEAK, BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBeak, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
+import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
@@ -907,7 +907,7 @@ export class DemoStrip {
   private onBack(d: Demo, at: number, ch: string, now: number) {
     // Back-man's bite: chewed at its own pace, kicking its bend leftward,
     // where it eats.
-    if (d.look.popEffects && d.look.backMan && (d.style === "box" || d.style === "line")) {
+    if (d.look.popEffects && d.look.backMan && d.style === "box") {
       if (now > d.bm.at) { backManSpring(d.bm, (now - d.bm.at) / 1000); d.bm.at = now; }
       d.bm.v -= BACKMAN_BEND_KICK;
       d.bmChew = backManChew(d.bmChew, now, false);
@@ -929,7 +929,7 @@ export class DemoStrip {
     const cw = d.stepPx || 7;
     // A Backspace with Back-man on: it eats the letter, the others stand
     // aside (a line cleared is not its bite).
-    const backMan = bite && d.bmChew && !!(look.popEffects && look.backMan && (d.style === "box" || d.style === "line"));
+    const backMan = bite && d.bmChew && !!(look.popEffects && look.backMan && d.style === "box");
     // Down when the chomp it fell in shuts.
     const down = d.bmChew ? backManDown(d.bmChew, now) - now : 0;
     letters.forEach(({ ch, at }, k) => {
@@ -1212,18 +1212,16 @@ export class DemoStrip {
       styles.height = `${(d.style === "line" ? g.lineH : d.style === "underline" ? g.ulH : g.h).toFixed(2)}px`;
       styles.top = `${(d.style === "line" ? g.lineTop : d.style === "underline" ? g.top + g.h - g.ulH : g.top).toFixed(2)}px`;
     }
-    // Back-man, as the engine draws it (drawBackMan, drawBackManLine): the
-    // mouth toward the letters (Backspace's: left), chewing at its own pace;
-    // the gulp, and the bend on its spring (on past the bites while it
-    // settles). The caret is widened on both sides for it to show. A Box:
-    // soft-lipped, its head and feet the box's (rounded as the box is), a
-    // square eye with a square glint; filled, the caret is cut to its
-    // outline (the eye a hole); hollow, the outline and the eye are drawn
-    // instead of the box's border. A Line: a beak, drawn instead of the
-    // line, its lump going down.
+    // Back-man, as the engine draws it (drawBackMan): the mouth toward the
+    // letters (Backspace's: left), soft-lipped, chewing at its own pace; the
+    // gulp, and the bend on its spring (on past the bites while it
+    // settles); its head and feet the box's (rounded as the box is), a
+    // square eye with a square glint. The caret is widened on both sides
+    // for it to show; filled, it is cut to the creature's outline (the eye
+    // a hole); hollow, the outline and the eye are drawn instead of the
+    // box's border.
     let bm: (ReturnType<typeof backManBite> & { bend: number }) | null = null;
-    const isLine = d.style === "line";
-    if (look.popEffects && look.backMan && (d.style === "box" || isLine) && d.geo) {
+    if (look.popEffects && look.backMan && d.style === "box" && d.geo) {
       const b = d.bm;
       if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.at = this.last; }
       const c = d.bmChew;
@@ -1231,22 +1229,7 @@ export class DemoStrip {
       if ((bite && !bite.done) || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) bm = { ...(bite && !bite.done ? bite : backManBite(1e9)), bend: b.bend };
     }
     const n = (v: number) => v.toFixed(2);
-    if (bm && d.geo && isLine) {
-      const lw = d.geo.lineW, lh = parseFloat(styles.height) || d.geo.lineH;
-      const m = Math.ceil((lh / 2) * Math.sin(BACKMAN_BEAK) + BACKMAN_BEND_MAX * px + 3);
-      const beak = backManBeak(bm.open, -1, bm.bend, bm.g, lw, lh, px);
-      d.bmMouth = from + beak.hinge[0];
-      const ox = m + (width - lw) / 2;
-      const pt = ([x, y]: [number, number]) => `${n(ox + x)} ${n(y)}`;
-      const lump = beak.lump ? `<ellipse cx='${n(ox + beak.lump.x)}' cy='${n(beak.lump.y)}' rx='${n(beak.lump.rx)}' ry='${n(beak.lump.ry)}' fill='${color}'/>` : "";
-      const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n(width + 2 * m)} ${n(lh)}' preserveAspectRatio='none'><path d='M${pt(beak.top)} L${pt(beak.hinge)} L${pt(beak.foot)}' fill='none' stroke='${color}' stroke-width='${n(lw)}' stroke-linejoin='round' stroke-linecap='butt'/>${lump}</svg>`;
-      Object.assign(styles, {
-        width: `${n(width + 2 * m)}px`, transform: `${styles.transform} translateX(${-m}px)`, overflow: "visible",
-        backgroundColor: "transparent", backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
-        backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
-      });
-      d.bmOn = true;
-    } else if (bm && d.geo) {
+    if (bm && d.geo) {
       const body = backManShape(bm.open, -1, bm.bend, bm.front, bm.back);
       const m = Math.ceil((BACKMAN_BEND_MAX + BACKMAN_GROW * BACKMAN_BIG.grow) * width) + 1;
       const wide = width + 2 * m, high = parseFloat(styles.height) || d.geo.h;
@@ -1272,13 +1255,10 @@ export class DemoStrip {
       }
       d.bmOn = true;
     } else if (d.bmOn) {
-      Object.assign(styles, { clipPath: "", backgroundOrigin: "", backgroundRepeat: "", overflow: "", borderRadius: d.shape.hollowWidth && d.shape.gradient ? "0" : `${d.shape.radius}px` });
-      if (isLine) Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "" });
-      else if (d.shape.hollowWidth) Object.assign(styles, { borderColor: d.shape.fill, borderImage: d.shape.gradient ? d.shape.gradient + " 1" : "", backgroundImage: "", backgroundSize: "" });
+      Object.assign(styles, { clipPath: "", backgroundOrigin: "", backgroundRepeat: "", borderRadius: d.shape.hollowWidth && d.shape.gradient ? "0" : `${d.shape.radius}px` });
+      if (d.shape.hollowWidth) Object.assign(styles, { borderColor: d.shape.fill, borderImage: d.shape.gradient ? d.shape.gradient + " 1" : "", backgroundImage: "", backgroundSize: "" });
       d.bmOn = false;
     }
-    // A Line's serifs give way to the beak.
-    if (isLine) d.caret.toggleClass("is-chomp", !!bm);
     d.caret.setCssStyles(styles);
     // The letter copy inside a Box stays over the real letters: it is
     // moved back by the caret's own offset; hidden while Back-man eats.

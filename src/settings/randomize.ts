@@ -151,7 +151,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
     look.popLettersRise = !full && rand() < 0.3;
     look.backspaceDisintegrate = chance(0.3 + 0.5 * chaos);
     look.backspaceEvaporate = !look.backspaceDisintegrate && rand() < 0.5;
-    look.backMan = (style === "Box" || style === "Line") && chance(0.35);
+    look.backMan = style === "Box" && chance(0.35);
     look.thunderstrike = chance(0.2 + 0.6 * chaos);
     look.thunderstrikeSize = any(1, 5, 1);
     look.thunderstrikeStrength = level(0.3, 1, 0.05);

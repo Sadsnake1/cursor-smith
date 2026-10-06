@@ -16,11 +16,8 @@
 // its sides
 // bend in a V from the middle toward where it is going, on a spring - each
 // bite kicks it, and it eases back when the bites stop. Smooth, not pixels.
-// A Line chomps too ("make the line chomp the letter"): it hinges at its
-// middle like a beak - its two halves swing open toward the letter (a ">"
-// for Backspace) and snap shut on it, the letter going into the hinge -
-// and the gulp is a lump sliding down its lower half and out at its foot.
-// An Underline has no room for either.
+// A Box's only: a Line chomped like a beak for a day ("remove the backman
+// effect on cursor style line"), and an Underline has no room for a mouth.
 import type { DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -55,8 +52,8 @@ export interface BackManMorsel { char: string; cx: number; cy: number; font: str
 export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[] }
 // open: the mouth; front, back: the gulp's swell of each side; squint: the
 // eye's happy squint (1 shut); g: how far the gulp has gone (0 to 1 while
-// it goes; the Line's lump); meal: the letters going in, each with how far
-// it has gone (e, 0 to 1).
+// it goes); meal: the letters going in, each with how far it has gone (e,
+// 0 to 1).
 export interface BackManPose {
   open: number; dir: number; bend: number; front: number; back: number; squint: number; g: number;
   meal?: { m: BackManMorsel; e: number }[];
@@ -96,31 +93,6 @@ export function backManChew(c: { c0: number; t: number; big: boolean } | null, n
 export function backManDown(c: { c0: number; big: boolean }, now: number) {
   const ch = BACKMAN_CHOMP_MS * (c.big ? BACKMAN_BIG.chomp : 1);
   return c.c0 + Math.ceil((now - c.c0 + 0.4 * ch) / ch) * ch;
-}
-
-// How wide a Line's beak opens (radians, each half).
-export const BACKMAN_BEAK = 0.7;
-
-// A Line's beak in its w x h rect, px from the rect's top left: the hinge
-// at its middle, bent `bend` letter widths (cw) toward where it eats; the
-// two halves, each half the line long, swung open about the hinge toward
-// the letter (dir) as far as the mouth is open - shut, they are the line
-// again, the top and the foot where they were; and the gulp's lump, `g`
-// of the way from the hinge down to the foot, swelling and going. Pure,
-// for the tests and both painters.
-export function backManBeak(open: number, dir: number, bend: number, g: number, w: number, h: number, cw: number) {
-  const f = dir >= 0 ? 1 : -1;
-  const a = BACKMAN_BEAK * Math.max(0, Math.min(1, open));
-  const hx = w / 2 + bend * cw, hy = h / 2;
-  // Each half from the hinge to its end at rest, turned by its angle (a
-  // clockwise turn is positive, y down): the top half toward f, the lower
-  // half the other way, so both ends reach toward the letter.
-  const turn = (vx: number, vy: number, t: number): [number, number] => [hx + vx * Math.cos(t) - vy * Math.sin(t), hy + vx * Math.sin(t) + vy * Math.cos(t)];
-  const top = turn(w / 2 - hx, -hy, f * a), foot = turn(w / 2 - hx, h - hy, -f * a);
-  const s = g > 0 && g < 1 ? Math.sin(Math.PI * g) : 0;
-  const r = Math.max(1.2, 0.8 * w);
-  const lump = s > 0 ? { x: hx + (foot[0] - hx) * g, y: hy + (foot[1] - hy) * g, rx: w / 2 + r * s, ry: w / 2 + 1.6 * r * s } : null;
-  return { top, hinge: [hx, hy] as [number, number], foot, lump };
 }
 
 // The bend's spring from `s` over dt seconds (up to two: a longer gap -
@@ -234,10 +206,9 @@ function tracePoly(ctx: CanvasRenderingContext2D, pts: [number, number][], x: nu
 }
 
 export const effectsBackManMethods = {
-  // On for the look showing: Pop effects and Back-man, a Box or a Line.
+  // On for the look showing: Pop effects and Back-man, a Box cursor.
   _backManOn(this: CursorSmithPlugin): boolean {
-    const style = this.styleFor("cursorStyle");
-    return !!(this.look.popEffects && this.look.backMan && (style === "Box" || style === "Line"));
+    return !!(this.look.popEffects && this.look.backMan && this.styleFor("cursorStyle") === "Box");
   },
 
   // A bite: Backspace (dir -1, it eats leftward) or Delete (dir 1); `big`
@@ -373,30 +344,6 @@ export const effectsBackManMethods = {
       ctx.fillText(m.char, 0, 0);
       ctx.restore();
       this._markDirty(Math.min(m.cx, cx) - h, Math.min(m.cy, cy) - h, Math.abs(m.cx - cx) + 2 * h, Math.abs(m.cy - cy) + 2 * h);
-    }
-  },
-
-  // A Line chomping, in its rect (x, y, w, h) - w its thickness, cw a
-  // letter's width - in the line's own paint: the letters going into the
-  // hinge, the two halves of the beak (the line's thickness, joined round
-  // at the hinge, their ends cut square like the line's), the gulp's lump.
-  drawBackManLine(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, cw: number, paint: string | CanvasGradient | CanvasPattern, pose: BackManPose) {
-    const b = backManBeak(pose.open, pose.dir, pose.bend, pose.g, w, h, cw);
-    this._drawBackManMeal(ctx, pose, x + b.hinge[0], y + b.hinge[1], h);
-    ctx.strokeStyle = paint;
-    ctx.lineWidth = w;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "butt";
-    ctx.beginPath();
-    ctx.moveTo(x + b.top[0], y + b.top[1]);
-    ctx.lineTo(x + b.hinge[0], y + b.hinge[1]);
-    ctx.lineTo(x + b.foot[0], y + b.foot[1]);
-    ctx.stroke();
-    if (b.lump) {
-      ctx.fillStyle = paint;
-      ctx.beginPath();
-      ctx.ellipse(x + b.lump.x, y + b.lump.y, b.lump.rx, b.lump.ry, 0, 0, Math.PI * 2);
-      ctx.fill();
     }
   },
 };

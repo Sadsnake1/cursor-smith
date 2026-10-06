@@ -1503,8 +1503,15 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       "cursorRounded"));
     // Caps Lock and Shift (1.7.7, effects-caps.ts): desktop only - a phone's
     // keyboard reports neither key.
+    const desktop = () => !Platform.isMobile;
     appearance.push(toggle("Caps Lock and Shift", "While Caps Lock is on or Shift is held, the cursor turns its opposite color and grows a little.",
-      "capsLook", { when: () => !Platform.isMobile }));
+      "capsLook", { gate: true, when: desktop }));
+    // Its parts: what shows it, and what it does.
+    const caps = all(desktop, on("capsLook"));
+    appearance.push(toggle("Caps Lock", "Shows it while Caps Lock is on.", "capsLookCapsLock", { depth: 1, when: caps }));
+    appearance.push(toggle("Shift", "Shows it while Shift is held on its own.", "capsLookShift", { depth: 1, when: caps }));
+    appearance.push(toggle("Invert colors", "Flips the cursor and its effects to their opposite colors.", "capsLookInvert", { depth: 1, when: caps }));
+    appearance.push(toggle("Grow", "Makes the cursor a little bigger.", "capsLookGrow", { depth: 1, when: caps }));
     // --- Blinking ------------------------------------------------------------
     card = "Blinking";
     const blinking = [];

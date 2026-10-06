@@ -87,7 +87,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
   // Caps Lock and Shift is kept as it is, like the sounds: a signal, not a
   // look to roll.
-  for (const k of LOOK_KEYS) if (!TORCH_KEYS.has(k) && !SOUND_KEYS.has(k) && k !== "capsLook") out[k] = defaults[k];
+  for (const k of LOOK_KEYS) if (!TORCH_KEYS.has(k) && !SOUND_KEYS.has(k) && !k.startsWith("capsLook")) out[k] = defaults[k];
   out.torchEffect = false;
   for (const k of [...ROLL_EFFECTS, "smear", "popLetters", "glow", "bracketTether"]) out[k] = false;
   const look = out as Partial<Look>;

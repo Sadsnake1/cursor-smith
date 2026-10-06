@@ -21,9 +21,11 @@ import { Platform } from "obsidian";
 import { capsColor } from "../util/color";
 import type CursorSmithPlugin from "../plugin";
 
-// How much bigger the cursor grows, and the ease's time constant: about 80 ms
-// to get there.
+// How much bigger the cursor grows (a Line: much thicker, barely taller -
+// grown 15% from its foot it reached into the line above), and the ease's
+// time constant: about 80 ms to get there.
 export const CAPS_GROW = 0.15;
+export const CAPS_GROW_LINE_W = 0.5, CAPS_GROW_LINE_H = 0.06;
 export const CAPS_EASE_MS = 28;
 // A white or gray cursor's stand-in when Obsidian's accent cannot be read.
 const CAPS_FALLBACK = "#ffb000";
@@ -33,6 +35,15 @@ export function capsEase(amt: number, on: boolean, dt: number): number {
   const target = on ? 1 : 0;
   const next = target + (amt - target) * Math.exp(-Math.max(0, dt) / CAPS_EASE_MS);
   return Math.abs(next - target) < 0.01 ? target : next;
+}
+
+// How the cursor is grown, `k` of the way in: a Box or an Underline the
+// same both ways from its foot; a Line thicker and a little taller, from
+// its middle. Pure.
+export function capsScale(k: number, line: boolean) {
+  return line
+    ? { sx: 1 + CAPS_GROW_LINE_W * k, sy: 1 + CAPS_GROW_LINE_H * k, foot: false }
+    : { sx: 1 + CAPS_GROW * k, sy: 1 + CAPS_GROW * k, foot: true };
 }
 
 // What a key event says: Caps Lock on, Shift held on its own. Pure.
@@ -83,11 +94,13 @@ export const effectsCapsMethods = {
   },
 
   // Whether the look is wanted now: the setting on, on a desktop, and Caps
-  // Lock on - or Shift held, outside a Vim mode where Shift runs commands.
+  // Lock on - or Shift held, outside a Vim mode where Shift runs commands -
+  // each as its sub-option allows.
   _capsWanted(this: CursorSmithPlugin): boolean {
-    if (!this.look.capsLook || Platform.isMobile) return false;
-    if (this._capsOn) return true;
-    if (!this._shiftHeld) return false;
+    const look = this.look;
+    if (!look.capsLook || Platform.isMobile) return false;
+    if (this._capsOn && look.capsLookCapsLock !== false) return true;
+    if (!this._shiftHeld || look.capsLookShift === false) return false;
     const mode = this.lookVimMode();
     return !mode || mode === "insert" || mode === "replace";
   },
@@ -122,6 +135,7 @@ export const effectsCapsMethods = {
   // A color the cursor is painted in, as far as the look is in: a white or
   // gray one toward the accent (capsColor); the canvas's turn does the rest.
   _capsFlip(this: CursorSmithPlugin, hex: string): string {
+    if (this.look.capsLookInvert === false) return hex;
     const k = this.capsAmount(performance.now());
     return k > 0 ? capsColor(hex, k, this._capsAccent()) : hex;
   },
@@ -154,21 +168,24 @@ export const effectsCapsMethods = {
   _capsCanvas(this: CursorSmithPlugin, now: number) {
     const el = this.canvas;
     if (!el) return;
-    const k = this.capsAmount(now);
+    const k = this.look.capsLookInvert === false ? 0 : this.capsAmount(now);
     const want = k > 0 ? `hue-rotate(${Math.round(180 * k)}deg)` : "";
     if (this._capsFilter === want) return;
     this._capsFilter = want;
     el.style.filter = want;
   },
 
-  // Grows what is painted next from the cursor's foot (cx, foot), as far as
-  // the look is in. Inside the caller's save/restore.
-  _capsGrow(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, cx: number, foot: number, now: number) {
+  // Grows what is painted next - the cursor in its rect (x, y, w, h), a
+  // Line or not (capsScale) - as far as the look is in. Inside the caller's
+  // save/restore.
+  _capsGrow(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, now: number, line = false) {
+    if (this.look.capsLookGrow === false) return;
     const k = this.capsAmount(now);
     if (!(k > 0)) return;
-    const s = 1 + CAPS_GROW * k;
-    ctx.translate(cx, foot);
-    ctx.scale(s, s);
-    ctx.translate(-cx, -foot);
+    const s = capsScale(k, line);
+    const cx = x + w / 2, cy = s.foot ? y + h : y + h / 2;
+    ctx.translate(cx, cy);
+    ctx.scale(s.sx, s.sy);
+    ctx.translate(-cx, -cy);
   },
 };

@@ -31,8 +31,8 @@ section("Randomizer: the roll");
   ok("a seed rolls the same cursor; another seed another", JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(c));
   const all = [...many({ chaos: 0 }), ...many({ chaos: 50, color: 30, motion: 80 }), ...many({ chaos: 100, color: 100, motion: 100, sounds: true }, 50)];
   ok("only look keys, every one but the torch's settings", all.every((l) => Object.keys(l).every((k) => T.LOOK_KEYS.includes(k)) && !("overlayRadius" in l) && !("overlayColor" in l)) &&
-     T.LOOK_KEYS.filter((k) => !k.startsWith("overlay") && !k.startsWith("typewriterSound") && k !== "capsLook").every((k) => k in a));
-  ok("Caps Lock and Shift kept as it is (a signal, not a look to roll)", all.every((l) => !("capsLook" in l)));
+     T.LOOK_KEYS.filter((k) => !k.startsWith("overlay") && !k.startsWith("typewriterSound") && !k.startsWith("capsLook")).every((k) => k in a));
+  ok("Caps Lock and Shift kept as it is, its parts too (a signal, not a look to roll)", all.every((l) => !Object.keys(l).some((k) => k.startsWith("capsLook"))));
   ok("the torch never lit (it darkens the window, not the cursor)", all.every((l) => l.torchEffect === false));
   const bad = [];
   for (const l of all) for (const [k, [lo, hi]] of Object.entries(RANGES)) if (typeof l[k] === "number" && (l[k] < lo - 1e-9 || l[k] > hi + 1e-9)) bad.push([k, l[k]]);

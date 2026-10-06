@@ -175,6 +175,10 @@ export interface Look {
   lineSerifs: boolean;
   underlineSerifs: boolean;
   capsLook: boolean;
+  capsLookCapsLock: boolean;
+  capsLookShift: boolean;
+  capsLookInvert: boolean;
+  capsLookGrow: boolean;
   boxHollow: boolean;
   boxHollowWidth: number;
   underlineWidthPx: number;

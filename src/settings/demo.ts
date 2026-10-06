@@ -55,7 +55,7 @@ import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { Platform } from "obsidian";
 import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
-import { CAPS_GROW, capsEase } from "../effects/effects-caps";
+import { capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
@@ -938,7 +938,7 @@ export class DemoStrip {
   // Caps Lock and Shift's look now: on while Shift is held for a capital
   // (Caps Lock and Shift on, on a desktop), eased as the engine's.
   private capsNow(d: Demo): number {
-    if (!d.look.capsLook || Platform.isMobile) return 0;
+    if (!d.look.capsLook || d.look.capsLookShift === false || Platform.isMobile) return 0;
     d.capsAmt = capsEase(d.capsAmt, this.last < d.capsUntil, this.last - d.capsAt);
     d.capsAt = this.last;
     return d.capsAmt;
@@ -1325,10 +1325,11 @@ export class DemoStrip {
     // (the preview's hue turned, as the engine's canvas), a white or gray
     // caret to the accent, the caret grown from its foot, easing in and out.
     const caps = this.capsNow(d);
-    const turn = caps > 0 ? `hue-rotate(${Math.round(180 * caps)}deg)` : "";
+    const invert = caps > 0 && d.look.capsLookInvert !== false ? caps : 0;
+    const turn = invert > 0 ? `hue-rotate(${Math.round(180 * invert)}deg)` : "";
     if (d.capsFilter !== turn) { d.capsFilter = turn; d.el.setCssStyles({ filter: turn }); }
-    const accent = caps > 0 ? this.accentHex(d) : "";
-    const color = caps > 0 ? capsColor(own, caps, accent) : own;
+    const accent = invert > 0 ? this.accentHex(d) : "";
+    const color = invert > 0 ? capsColor(own, invert, accent) : own;
     // The preview's text, written so far (typos and all), a letter an
     // element; the unwritten half only ever held the first line, to measure
     // the letters by.
@@ -1369,7 +1370,8 @@ export class DemoStrip {
     }
     // Breathing: the blink as a change of size, about the middle.
     if (d.breath > 0) sy *= 1 - (look.blinkBreathDepth ?? 0.2) * d.breath;
-    const grow = caps > 0 ? ` scale(${(1 + CAPS_GROW * caps).toFixed(3)})` : "";
+    const sc = capsScale(caps > 0 && d.look.capsLookGrow !== false ? caps : 0, d.style === "line");
+    const grow = sc.sx !== 1 || sc.sy !== 1 ? ` scale(${sc.sx.toFixed(3)}, ${sc.sy.toFixed(3)})` : "";
     const styles: Record<string, string> = {
       transform: (dip || advance ? `translate(${(from + advance).toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`) + grow,
       width: `${width.toFixed(2)}px`,
@@ -1381,8 +1383,8 @@ export class DemoStrip {
       // Flipped (a white or gray one, its gradient's every stop, the letter
       // inside readable on it) - or, once, back as it was.
       const flip = caps > 0;
-      const grad = d.shape.gradient && flip ? gradientCss(d.style, d.stops.map((c) => capsColor(c, caps, accent))) : d.shape.gradient;
-      styles.transformOrigin = flip ? "50% 100%" : "";
+      const grad = d.shape.gradient && invert > 0 ? gradientCss(d.style, d.stops.map((c) => capsColor(c, invert, accent))) : d.shape.gradient;
+      styles.transformOrigin = flip ? (sc.foot ? "50% 100%" : "50% 50%") : "";
       if (d.shape.hollowWidth) { styles.borderColor = color; if (grad) styles.borderImage = `${grad} 1`; }
       else { styles.backgroundColor = color; styles.backgroundImage = grad ?? ""; }
       if (d.inner) d.inner.setCssStyles({ color: readableGlyphColor(color, d.look.glyphColorMode ?? "contrast") });

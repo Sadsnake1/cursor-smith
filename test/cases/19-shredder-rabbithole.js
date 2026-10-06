@@ -120,7 +120,7 @@ section("Shredder and Vacuum: they have the letters");
 
 section("Shredder and Vacuum: the settings");
 {
-  ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-5, -2).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
+  ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-9, -6).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
   const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "Cursor on delete").dropdowns[0];
   ok("choices of \"Cursor on delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Vacuum");
   const on = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });

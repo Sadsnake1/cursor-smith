@@ -464,7 +464,7 @@ export const paintShapeMethods = {
 
     // Grown from its foot while Caps Lock is on or Shift held
     // (effects-caps.ts).
-    this._capsGrow(ctx, rx + rw / 2, ry + rh, now);
+    this._capsGrow(ctx, rx, ry, rw, rh, now, !isUnderline);
 
     // Line + serifs = classic I-beam. An Underline's serifs are its own
     // (since 1.7.7): a tick up at each end - capping it with two more bars
@@ -573,7 +573,7 @@ export const paintShapeMethods = {
       this._armGlow(ctx, color, 10 * blinkAlpha);
       // Grown from its foot while Caps Lock is on or Shift held
       // (effects-caps.ts).
-      this._capsGrow(ctx, active.x + renderW / 2, active.top + active.h, now);
+      this._capsGrow(ctx, active.x, active.top, renderW, active.h, now);
 
       // Signal Glitch takes over the body of the cursor entirely while a burst
       // is live - it replaces the fill/stroke rather than layering on top,
@@ -661,7 +661,7 @@ export const paintShapeMethods = {
         ctx.save();
         ctx.globalAlpha = glyphAlpha;
         // Grown with its box.
-        this._capsGrow(ctx, active.x + renderW / 2, active.top + active.h, now);
+        this._capsGrow(ctx, active.x, active.top, renderW, active.h, now);
         // `color` is the box's own fill (getActiveColor, so heat- and
         // gradient-resolved). With Gradient on this is the ramp's FIRST stop
         // rather than the exact shade under the glyph - the fill varies across

@@ -11,7 +11,8 @@ const fs = require("fs");
 
 section("Underline serifs");
 {
-  ok("two look keys, appended, off by default", T.LOOK_KEYS.slice(-2).join() === "underlineSerifs,capsLook" && T.DEFAULT_SETTINGS.underlineSerifs === false && T.DEFAULT_SETTINGS.capsLook === false);
+  ok("look keys, appended: the serifs and Caps Lock and Shift off, its parts on", T.LOOK_KEYS.slice(-6).join() === "underlineSerifs,capsLook,capsLookCapsLock,capsLookShift,capsLookInvert,capsLookGrow" && T.DEFAULT_SETTINGS.underlineSerifs === false && T.DEFAULT_SETTINGS.capsLook === false &&
+     ["capsLookCapsLock", "capsLookShift", "capsLookInvert", "capsLookGrow"].every((k) => T.DEFAULT_SETTINGS[k] === true));
   const s = T.underSerifSize(3, 24, 9);
   ok("a tick as thick as a Line's serif on the bar (no thicker than it), small: a third of the letter", s.t === 2 && s.t <= 3 && Math.abs(s.len - 2.7) < 1e-9, s);
   ok("...never under 1.5 px, nor over an eighth of the line", T.underSerifSize(3, 24, 1).len === 1.5 && Math.abs(T.underSerifSize(3, 16, 40).len - 1.92) < 1e-9);
@@ -123,6 +124,9 @@ section("Caps Lock and Shift");
   delete e.getActiveColor;
   e._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   ok("Shift held: wanted", e._capsWanted() === true);
+  e.settings.capsLookShift = false;
+  ok("...not with Shift off in its parts", e._capsWanted() === false);
+  e.settings.capsLookShift = true;
   // Half a second on: the key pressed then, the look out until then.
   e._capsChangeT = performance.now() - 500;
   e._caps = { amt: 0, at: e._capsChangeT, on: false };
@@ -136,8 +140,21 @@ section("Caps Lock and Shift");
   e.settings.gradientEnabled = false;
   const ops = [];
   const ctx = { translate: (x, y) => ops.push(["t", x, y]), scale: (x, y) => ops.push(["s", x, y]) };
-  e._capsGrow(ctx, 50, 80, performance.now());
-  ok("...grown from its foot", ops.length === 3 && ops[0][1] === 50 && ops[0][2] === 80 && ops[1][1] === 1 + T.CAPS_GROW && ops[1][2] === 1 + T.CAPS_GROW && ops[2][1] === -50);
+  e._capsGrow(ctx, 40, 56, 20, 24, performance.now());
+  ok("...a Box grown from its foot, the same both ways", ops.length === 3 && ops[0][1] === 50 && ops[0][2] === 80 && ops[1][1] === 1 + T.CAPS_GROW && ops[1][2] === 1 + T.CAPS_GROW && ops[2][1] === -50);
+  ops.length = 0;
+  e._capsGrow(ctx, 49, 40, 2, 24, performance.now(), true);
+  ok("...a Line thicker and only a little taller, from its middle (not up into the line above)", ops.length === 3 && ops[0][1] === 50 && ops[0][2] === 52 && ops[1][1] > 1.4 && ops[1][2] < 1.1 && ops[1][2] > 1, ops);
+  ops.length = 0;
+  e.settings.capsLookGrow = false;
+  e._capsGrow(ctx, 40, 56, 20, 24, performance.now());
+  ok("Grow off: not grown", ops.length === 0);
+  e.settings.capsLookGrow = true;
+  e.settings.capsLookInvert = false;
+  e._capsCanvas(performance.now());
+  ok("Invert colors off: the canvas unturned, a white cursor white", e.canvas.style.filter === "" && e.getBaseColor() === "#ffffff");
+  e.settings.capsLookInvert = true;
+  e._capsCanvas(performance.now());
   e._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   ok("Shift let go: easing out, the frames kept coming until it is out", e._capsWanted() === false && e.capsMoving(performance.now()) === true);
   e._capsChangeT = e._caps.at = performance.now() - 500;
@@ -148,6 +165,9 @@ section("Caps Lock and Shift");
   ok("the window losing focus lets go of Shift (its keyup goes elsewhere)", e._shiftHeld === false && e._capsWanted() === false);
   e._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: (k) => k === "CapsLock" });
   ok("Caps Lock on: wanted, as long as it is on", e._capsWanted() === true);
+  e.settings.capsLookCapsLock = false;
+  ok("...not with Caps Lock off in its parts", e._capsWanted() === false);
+  e.settings.capsLookCapsLock = true;
   // A Vim mode has its own look, which carries the setting.
   e.lookVimMode = () => "normal";
   Object.defineProperty(e, "look", { value: { capsLook: true }, configurable: true });
@@ -174,7 +194,13 @@ section("Caps Lock and Shift");
   ok("both painters grow the body, and the Box its letter", (shape.match(/this\._capsGrow\(ctx,/g) || []).length === 3);
   const rows = renderPanel({});
   const row = rows.find((x) => x.name === "Caps Lock and Shift");
-  ok("a setting in Appearance, after Rounded corners, hidden on a phone", !!row && rows.findIndex((x) => x.name === "Caps Lock and Shift") === rows.findIndex((x) => x.name === "Rounded corners") + 1 && /when: \(\) => !Platform\.isMobile/.test(fs.readFileSync(srcPath("settings-tab.ts"), "utf8")));
+  ok("a setting in Appearance, after Rounded corners, hidden on a phone", !!row && rows.findIndex((x) => x.name === "Caps Lock and Shift") === rows.findIndex((x) => x.name === "Rounded corners") + 1 && /const desktop = \(\) => !Platform\.isMobile/.test(fs.readFileSync(srcPath("settings-tab.ts"), "utf8")));
+  const subs = renderPanel({ capsLook: true });
+  const at = subs.findIndex((x) => x.name === "Caps Lock and Shift");
+  ok("its parts under it, shown with it on: Caps Lock, Shift, Invert colors, Grow", subs.slice(at + 1, at + 5).map((x) => x.name).join() === "Caps Lock,Shift,Invert colors,Grow" && subs.slice(at + 1, at + 5).every((x) => x.def.visible()));
+  const offRows = renderPanel({ capsLook: false });
+  const sub = offRows.find((x) => x.name === "Invert colors");
+  ok("...hidden with it off", !sub || !sub.def.visible());
   const roll = T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(3));
   ok("the Randomizer keeps it as it is", !("capsLook" in roll));
 }

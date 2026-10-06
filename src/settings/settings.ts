@@ -218,6 +218,12 @@ export const DEFAULT_SETTINGS = {
   // Caps Lock and Shift (1.7.7, desktop): the cursor flips to its opposite
   // color and grows a little while Caps Lock is on or Shift is held.
   capsLook: false,
+  // ...its parts: what shows it (Caps Lock, Shift) and what it does (the
+  // colors flipped, the cursor grown). All on.
+  capsLookCapsLock: true,
+  capsLookShift: true,
+  capsLookInvert: true,
+  capsLookGrow: true,
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing
   // setup (and a fresh install) keeps exactly the look it had.
@@ -563,6 +569,7 @@ export const LOOK_KEYS: (keyof Look)[] = [
   // The Underline's serifs, and Caps Lock and Shift (1.7.7). Appended, off by
   // default.
   "underlineSerifs", "capsLook",
+  "capsLookCapsLock", "capsLookShift", "capsLookInvert", "capsLookGrow",
 ];
 
 // ---------------------------------------------------------------------------

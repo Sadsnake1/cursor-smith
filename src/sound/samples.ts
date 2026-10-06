@@ -188,7 +188,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // IBM buckling spring, from kbsim by Thomas Lai (github.com/tplai/kbsim), MIT
   {
     id: "buckling",
-    label: "Buckling Springs",
+    label: "Springs",
     kind: "keyboard",
     onset: 0.04421,
     sounds: [["strike",0.04,0.105],["strike",0.225,0.11],["strike",0.415,0.105],["strike",0.6,0.105],["strike",0.785,0.09],["space",0.955,0.18298],["back",1.21798,0.13319],["enter",1.43117,0.1486]],

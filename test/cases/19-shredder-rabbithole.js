@@ -1,10 +1,9 @@
-// Pop effects' Shredder (a Line's) and Vacuum (an Underline's), 1.7.7:
+// Pop effects' Shredder (a Line's) and Portal (an Underline's), 1.7.7:
 // what Backspace and Delete take, cut into ribbons by the Line broken into
-// blades, or dropped onto the Underline - a little trampoline - squashing,
-// and pulled through as it sags, the floor springing back after. The pure
-// parts (shredDash, shredBlades, shredFeed; holeFall, holeSpring), the
-// runs and the poses, the deletion, the settings, the
-// drawing.
+// blades, or dropped straight through the Underline - a still floor, cut
+// off at its top edge, the floor lit while it passes. The pure parts
+// (shredDash, shredBlades, shredFeed; holeFall, holeGlow), the runs and
+// the poses, the deletion, the settings, the drawing.
 // One of the files test/test.js runs in order; see test/lib.js.
 const { T, ok, section, makeEngine, renderPanel } = require("../lib");
 
@@ -21,23 +20,27 @@ section("Shredder: the blades and the ribbons");
   ok("...its ribbons falling and fading after, then gone", start.dy === 0 && end.dy > 0 && end.alpha === 1 && T.shredFeed(l, 100, T.SHRED_FEED_MS + T.SHRED_FALL_MS / 2).alpha < 0.6 && gone.done);
 }
 
-section("Vacuum: the pull, the stretch, the bounce");
+section("Portal: straight through");
 {
-  const l = { char: "a", cx: 104.5, cy: 10, half: 4.8, font: "16px x", color: "#ddd", t0: 0, landed: false };
-  const F = T.HOLE_FALL_MS, at = (f) => T.holeFall(l, 104.5, 22, f * F);
-  const start = at(0), pulling = at(0.25), near = at(0.5), through = at(0.8), gone = at(1);
-  ok("a letter is pulled down from where it stood, faster and faster", start.foot === 14.8 && start.sx === 1 && start.sy === 1 && start.phase === 0 && pulling.foot > 14.8 && pulling.foot - 14.8 < (22 - 14.8) / 4 && near.foot - pulling.foot > pulling.foot - 14.8);
-  ok("...stretching tall and thin toward the floor (about its foot)", near.phase === 0 && near.sy > 1.3 && near.sx < 0.8 && pulling.sy > 1 && pulling.sy < near.sy);
-  ok("...then through it, thinner still, turning and shrinking as it sinks (the Portal's spin), its top past the floor by the end", through.phase === 2 && through.foot > 22 && through.sx < near.sx && Math.abs(through.rot) > Math.abs(near.rot) && Math.abs(gone.rot) >= T.HOLE_SPIN && gone.k <= 1 - T.HOLE_SHRINK + 1e-9 && Math.sign(gone.rot) === T.holeSpinDir(l.char) && gone.done && gone.foot - 2 * l.half * gone.sy * gone.k > 22);
-  const sp = { sag: 0, v: 0 };
-  let low = 0;
-  for (let k = 0; k < 30; k++) { T.holeSpring(sp, 1 / 60, T.HOLE_SAG); low = Math.max(low, sp.sag); }
-  ok("the floor sags under the weight, a little past it (it gives)", low > T.HOLE_SAG && low < 2 * T.HOLE_SAG, low);
-  let up = 0;
-  for (let k = 0; k < 60; k++) { T.holeSpring(sp, 1 / 60, 0); up = Math.min(up, sp.sag); }
-  ok("...let go, it springs back up past straight - the trampoline", up < -0.05, up);
-  for (let k = 0; k < 120; k++) T.holeSpring(sp, 1 / 60, 0);
-  ok("...and settles", Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05, sp);
+  // "the portal looks bad, the letters look like fallen trees and the
+  // portal like a bouncy bed": no stretch, no turn, no spring.
+  const l = { char: "a", cx: 104.5, cy: 10, half: 4.8, w: 9, font: "16px x", color: "#ddd", t0: 0 };
+  const F = T.HOLE_FALL_MS, at = (f, ll = l) => T.holeFall(ll, 22, f * F);
+  const ks = Array.from({ length: 21 }, (_, i) => at(i / 20));
+  ok("a letter over the floor drops straight down from where it stood, never sideways", ks[0].foot === 14.8 && ks[0].through === 0 && ks[0].phase === 0 && ks.every((f) => f.x === 104.5));
+  ok("...slow to start, faster as it goes in, always down till it is through", ks.every((f, i) => i === 0 || f.foot > ks[i - 1].foot || ks[i - 1].through === 1) && ks[2].foot - ks[1].foot > ks[1].foot - ks[0].foot && ks[8].foot - ks[7].foot > ks[2].foot - ks[1].foot);
+  const crossing = ks.find((f) => f.through > 0 && f.through < 1);
+  ok("...into the floor, part of it through (cut off there)", !!crossing && crossing.phase === 2 && crossing.foot > 22);
+  ok("...all of it through by the end, its top past the floor's top edge, and gone", ks[20].through === 1 && ks[20].foot - T.HOLE_TALL * l.half >= 22 && ks[20].done && !ks[19].done);
+  ok("no turn, no stretch: nothing in the pose but where it is", Object.keys(ks[10]).sort().join() === "done,foot,phase,through,x");
+  // A word taken at once: "slid over to the floor, a word's letters piled
+  // up on it" - each drops where it stood, the floor reaching under it.
+  const far = { ...l, cx: 104.5 + 6 * 9 };
+  const fs2 = Array.from({ length: 41 }, (_, i) => at(i / 40, far));
+  const first = fs2.findIndex((f) => f.through > 0), last = fs2.findIndex((f) => f.through === 1);
+  ok("a word's letter away from the floor drops straight down where it stood too", fs2.every((f) => f.x === far.cx) && fs2[40].done);
+  ok("...the floor reaching under it before it goes in, and back only once it is through", T.holeSpan(0) === 0 && T.holeSpan(first / 40) === 1 && T.holeSpan(last / 40) === 1 && T.holeSpan(1) === 0 && T.holeSpan(0.92) > 0 && T.holeSpan(0.92) < 1, [first, last]);
+  ok("the glow: none until it goes in, at its height half through, none once gone", T.holeGlow(0) === 0 && T.holeGlow(1) === 0 && Math.abs(T.holeGlow(0.5) - 1) < 1e-9 && T.holeGlow(0.25) > 0.5);
 }
 
 section("Shredder and Vacuum: the runs");
@@ -73,15 +76,17 @@ section("Shredder and Vacuum: the runs");
     ul._holeBite();
     ul.spawnHoleMeal({ letters: [{ char: "b", x: 200, w: 9 }], forward: false, old: { top: 0, h: 24, textColor: "#eee", fontSize: 16 } });
     let q = ul.holePose(now);
-    ok("Backspace on an Underline: a light tap, the letter dropping from the middle of its cell", !!q && q.letters.length === 1 && q.letters[0].cx === 204.5 && q.letters[0].cy === 12 && q.letters[0].half === 4.8);
+    ok("Backspace on an Underline: the floor out, the letter dropping from the middle of its cell", !!q && q.letters.length === 1 && q.letters[0].cx === 204.5 && q.letters[0].cy === 12 && q.letters[0].half === 4.8);
     now += 0.6 * T.HOLE_FALL_MS;
     q = ul.holePose(now);
-    ok("...reaching the floor: the floor pulls (kicked) and dips under it", q.letters[0].landed && q.sag > 0.1, q.sag);
-    let up = 0;
-    for (let k = 0; k < 40 && ul._hole; k++) { now += 16; const r = ul.holePose(now); if (r) up = Math.min(up, r.sag); }
-    ok("...gone through: the floor springs back up past straight", up < -0.02, up);
-    now += 3000;
+    ok("...going through, the floor still there", !!q && q.letters.length === 1 && Object.keys(q).join() === "letters");
+    now += 0.5 * T.HOLE_FALL_MS;
+    q = ul.holePose(now);
+    ok("...gone through: the floor stays a moment after", !!q && q.letters.length === 0);
+    now += T.HOLE_HOLD_MS;
     ok("...and then it is the bar again", ul.holePose(now) === null && !ul.holeMoving(now));
+    ul._holeBite();
+    ok("a key that took nothing readable: the floor out for the hold, then the bar", !!ul.holePose(now + T.HOLE_HOLD_MS - 1) && ul.holePose(now + T.HOLE_HOLD_MS) === null);
     const off = makeEngine({ cursorStyle: "Underline", popEffects: false, rabbitHole: true });
     off.styleFor = (k) => off.look[k];
     off._holeBite();
@@ -161,23 +166,28 @@ section("Shredder and Vacuum: drawn");
     ok("a word's far letter: everything it may paint marked - the unfed part up to 4 line heights past the cut, the fanned ribbons before it", !!m && m.x <= 100 - 4 * 24 && m.x + m.w >= 100 + 4 * 24 && m.y < -24 && m.y + m.h > 2 * 24, m);
   }
   calls.length = 0;
-  const h = { char: "b", cx: 104.5, cy: 10, half: 4.8, font: "16px x", color: "#ddd", t0: 0, landed: true };
-  T.EngineProto.drawHole.call(plugin, ctx, 100, 22, 9, 2, "#f80", { sag: T.HOLE_SAG, letters: [h] }, T.HOLE_FALL_MS / 2);
+  const h = { char: "b", cx: 104.5, cy: 10, half: 4.8, w: 9, font: "16px x", color: "#ddd", t0: 0 };
+  const hp = Object.assign({}, plugin, { traceRoundedRect: T.EngineProto.traceRoundedRect });
+  T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: [h] }, 0);
+  const kinds0 = calls.filter((c) => ["fill", "stroke", "fillText", "clip"].includes(c[0])).map((c) => c[0]).join();
+  ok("the Portal: the letter, clipped to above the floor's top edge, then the floor, one fill, its own bar - no dip, no hole, no circle", kinds0 === "clip,fillText,fill" && calls.some((c) => c[0] === "rect" && c[2] + c[4] === 22) && calls.some((c) => c[0] === "rect" && c.slice(1).join() === "100,22,9,2") && !calls.some((c) => ["ellipse", "arc", "quadraticCurveTo"].includes(c[0])) && calls.some((c) => c[0] === "set fillStyle" && c[1] === "#f80"), kinds0);
+  ok("...the letter upright and its own size (no turn, no stretch)", !calls.some((c) => c[0] === "rotate" || c[0] === "scale" || c[0] === "translate"));
+  calls.length = 0;
+  T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: [h] }, T.HOLE_FALL_MS / 2);
   const kinds = calls.filter((c) => ["fill", "stroke", "fillText", "clip"].includes(c[0])).map((c) => c[0]).join();
-  ok("the Underline dipping: the letter (stretched as it is pulled), clipped to above the bar, then the bar, one fill - no hole, no circle", kinds === "clip,fillText,fill" && !calls.some((c) => c[0] === "ellipse" || c[0] === "arc") && calls.some((c) => c[0] === "scale" && c[2] > c[1]), kinds);
-  // The outline's points, after the letter: the ends of its segments and
-  // each curve's middle.
-  const at = calls.findIndex((c) => c[0] === "fillText");
-  let cur = [0, 0];
-  const pts = calls.slice(at).flatMap((c) => {
-    if (c[0] === "moveTo" || c[0] === "lineTo") { cur = [c[1], c[2]]; return [cur]; }
-    if (c[0] !== "quadraticCurveTo") return [];
-    const mid = [0.25 * cur[0] + 0.5 * c[1] + 0.25 * c[3], 0.25 * cur[1] + 0.5 * c[2] + 0.25 * c[4]];
-    cur = [c[3], c[4]];
-    return [mid, cur];
-  });
-  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-  ok("...the bar a shallow curve: its feet where they were, its middle down a little, in its paint",
-     pts.some((p) => p[0] === 100 && p[1] === 24) && pts.some((p) => p[0] === 109 && p[1] === 24) && Math.max(...ys) > 24 && Math.max(...ys) - 24 <= 0.35 * 9 && calls.some((c) => c[0] === "set fillStyle" && c[1] === "#f80"));
-  ok("...no serifs: nothing above its ends, nothing past them", Math.min(...ys) >= 22 && Math.min(...xs) === 100 && Math.max(...xs) === 109);
+  const lit = calls.filter((c) => c[0] === "set fillStyle" && /^rgba\(255, 255, 255, /.test(c[1]));
+  const soft = calls.find((c) => c[0] === "set shadowColor" && /^rgba\(255, 136, 0, /.test(c[1]));
+  ok("...half through: the floor haloed soft in its own color and lit white over it", kinds === "clip,fillText,fill,fill" && lit.length === 1 && parseFloat(lit[0][1].split(", ")[3]) > 0.2 && !!soft && calls.some((c) => c[0] === "set shadowBlur" && c[1] >= T.HOLE_HALO_MIN), kinds);
+  // A word taken at once: its letters to the right of the floor.
+  calls.length = 0;
+  const word = [0, 1, 2].map((k) => ({ ...h, cx: 104.5 + 9 * k }));
+  T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: word }, T.HOLE_FALL_MS / 2);
+  ok("a word: the floor reaching under all of it, from its own left end", calls.some((c) => c[0] === "rect" && c.slice(1).join() === "100,22,27,2"));
+  calls.length = 0;
+  T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: word }, T.HOLE_FALL_MS - 1);
+  ok("...and drawn back as it is gone", calls.some((c) => c[0] === "rect" && c[1] === 100 && c[3] < 10 && c[3] >= 9));
+  // Letters behind the caret: typed over again already.
+  calls.length = 0;
+  T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: [{ ...h, cx: 104.5 - 18 }] }, T.HOLE_FALL_MS / 2);
+  ok("...but never back under letters behind it (typed over again: a long bar under the new ones)", calls.some((c) => c[0] === "rect" && c.slice(1).join() === "100,22,9,2"));
 }

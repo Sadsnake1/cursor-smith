@@ -1,8 +1,8 @@
-// The Underline's serifs and the Vacuum's U, and Caps Lock and Shift
+// The Underline's serifs and the Portal's floor, and Caps Lock and Shift
 // (1.7.7). The Underline's serifs: a tick up at each end of the bar, as a
 // Line's serif would be on it (underSerifSize, underSerifQuads); the
-// Vacuum's floor stands its ends up into arms as it dips, a U (holeArm,
-// holeOutline). Caps Lock and Shift: while Caps Lock is on or Shift held on
+// Portal's floor is the bar alone, still (drawHole, and the preview's).
+// Caps Lock and Shift: while Caps Lock is on or Shift held on
 // its own, the cursor flips to its opposite color and grows a little from
 // its foot, easing in and out (effects-caps.ts).
 // One of the files test/test.js runs in order; see test/lib.js.
@@ -67,44 +67,15 @@ section("Underline serifs");
   ok("a setting under the Underline's, after its thickness", !!row && rows.findIndex((x) => x.name === "Underline serifs") === rows.findIndex((x) => x.name === "Underline thickness") + 1);
 }
 
-section("Vacuum: no serifs");
+section("Portal: a still floor");
 {
-  // An outline's points: the ends of its segments and each curve's middle.
-  const pts = (cmds) => {
-    let cur = [0, 0];
-    return cmds.flatMap((c) => {
-      if (c[0] === "M" || c[0] === "L") { cur = [c[1], c[2]]; return [cur]; }
-      if (c[0] !== "Q") return [];
-      const mid = [0.25 * cur[0] + 0.5 * c[1] + 0.25 * c[3], 0.25 * cur[1] + 0.5 * c[2] + 0.25 * c[4]];
-      cur = [c[3], c[4]];
-      return [mid, cur];
-    });
-  };
-  const fp = pts(T.holeOutline(9, 3, 0));
-  ok("no dip: the bar, its ends, its top and its foot", Math.min(...fp.map((p) => p[0])) === 0 && Math.max(...fp.map((p) => p[0])) === 9 && Math.min(...fp.map((p) => p[1])) === 0 && Math.max(...fp.map((p) => p[1])) === 3);
-  const u = pts(T.holeOutline(9, 3, 2.7));
-  ok("dipping: its ends where they were, nothing above them (no arms), the middle of its foot 2.7 down", Math.min(...u.map((p) => p[0])) === 0 && Math.max(...u.map((p) => p[0])) === 9 && Math.min(...u.map((p) => p[1])) >= 0 && Math.abs(Math.max(...u.map((p) => p[1])) - 5.7) < 1e-9);
-  const round = T.holeOutline(9, 3, 2.7, 1.5);
-  ok("rounded: its corners curves (Rounded corners), inside the bar's ends", pts(round).every((p) => p[0] >= 0 && p[0] <= 9) && round[0][2] === 1.5);
+  // "the portal like a bouncy bed": no dip, no ripple, no swell, no spring;
+  // "the letters look like fallen trees": no turn, no stretch.
+  const eng = fs.readFileSync(srcPath("effects-rabbithole.ts"), "utf8");
+  ok("the engine's floor: no spring, no ripple, no dip, the letter neither turned nor scaled", !["holeSpring", "holeRipple", "HOLE_SAG", "HOLE_SPIN", "ctx.rotate", "ctx.scale", "ctx.translate"].some((w) => eng.includes(w)));
   const src = fs.readFileSync(srcPath("demo.ts"), "utf8");
-  ok("the preview draws the same outline (its ripple and swell too), its shimmer over it", /holeOutline\(ew, bh, shape, d\.shape\.radius\)/.test(src) && /fill='white' fill-opacity/.test(src));
-  // The Portal ("remove that gap, make the wobble more like a portal of
-  // something that the letter drops through"): one surface, rippling.
-  const ripple = T.holeOutline(9, 2, { sag: 1.5, r2: 0.8, r3: 0.5 }, 0);
-  ok("no gap: one outline, whole, however it ripples", ripple.filter((c) => c[0] === "M").length === 1);
-  const tops = [1, 2, 3, 4, 5, 6, 7, 8].map((x) => T.holeTop(x, 9, { sag: 1.5, r2: 0.8, r3: 0.5 }));
-  const turns = tops.slice(1, -1).filter((y, i) => (y - tops[i]) * (tops[i + 2] - y) < 0).length;
-  ok("...its top edge waves (the ripple on the dip), its ends where they were", turns >= 1 && Math.abs(T.holeTop(0, 9, { sag: 1.5, r2: 0.8, r3: 0.5 })) < 1e-9 && Math.abs(T.holeTop(9, 9, { sag: 1.5, r2: 0.8, r3: 0.5 })) < 1e-9, tops);
-  const sp = { r2: 0, v2: T.HOLE_RIPPLE_KICK[0], r3: 0, v3: T.HOLE_RIPPLE_KICK[1] };
-  let peak = 0;
-  for (let i = 0; i < 20; i++) { T.holeRipple(sp, 0.02); peak = Math.max(peak, Math.abs(sp.r2) + Math.abs(sp.r3)); }
-  const after = Math.abs(sp.r2) + Math.abs(sp.r3);
-  for (let i = 0; i < 100; i++) T.holeRipple(sp, 0.02);
-  ok("...a landing sets it rippling, and it settles within a couple of seconds", peak > 0.02 && after < peak && Math.abs(sp.r2) + Math.abs(sp.r3) < 0.002, [peak, after]);
-  const thick = T.holeOutline(9, 2, { sag: 0, swell: 1.8 }, 0);
-  const ys = thick.flatMap((c) => (c[0] === "Z" ? [] : c[0] === "Q" ? [c[2], c[4]] : [c[2]]));
-  ok("the swell: the floor thicker at its middle, a little up and more down, at its fullest just after the landing", Math.min(...ys) < 0 && Math.max(...ys) > 2 + 0.5 && T.holeSwell(0) === 0 && T.holeSwell(50) > T.holeSwell(15) && T.holeSwell(50) > T.holeSwell(300) && T.holeSwell(5000) === 0);
-  ok("the shimmer: a flash at the landing, gone over HOLE_FLASH_MS", T.holeFlash(0) === T.HOLE_FLASH && T.holeFlash(T.HOLE_FLASH_MS / 2) > 0 && T.holeFlash(T.HOLE_FLASH_MS) === 0 && T.holeFlash(-1) === 0);
+  ok("the preview's the same: the engine's fall (holeFall), the letter cut off at the floor's top edge, the floor lit (holeGlow) - no outline drawn, no turn",
+     src.includes("holeFall(") && src.includes("clipPath: `polygon(-100% -100%, 200% -100%, 200% ${cut}px, -100% ${cut}px)`") && src.includes("holeGlow(f.through)") && !["holeOutline", "holeSpring", "rotate(${f."].some((w) => src.includes(w)));
 }
 
 section("Caps Lock and Shift");

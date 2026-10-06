@@ -8,192 +8,93 @@
 // hole", then Portal again when "the underline vacuum needs to open a bit.
 // so a gap could work. and maybe rename it to Portal" - the code keeps the
 // old names, rabbitHole and hole*, as the saved settings do): the
-// Underline cursor - the floor under the letter - sucks the letters
-// Backspace or Delete takes down into it. The gap it opened for a day read
-// as a trapdoor ("remove that gap, make the wobble more like a portal of
-// something that the letter drops through"); now the floor is a surface
-// the letter sinks through, turning and shrinking as it goes (HOLE_SPIN),
-// the surface rippling where it went in (HOLE_RIPPLE_*), swelling a moment
-// (HOLE_SWELL) and flashing (HOLE_FLASH). A letter is pulled
-// down, faster and faster, stretching tall and thin toward it (no streaks:
-// the user's word); the floor dips in one quick pull as the letter goes in
-// - a shallow dip ("dont make the cursor a circle, make it curved concave
-// just a bit"; a dark ellipse for a day) - and it goes through, thinner,
-// out of sight; then the floor springs back up past straight and wobbles
-// to rest. A floor: on a Box or a Line the cursor morphs into one
-// first (effects-eaters.ts). No serifs: the Underline's give way to it
-// (it had arms standing up into a U for a day: "remove the serifs from the
-// vacuum").
+// Underline cursor - the floor under the letter - takes the letters
+// Backspace or Delete takes down through it. The floor stays still; a
+// letter drops straight down into it and is cut off at its top edge, out
+// of sight below, and the floor glows while it passes (HOLE_GLOW,
+// HOLE_HALO) - "Straight through", picked of three mockups ("do A"). What
+// it replaced: a gap opening for a day read as a trapdoor ("remove that
+// gap"); then a letter stretched tall, turning as it sank, over a floor
+// that dipped, rippled and sprang back read as "the letters look like
+// fallen trees and the portal like a bouncy bed" - so no stretch, no turn,
+// no spring. A word taken at once (a phone's held Backspace) drops
+// straight down too, every letter where it stood: the floor reaches along
+// under it as it goes in and draws back as it is gone (holeSpan) - slid
+// over to the floor, a word's letters piled up on it. Only ahead of the
+// caret, where the letters a deletion leaves are (a held Backspace's still
+// going down, a word's): behind it are only letters typed over again, and
+// reaching back to them laid a long bar under the new ones. A floor: on a Box or
+// a Line the cursor morphs into one first (effects-eaters.ts). No serifs:
+// the Underline's give way to it.
 import type { CaretRecord, DeletedLetters } from "../types";
 import { letterChoiceOf } from "../settings/settings";
-import type { BackManCmd } from "./effects-backman";
+import { parseColorTuple } from "../util/color";
 import type CursorSmithPlugin from "../plugin";
 
-// A letter's way in: pulled down to the floor (to LAND of the way), then
-// through it (to the end) - SINK, where it starts going through, is LAND.
+// A letter's way: from where it stood until it is out of sight below the
+// floor's top edge (all but the last HOLE_REACH of it), then the floor
+// drawing back (holeSpan).
 export const HOLE_FALL_MS = 420;
-const LAND = 0.55, SINK = LAND;
-// How far the floor dips as it pulls a letter in (a letter's width - "just
-// a bit"), how much taller a letter is stretched by the pull (it goes
-// thinner as much).
-export const HOLE_SAG = 0.15;
-export const HOLE_STRETCH = 0.5;
-// The surface's ripple: two more ways it moves besides the dip, faster
-// (Hz), lightly damped, kicked by each landing (letter widths a second),
-// so it sloshes and ripples where a letter went in.
-export const HOLE_RIPPLE_HZ = [8.5, 13];
-export const HOLE_RIPPLE_DAMPING = 0.16;
-export const HOLE_RIPPLE_KICK = [3.2, 2.8];
-// The swell: the floor thickening at its middle as a letter goes in, up to
-// HOLE_SWELL of its thickness more, at its fullest HOLE_SWELL_MS after the
-// landing, then easing back.
-export const HOLE_SWELL = 0.5;
-export const HOLE_SWELL_MS = 50;
-// The shimmer: a flash of light over the floor at a landing, HOLE_FLASH
-// strong, gone over HOLE_FLASH_MS.
-export const HOLE_FLASH = 0.5;
-export const HOLE_FLASH_MS = 220;
-// The spin: going through, a letter turns this far (radians) and shrinks by
-// this much of itself.
-export const HOLE_SPIN = 1.8;
-export const HOLE_SHRINK = 0.55;
-
-// The swell's share at `age` ms after a landing: rising to 1 at
-// HOLE_SWELL_MS, then easing out. Pure.
-export function holeSwell(age: number): number {
-  if (!(age > 0)) return 0;
-  const k = age / HOLE_SWELL_MS;
-  return k > 12 ? 0 : k * Math.exp(1 - k);
-}
-
-// The shimmer's strength at `age` ms after a landing. Pure.
-export function holeFlash(age: number): number {
-  if (!(age >= 0) || age >= HOLE_FLASH_MS) return 0;
-  const k = 1 - age / HOLE_FLASH_MS;
-  return HOLE_FLASH * k * k;
-}
-
-// Which way a letter turns going through: by its character, so the letters
-// of a word do not all turn alike. Pure.
-export function holeSpinDir(char: string): number {
-  return (char.charCodeAt(0) || 0) % 2 ? 1 : -1;
-}
-// The floor's spring: its frequency (Hz) and damping ratio (0.3: it springs
-// back past straight and wobbles), the kick a landing gives it and a key's
-// tap (letter widths a second).
-export const HOLE_HZ = 5;
-export const HOLE_DAMPING = 0.3;
-export const HOLE_KICK = 6;
+// How tall a letter is, from its foot up, in halves (half: from its middle
+// to its foot, 0.3 of the font): a capital's or an ascender's top.
+export const HOLE_TALL = 2.5;
+// The floor reaching under a letter that stood away from it: out over the
+// first HOLE_REACH of the letter's way, back over the last.
+export const HOLE_REACH = 0.15;
+// The glow while a letter passes: white over the floor's paint, this
+// strong at its height, and a soft halo of the floor's own color round
+// it, blurred its thickness times HOLE_HALO (at least HOLE_HALO_MIN px),
+// HOLE_HALO_ALPHA strong.
+export const HOLE_GLOW = 0.6;
+export const HOLE_HALO = 2;
+export const HOLE_HALO_MIN = 4;
+export const HOLE_HALO_ALPHA = 0.8;
+// How long the floor stays after the last key or letter.
+export const HOLE_HOLD_MS = 200;
+// Where in its way the letters' effect plays for a letter: Burst as it
+// goes through, Evaporate once it is gone.
+export const HOLE_BURST_AT = 0.5;
+const EVAPORATE_AT = 0.9;
 const MEAL_MAX = 12;
 
 // A letter going down: where its middle stood, half its height (from its
-// middle to its foot), its font and color, when it set off, whether it has
-// landed.
+// middle to its foot), its font and color, when it set off.
 // fx: the letters' effect played for it.
-export interface HoleLetter { char: string; cx: number; cy: number; half: number; w: number; old: CaretRecord; font: string; color: string; t0: number; landed: boolean; fx?: boolean }
-// The floor's spring (sag in letter widths, down positive) and the letters.
-// floor: where the floor's middle was last drawn (the letters' effect plays
-// there).
-// r2, v2, r3, v3: the ripple's two motions (letter widths, and a second);
-// landT: the last landing (the swell and the shimmer run from it).
-export interface HoleState { sag: number; v: number; r2: number; v2: number; r3: number; v3: number; landT: number; at: number; letters: HoleLetter[]; floor?: { x: number; y: number } }
-export interface HolePose { sag: number; r2: number; r3: number; landT: number; letters: HoleLetter[] }
+export interface HoleLetter { char: string; cx: number; cy: number; half: number; w: number; old: CaretRecord; font: string; color: string; t0: number; fx?: boolean }
+// The letters, and the last key or the last letter's end (the floor stays
+// HOLE_HOLD_MS after). floor: where the floor's middle was last drawn (its
+// top edge: the letters' effect plays there).
+export interface HoleState { at: number; letters: HoleLetter[]; floor?: { x: number; y: number } }
+export interface HolePose { letters: HoleLetter[] }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+const smooth = (t: number) => t * t * (3 - 2 * t);
 
-// The floor's spring toward `target` over dt seconds (up to two), in small
-// steps so any frame rate gives the same bounce. Pure.
-export function holeSpring(s: { sag: number; v: number }, dt: number, target: number) {
-  const w = 2 * Math.PI * HOLE_HZ;
-  dt = Math.max(0, Math.min(2, dt));
-  const steps = Math.max(1, Math.ceil(dt * 480));
-  const h = dt / steps;
-  for (let i = 0; i < steps; i++) {
-    s.v += (-w * w * (s.sag - target) - 2 * HOLE_DAMPING * w * s.v) * h;
-    s.sag += s.v * h;
-  }
-}
-
-// The ripple's two motions over dt seconds (up to two), each a damped
-// spring back to flat, in small steps so any frame rate gives the same
-// ripple. Pure.
-export function holeRipple(s: { r2: number; v2: number; r3: number; v3: number }, dt: number) {
-  dt = Math.max(0, Math.min(2, dt));
-  const steps = Math.max(1, Math.ceil(dt * 480));
-  const h = dt / steps;
-  const w2 = 2 * Math.PI * HOLE_RIPPLE_HZ[0], w3 = 2 * Math.PI * HOLE_RIPPLE_HZ[1];
-  for (let i = 0; i < steps; i++) {
-    s.v2 += (-w2 * w2 * s.r2 - 2 * HOLE_RIPPLE_DAMPING * w2 * s.v2) * h;
-    s.r2 += s.v2 * h;
-    s.v3 += (-w3 * w3 * s.r3 - 2 * HOLE_RIPPLE_DAMPING * w3 * s.v3) * h;
-    s.r3 += s.v3 * h;
-  }
-}
-
-// A letter at `now`, the floor's middle at (fx, fy) (its top edge, where it
-// dips deepest): where its foot is (x, foot), how it is stretched (sx, sy,
-// about its foot), shrunk (k) and turned (rot, none: the pull is straight),
-// how seen (alpha), which part of its way it is on (0 pulled down, 2 going
-// through) and whether it is gone. Pulled down faster and faster, it
-// stretches tall and thin toward the floor; then it goes through, thinner
-// still, its top past the floor by the end. Pure.
-export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
+// A letter at `now`, the floor's top edge at `fy`: where its foot is (x,
+// foot - straight down from where it stood, slow to start, faster as it
+// goes in), how much of it is through the floor (through, 0 none, 1 all),
+// which part of its way it is on (0 above, 2 going through) and whether it
+// is gone. Pure.
+export function holeFall(l: HoleLetter, fy: number, now: number) {
   const u = clamp01((now - l.t0) / HOLE_FALL_MS);
   const foot0 = l.cy + l.half;
-  if (u < LAND) {
-    const e = Math.pow(u / LAND, 3);
-    // Starting to turn as it is pulled in.
-    return { x: l.cx + (fx - l.cx) * e, foot: foot0 + (fy - foot0) * e, sx: 1 - 0.4 * e, sy: 1 + HOLE_STRETCH * e, k: 1, rot: holeSpinDir(l.char) * 0.2 * e, alpha: 1, phase: 0, done: false };
-  }
-  // Through the surface: turning on (HOLE_SPIN) and shrinking (HOLE_SHRINK)
-  // as it sinks, as into a whirlpool.
-  const c = (u - SINK) / (1 - SINK);
-  const sx = 0.6 - 0.35 * c, sy = 1 + HOLE_STRETCH + 0.4 * c, k = 1 - HOLE_SHRINK * c;
-  return { x: fx, foot: fy + 2 * l.half * sy * k * Math.pow(c, 1.2) + 1, sx, sy, k, rot: holeSpinDir(l.char) * (0.2 + HOLE_SPIN * Math.pow(c, 1.1)), alpha: 1, phase: 2, done: u >= 1 };
+  const tall = HOLE_TALL * l.half;
+  const foot = foot0 + (Math.max(0, fy - foot0) + tall + 1) * smooth(clamp01(u / (1 - HOLE_REACH)));
+  const through = clamp01((foot - fy) / tall);
+  return { x: l.cx, foot, through, phase: through > 0 ? 2 : 0, done: u >= 1 };
 }
 
-// The floor's shape, in px: its dip (`sag`, its middle below its ends),
-// the ripple's two motions (`r2`, `r3`) and the swell (`swell`: thicker at
-// the middle, a little up and more down).
-export interface PortalShape { sag: number; r2?: number; r3?: number; swell?: number }
-
-// The top edge's offset at `x` across a floor `w` wide: the dip's curve,
-// the ripple's waves on it, the swell lifting it. Pure.
-export function holeTop(x: number, w: number, s: PortalShape): number {
-  const u = x / w;
-  const bump = Math.sin(Math.PI * u) ** 2;
-  return 4 * s.sag * u * (1 - u) + (s.r2 || 0) * Math.sin(2 * Math.PI * u) + (s.r3 || 0) * Math.sin(3 * Math.PI * u) - 0.4 * (s.swell || 0) * bump;
+// How far the floor reaches under a letter that stood away from it, `u` of
+// the letter's way along: all the way while it goes through, out before it
+// reaches the floor, back once it is gone. Pure.
+export function holeSpan(u: number): number {
+  return smooth(clamp01(u / HOLE_REACH)) * (1 - smooth(clamp01((u - (1 - HOLE_REACH)) / HOLE_REACH)));
 }
 
-// The floor as one outline, in a box from its left end's top edge (0, 0):
-// `w` wide, `h` thick, shaped by `shape` (a number: the dip alone), its
-// ends where they were, its corners rounded by `corner` as Rounded corners
-// rounds the cursor. The dip alone is one curve each edge; rippling or
-// swelling it is followed in short steps. Pure.
-export function holeOutline(w: number, h: number, shape: number | PortalShape, corner = 0): BackManCmd[] {
-  const s: PortalShape = typeof shape === "number" ? { sag: shape } : shape;
-  const sag = s.sag;
-  const r = Math.max(0, Math.min(corner, h / 2, w / 2));
-  if (!s.r2 && !s.r3 && !s.swell) {
-    const f = (x: number) => 4 * sag * (x / w) * (1 - x / w);
-    const df = (x: number) => 4 * sag * (1 / w - (2 * x) / (w * w));
-    // The parabola from x = a to x = b, dy below the top edge: a quadratic
-    // whose control is where the tangents at its ends meet.
-    const para = (a: number, b: number, dy: number): BackManCmd => ["Q", (a + b) / 2, dy + f(a) + (df(a) * (b - a)) / 2, b, dy + f(b)];
-    return [["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, f(r)], para(r, w - r, 0), ["Q", w, 0, w, r],
-      ["L", w, h - r], ["Q", w, h, w - r, h + f(w - r)], para(w - r, r, h), ["Q", 0, h, 0, h - r], ["Z"]];
-  }
-  const top = (x: number) => holeTop(x, w, s);
-  const bump = (x: number) => Math.sin((Math.PI * x) / w) ** 2;
-  const bottom = (x: number) => h + holeTop(x, w, Object.assign({}, s, { swell: 0 })) + 0.6 * (s.swell || 0) * bump(x);
-  const n = 14;
-  const at = (i: number) => r + ((w - 2 * r) * i) / n;
-  const out: BackManCmd[] = [["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, top(r)]];
-  for (let i = 1; i <= n; i++) out.push(["L", at(i), top(at(i))]);
-  out.push(["Q", w, 0, w, r], ["L", w, h - r], ["Q", w, h, w - r, bottom(w - r)]);
-  for (let i = n - 1; i >= 0; i--) out.push(["L", at(i), bottom(at(i))]);
-  out.push(["Q", 0, h, 0, h - r], ["Z"]);
-  return out;
+// The glow for a letter `through` of the way through the floor: up as it
+// goes in, gone as it is out of sight. Pure.
+export function holeGlow(through: number): number {
+  return through > 0 && through < 1 ? Math.sin(Math.PI * through) : 0;
 }
 
 export const effectsRabbitHoleMethods = {
@@ -203,18 +104,12 @@ export const effectsRabbitHoleMethods = {
     return this._eaterOn() === "rabbithole";
   },
 
-  // A key that deletes (Backspace or Delete): a light tap on the floor.
+  // A key that deletes (Backspace or Delete): the floor out.
   _holeBite(this: CursorSmithPlugin) {
     if (!this._holeOn()) return;
     const now = performance.now();
-    const s = this._hole;
-    if (s) {
-      if (now > s.at) { holeSpring(s, (now - s.at) / 1000, 0); holeRipple(s, (now - s.at) / 1000); s.at = now; }
-      s.v += 0.25 * HOLE_KICK;
-      s.v3 += 0.3 * HOLE_RIPPLE_KICK[1];
-    } else {
-      this._hole = { sag: 0, v: 0.25 * HOLE_KICK, r2: 0, v2: 0, r3: 0, v3: 0.3 * HOLE_RIPPLE_KICK[1], landT: -1e9, at: now, letters: [] };
-    }
+    if (this._hole) this._hole.at = now;
+    else this._hole = { at: now, letters: [] };
   },
 
   // What the key took (effects-delete.ts): the letters, each dropping from
@@ -231,47 +126,32 @@ export const effectsRabbitHoleMethods = {
     const now = performance.now();
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
-      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, w: l.w, old, font, color, t0: now, landed: false });
+      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, w: l.w, old, font, color, t0: now });
+      s.at = Math.max(s.at, now + HOLE_FALL_MS);
     }
   },
 
-  // The floor at `now`: how far it sags (the spring run up to now - pulled
-  // down while a letter is on it or going through, kicked by each landing)
-  // and the letters still about - or null when every letter is gone and
-  // the floor has come to rest.
+  // The floor at `now`: the letters still about - or null when every
+  // letter is gone and HOLE_HOLD_MS has passed since the last.
   holePose(this: CursorSmithPlugin, now: number): HolePose | null {
     const s = this._hole;
     if (!s || !this._holeOn()) return null;
-    // The letters' effect: Burst as a splash of pixels out of the dip as a
-    // letter goes in, Evaporate as its ghost floating back up out of it.
+    // The letters' effect: Burst as a splash of pixels out of the floor as
+    // a letter goes through, Evaporate as its ghost floating back up out of
+    // it.
     const fx = this.look.popEffects ? letterChoiceOf(this.look) : "vanish";
     for (const l of s.letters) {
       const u = (now - l.t0) / HOLE_FALL_MS;
-      if (l.fx || fx === "vanish" || u < (fx === "burst" ? SINK : 0.9)) continue;
+      if (l.fx || fx === "vanish" || u < (fx === "burst" ? HOLE_BURST_AT : EVAPORATE_AT)) continue;
       l.fx = true;
-      const at = s.floor || { x: l.cx, y: l.cy + l.half };
+      // Where it went in: its own cell (it drops straight), at the floor.
+      const fy = s.floor ? s.floor.y : l.cy + l.half;
       const h = l.old.h || 20;
-      this._eatenLetterFx(l.char, l.w, l.old, at.x - l.w / 2, at.y - (fx === "burst" ? 0.6 : 0.5) * h);
+      this._eatenLetterFx(l.char, l.w, l.old, l.cx - l.w / 2, fy - (fx === "burst" ? 0.6 : 0.5) * h);
     }
     s.letters = s.letters.filter((l) => now - l.t0 < HOLE_FALL_MS);
-    let weighed = false;
-    for (const l of s.letters) {
-      const u = (now - l.t0) / HOLE_FALL_MS;
-      if (u >= LAND) weighed = true;
-      if (u >= LAND && !l.landed) {
-        // A landing: the dip kicked, the surface set rippling (sloshing one
-        // way or the other by the letter), the swell and the shimmer begun.
-        l.landed = true;
-        s.v += HOLE_KICK;
-        s.v2 += holeSpinDir(l.char) * HOLE_RIPPLE_KICK[0];
-        s.v3 += HOLE_RIPPLE_KICK[1];
-        s.landT = now;
-      }
-    }
-    if (now > s.at) { holeSpring(s, (now - s.at) / 1000, weighed ? HOLE_SAG : 0); holeRipple(s, (now - s.at) / 1000); s.at = now; }
-    const still = Math.abs(s.sag) < 0.003 && Math.abs(s.v) < 0.05 && Math.abs(s.r2) < 0.003 && Math.abs(s.v2) < 0.05 && Math.abs(s.r3) < 0.003 && Math.abs(s.v3) < 0.05;
-    if (!s.letters.length && still && now - s.landT > HOLE_FLASH_MS) { this._hole = null; return null; }
-    return { sag: s.sag, r2: s.r2, r3: s.r3, landT: s.landT, letters: s.letters };
+    if (!s.letters.length && now - s.at >= HOLE_HOLD_MS) { this._hole = null; return null; }
+    return { letters: s.letters };
   },
 
   // Whether it is still about (the frame governor keeps the frames coming).
@@ -280,65 +160,59 @@ export const effectsRabbitHoleMethods = {
   },
 
   // The Underline as the floor, in its bar (x, y, w, h) and its own paint:
-  // the letters first (seen above the bar's top edge, curved as the bar is;
-  // out of sight once through it), then the bar along the curve - its ends
-  // where they were, its middle down (or up, springing back), its thickness
-  // the bar's - one fill (holeOutline), rounded as Rounded corners rounds it.
+  // the letters first (seen above the bar's top edge, out of sight once
+  // through it), then the bar, still, rounded as Rounded corners rounds it
+  // - reaching along to the right under letters that stood away from it
+  // (holeSpan), lit (HOLE_GLOW) and haloed (HOLE_HALO) while a letter
+  // passes.
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
-    // The surface: the dip, the ripple on it, the swell from the last
-    // landing.
-    const shape: PortalShape = { sag: pose.sag * w, r2: (pose.r2 || 0) * w, r3: (pose.r3 || 0) * w, swell: HOLE_SWELL * h * holeSwell(now - (pose.landT ?? -1e9)) };
-    const cx = x + w / 2, mid = y + h / 2, top = y;
-    const entry = top + holeTop(w / 2, w, shape);
-    if (this._hole) this._hole.floor = { x: cx, y: entry };
+    const top = y;
+    if (this._hole) this._hole.floor = { x: x + w / 2, y: top };
+    let glow = 0, right = x + w;
     for (const l of pose.letters) {
-      const f = holeFall(l, cx, entry, now);
+      const f = holeFall(l, top, now);
       if (f.done) continue;
-      const far = 6 * Math.max(w, Math.abs(l.cx - cx) + w);
+      glow = Math.max(glow, holeGlow(f.through));
+      const reach = holeSpan((now - l.t0) / HOLE_FALL_MS);
+      right = Math.max(right, x + w + Math.max(0, l.cx + l.w / 2 - x - w) * reach);
+      const far = 6 * Math.max(l.w, Math.abs(l.cx - x) + w);
       ctx.save();
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
-      // Above the surface: what has sunk through it is gone.
+      // Above the floor's top edge: what has gone through it is gone.
       ctx.beginPath();
-      ctx.moveTo(x - far, top - far);
-      ctx.lineTo(x + w + far, top - far);
-      ctx.lineTo(x + w + far, top);
-      for (let i = 14; i >= 0; i--) ctx.lineTo(x + (w * i) / 14, top + holeTop((w * i) / 14, w, shape));
-      ctx.lineTo(x - far, top);
-      ctx.closePath();
+      ctx.rect(x - far, top - far, w + 2 * far, far);
       ctx.clip();
-      // About its foot: squashed onto the floor, shrunk and turned going
-      // through.
-      ctx.translate(f.x, f.foot);
-      ctx.rotate(f.rot);
-      ctx.scale(f.sx * f.k, f.sy * f.k);
       ctx.font = l.font;
       ctx.fillStyle = l.color;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(l.char, 0, -l.half);
+      ctx.fillText(l.char, f.x, f.foot - l.half);
       ctx.restore();
-      this._markDirty(Math.min(l.cx, cx) - w * 2, Math.min(l.cy, mid) - w * 2, Math.abs(l.cx - cx) + w * 4, Math.abs(l.cy - mid) + w * 4);
+      this._markDirty(l.cx - 2 * l.w, Math.min(l.cy, top) - 2 * l.w - 4 * l.half, 4 * l.w, Math.abs(top - l.cy) + 4 * l.w + 8 * l.half);
     }
-    // The surface, then its shimmer over it (light, the glow kept off it).
+    const bw = right - x;
+    const r = this.cornerRadius(Math.min(bw, h));
+    const halo = Math.max(HOLE_HALO_MIN, HOLE_HALO * h);
     ctx.fillStyle = paint;
     ctx.beginPath();
-    for (const c of holeOutline(w, h, shape, this.cornerRadius(Math.min(w, h)))) {
-      if (c[0] === "M") ctx.moveTo(x + c[1], y + c[2]);
-      else if (c[0] === "L") ctx.lineTo(x + c[1], y + c[2]);
-      else if (c[0] === "Q") ctx.quadraticCurveTo(x + c[1], y + c[2], x + c[3], y + c[4]);
-      else ctx.closePath();
-    }
-    ctx.fill();
-    const flash = holeFlash(now - (pose.landT ?? -1e9));
-    if (flash > 0.01) {
+    this.traceRoundedRect(ctx, x, y, bw, h, r);
+    if (glow > 0.01) {
+      // The halo, soft, in the floor's own color - then the light over it,
+      // the glow kept off that.
+      const rgb = parseColorTuple(typeof paint === "string" ? paint : this.getActiveColor()) || [255, 255, 255];
       ctx.save();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = `rgba(255, 255, 255, ${flash.toFixed(3)})`;
+      ctx.shadowColor = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(HOLE_HALO_ALPHA * glow).toFixed(3)})`;
+      ctx.shadowBlur = halo;
       ctx.fill();
       ctx.restore();
-    }
-    // The ripple and the swell reach past the bar a little.
-    this._markDirty(x - 2, y - w - 4, w + 4, h + 2 * w + 8);
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = `rgba(255, 255, 255, ${(HOLE_GLOW * glow).toFixed(3)})`;
+      ctx.fill();
+      ctx.restore();
+    } else ctx.fill();
+    this._markDirty(x - 2 * halo - 2, y - 2 * halo - 2, bw + 4 * halo + 4, h + 4 * halo + 4);
   },
 };

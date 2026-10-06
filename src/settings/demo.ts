@@ -65,7 +65,7 @@ import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_KICK, HOLE_RIPPLE_KICK, HOLE_SAG, HOLE_SWELL, holeFall, holeFlash, holeOutline, holeRipple, holeSpinDir, holeSpring, holeSwell, holeTop } from "../effects/effects-rabbithole";
+import { HOLE_BURST_AT, HOLE_FALL_MS, HOLE_GLOW, HOLE_HALO, HOLE_HALO_ALPHA, HOLE_HALO_MIN, HOLE_HOLD_MS, holeFall, holeGlow, holeSpan } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -695,8 +695,6 @@ interface Particle {
   // it (an eater's combo).
   ch?: string;
   fired?: boolean;
-  // A Rabbit hole letter that has landed on the floor (kicked it once).
-  landed?: boolean;
   rot?: number;
   shape0?: number;
   phase?: number;
@@ -794,9 +792,14 @@ interface Demo {
   // the caret wears now (to put it back once).
   shredRun: { t0: number; t: number } | null;
   cut: number;
-  holeSp: { sag: number; v: number; r2: number; v2: number; r3: number; v3: number; landT: number; at: number } | null;
+  // holeRun.at: the last key or the last letter's end (the floor stays
+  // HOLE_HOLD_MS after); holeGlow: the frame's glow, from the letters going
+  // through; holeCells: the frame's letters' cells (left, right), each
+  // with how far the floor reaches under it (holeSpan).
+  holeRun: { at: number } | null;
   holeAt: [number, number];
-  holeWeighed: boolean;
+  holeGlow: number;
+  holeCells: [number, number, number][];
   // The caret's morph into its eater's shape and back (effects-eaters.ts).
   eatM: { kind: Eater; t0: number; exit: number } | null;
   eatOn: "" | "shred" | "hole";
@@ -900,7 +903,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, hotType: 0, hotTypeT: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, hotType: 0, hotTypeT: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeRun: null, holeAt: [0, 0], holeGlow: 0, holeCells: [], eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
       vim: null,
     };
     // Vim: the mode's badge in the stage's corner, the Visual selection under
@@ -1280,13 +1283,7 @@ export class DemoStrip {
     }
     // Shredder's blades out (a Line's), Rabbit hole open (an Underline's).
     if (eatKind === "shredder") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
-    if (eatKind === "rabbithole") {
-      // A light tap on the floor.
-      const sp = d.holeSp || (d.holeSp = { sag: 0, v: 0, r2: 0, v2: 0, r3: 0, v3: 0, landT: -1e9, at: now });
-      if (now > sp.at) { holeSpring(sp, (now - sp.at) / 1000, 0); holeRipple(sp, (now - sp.at) / 1000); sp.at = now; }
-      sp.v += 0.25 * HOLE_KICK;
-      sp.v3 += 0.3 * HOLE_RIPPLE_KICK[1];
-    }
+    if (eatKind === "rabbithole") d.holeRun = { at: now };
     d.keyT = now;
     d.keyKind = "back";
     d.keyHeavy = false;
@@ -1311,7 +1308,7 @@ export class DemoStrip {
     // ...Shredder and Rabbit hole the same, on their own cursors.
     const shred = bite && !!d.shredRun && eatKind === "shredder";
     const shredShown = look.shredderLetters !== false;
-    const hole = bite && !!d.holeSp && eatKind === "rabbithole";
+    const hole = bite && !!d.holeRun && eatKind === "rabbithole";
     letters.forEach(({ ch, at }, k) => {
       if (!ch.trim()) return;
       const x = at * cw;
@@ -1327,7 +1324,10 @@ export class DemoStrip {
         return;
       }
       if (hole) {
-        if (k < 12) { const l = this.spawn(d, x, 11, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole"); if (l) l.landed = false; }
+        // At 5: a letter span's 12 px line box over the row's 22 px one,
+        // its letter on the row's (at 11, where the other letters start,
+        // it stood 6 px low and was through the floor before it fell).
+        if (k < 12 && this.spawn(d, x, 5, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") && d.holeRun) d.holeRun.at = Math.max(d.holeRun.at, now + HOLE_FALL_MS);
         return;
       }
       if (look.typewriter && look.typewriterTape) {
@@ -1433,7 +1433,7 @@ export class DemoStrip {
         }
         if (p.kind === "hole" && !p.fired && letterChoiceOf(d.look) === "evaporate") {
           const cw = d.stepPx || 7;
-          born.push(() => this.afterEaten(d, p.ch ?? "", d.holeAt[0] - cw / 2, 11, now));
+          born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 11, now));
         }
         d.pool.push(p.el);
         continue;
@@ -1480,28 +1480,22 @@ export class DemoStrip {
           });
         }
       } else if (p.kind === "hole") {
-        // Pulled down to the floor (d.holeAt, its middle's top edge),
-        // stretching tall and thin - the floor kicked, and dipping while
-        // it goes in - then through, fading as it goes (no clip here), as
-        // the engine's (holeFall). The span's foot (its baseline) is 9.6 px
-        // down, its middle 6.
+        // Straight down into the floor, cut off at its top edge (fy: the
+        // floor's, as eaterForm puts it - d.holeAt is a frame behind) - the
+        // floor lit while it passes - as the engine's (holeFall). The
+        // span's foot (its baseline) is 9.6 px down, its middle 6.
         const cw = d.stepPx || 7;
-        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0, landed: !!p.landed }, d.holeAt[0], d.holeAt[1], now);
-        if (f.phase === 2 && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", d.holeAt[0] - cw / 2, 15, now)); }
-        if (f.phase >= 1) {
-          d.holeWeighed = true;
-          if (!p.landed && d.holeSp) {
-            p.landed = true;
-            d.holeSp.v += HOLE_KICK;
-            d.holeSp.v2 += holeSpinDir(p.ch ?? "") * HOLE_RIPPLE_KICK[0];
-            d.holeSp.v3 += HOLE_RIPPLE_KICK[1];
-            d.holeSp.landT = now;
-          }
-        }
+        const fy = d.geo ? d.geo.top + d.geo.h - d.geo.ulH : d.holeAt[1];
+        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, fy, now);
+        if (age >= HOLE_BURST_AT && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 15, now)); }
+        d.holeGlow = Math.max(d.holeGlow, holeGlow(f.through));
+        d.holeCells.push([p.x, p.x + cw, holeSpan(age)]);
+        // The floor's top edge in the span's own place.
+        const cut = (fy - (f.foot - 9.6)).toFixed(1);
         p.el.setCssStyles({
-          transformOrigin: "50% 80%",
-          transform: `translate(${(f.x - cw / 2).toFixed(1)}px, ${(f.foot - 9.6).toFixed(1)}px) rotate(${f.rot.toFixed(2)}rad) scale(${(f.sx * f.k).toFixed(2)}, ${(f.sy * f.k).toFixed(2)})`,
-          opacity: f.done ? "0" : f.phase === 2 ? Math.max(0, (f.k - 0.8) / 0.2).toFixed(2) : "1",
+          transform: `translate(${(f.x - cw / 2).toFixed(1)}px, ${(f.foot - 9.6).toFixed(1)}px)`,
+          clipPath: `polygon(-100% -100%, 200% -100%, 200% ${cut}px, -100% ${cut}px)`,
+          opacity: f.done ? "0" : "1",
         });
       } else if (p.kind === "xout") {
         p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (t < 0.5 ? 1 : 1 - (t - 0.5) * 2).toFixed(2) });
@@ -1736,7 +1730,7 @@ export class DemoStrip {
     if (d.geo) {
       const c0 = d.bmChew;
       const live = eatKind === "backman" ? (!!c0 && !backManBite(Math.max(0, this.last - c0.c0), c0.t - c0.c0, c0.big).done) || Math.abs(d.bm.bend) >= 0.004 || Math.abs(d.bm.v) >= 0.05
-        : eatKind === "shredder" ? !!d.shredRun : eatKind === "rabbithole" ? !!d.holeSp : false;
+        : eatKind === "shredder" ? !!d.shredRun : eatKind === "rabbithole" ? !!d.holeRun : false;
       const st = d.eatM;
       if (live && eatKind) {
         if (!st || st.kind !== eatKind) d.eatM = { kind: eatKind, t0: this.last, exit: 0 };
@@ -1801,9 +1795,8 @@ export class DemoStrip {
       d.bmOn = false;
     }
     // Shredder (a Line's) and Rabbit hole (an Underline's), as the engine
-    // draws them: the line as blades, buzzing; the bar sagging into a
-    // shallow dip, its color and thickness (the caret heightened for it,
-    // drawn in its background).
+    // draws them: the line as blades, buzzing; the bar still, lit while a
+    // letter goes through it.
     const n2 = (v: number) => v.toFixed(2);
     let eat: "" | "shred" | "hole" = "";
     if (eatKind === "shredder" && d.shredRun && d.geo) {
@@ -1822,39 +1815,33 @@ export class DemoStrip {
       }
       if (last >= SHRED_HOLD_MS + SHRED_FEED_MS + SHRED_FALL_MS) d.shredRun = null;
     }
-    if (eatKind === "rabbithole" && d.holeSp && d.geo) {
-      // The floor's spring: down while a letter weighs on it, back up past
-      // straight after, settling (holeSpring).
-      const sp = d.holeSp;
-      if (this.last > sp.at) { holeSpring(sp, (this.last - sp.at) / 1000, d.holeWeighed ? HOLE_SAG : 0); holeRipple(sp, (this.last - sp.at) / 1000); sp.at = this.last; }
-      const bh = parseFloat(styles.height) || d.geo.ulH, top = parseFloat(styles.top) || 0;
-      const shape = { sag: sp.sag * ew, r2: sp.r2 * ew, r3: sp.r3 * ew, swell: HOLE_SWELL * bh * holeSwell(this.last - sp.landT) };
-      d.holeAt = [ex + ew / 2, top + holeTop(ew / 2, ew, shape)];
-      const still = Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && Math.abs(sp.r2) < 0.003 && Math.abs(sp.v2) < 0.05 && Math.abs(sp.r3) < 0.003 && Math.abs(sp.v3) < 0.05;
-      const resting = !d.holeWeighed && still && this.last - sp.landT > 250 && !d.particles.some((q) => q.kind === "hole");
-      if (resting) d.holeSp = null;
+    if (eatKind === "rabbithole" && d.holeRun && d.geo) {
+      const top = parseFloat(styles.top) || 0, bh = parseFloat(styles.height) || d.geo.ulH;
+      d.holeAt = [ex + ew / 2, top];
+      if (this.last - d.holeRun.at >= HOLE_HOLD_MS && !d.particles.some((q) => q.kind === "hole")) d.holeRun = null;
       else {
-        // The floor as the engine's outline (holeOutline), drawn in a caret
-        // as tall as it reaches, up or down; its shimmer over it.
-        const cmds = holeOutline(ew, bh, shape, d.shape.radius);
-        const ys = cmds.flatMap((c) => (c[0] === "Z" ? [] : c[0] === "Q" ? [c[2], c[4]] : [c[2]]));
-        const up = Math.max(0, -Math.min(0, ...ys)), H = Math.max(bh, ...ys) + up + 1;
-        const path = cmds.map((c) =>
-          c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(c[1])} ${n2(up + c[2])} ${n2(c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(c[1])} ${n2(up + c[2])}`).join(" ");
-        const flash = holeFlash(this.last - sp.landT);
-        const shine = flash > 0.01 ? `<path d='${path}' fill='white' fill-opacity='${flash.toFixed(3)}'/>` : "";
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/>${shine}</svg>`;
+        // The floor still, as the engine's (drawHole): reaching along to
+        // the right under a letter that stood away from it (a held
+        // Backspace's, still going down), lit and haloed in its own color
+        // while a letter passes.
+        let right = ex + ew;
+        for (const [, r, k] of d.holeCells) right = Math.max(right, ex + ew + Math.max(0, r - ex - ew) * k);
+        if (right > ex + ew) styles.width = `${n2(right - ex)}px`;
+        const glow = d.holeGlow > 0.01 ? d.holeGlow : 0;
+        const wash = `rgba(255, 255, 255, ${(HOLE_GLOW * glow).toFixed(3)})`;
+        const halo = `0 0 ${n2(Math.max(HOLE_HALO_MIN, HOLE_HALO * bh))}px color-mix(in srgb, ${color} ${(100 * HOLE_HALO_ALPHA * glow).toFixed(1)}%, transparent)`;
         Object.assign(styles, {
-          height: `${n2(H)}px`, top: `${n2(top - up)}px`,
-          backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
-          backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
+          backgroundColor: color, backgroundSize: "", backgroundRepeat: "",
+          backgroundImage: [glow ? `linear-gradient(${wash}, ${wash})` : "", d.shape.hollowWidth ? "" : d.shape.gradient ?? ""].filter(Boolean).join(", "),
+          boxShadow: [glow ? halo : "", styles.boxShadow ?? ""].filter(Boolean).join(", "),
         });
         eat = "hole";
       }
     }
-    d.holeWeighed = false;
+    d.holeGlow = 0;
+    d.holeCells.length = 0;
     if (!eat && d.eatOn) {
-      Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "" });
+      Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "", boxShadow: styles.boxShadow ?? "" });
     }
     // A Line's serifs, and an Underline's, give way while an eater has it.
     if (d.style === "line" || d.style === "underline") d.caret.toggleClass("is-shred", eatShape);

@@ -39,16 +39,37 @@ export function eaterOf(e: EaterChoice): Eater | null {
 // Each eater's shape for a caret at the gap `gx` on the row (top, h), a
 // letter `cw` wide, a Line `lw` thick (spanning lineTop..+lineH), an
 // Underline `uh` thick: Back-man the letter's box, Shredder the line,
-// Rabbit hole the floor. Pure.
-export function eaterForm(kind: Eater, gx: number, top: number, h: number, cw: number, lw: number, lineTop: number, lineH: number, uh: number): Rect {
-  if (kind === "backman") return { x: gx, y: top, w: cw, h };
+// Rabbit hole the floor. On a Box (`box`) Shredder keeps the box - the
+// whole of it shredded into strips ("make the shredder for box cursor, be a
+// shreded box entirely (horizontal lines)"). Pure.
+export function eaterForm(kind: Eater, gx: number, top: number, h: number, cw: number, lw: number, lineTop: number, lineH: number, uh: number, box = false): Rect {
+  if (kind === "backman" || (kind === "shredder" && box)) return { x: gx, y: top, w: cw, h };
   if (kind === "shredder") return { x: gx - lw / 2, y: lineTop, w: lw, h: lineH };
   return { x: gx, y: top + h - uh, w: cw, h: uh };
 }
 
-// The trail an eater leaves with Motion smear on (eaterSmear): the
-// cursor's own smear, behind it, at this much of its paint.
+// The trail an eater leaves with Motion smear on (eaterSmear): its own
+// shape stretched along the row as far as the smear reaches past the
+// cursor, EATER_TRAIL_CW letters at most, behind it at EATER_TRAIL_ALPHA of
+// its paint.
 export const EATER_TRAIL_ALPHA = 0.5;
+export const EATER_TRAIL_CW = 3;
+
+// An eater's trail: its rect `r` stretched along its row as far as the
+// smear's quad `q` reaches past the cursor's own rect `own` each way,
+// `maxReach` px at most - or none: no smear, a smear that reaches nowhere
+// (the cursor at rest: a trail there was a ghost of the cursor over the
+// Vacuum's floor), or one across rows (a Backspace joining two lines). Pure.
+export function eaterTrail(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null, maxReach: number): Rect | null {
+  if (!q) return null;
+  const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x], ys = [q.tl.y, q.tr.y, q.br.y, q.bl.y];
+  const up = Math.max(0, own.y - Math.min(...ys)), down = Math.max(0, Math.max(...ys) - (own.y + own.h));
+  if (up > own.h * 0.5 || down > own.h * 0.5) return null;
+  const left = Math.min(maxReach, Math.max(0, own.x - Math.min(...xs)));
+  const right = Math.min(maxReach, Math.max(0, Math.max(...xs) - (own.x + own.w)));
+  if (left < 0.5 && right < 0.5) return null;
+  return { x: r.x - left, y: r.y, w: r.w + left + right, h: r.h };
+}
 
 // A rect between `a` (k 0) and `b` (k 1). Pure.
 export function lerpRect(a: Rect, b: Rect, k: number): Rect {
@@ -119,23 +140,23 @@ export const effectsEatersMethods = {
     if (!e || !a) return false;
     const span = this.lineSpan(a.top, a.h);
     const cw = a.actualCharWidth || own.w;
-    const form = eaterForm(e.kind, gx, a.top, a.h, cw, this.caretThickness(), span.top, span.h, this.underlineThickness(a.h));
+    const box = this.styleFor("cursorStyle") === "Box";
+    const form = eaterForm(e.kind, gx, a.top, a.h, cw, this.caretThickness(), span.top, span.h, this.underlineThickness(a.h), box);
     const r = lerpRect(own, form, e.m);
-    // With Motion smear on (eaterSmear): the eater its own size, the
-    // cursor's own smear behind it as a trail, at EATER_TRAIL_ALPHA. It was
-    // the eater stretched along the smear ("if motion smear is on then
-    // apply motion smears for them too"), and that grew it far too big -
-    // "back-man is too big with smear on, just make it have the trail", the
-    // Vacuum "waaaay bigger" deleting fast, all of them "huuuge" across two
-    // lines when a Backspace joins them (the smear spans both rows). The
-    // trail is the smear the cursor would have drawn, inside the cursor's
-    // own bounds, so it is cleared as the cursor is.
-    const quad = !e.back && this.look.smear && this.look.eaterSmear !== false ? this.smearCorners() : null;
-    if (quad) {
+    // With Motion smear on (eaterSmear): the eater its own size, its trail
+    // behind it (eaterTrail) - its own shape stretched along the row, faint.
+    // It was the eater itself stretched along the smear, and that grew it
+    // far too big ("back-man is too big with smear on, just make it have the
+    // trail", the Vacuum "waaaay bigger" deleting fast, "huuuge" across two
+    // lines); then the cursor's own smear behind it, which on a Box was a
+    // ghost box over the Vacuum's floor ("it leavs a ghost like a box on top
+    // of it").
+    const trail = !e.back && this.look.smear && this.look.eaterSmear !== false ? eaterTrail(r, own, this.smearCorners(), EATER_TRAIL_CW * cw) : null;
+    if (trail) {
       ctx.save();
       ctx.globalAlpha *= EATER_TRAIL_ALPHA;
       ctx.beginPath();
-      this.traceQuad(ctx, quad, this.cornerRadius(Math.min(own.w, own.h)));
+      this.traceRoundedRect(ctx, trail.x, trail.y, trail.w, trail.h, this.cornerRadius(Math.min(trail.w, trail.h)));
       if (stroke > 0) {
         ctx.strokeStyle = paint;
         ctx.lineWidth = stroke;
@@ -152,6 +173,7 @@ export const effectsEatersMethods = {
     // stayed on the page.
     const m = Math.max(r.w, r.h) * 0.6 + 12;
     this._markDirty(r.x - m, r.y - m, r.w + 2 * m, r.h + 2 * m);
+    if (trail) this._markDirty(trail.x - 12, trail.y - 12, trail.w + 24, trail.h + 24);
     // Each effect's pose at `now` (asked again: the same for the same
     // `now`).
     const bm = !e.back && e.kind === "backman" ? this.backManPose(now) : null;
@@ -166,7 +188,7 @@ export const effectsEatersMethods = {
       const style = this.styleFor("cursorStyle");
       const cut = la ? la.x + (style === "Line" ? this.caretThickness() / 2 : 0) : gx;
       this.drawShreds(ctx, cut, shred, now);
-      this.drawShredLine(ctx, r.x, r.y, r.w, r.h, paint, shred, now);
+      this.drawShredLine(ctx, r.x, r.y, r.w, r.h, paint, shred, now, stroke);
     } else if (hole) {
       this.drawHole(ctx, r.x, r.y, r.w, r.h, paint, hole, now);
     } else {

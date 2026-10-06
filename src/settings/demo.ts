@@ -60,7 +60,7 @@ import { hsvToRgb, capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex }
 import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
-import { EATER_OUT_MS, EATER_TRAIL_ALPHA, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
+import { EATER_OUT_MS, EATER_TRAIL_ALPHA, EATER_TRAIL_CW, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
@@ -1744,11 +1744,11 @@ export class DemoStrip {
         const g = d.geo;
         const gx = d.style === "line" ? from + lineShift : from;
         const own = { x: from, y: parseFloat(styles.top) || 0, w: width, h: parseFloat(styles.height) || 0 };
-        const r0 = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
-        // The eater its own size; with Motion smear on (eaterSmear), the
-        // caret's own smear behind it as a trail, as the engine's.
+        const r0 = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH, d.style === "box"), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
+        // The eater its own size; with Motion smear on (eaterSmear), its own
+        // shape stretched behind it as a trail, as the engine's (eaterTrail).
         const r = r0;
-        if (look.smear && look.eaterSmear !== false && !d.eatM.exit && stretch > 0.5) trail = own;
+        if (look.smear && look.eaterSmear !== false && !d.eatM.exit && stretch > 0.5) trail = { x: r0.x, y: r0.y, w: r0.w + Math.min(stretch, EATER_TRAIL_CW * px), h: r0.h };
         ex = r.x; ew = r.w; eatShape = true;
         Object.assign(styles, { transform: `translateX(${r.x.toFixed(2)}px)`, width: `${r.w.toFixed(2)}px`, height: `${r.h.toFixed(2)}px`, top: `${r.y.toFixed(2)}px` });
         // A hollow box's border gives way to the line and the floor.

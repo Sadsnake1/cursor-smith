@@ -9,8 +9,8 @@
 // a shredder's blades, buzzing - and the letters it takes are fed through
 // them, coming out the other side cut into ribbons that fan apart, then
 // flutter down and fade; when the last is through, the line is whole
-// again. A standing line: on a Box or an Underline the cursor morphs into
-// one first (effects-eaters.ts).
+// again. A standing line: on an Underline the cursor morphs into one first
+// (effects-eaters.ts); a Box stays a box, the whole of it cut into strips.
 import type { CaretRecord, DeletedLetters } from "../types";
 import { letterChoiceOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
@@ -175,11 +175,19 @@ export const effectsShredderMethods = {
   },
 
   // The Line as blades, in its rect (x, y, w, h) and its own paint: the
-  // dashes, buzzing a little, as one fill.
-  drawShredLine(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: ShredPose, now: number) {
-    ctx.fillStyle = paint;
+  // dashes, buzzing a little, as one fill. A Box keeps its box: the same
+  // blades across its width, strips (outlined, `stroke` wide, when the box
+  // is hollow).
+  drawShredLine(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: ShredPose, now: number, stroke = 0) {
     ctx.beginPath();
     for (const [dx, top, len] of shredBlades(pose.dash, w, h, now)) ctx.rect(x + dx, y + top, w, len);
-    ctx.fill();
+    if (stroke > 0) {
+      ctx.strokeStyle = paint;
+      ctx.lineWidth = stroke;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = paint;
+      ctx.fill();
+    }
   },
 };

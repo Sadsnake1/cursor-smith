@@ -1005,7 +1005,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           void plugin.saveSettings();
         }));
     });
-    items.push(dial("Chaos", "How many effects a roll picks, and how strong they are.", "rollChaos"));
+    items.push(dial("Chaos", "From one quiet effect to all of them at once.", "rollChaos"));
     items.push(dial("Color", "From a single calm color to gradients and rainbows.", "rollColor"));
     items.push(dial("Motion", "From a still cursor to one that glides, smears and trails.", "rollMotion"));
     // A switch per effect a roll may pick (not the torch or the bracket

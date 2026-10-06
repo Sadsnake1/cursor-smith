@@ -1097,6 +1097,9 @@ export const engineMethods = {
         : this.heat > 0 ? "heat"
         : this._smearMoving ? "smear"
         : !!this.styleFor("hotHead") && !!this.animActive && this.hotHeadFeeding(nowT) ? "fire"
+        // The delete effects (Back-man, Shredder, Portal, and the morph in
+        // and out): they fell through to "secondaries" before.
+        : this._eat || this._backMan || this._shred || this._hole ? "eater"
         : animating ? "secondaries"
         : recentInput ? "input:" + (this._lastActivityKind || "?")
         : blinkFading ? "blink"

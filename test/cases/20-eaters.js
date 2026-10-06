@@ -231,3 +231,12 @@ section("The eaters' paint: over all they cover");
   ok("...its Shredder: over the whole line, not the bar", sh.paint === "eater's paint" && covers(sh.at, sh.shape) && sh.shape.h === 24, sh);
   ok("...its Portal: over the floor and its reach right under a word", ho.paint === "eater's paint" && covers(ho.at, ho.shape) && ho.at.x + ho.at.w >= 124.5, ho);
 }
+
+section("The performance report names the eaters");
+{
+  // A phone's report gave "awake because: ... secondaries 23%" for a single
+  // cursor: the Portal's frames, falling through to the last label.
+  const src = require("fs").readFileSync(srcPath("engine.ts"), "utf8");
+  const eater = src.indexOf('? "eater"'), sec = src.indexOf('? "secondaries"');
+  ok("an eater's frames are \"eater\", ahead of the catch-all \"secondaries\"", eater > 0 && sec > eater && /this\._eat \|\| this\._backMan \|\| this\._shred \|\| this\._hole \? "eater"/.test(src));
+}

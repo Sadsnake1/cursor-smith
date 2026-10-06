@@ -165,5 +165,5 @@ section("Shredder and Vacuum: drawn");
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   ok("...the bar a shallow curve: its feet where they were, its middle down a little, in its paint",
      pts.some((p) => p[0] === 100 && p[1] === 24) && pts.some((p) => p[0] === 109 && p[1] === 24) && Math.max(...ys) > 24 && Math.max(...ys) - 24 <= 0.35 * 9 && calls.some((c) => c[0] === "set fillStyle" && c[1] === "#f80"));
-  ok("...its ends standing up as small arms, leaning out with the bend: a U", pts.some((p) => p[0] < 100 && p[1] < 22 - 1) && pts.some((p) => p[0] > 109 && p[1] < 22 - 1) && Math.min(...ys) > 22 - 3 && Math.min(...xs) > 98 && Math.max(...xs) < 111);
+  ok("...no serifs: nothing above its ends, nothing past them", Math.min(...ys) >= 22 && Math.min(...xs) === 100 && Math.max(...xs) === 109);
 }

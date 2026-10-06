@@ -56,7 +56,6 @@ import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL
 import { Platform } from "obsidian";
 import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 import { CAPS_GROW, capsEase } from "../effects/effects-caps";
-import { underSerifSize } from "../paint/paint-shape";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
@@ -64,7 +63,7 @@ import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeArm, holeFall, holeLean, holeOutline, holeSpring } from "../effects/effects-rabbithole";
+import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeOutline, holeSpring } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -1520,20 +1519,14 @@ export class DemoStrip {
       const resting = !d.holeWeighed && Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && !d.particles.some((q) => q.kind === "hole");
       if (resting) d.holeSp = null;
       else {
-        // The floor as the engine's outline (holeOutline), its arms
-        // standing up as it dips - the Underline's serifs when it has them -
-        // and leaning out with the bend, drawn in a caret as tall as it
-        // reaches, up and down, and wide enough for the lean.
-        const size = underSerifSize(bh, d.geo.lineH, ew);
-        const arm = holeArm(d.style === "underline" && d.shape.serifs ? size.len : 0, sag, ew);
-        const lean = holeLean(sag, ew), side = Math.ceil(arm * Math.abs(Math.sin(lean))) + 1;
-        const up = arm + Math.max(0, -sag), H = up + bh + Math.max(0, sag) + 1;
-        const path = holeOutline(ew, bh, sag, arm, size.t, d.shape.radius, d.look.cursorRounded ? size.t / 2 : 0, lean).map((c) =>
-          c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(side + c[1])} ${n2(up + c[2])} ${n2(side + c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(side + c[1])} ${n2(up + c[2])}`).join(" ");
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew + 2 * side)} ${n2(H)}'><path d='${path}' fill='${color}'/></svg>`;
+        // The floor as the engine's outline (holeOutline), drawn in a caret
+        // as tall as it reaches, up or down.
+        const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
+        const path = holeOutline(ew, bh, sag, d.shape.radius).map((c) =>
+          c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(c[1])} ${n2(up + c[2])} ${n2(c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(c[1])} ${n2(up + c[2])}`).join(" ");
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/></svg>`;
         Object.assign(styles, {
           height: `${n2(H)}px`, top: `${n2(top - up)}px`,
-          width: `${n2(ew + 2 * side)}px`, transform: `${styles.transform} translateX(${-side}px)`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
           backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
         });

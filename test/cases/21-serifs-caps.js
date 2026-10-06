@@ -66,11 +66,8 @@ section("Underline serifs");
   ok("a setting under the Underline's, after its thickness", !!row && rows.findIndex((x) => x.name === "Underline serifs") === rows.findIndex((x) => x.name === "Underline thickness") + 1);
 }
 
-section("Vacuum: the U");
+section("Vacuum: no serifs");
 {
-  ok("its arms, small: the serifs' height (no taller as it dips); without them a little as it dips, gone springing back", T.holeArm(0, 0, 9) === 0 && T.holeArm(2.7, 0, 9) === 2.7 && T.holeArm(2.7, 2, 9) === 2.7 && Math.abs(T.holeArm(0, 2, 9) - 2 * T.HOLE_ARM_PULL) < 1e-9 && T.holeArm(0, 50, 9) <= 0.3 * 9 + 1e-9 && T.holeArm(0, -2, 9) === 0);
-  ok("...leaning out with the bend, in a little springing back, never far", T.holeLean(0, 9) === 0 && T.holeLean(2.7, 9) > 0.2 && T.holeLean(2.7, 9) <= 0.6 && T.holeLean(-1, 9) < 0 && T.holeLean(50, 9) <= 0.6);
-  const flat = T.holeOutline(9, 3, 0, 0, 2);
   // An outline's points: the ends of its segments and each curve's middle.
   const pts = (cmds) => {
     let cur = [0, 0];
@@ -82,17 +79,14 @@ section("Vacuum: the U");
       return [mid, cur];
     });
   };
-  const fp = pts(flat);
-  ok("no arms and no dip: the bar, its ends, its top and its foot", Math.min(...fp.map((p) => p[0])) === 0 && Math.max(...fp.map((p) => p[0])) === 9 && Math.min(...fp.map((p) => p[1])) === 0 && Math.max(...fp.map((p) => p[1])) === 3 && flat[flat.length - 1][0] === "Z");
-  const u = pts(T.holeOutline(9, 3, 2.7, 5, 2));
-  ok("dipping with arms: a U - both ends standing 5 up, the middle of its foot 2.7 down", u.some((p) => p[0] === 0 && p[1] === -5) && u.some((p) => p[0] === 9 && p[1] === -5) && Math.abs(Math.max(...u.map((p) => p[1])) - 5.7) < 1e-9);
-  ok("...its arms' free ends tapered on the inside", u.some((p) => p[0] === 2 && p[1] > -5 && p[1] < 0) && u.some((p) => p[0] === 7 && p[1] > -5 && p[1] < 0));
-  const leant = pts(T.holeOutline(9, 3, 2.7, 5, 2, 0, 0, 0.4));
-  ok("leaning: the arms' tops out past the bar's ends, its feet where they were", leant.some((p) => p[0] < -1 && p[1] < -4) && leant.some((p) => p[0] > 10 && p[1] < -4) && leant.some((p) => p[0] === 0 && p[1] === 3) && leant.some((p) => p[0] === 9 && p[1] === 3));
-  const round = T.holeOutline(9, 3, 2.7, 5, 2, 1.5, 1);
-  ok("rounded: its corners curves (Rounded corners), the same outline", round.filter((c) => c[0] === "Q").length === T.holeOutline(9, 3, 2.7, 5, 2).filter((c) => c[0] === "Q").length && pts(round).every((p) => p[0] >= 0 && p[0] <= 9));
+  const fp = pts(T.holeOutline(9, 3, 0));
+  ok("no dip: the bar, its ends, its top and its foot", Math.min(...fp.map((p) => p[0])) === 0 && Math.max(...fp.map((p) => p[0])) === 9 && Math.min(...fp.map((p) => p[1])) === 0 && Math.max(...fp.map((p) => p[1])) === 3);
+  const u = pts(T.holeOutline(9, 3, 2.7));
+  ok("dipping: its ends where they were, nothing above them (no arms), the middle of its foot 2.7 down", Math.min(...u.map((p) => p[0])) === 0 && Math.max(...u.map((p) => p[0])) === 9 && Math.min(...u.map((p) => p[1])) >= 0 && Math.abs(Math.max(...u.map((p) => p[1])) - 5.7) < 1e-9);
+  const round = T.holeOutline(9, 3, 2.7, 1.5);
+  ok("rounded: its corners curves (Rounded corners), inside the bar's ends", pts(round).every((p) => p[0] >= 0 && p[0] <= 9) && round[0][2] === 1.5);
   const src = fs.readFileSync(srcPath("demo.ts"), "utf8");
-  ok("the preview draws the same outline, leaning as it does", /holeOutline\(ew, bh, sag, arm, [^)]*, lean\)/.test(src));
+  ok("the preview draws the same outline", /holeOutline\(ew, bh, sag, d\.shape\.radius\)/.test(src));
 }
 
 section("Caps Lock and Shift");

@@ -27,8 +27,9 @@ import type CursorSmithPlugin from "../plugin";
 // as thick as a Line's serif on a stem the bar's thickness (`t`), small
 // ("make the underline serifs smaller"): about a third of the letter's
 // width above the bar (`len`), no more than an eighth of the line, never
-// under 1.5 px. Up only: down, they would reach into the line below - and
-// up, the bar is a U when the Vacuum pulls (effects-rabbithole.ts). Pure.
+// under 1.5 px. Up only: down, they would reach into the line below. They
+// give way to an eater, as the Line's do (the Vacuum's floor has none).
+// Pure.
 export function underSerifSize(barH: number, lineH: number, charW?: number) {
   const t = Math.max(1, Math.round(Math.min(barH * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO)));
   const raw = charW && charW > 0 ? charW : barH * 3;
@@ -489,15 +490,13 @@ export const paintShapeMethods = {
         px = Math.min(rx, serifs.left);
         pw = Math.max(rx + rw, serifs.right) - px;
       }
-      // The same for an Underline's ticks and the Vacuum's arms and dip,
-      // above and below the bar - for Aurora's pattern only: a gradient
-      // runs along the bar and reaches them anyway, and a taller rect would
-      // turn it on its side (createCursorGradient).
+      // The same for an Underline's ticks above the bar and the Vacuum's
+      // dip below it (or its bulge above, springing back) - for Aurora's
+      // pattern only: a gradient runs along the bar and reaches them anyway,
+      // and a taller rect would turn it on its side (createCursorGradient).
       if (isUnderline && settings.energyEffect && settings.gradientEnabled && settings.energyAurora
           && (settings.underlineSerifs || this._holeOn())) {
-        const room = underSerifSize(rh, active.h, active.actualCharWidth).len + rw;
-        px = rx - rw / 2;
-        pw = rw * 2;
+        const room = Math.max(underSerifSize(rh, active.h, active.actualCharWidth).len, rw / 2);
         py = ry - room;
         ph = rh + room + rw;
       }

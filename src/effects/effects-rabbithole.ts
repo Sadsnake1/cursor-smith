@@ -14,15 +14,11 @@
 // just a bit"; a dark ellipse for a day) - and it goes through, thinner,
 // out of sight; then the floor springs back up past straight and wobbles
 // to rest. A floor: on a Box or a Line the cursor morphs into one
-// first (effects-eaters.ts). As it pulls, its ends stand up into small
-// arms - a U ("add two serifs to the underline so it look like a U when
-// pulling"; then "way smaller and to curve a bit with the cursor") - the
-// Underline's own serifs when it has them (underSerifSize), leaning out
-// with the bend.
+// first (effects-eaters.ts). No serifs: the Underline's give way to it
+// (it had arms standing up into a U for a day: "remove the serifs from the
+// vacuum").
 import type { CaretRecord, DeletedLetters } from "../types";
 import { letterChoiceOf } from "../settings/settings";
-import { SERIF_TAPER } from "../constants";
-import { underSerifSize } from "../paint/paint-shape";
 import type { BackManCmd } from "./effects-backman";
 import type CursorSmithPlugin from "../plugin";
 
@@ -42,13 +38,6 @@ export const HOLE_HZ = 5;
 export const HOLE_DAMPING = 0.3;
 export const HOLE_KICK = 6;
 const MEAL_MAX = 12;
-// How fast the arms stand up as the floor dips (px of arm a px of dip), and
-// how tall they get (a share of the floor's width) - small; the serifs, when
-// on, are as tall already. How far they lean out with the bend: a share of
-// the bar's slope at its ends (as an angle), and the most.
-export const HOLE_ARM_PULL = 0.8;
-const HOLE_ARM_MAX = 0.3;
-const HOLE_LEAN = 0.55, HOLE_LEAN_MAX = 0.6;
 
 // A letter going down: where its middle stood, half its height (from its
 // middle to its foot), its font and color, when it set off, whether it has
@@ -95,69 +84,19 @@ export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
   return { x: fx, foot: fy + 2 * l.half * sy * k * Math.pow(c, 1.2) + 1, sx, sy, k, rot: 0, alpha: 1, phase: 2, done: u >= 1 };
 }
 
-// How tall the floor's arms stand above its top edge: `base` at rest (the
-// Underline's serifs, 0 without them); without serifs, a little as the floor
-// dips `sag` px - a U as it pulls - and gone as it springs back up. Pure.
-export function holeArm(base: number, sag: number, w: number): number {
-  return Math.max(base, Math.min(HOLE_ARM_MAX * w, HOLE_ARM_PULL * Math.max(0, sag)));
-}
-
-// How far the arms lean out (radians) as the floor dips `sag` px: with the
-// bar's slope at its ends, so the arms curve with it - and in a little as
-// it springs back up past straight. Pure.
-export function holeLean(sag: number, w: number): number {
-  return Math.max(-HOLE_LEAN_MAX, Math.min(HOLE_LEAN_MAX, HOLE_LEAN * Math.atan((4 * sag) / Math.max(1, w))));
-}
-
 // The floor as one outline, in a box from its left end's top edge (0, 0):
 // `w` wide, `h` thick, its middle dipped `sag` px (its top and bottom edges
-// the same parabola, the bar's ends where they were), and, with `arm` > 0,
-// an arm `t` thick standing `arm` above each end, its free end tapered on
-// the inside like a serif, leaning out by `lean` (radians) - bending from
-// upright at its foot, so it curves with the bar. Corners rounded by
-// `corner` (the bar's) and `armCorner` (an arm's, on its own thickness),
-// as Rounded corners rounds the cursor: one fill, so no overlap is painted
-// twice. Pure.
-export function holeOutline(w: number, h: number, sag: number, arm: number, t: number, corner = 0, armCorner = 0, lean = 0): BackManCmd[] {
+// the same parabola, the bar's ends where they were), its corners rounded
+// by `corner` as Rounded corners rounds the cursor. Pure.
+export function holeOutline(w: number, h: number, sag: number, corner = 0): BackManCmd[] {
   const f = (x: number) => 4 * sag * (x / w) * (1 - x / w);
   const df = (x: number) => 4 * sag * (1 / w - (2 * x) / (w * w));
   // The parabola from x = a to x = b, dy below the top edge: a quadratic
   // whose control is where the tangents at its ends meet.
   const para = (a: number, b: number, dy: number): BackManCmd => ["Q", (a + b) / 2, dy + f(a) + (df(a) * (b - a)) / 2, b, dy + f(b)];
-  const out: BackManCmd[] = [];
-  if (!(arm > 0.3) || w < 2 * t + 1) {
-    const r = Math.max(0, Math.min(corner, h / 2, w / 2));
-    out.push(["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, f(r)], para(r, w - r, 0), ["Q", w, 0, w, r],
-      ["L", w, h - r], ["Q", w, h, w - r, h + f(w - r)], para(w - r, r, h), ["Q", 0, h, 0, h - r], ["Z"]);
-    return out;
-  }
-  const a = arm, i = (a * SERIF_TAPER) / 2;
-  const ra = Math.max(0, Math.min(armCorner, t / 2, (a - i) / 2));
-  const rb = Math.max(0, Math.min(corner, armCorner, h / 2, t));
-  // The left arm in its own frame, from its outer foot (0, 0), turned out
-  // by `lean`: its outer top and its tapered inner top; each side a curve
-  // from upright at its foot (the control half its height straight up).
-  type P = [number, number];
-  const sn = Math.sin(lean), cs = Math.cos(lean);
-  const turn = (x: number, y: number): P => [x * cs + y * sn, -x * sn + y * cs];
-  const t0 = turn(0, -a), t1 = turn(t, -a + i);
-  const c0: P = [0, -a / 2], bi: P = [t, f(t)], ci: P = [t, f(t) - (a - i) / 2];
-  // A point `d` from `p` toward `q` (where a rounded corner starts).
-  const toward = (p: P, q: P, d: number): P => { const dx = q[0] - p[0], dy = q[1] - p[1], l = Math.hypot(dx, dy) || 1; return [p[0] + (dx / l) * d, p[1] + (dy / l) * d]; };
-  const e0 = toward(t0, c0, ra), l0 = toward(t0, t1, ra), e1 = toward(t1, t0, ra), l1 = toward(t1, ci, ra);
-  const m = (p: P): P => [w - p[0], p[1]];
-  const Q = (c: P, p: P): BackManCmd => ["Q", c[0], c[1], p[0], p[1]];
-  const L = (p: P): BackManCmd => ["L", p[0], p[1]];
-  out.push(
-    ["M", 0, h - rb], ["L", 0, 0],
-    // The left arm: up its outer side, round its top, down its inner side.
-    Q(c0, e0), Q(t0, l0), L(e1), Q(t1, l1), Q(ci, bi),
-    para(t, w - t, 0),
-    // The right arm, mirrored, the other way round.
-    Q(m(ci), m(l1)), Q(m(t1), m(e1)), L(m(l0)), Q(m(t0), m(e0)), Q(m(c0), [w, 0]),
-    ["L", w, h - rb], ["Q", w, h, w - rb, h + f(w - rb)], para(w - rb, rb, h), ["Q", 0, h, 0, h - rb], ["Z"],
-  );
-  return out;
+  const r = Math.max(0, Math.min(corner, h / 2, w / 2));
+  return [["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, f(r)], para(r, w - r, 0), ["Q", w, 0, w, r],
+    ["L", w, h - r], ["Q", w, h, w - r, h + f(w - r)], para(w - r, r, h), ["Q", 0, h, 0, h - r], ["Z"]];
 }
 
 export const effectsRabbitHoleMethods = {
@@ -237,7 +176,7 @@ export const effectsRabbitHoleMethods = {
   // the letters first (seen above the bar's top edge, curved as the bar is;
   // out of sight once through it), then the bar along the curve - its ends
   // where they were, its middle down (or up, springing back), its thickness
-  // the bar's - with its arms (holeArm), all one fill (holeOutline).
+  // the bar's - one fill (holeOutline), rounded as Rounded corners rounds it.
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
     const sag = pose.sag * w;
     const cx = x + w / 2, mid = y + h / 2, top = y;
@@ -272,16 +211,10 @@ export const effectsRabbitHoleMethods = {
       ctx.restore();
       this._markDirty(Math.min(l.cx, cx) - w * 2, Math.min(l.cy, mid) - w * 2, Math.abs(l.cx - cx) + w * 4, Math.abs(l.cy - mid) + w * 4);
     }
-    // The bar along the curve (its lowest point `sag` below its ends), its
-    // arms up from its ends - the Underline's serifs when it has them -
-    // leaning out with the bend.
-    const a = this.animActive;
-    const size = underSerifSize(h, a ? a.h : 6 * h, a ? a.actualCharWidth : w);
-    const serifs = this.styleFor("cursorStyle") === "Underline" && !!this.look.underlineSerifs;
-    const arm = holeArm(serifs ? size.len : 0, sag, w);
+    // The bar along the curve (its lowest point `sag` below its ends).
     ctx.fillStyle = paint;
     ctx.beginPath();
-    for (const c of holeOutline(w, h, sag, arm, size.t, this.cornerRadius(Math.min(w, h)), this.cornerRadius(size.t), holeLean(sag, w))) {
+    for (const c of holeOutline(w, h, sag, this.cornerRadius(Math.min(w, h)))) {
       if (c[0] === "M") ctx.moveTo(x + c[1], y + c[2]);
       else if (c[0] === "L") ctx.lineTo(x + c[1], y + c[2]);
       else if (c[0] === "Q") ctx.quadraticCurveTo(x + c[1], y + c[2], x + c[3], y + c[4]);

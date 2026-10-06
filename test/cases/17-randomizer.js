@@ -229,7 +229,7 @@ section("Randomizer: the pill's demo waits while its page is away");
 section("Randomizer: the preview's script");
 {
   ok("its lines: the user's four and more, none longer than the box holds, all different",
-     ["The quick brown fox... you know the rest.", "Kepano made me do it.", "Cursor-Smith is not even real.", "Hello, Mr. Anderson..."].every((l) => T.SCRIPT_LINES.includes(l)) &&
+     ["The quick brown fox... you know the rest.", "Obsidian made me do it.", "Cursor-Smith is not even real.", "Hello, Mr. Anderson..."].every((l) => T.SCRIPT_LINES.includes(l)) &&
      T.SCRIPT_LINES.length >= 16 && T.SCRIPT_LINES.every((l) => l.length <= T.SCRIPT_MAX) && new Set(T.SCRIPT_LINES).size === T.SCRIPT_LINES.length,
      T.SCRIPT_LINES.filter((l) => l.length > T.SCRIPT_MAX));
   // Every line, many seeds: what a script types, played on the text, is the line.
@@ -250,7 +250,7 @@ section("Randomizer: the preview's script");
   ok("...typos now and then, not always (a neighboring key, backspaced)", typos > 3 * T.SCRIPT_LINES.length && typos < T.SCRIPT_LINES.length * 30, typos);
   ok("...typed fast (under 75 ms a key)", fast);
   ok("...then plays with the cursor - five or more moves, all inside the line - and ends at the line's end, cleared", okMoves && okEnd);
-  const jumps = T.scriptFor("Kepano made me do it.", T.seededRandom(3)).filter((a) => a.do === "move");
+  const jumps = T.scriptFor("Obsidian made me do it.", T.seededRandom(3)).filter((a) => a.do === "move");
   ok("...quick jumps (under 350 ms) and single steps (75 ms)", jumps.every((a) => a.ms === 75 || (a.ms >= 230 && a.ms <= 340) || a.ms === 620), jumps.map((a) => a.ms));
   const typo = T.scriptFor("The quick brown fox... you know the rest.", T.seededRandom(11));
   const i = typo.findIndex((a) => a.do === "back");

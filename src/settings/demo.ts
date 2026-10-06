@@ -178,7 +178,7 @@ export function initialState(now: number): DemoState {
 // 50-letter countdown made all of it smaller; the user had it shortened).
 export const SCRIPT_LINES = [
   "The quick brown fox... you know the rest.",
-  "Kepano made me do it.",
+  "Obsidian made me do it.",
   "Cursor-Smith is not even real.",
   "Hello, Mr. Anderson...",
   "I came here to write. Now look at me.",
@@ -196,8 +196,6 @@ export const SCRIPT_LINES = [
   "Dear diary, today I typed a lot.",
   "Ten minutes of writing, two hours of cursor.",
   "The cursor blinked first.",
-  "34j0934)@#$#U*$FH0hr082h34",
-  "Can you even vibecode such a thing?",
   "Deleting Vault in 3...2...1...0.4999999 XD",
   "You can never have too many cursors...",
   "The cake is a lie.",

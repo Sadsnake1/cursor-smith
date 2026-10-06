@@ -196,8 +196,11 @@ section("Randomizer: the pill's demo waits while its page is away");
   timers.shift()();
   // On from where it was: within a few seconds the line grows (it was
   // being typed) or is cleared for the next (it was done) - either way the
-  // text changes. (A short line can be done by the time it went away.)
-  ok("back: it plays on from where it was (the preview's cursor keeps going)", run(7000) && written() !== at, [at, written()]);
+  // text changes at some point. Watched every frame: a short line can be
+  // cleared and typed all over again inside the window, and end as it was.
+  let changed = false;
+  for (let i = 0; i < 7000 / 16 && frames.length; i++) { run(16); if (written() !== at) { changed = true; break; } }
+  ok("back: it plays on from where it was (the preview's cursor keeps going)", changed, [at, written()]);
   // One line per roll: the same line again after it is cleared.
   // Typos never touch a line's first three letters: after each clear, the
   // text typed again starts as the line does.

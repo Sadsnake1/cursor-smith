@@ -1162,45 +1162,29 @@ export const engineMethods = {
     if (dx || dy) this._shiftEffects(dx, dy);
   },
 
-  // Every effect laid on the text, moved by (dx, dy): the pixels, the fire
-  // and its burn marks, stardust, the letters thrown off, fireworks and
-  // bolts, the carriage return, the evaporating letters - each caret's own
-  // too (a secondary's in its bundle), and where the fire last saw its
-  // caret, so a scroll is not taken for a move. What is pinned to the
-  // document (the ink, the X-out, the tether) is measured from it anyway.
-  // Not the CRT ghosts: updateActivePoint carries them with the caret on
-  // any scroll or layout shift already, and moved twice they ran ahead.
+  // Every effect laid on the text, moved by (dx, dy): the pixels,
+  // stardust, the letters thrown off, fireworks and bolts, the carriage
+  // return, the evaporating letters. What is pinned to the document (the
+  // ink, the X-out, the tether) is measured from it anyway. Not Hot-head's
+  // fire: hotSyncScroll keeps it (embers, burn marks, where it last saw each
+  // caret) on the text already - moved here too it ran twice as far as the
+  // text and its caret memory with it, so a scroll read as a move and lit
+  // the fire ("the hot head fire also starts when scrolling"). Not the CRT
+  // ghosts either: updateActivePoint carries them with the caret.
   _shiftEffects(this: CursorSmithPlugin, dx: number, dy: number) {
-    const pt = (p: { x: number; y: number; row?: number } | null | undefined) => {
-      if (!p) return;
-      p.x += dx; p.y += dy;
-      if (typeof p.row === "number") p.row += dy;
-    };
-    for (const p of this.flamePixels || []) pt(p);
-    for (const p of this.flameEmbers || []) pt(p);
-    for (const p of this.particles || []) pt(p);
-    for (const m of this.stardust || []) { pt(m); m.ax += dx; m.ay += dy; }
+    for (const q of this.flamePixels || []) { q.x += dx; q.y += dy; }
+    for (const q of this.particles || []) { q.x += dx; q.y += dy; }
+    for (const m of this.stardust || []) { m.x += dx; m.y += dy; m.ax += dx; m.ay += dy; }
     for (const f of this.fireworks || []) {
       f.x0 += dx; f.y0 += dy; f.bx += dx; f.by += dy;
       f.minX += dx; f.maxX += dx; f.minY += dy; f.maxY += dy;
     }
-    for (const b of this.thunderbolts || []) {
-      b.tx += dx; b.ty += dy; b.minX += dx; b.maxX += dx; b.minY += dy; b.maxY += dy;
-      for (const band of b.bands) for (const c of band.cells) { c.x += dx; c.y += dy; }
+    for (const t of this.thunderbolts || []) {
+      t.tx += dx; t.ty += dy; t.minX += dx; t.maxX += dx; t.minY += dy; t.maxY += dy;
+      for (const band of t.bands) for (const c of band.cells) { c.x += dx; c.y += dy; }
     }
     for (const r of this.typeReturns || []) { r.x0 += dx; r.xs += dx; r.y += dy; }
     for (const g of this.evaporateGlyphs || []) { g.x += dx; g.top += dy; }
-    const own = (s: Pick<CursorSmithPlugin, "hotBurns" | "_hotPrev" | "_hotEmitFrom">) => {
-      for (const b of s.hotBurns || []) {
-        pt(b);
-        if (b.rowLeft != null) b.rowLeft += dx;
-        if (b.rowRight != null) b.rowRight += dx;
-      }
-      pt(s._hotPrev);
-      pt(s._hotEmitFrom);
-    };
-    own(this);
-    for (const s of this._secondaries || []) own(s);
   },
 
   _markDirty(this: CursorSmithPlugin, x: number, y: number, w: number, h: number) {

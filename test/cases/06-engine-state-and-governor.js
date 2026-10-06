@@ -1061,15 +1061,16 @@ section("Effects stay on the text through a scroll");
   ok("the first frame only notes the scroll", e.flamePixels[0].y === 100);
   el.scrollTop = 250;
   e._scrollCarry(view);
-  const ys = [e.flamePixels[0].y, e.flameEmbers[0].y, e.particles[0].y, e.stardust[0].y, e.stardust[0].ay, e.fireworks[0].by, e.fireworks[0].minY,
-    e.thunderbolts[0].ty, e.thunderbolts[0].bands[0].cells[0].y, e.typeReturns[0].y, e.evaporateGlyphs[0].top, e.hotBurns[0].y, e._hotPrev.row, sec.hotBurns[0].y];
-  ok("scrolled 50 down: every effect laid on the text 50 up with it - the pixels, the fire and its marks, stardust, letters, fireworks, bolts, returns, evaporating letters, a secondary's own",
-     ys.every((y, i) => y === [50, 50, 50, 50, 50, 30, 20, 50, 50, 50, 50, 50, 50, 50][i]), ys);
+  const ys = [e.flamePixels[0].y, e.particles[0].y, e.stardust[0].y, e.stardust[0].ay, e.fireworks[0].by, e.fireworks[0].minY,
+    e.thunderbolts[0].ty, e.thunderbolts[0].bands[0].cells[0].y, e.typeReturns[0].y, e.evaporateGlyphs[0].top];
+  ok("scrolled 50 down: every effect laid on the text 50 up with it - the pixels, stardust, letters, fireworks, bolts, returns, evaporating letters",
+     ys.every((y, i) => y === [50, 50, 50, 50, 30, 20, 50, 50, 50, 50][i]), ys);
+  ok("...not Hot-head's fire, nor where it last saw each caret: hotSyncScroll keeps those on the text (moved twice, a scroll read as a move and lit the fire)",
+     e.flameEmbers[0].y === 100 && e.hotBurns[0].y === 100 && e._hotPrev.y === 112 && e._hotEmitFrom.y === 112 && sec.hotBurns[0].y === 100 && sec._hotPrev.y === 112);
   ok("...not the CRT ghosts: the caret's own update carries them (moved twice they ran ahead)", e.trail[0].y === 100 && sec.trail[0].y === 100);
-  ok("...and where the fire last saw its caret, so the scroll is not taken for a move", e._hotPrev.y === 62 && e._hotEmitFrom.y === 62 && sec._hotPrev.y === 62);
   el.scrollLeft = 30;
   e._scrollCarry(view);
-  ok("sideways too (a wide table): the row's ends with them", e.flamePixels[0].x === -29 && e.hotBurns[0].rowLeft === -30 && e.hotBurns[0].rowRight === 270, [e.flamePixels[0].x, e.hotBurns[0].rowLeft]);
+  ok("sideways too (a wide table)", e.flamePixels[0].x === -29 && e.typeReturns[0].x0 === -23, [e.flamePixels[0].x, e.typeReturns[0].x0]);
   const other = { scrollDOM: { scrollTop: 900, scrollLeft: 0 } };
   e._scrollCarry(other);
   ok("another note's scroller: nothing moved (it starts afresh)", e.flamePixels[0].y === 50 && e.flamePixels[0].x === -29);

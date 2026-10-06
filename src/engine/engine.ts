@@ -678,7 +678,7 @@ export const engineMethods = {
           if (doDraw && this._canvasRect) {
             const tDraw = perf ? performance.now() : 0;
             this.draw();
-            if (perf) { perf.draws++; perf.drawMs += performance.now() - tDraw; }
+            if (perf) { perf.draws++; perf.drawMs += performance.now() - tDraw; this._perfDeleteFrame(perf, performance.now()); }
           }
         }
       } catch (e) {
@@ -1461,10 +1461,32 @@ export const engineMethods = {
     }, seconds * 1000);
   },
 
+  // A frame drawn within a delete's window (_deleting): counted, and
+  // whether the smear reached past the caret's own box then.
+  _perfDeleteFrame(this: CursorSmithPlugin, perf: PerfCounters, now: number) {
+    const d = perf.del;
+    if (!d || !this._deleting(now)) return;
+    d.after++;
+    const q = this.smearCorners(), a = this.animActive;
+    if (!q || !a) return;
+    const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x];
+    const right = a.x + Math.max(a.w || 0, a.actualCharWidth || 0);
+    if (Math.max(...xs) - right > 0.5 || a.x - Math.min(...xs) > 0.5) d.stretched++;
+  },
+
+  // The report's deleting line: how the deletions came, and what they drew.
+  _perfDeleteLine(this: CursorSmithPlugin, perf: PerfCounters): string {
+    const d = perf.del;
+    if (!d) return "deleting: not counted";
+    const inputs = Object.entries(d.input).sort((x, y) => y[1] - x[1]).map(([t, n]) => `${t} ${n}`).join(", ") || "none";
+    return `deleting: Backspace/Delete keys ${d.key}; input events ${inputs}; delete moves ${d.moves}; frames after a delete ${d.after}, smear stretched in ${d.stretched}; eater drew ${d.eater} (trail ${d.trail})`;
+  },
+
   _freshPerf(this: CursorSmithPlugin): PerfCounters {
     return {
       t0: performance.now(), ticks: 0, draws: 0, gears: {}, tickMs: 0, caretMs: 0, drawMs: 0,
       reanchors: 0, longTasks: 0, longTaskMs: 0, rafGaps: {}, rafPrev: 0, keys: 0, why: {},
+      del: { key: 0, input: {}, moves: 0, after: 0, stretched: 0, eater: 0, trail: 0 },
     };
   },
 
@@ -1522,6 +1544,7 @@ export const engineMethods = {
       `awake because: ${why}`,
       `cost per frame: tick ${perf.ticks ? (perf.tickMs / perf.ticks).toFixed(2) : "0"}ms (caret measure ${perf.ticks ? (perf.caretMs / perf.ticks).toFixed(2) : "0"}ms), draw ${perf.draws ? (perf.drawMs / perf.draws).toFixed(2) : "0"}ms; plugin main-thread total ${perf.tickMs.toFixed(0)}ms of ${(secs * 1000).toFixed(0)}ms (${(100 * perf.tickMs / (secs * 1000)).toFixed(1)}%)`,
       `long tasks (anything over 50ms, any source): ${perf.longTasks}, ${perf.longTaskMs.toFixed(0)}ms total`,
+      this._perfDeleteLine(perf),
     ];
     return lines.join("\n");
   },

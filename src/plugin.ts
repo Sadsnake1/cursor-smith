@@ -370,6 +370,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare _frameCaps: EngineMethods["_frameCaps"];
   declare _isAnimating: EngineMethods["_isAnimating"];
   declare _markDirty: EngineMethods["_markDirty"];
+  declare _perfDeleteFrame: EngineMethods["_perfDeleteFrame"];
+  declare _perfDeleteLine: EngineMethods["_perfDeleteLine"];
   declare _scrollCarry: EngineMethods["_scrollCarry"];
   declare _shiftEffects: EngineMethods["_shiftEffects"];
   // The note's scroller and its scroll at the last frame (_scrollCarry).
@@ -1231,6 +1233,7 @@ export default class CursorSmithPlugin extends Plugin {
       this._realKeyT = performance.now();
 
       if (k === "Backspace" || k === "Delete") {
+        if (this._perf && this._perf.del) this._perf.del.key++;
         noteKeystroke("delete", e);
         // Back-man eats toward the letters going: left, or right for Delete;
         // a word (Ctrl, or Option on a Mac), a line (Cmd) or a selection in
@@ -1273,6 +1276,9 @@ export default class CursorSmithPlugin extends Plugin {
     // beforeinput gap and far shorter than any plausible second keystroke.
     const onBeforeInput = (e: InputEvent) => {
       this._markActivity("input");
+      // Every input event's kind, for the report's deleting line - a phone's
+      // keyboard may delete through a composition, not a delete.
+      if (this._perf && this._perf.del) { const t0 = e.inputType || "?"; this._perf.del.input[t0] = (this._perf.del.input[t0] || 0) + 1; }
       if (performance.now() - (this._realKeyT || 0) < 60) return;
       const t = e.inputType || "";
       if (t.startsWith("delete")) {

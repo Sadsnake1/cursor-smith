@@ -168,6 +168,7 @@ export const effectsEatersMethods = {
     // ghost box over the Vacuum's floor ("it leavs a ghost like a box on top
     // of it").
     const trail = !e.back && this.look.smear && this.look.eaterSmear !== false ? eaterTrail(r, own, this.smearCorners(), EATER_TRAIL_CW * cw) : null;
+    if (this._perf && this._perf.del) { this._perf.del.eater++; if (trail) this._perf.del.trail++; }
     if (trail) {
       // In slices, each fainter than the one before (eaterTrailAlpha), the
       // first against the eater. A hollow box's is fainter again: its own

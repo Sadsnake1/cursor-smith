@@ -61,6 +61,12 @@ export interface PerfCounters {
   longTasks: number; longTaskMs: number; rafGaps: Record<string, number>; rafPrev: number; keys: number;
   // Why each tick was in the gear it was in: the first reason that held.
   why: Record<string, number>;
+  // Deleting (the report's "deleting" line, 1.7.7): Backspace or Delete as
+  // keys; every beforeinput by its inputType (a phone's keyboard deletes
+  // through these); the moves a deletion made; the frames drawn within a
+  // delete's window, and in how many the smear reached past the caret; the
+  // frames an eater drew, and with its trail.
+  del?: { key: number; input: Record<string, number>; moves: number; after: number; stretched: number; eater: number; trail: number };
 }
 
 // Caret measurement caches, keyed on what invalidates them.

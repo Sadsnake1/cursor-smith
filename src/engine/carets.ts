@@ -832,6 +832,7 @@ export const caretsMethods = {
     // above, and neon's streak across that leap ran the whole line ("the crt
     // neon effect underlines the whole line when deleting fast").
     const deletingMove = !!(this._deletePending && performance.now() - this._deletePending < 250);
+    if (deletingMove && !secondary && this._perf && this._perf.del) this._perf.del.moves++;
     if (whenAllows(this.look.crtTrailWhen, deletingMove)) this.pushTrail(this.lastActive, deletingMove ? null : caret);
     if (this.lastActive) {
       // Consume a pending Backspace/Delete keystroke if it happened

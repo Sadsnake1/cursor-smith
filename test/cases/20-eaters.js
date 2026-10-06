@@ -5,7 +5,7 @@
 // morphs from its own shape into its eater's and back); and the combos (the
 // letters' effect played where the eater is done with a letter).
 // One of the files test/test.js runs in order; see test/lib.js.
-const { T, ok, section, makeEngine, renderPanel, srcPath } = require("../lib");
+const { T, ok, section, makeEngine, renderPanel, srcPath, makePathCtx } = require("../lib");
 
 section("On delete: two choices, in the switches they replaced");
 {
@@ -169,10 +169,8 @@ section("The eaters smeared with Motion smear");
   const own = { x: 100, y: 10, w: 2, h: 24 }, r = { x: 100, y: 10, w: 9, h: 24 };
   // The cursor stepped left: the smear's quad trails 9 px to the right of it.
   const q = { tl: { x: 100, y: 10 }, tr: { x: 111, y: 10 }, br: { x: 111, y: 34 }, bl: { x: 100, y: 34 } };
-  const s = T.eaterSmeared(r, own, q);
-  ok("its rect stretched as far past it as the smear stretches the cursor's own (the tail behind it)", s.x === 100 && s.w === 18 && s.y === 10 && s.h === 24, s);
-  ok("...nothing without a smear", T.eaterSmeared(r, own, null) === r);
-  // drawEater, the painters stubbed: the rect each is handed.
+  // drawEater, the painters stubbed: the rect each is handed, what was
+  // filled at what alpha, and what was marked for the next clear.
   const run = (over) => {
     const e = makeEngine({ popEffects: true, backMan: true, smear: true, ...over });
     e._eaterNow = () => ({ kind: "backman", back: false, m: 1 });
@@ -181,12 +179,20 @@ section("The eaters smeared with Motion smear");
     e.backManPose = () => ({});
     let got = null;
     e.drawBackMan = (c, x, y, w, h) => { got = { x, y, w, h }; };
-    e.drawEater({ filter: "none" }, own, 100, "#f80", 0, 0, 1000);
-    return got;
+    e.dirty = [];
+    const ctx = makePathCtx();
+    e.drawEater(ctx, own, 100, "#f80", 0, 0, 1000);
+    return Object.assign(got, { ops: ctx.ops, dirty: e.dirty });
   };
-  ok("drawn smeared, with Motion smear on", run({}).w > run({ eaterSmear: false }).w && run({ smear: false }).w === run({ eaterSmear: false }).w);
+  const on = run({}), off = run({ eaterSmear: false });
+  ok("with Motion smear on: the eater its own size, never stretched ('too big with smear on, just make it have the trail')", on.w === off.w && on.x === off.x && on.w === r.w, [on, off]);
+  const trailFill = on.ops.find((o) => o.op === "fill");
+  ok("...and the cursor's own smear behind it, at EATER_TRAIL_ALPHA", !!trailFill && trailFill.alpha === T.EATER_TRAIL_ALPHA && !off.ops.some((o) => o.op === "fill"), on.ops);
+  ok("...none with the switch off, nor without Motion smear", !run({ smear: false }).ops.some((o) => o.op === "fill"));
+  const d = on.dirty.find((m) => m.x < 100 && m.x + m.w > 109);
+  ok("all it may paint marked for the next frame's clear: its rect, grown and bent past it", !!d && d.x < 100 - 9 && d.x + d.w > 109 + 9 && d.y < 10 - 9 && d.y + d.h > 34 + 9, on.dirty);
   const rows = renderPanel({ popEffects: true, backMan: true });
   const row = rows.find((x) => x.name === "Smear");
   ok("a setting under the eater's choice, needing Motion smear", !!row && rows.findIndex((x) => x.name === "Smear") > rows.findIndex((x) => x.name === "Cursor on delete") && rows.findIndex((x) => x.name === "Smear") < rows.findIndex((x) => x.name === "Letters on delete"));
-  ok("the preview smears its eater too", /look\.smear && look\.eaterSmear !== false \? \{ \.\.\.r0, w: r0\.w \+ stretch \}/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
+  ok("the preview leaves the trail too, its eater its own size", /const r = r0;\n\s*if \(look\.smear && look\.eaterSmear !== false && !d\.eatM\.exit && stretch > 0\.5\) trail = own;/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
 }

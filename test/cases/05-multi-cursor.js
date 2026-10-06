@@ -700,7 +700,9 @@ section("multi-cursor: full effects on secondary carets");
     e.hotBurns = []; e.flameEmbers = [];
     // A few frames' worth, so the placement checks below are not at the
     // mercy of a handful of random draws.
-    for (let i = 0; i < 12; i++) { e._lastHotT = performance.now() - 16; e.maybeSpawnHotHead(); }
+    // (40: the flare is smaller since 1.7.7, and 12 left a side bare now
+    // and then.)
+    for (let i = 0; i < 40; i++) { e._lastHotT = performance.now() - 16; e.maybeSpawnHotHead(); }
     const ps = e.flameEmbers;
     ok("the engulf spawns fire", ps.length > 0, ps.length);
     ok("...beside the caret", ps.some((p) => p.x < a.x) && ps.some((p) => p.x > a.x + a.w));

@@ -466,6 +466,15 @@ button.cursor-smith-pcard-use:hover {
 .cursor-smith-pcard-ghost {
   z-index: 0;
 }
+/* An eater's trail with Motion smear on: the caret's own smear, faint,
+   under the eater (demo.ts; the engine's EATER_TRAIL_ALPHA). */
+.cursor-smith-pcard-eat-trail {
+  position: absolute;
+  left: 0;
+  z-index: 0;
+  border-radius: 1px;
+  pointer-events: none;
+}
 .cursor-smith-pcard-caret {
   z-index: 1;
 }

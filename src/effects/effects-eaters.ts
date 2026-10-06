@@ -46,16 +46,9 @@ export function eaterForm(kind: Eater, gx: number, top: number, h: number, cw: n
   return { x: gx, y: top + h - uh, w: cw, h: uh };
 }
 
-// An eater's rect `r` stretched with the smear: as far past it, each way,
-// as the smear's quad `q` (null: none) reaches past the cursor's own rect
-// `own`. Pure.
-export function eaterSmeared(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null): Rect {
-  if (!q) return r;
-  const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x], ys = [q.tl.y, q.tr.y, q.br.y, q.bl.y];
-  const left = Math.max(0, own.x - Math.min(...xs)), right = Math.max(0, Math.max(...xs) - (own.x + own.w));
-  const up = Math.max(0, own.y - Math.min(...ys)), down = Math.max(0, Math.max(...ys) - (own.y + own.h));
-  return { x: r.x - left, y: r.y - up, w: r.w + left + right, h: r.h + up + down };
-}
+// The trail an eater leaves with Motion smear on (eaterSmear): the
+// cursor's own smear, behind it, at this much of its paint.
+export const EATER_TRAIL_ALPHA = 0.5;
 
 // A rect between `a` (k 0) and `b` (k 1). Pure.
 export function lerpRect(a: Rect, b: Rect, k: number): Rect {
@@ -127,12 +120,38 @@ export const effectsEatersMethods = {
     const span = this.lineSpan(a.top, a.h);
     const cw = a.actualCharWidth || own.w;
     const form = eaterForm(e.kind, gx, a.top, a.h, cw, this.caretThickness(), span.top, span.h, this.underlineThickness(a.h));
-    let r = lerpRect(own, form, e.m);
-    // Smeared (eaterSmear, "if motion smear is on then apply motion smears
-    // for them too while backspacing"): the eater's rect stretched as far
-    // past it, each way, as the smear stretches the cursor's own - drawn in
-    // a longer box, not distorted, so the letters still go to its mouth.
-    if (this.look.smear && this.look.eaterSmear !== false) r = eaterSmeared(r, own, this.smearCorners());
+    const r = lerpRect(own, form, e.m);
+    // With Motion smear on (eaterSmear): the eater its own size, the
+    // cursor's own smear behind it as a trail, at EATER_TRAIL_ALPHA. It was
+    // the eater stretched along the smear ("if motion smear is on then
+    // apply motion smears for them too"), and that grew it far too big -
+    // "back-man is too big with smear on, just make it have the trail", the
+    // Vacuum "waaaay bigger" deleting fast, all of them "huuuge" across two
+    // lines when a Backspace joins them (the smear spans both rows). The
+    // trail is the smear the cursor would have drawn, inside the cursor's
+    // own bounds, so it is cleared as the cursor is.
+    const quad = !e.back && this.look.smear && this.look.eaterSmear !== false ? this.smearCorners() : null;
+    if (quad) {
+      ctx.save();
+      ctx.globalAlpha *= EATER_TRAIL_ALPHA;
+      ctx.beginPath();
+      this.traceQuad(ctx, quad, this.cornerRadius(Math.min(own.w, own.h)));
+      if (stroke > 0) {
+        ctx.strokeStyle = paint;
+        ctx.lineWidth = stroke;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = paint;
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    // All it may paint, marked for the next frame's clear: the cursor's
+    // own bounds (_cursorBounds) do not hold the eater's rect, and Back-man
+    // grows and bends past his (BACKMAN_BIG, the bend) - what fell outside
+    // stayed on the page.
+    const m = Math.max(r.w, r.h) * 0.6 + 12;
+    this._markDirty(r.x - m, r.y - m, r.w + 2 * m, r.h + 2 * m);
     // Each effect's pose at `now` (asked again: the same for the same
     // `now`).
     const bm = !e.back && e.kind === "backman" ? this.backManPose(now) : null;

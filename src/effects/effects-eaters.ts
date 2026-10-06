@@ -46,6 +46,17 @@ export function eaterForm(kind: Eater, gx: number, top: number, h: number, cw: n
   return { x: gx, y: top + h - uh, w: cw, h: uh };
 }
 
+// An eater's rect `r` stretched with the smear: as far past it, each way,
+// as the smear's quad `q` (null: none) reaches past the cursor's own rect
+// `own`. Pure.
+export function eaterSmeared(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null): Rect {
+  if (!q) return r;
+  const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x], ys = [q.tl.y, q.tr.y, q.br.y, q.bl.y];
+  const left = Math.max(0, own.x - Math.min(...xs)), right = Math.max(0, Math.max(...xs) - (own.x + own.w));
+  const up = Math.max(0, own.y - Math.min(...ys)), down = Math.max(0, Math.max(...ys) - (own.y + own.h));
+  return { x: r.x - left, y: r.y - up, w: r.w + left + right, h: r.h + up + down };
+}
+
 // A rect between `a` (k 0) and `b` (k 1). Pure.
 export function lerpRect(a: Rect, b: Rect, k: number): Rect {
   return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: Math.max(0.5, a.w + (b.w - a.w) * k), h: Math.max(0.5, a.h + (b.h - a.h) * k) };
@@ -116,7 +127,12 @@ export const effectsEatersMethods = {
     const span = this.lineSpan(a.top, a.h);
     const cw = a.actualCharWidth || own.w;
     const form = eaterForm(e.kind, gx, a.top, a.h, cw, this.caretThickness(), span.top, span.h, this.underlineThickness(a.h));
-    const r = lerpRect(own, form, e.m);
+    let r = lerpRect(own, form, e.m);
+    // Smeared (eaterSmear, "if motion smear is on then apply motion smears
+    // for them too while backspacing"): the eater's rect stretched as far
+    // past it, each way, as the smear stretches the cursor's own - drawn in
+    // a longer box, not distorted, so the letters still go to its mouth.
+    if (this.look.smear && this.look.eaterSmear !== false) r = eaterSmeared(r, own, this.smearCorners());
     // Each effect's pose at `now` (asked again: the same for the same
     // `now`).
     const bm = !e.back && e.kind === "backman" ? this.backManPose(now) : null;

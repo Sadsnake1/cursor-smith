@@ -233,6 +233,8 @@ export const DEFAULT_SETTINGS = {
   hotHeadWhen: "both",
   flameTrailWhen: "both",
   crtGlitchWhen: "jumps",
+  // The eaters smeared with Motion smear as they move (1.7.7): on.
+  eaterSmear: true,
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing
   // setup (and a fresh install) keeps exactly the look it had.
@@ -591,6 +593,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "deleteInvert",
   // When Hot-head, Pixel trail and Signal glitch go (1.7.7). Appended.
   "hotHeadWhen", "flameTrailWhen", "crtGlitchWhen",
+  // The eaters smeared with Motion smear (1.7.7). Appended, on.
+  "eaterSmear",
 ];
 
 // ---------------------------------------------------------------------------

@@ -1461,7 +1461,10 @@ export class DemoStrip {
         const g = d.geo;
         const gx = d.style === "line" ? from + lineShift : from;
         const own = { x: from, y: parseFloat(styles.top) || 0, w: width, h: parseFloat(styles.height) || 0 };
-        const r = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
+        const r0 = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
+        // Smeared as the engine's (eaterSmear): as long again as the caret's
+        // own stretch.
+        const r = look.smear && look.eaterSmear !== false ? { ...r0, w: r0.w + stretch } : r0;
         ex = r.x; ew = r.w; eatShape = true;
         Object.assign(styles, { transform: `translateX(${r.x.toFixed(2)}px)`, width: `${r.w.toFixed(2)}px`, height: `${r.h.toFixed(2)}px`, top: `${r.y.toFixed(2)}px` });
         // A hollow box's border gives way to the line and the floor.

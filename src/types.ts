@@ -183,6 +183,7 @@ export interface Look {
   hotHeadWhen: string;
   flameTrailWhen: string;
   crtGlitchWhen: string;
+  eaterSmear: boolean;
   boxHollow: boolean;
   boxHollowWidth: number;
   underlineWidthPx: number;

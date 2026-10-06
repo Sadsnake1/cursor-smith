@@ -184,6 +184,8 @@ export const paintFrameMethods = {
     // blend for a highlighter-translucent box AND clears it for every other
     // style, and the other styles don't call drawBoxCursor.
     this.applyCanvasBlend();
+    // Caps Lock and Shift: every effect's hue, by the canvas's (effects-caps.ts).
+    this._capsCanvas(performance.now());
     switch (this.styleFor("cursorStyle")) {
       case "Line":
         this.drawGenericCaret(false);

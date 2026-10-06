@@ -13,8 +13,8 @@ section("Underline serifs");
 {
   ok("two look keys, appended, off by default", T.LOOK_KEYS.slice(-2).join() === "underlineSerifs,capsLook" && T.DEFAULT_SETTINGS.underlineSerifs === false && T.DEFAULT_SETTINGS.capsLook === false);
   const s = T.underSerifSize(3, 24, 9);
-  ok("a tick as thick as a Line's serif on the bar (no thicker than it), as tall as half the letter", s.t === 2 && s.t <= 3 && s.len === 4.5, s);
-  ok("...clamped as a Line serif's span is", T.underSerifSize(3, 24, 1).len === 2.5 && T.underSerifSize(3, 8, 40).len === 5);
+  ok("a tick as thick as a Line's serif on the bar (no thicker than it), small: a third of the letter", s.t === 2 && s.t <= 3 && Math.abs(s.len - 2.7) < 1e-9, s);
+  ok("...never under 1.5 px, nor over an eighth of the line", T.underSerifSize(3, 24, 1).len === 1.5 && Math.abs(T.underSerifSize(3, 16, 40).len - 1.92) < 1e-9);
 
   const e = makeEngine({ cursorStyle: "Underline", underlineSerifs: true });
   e.smearCorners = () => null;
@@ -22,7 +22,7 @@ section("Underline serifs");
   const q = e.underSerifQuads(active, 100, 9, 61, 3);
   const [l, r] = q.quads;
   ok("two ticks, one at each end of the bar", q.quads.length === 2 && l.tl.x === 100 && l.bl.x === 100 && r.tr.x === 109 && r.br.x === 109);
-  ok("...from the bar's foot up past its top by their length - up only", l.bl.y === 64 && r.br.y === 64 && l.tl.y === 61 - 4.5 && r.tr.y === 61 - 4.5 && q.top === 56.5);
+  ok("...from the bar's foot up past its top by their length - up only", l.bl.y === 64 && r.br.y === 64 && Math.abs(l.tl.y - 58.3) < 1e-9 && Math.abs(r.tr.y - 58.3) < 1e-9 && Math.abs(q.top - 58.3) < 1e-9);
   ok("...a tick's thickness wide", l.tr.x - l.tl.x === 2 && r.tr.x - r.tl.x === 2);
   ok("...tapered on the inside at the free end, as a Line serif's bracket", l.tr.y > l.tl.y && r.tl.y > r.tr.y && l.br.y === l.bl.y);
 
@@ -35,7 +35,7 @@ section("Underline serifs");
   sm._smearDir = { x: 0, y: 1 };
   sm.smearCorners = () => ({ tl: { x: 100, y: 21 }, tr: { x: 109, y: 21 }, br: { x: 109, y: 64 }, bl: { x: 100, y: 64 } });
   const v = sm.underSerifQuads(active, 100, 9, 61, 3);
-  ok("smeared down, at its foot (the head), not its top", v.quads[0].bl.y === 64 && v.quads[0].tl.y === 56.5, [v.quads[0].tl.y, v.quads[0].bl.y]);
+  ok("smeared down, at its foot (the head), not its top", v.quads[0].bl.y === 64 && Math.abs(v.quads[0].tl.y - 58.3) < 1e-9, [v.quads[0].tl.y, v.quads[0].bl.y]);
 
   // Painted: the bar and the ticks in one path, one fill.
   const paint = (over) => {
@@ -68,7 +68,8 @@ section("Underline serifs");
 
 section("Vacuum: the U");
 {
-  ok("its arms: the serifs' height at rest, standing up as it dips, not past most of its width, down again springing back", T.holeArm(0, 0, 9) === 0 && T.holeArm(4.5, 0, 9) === 4.5 && T.holeArm(0, 2, 9) === 2 * T.HOLE_ARM_PULL && T.holeArm(0, 50, 9) <= 9 && T.holeArm(4.5, -2, 9) === 4.5);
+  ok("its arms, small: the serifs' height (no taller as it dips); without them a little as it dips, gone springing back", T.holeArm(0, 0, 9) === 0 && T.holeArm(2.7, 0, 9) === 2.7 && T.holeArm(2.7, 2, 9) === 2.7 && Math.abs(T.holeArm(0, 2, 9) - 2 * T.HOLE_ARM_PULL) < 1e-9 && T.holeArm(0, 50, 9) <= 0.3 * 9 + 1e-9 && T.holeArm(0, -2, 9) === 0);
+  ok("...leaning out with the bend, in a little springing back, never far", T.holeLean(0, 9) === 0 && T.holeLean(2.7, 9) > 0.2 && T.holeLean(2.7, 9) <= 0.6 && T.holeLean(-1, 9) < 0 && T.holeLean(50, 9) <= 0.6);
   const flat = T.holeOutline(9, 3, 0, 0, 2);
   // An outline's points: the ends of its segments and each curve's middle.
   const pts = (cmds) => {
@@ -86,10 +87,12 @@ section("Vacuum: the U");
   const u = pts(T.holeOutline(9, 3, 2.7, 5, 2));
   ok("dipping with arms: a U - both ends standing 5 up, the middle of its foot 2.7 down", u.some((p) => p[0] === 0 && p[1] === -5) && u.some((p) => p[0] === 9 && p[1] === -5) && Math.abs(Math.max(...u.map((p) => p[1])) - 5.7) < 1e-9);
   ok("...its arms' free ends tapered on the inside", u.some((p) => p[0] === 2 && p[1] > -5 && p[1] < 0) && u.some((p) => p[0] === 7 && p[1] > -5 && p[1] < 0));
+  const leant = pts(T.holeOutline(9, 3, 2.7, 5, 2, 0, 0, 0.4));
+  ok("leaning: the arms' tops out past the bar's ends, its feet where they were", leant.some((p) => p[0] < -1 && p[1] < -4) && leant.some((p) => p[0] > 10 && p[1] < -4) && leant.some((p) => p[0] === 0 && p[1] === 3) && leant.some((p) => p[0] === 9 && p[1] === 3));
   const round = T.holeOutline(9, 3, 2.7, 5, 2, 1.5, 1);
   ok("rounded: its corners curves (Rounded corners), the same outline", round.filter((c) => c[0] === "Q").length === T.holeOutline(9, 3, 2.7, 5, 2).filter((c) => c[0] === "Q").length && pts(round).every((p) => p[0] >= 0 && p[0] <= 9));
   const src = fs.readFileSync(srcPath("demo.ts"), "utf8");
-  ok("the preview draws the same outline", /holeOutline\(ew, bh, sag, arm/.test(src));
+  ok("the preview draws the same outline, leaning as it does", /holeOutline\(ew, bh, sag, arm, [^)]*, lean\)/.test(src));
 }
 
 section("Caps Lock and Shift");
@@ -97,12 +100,13 @@ section("Caps Lock and Shift");
   ok("the keys: Caps Lock on, Shift on its own (with Ctrl, Alt or Cmd a shortcut)", T.capsKeys({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: (k) => k === "CapsLock" }).caps === true &&
      T.capsKeys({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false }).shift === true && T.capsKeys({ shiftKey: true, ctrlKey: true, altKey: false, metaKey: false }).shift === false && T.capsKeys({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: true }).shift === false);
   ok("eased: most of the way in 80 ms, all the way after, back out the same", T.capsEase(0, true, 80) > 0.9 && T.capsEase(0, true, 200) === 1 && T.capsEase(1, false, 200) === 0 && T.capsEase(0, true, 10) < 0.5);
-  ok("the opposite color, as bright: orange to azure", T.capsColor("#ff8000", 1, "#7f6df2") === "#007fff");
-  ok("...halfway between, halfway in", T.capsColor("#ff8000", 0.5, "#7f6df2") === "#808080");
-  ok("...a white or gray cursor (no opposite hue) to the accent", T.capsColor("#ffffff", 1, "#7f6df2") === "#7f6df2" && T.capsColor("#333333", 1, "#7f6df2") === "#7f6df2");
-  ok("...none of it at 0", T.capsColor("#ff8000", 0, "#000") === "#ff8000");
+  ok("a hue turn as CSS's: half the wheel takes orange to blue, and back", T.hueTurn("#ff8000", 180) !== "#ff8000" && /^#[0-4][0-9a-f][4-9a-f][0-9a-f]ff$/.test(T.hueTurn("#ff8000", 180)) && T.hueTurn(T.hueTurn("#7f6df2", 180), 180) === "#7f6df2", T.hueTurn("#ff8000", 180));
+  ok("a colorful cursor painted as it is (the canvas's turn flips it, and every effect with it)", T.capsColor("#ff8000", 1, "#7f6df2") === "#ff8000");
+  ok("...a white or gray one painted as the accent's half-turn, which the canvas's turn brings back to the accent", T.capsColor("#ffffff", 1, "#7f6df2") === T.hueTurn("#7f6df2", 180) && T.capsColor("#333333", 1, "#7f6df2") === T.hueTurn("#7f6df2", 180));
+  ok("...none of it at 0", T.capsColor("#ffffff", 0, "#7f6df2") === "#ffffff");
 
-  const e = makeEngine({ capsLook: true, cursorStyle: "Box", colorDark: "#ff8000" });
+  const e = makeEngine({ capsLook: true, cursorStyle: "Box", colorDark: "#ffffff" });
+  e.canvas = { style: {} };
   e.lookVimMode = () => null;
   e._capsAccent = () => "#7f6df2";
   e._markActivity = () => {};
@@ -110,10 +114,13 @@ section("Caps Lock and Shift");
   e._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   ok("Shift held: wanted", e._capsWanted() === true);
   e._caps = { amt: 0, at: performance.now() - 500 };
-  ok("...the cursor's color flipped (and so its glow and trail, which read it)", e.getBaseColor() === "#007fff" && e.getActiveColor() === "#007fff", e.getBaseColor());
+  e._capsCanvas(performance.now());
+  ok("...the whole canvas's hue turned half the wheel: the cursor and every effect on it flip", e.canvas.style.filter === "hue-rotate(180deg)", e.canvas.style.filter);
+  ok("...a white cursor painted so it shows as the accent (and its glow and trail, which read it)", e.getBaseColor() === T.hueTurn("#7f6df2", 180) && e.getActiveColor() === e.getBaseColor(), e.getBaseColor());
   e.settings.gradientEnabled = true;
-  e.settings.gradientDark1 = "#ff8000";
-  ok("...a gradient's every stop", e.gradientStops()[0] === "#007fff", e.gradientStops());
+  e.settings.gradientDark1 = "#ffffff";
+  e.settings.gradientDark2 = "#ff8000";
+  ok("...a gradient's white stops the same, its colorful ones left to the turn", e.gradientStops()[0] === T.hueTurn("#7f6df2", 180) && e.gradientStops()[1] === "#ff8000", e.gradientStops());
   e.settings.gradientEnabled = false;
   const ops = [];
   const ctx = { translate: (x, y) => ops.push(["t", x, y]), scale: (x, y) => ops.push(["s", x, y]) };
@@ -122,22 +129,34 @@ section("Caps Lock and Shift");
   e._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   ok("Shift let go: easing out, the frames kept coming until it is out", e._capsWanted() === false && e.capsMoving(performance.now()) === true);
   e._caps.at = performance.now() - 500;
-  ok("...then the cursor as it was", e.getBaseColor() === "#ff8000" && e.capsMoving(performance.now()) === false);
+  e._capsCanvas(performance.now());
+  ok("...then the cursor as it was, the canvas unturned", e.getBaseColor() === "#ffffff" && e.capsMoving(performance.now()) === false && e.canvas.style.filter === "");
   e._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
   e._capsBlur();
   ok("the window losing focus lets go of Shift (its keyup goes elsewhere)", e._shiftHeld === false && e._capsWanted() === false);
   e._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: (k) => k === "CapsLock" });
   ok("Caps Lock on: wanted, as long as it is on", e._capsWanted() === true);
-  e.lookVimMode = () => "normal";
-  ok("...but not in Vim's normal mode, where Shift runs commands", e._capsWanted() === false);
   // A Vim mode has its own look, which carries the setting.
-  e.lookVimMode = () => "insert";
+  e.lookVimMode = () => "normal";
   Object.defineProperty(e, "look", { value: { capsLook: true }, configurable: true });
-  ok("...and in insert mode", e._capsWanted() === true);
+  ok("...in every Vim mode: in Normal mode it is the warning you want", e._capsWanted() === true);
+  e._capsKey({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
+  ok("Shift alone in Vim's Normal mode: no (it runs commands there)", e._capsWanted() === false);
+  e.lookVimMode = () => "insert";
+  ok("...in insert mode, yes", e._capsWanted() === true);
   Object.defineProperty(e, "look", { value: { capsLook: false }, configurable: true });
   ok("...nor with the setting off", e._capsWanted() === false);
+  delete e.look;
+  e.lookVimMode = () => null;
+  e._capsKey({ shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, getModifierState: () => false });
+  e._capsPointer({ getModifierState: (k) => k === "CapsLock", shiftKey: true });
+  ok("the mouse reads Caps Lock (changed in another app), not Shift (a Shift-click selects)", e._capsOn === true && e._shiftHeld === false);
+  e._capsPointer({ getModifierState: () => false, shiftKey: false });
+  ok("...and sees it go off", e._capsOn === false);
 
   const src = fs.readFileSync(srcPath("plugin.ts"), "utf8");
+  ok("the mouse moving or pressed reads Caps Lock", /onMouseMove = \(e: MouseEvent\) => \{\s*this\._capsPointer\(e\)/.test(src) && /if \(e instanceof MouseEvent\) this\._capsPointer\(e\)/.test(src));
+  ok("the canvas turned every frame it is drawn (written only on change)", /this\._capsCanvas\(performance\.now\(\)\)/.test(fs.readFileSync(srcPath("paint-frame.ts"), "utf8")));
   ok("both keydown and keyup read the keys; the window's blur lets go", /this\._capsKey\(e\)/.test(src) && /addEventListener\("keyup", onKeyUp, true\)/.test(src) && /removeEventListener\("keyup", onKeyUp, true\)/.test(src) && /addEventListener\("blur", onWindowBlur\)/.test(src) && /removeEventListener\("blur", onWindowBlur\)/.test(src));
   const shape = fs.readFileSync(srcPath("paint-shape.ts"), "utf8");
   ok("both painters grow the body, and the Box its letter", (shape.match(/this\._capsGrow\(ctx,/g) || []).length === 3);

@@ -124,6 +124,8 @@ export const engineMethods = {
       // exactly what happens when a pop-out window moves the canvas to another
       // document while Translucent is on. See applyCanvasBlend.
       this._canvasBlend = "";
+      // ...and the same for Caps Lock and Shift's hue turn (_capsCanvas).
+      this._capsFilter = "";
 
       // NO app-region declaration (same rationale as wrapper above).
       this.canvas = this.canvasWrapper.createEl("canvas", { cls: "cursor-smith-canvas" });

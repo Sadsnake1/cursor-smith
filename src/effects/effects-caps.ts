@@ -4,14 +4,18 @@
 // them exactly as before. `this` is the plugin.
 //
 // Caps Lock and Shift (1.7.7, "a caps lock or when shift is pressed effect.
-// invert color of cursor and make it a bit bigger ... desktop only"): while
-// Caps Lock is on, or Shift is held on its own, the cursor flips to its
-// opposite color (capsColor - getBaseColor and gradientStops go through
-// _capsFlip, so the glow, the trail and the letter inside a Box follow) and
-// grows a little from its foot (_capsGrow, round the painters' bodies). It
-// eases in and out (CAPS_EASE_MS) rather than jumping. Shift with Ctrl, Alt
-// or Cmd is a shortcut, not a capital: no look then. In Vim, only in insert
-// and replace mode (Shift runs commands in the others). Phones report
+// invert color of cursor and make it a bit bigger ... desktop only"; then
+// "we need to make it work for all efects"): while Caps Lock is on, or
+// Shift is held on its own, the cursor and every effect it throws off flip
+// to their opposite colors - the whole canvas's hue turned half the wheel
+// (_capsCanvas), a white or gray cursor to the accent (capsColor, through
+// getBaseColor and gradientStops) - and the cursor grows a little from its
+// foot (_capsGrow, round the painters' bodies). It eases in and out
+// (CAPS_EASE_MS) rather than jumping. Shift with Ctrl, Alt or Cmd is a
+// shortcut, not a capital: no look then. In Vim, Caps Lock shows in every
+// mode (in Normal mode it is the warning you want), Shift only in insert
+// and replace (it runs commands in the others). The mouse reads Caps Lock
+// too, so it is right after coming back from another app. Phones report
 // neither key, and the setting is hidden there.
 import { Platform } from "obsidian";
 import { capsColor } from "../util/color";
@@ -51,17 +55,28 @@ export const effectsCapsMethods = {
     this._markActivity("key");
   },
 
+  // The mouse moving or pressed (plugin.ts): Caps Lock as it is now - it
+  // may have changed in another app. Not Shift: a Shift-click selects.
+  _capsPointer(this: CursorSmithPlugin, e: MouseEvent) {
+    if (Platform.isMobile || typeof e.getModifierState !== "function") return;
+    const caps = !!e.getModifierState("CapsLock");
+    if (caps === this._capsOn) return;
+    this._capsOn = caps;
+    this._markActivity("key");
+  },
+
   // The window losing focus: a Shift held through Alt+Tab never sends its
   // keyup here.
   _capsBlur(this: CursorSmithPlugin) {
     this._shiftHeld = false;
   },
 
-  // Whether the look is wanted now: the setting on, on a desktop, Caps Lock
-  // on or Shift held, and not in a Vim mode where Shift runs commands.
+  // Whether the look is wanted now: the setting on, on a desktop, and Caps
+  // Lock on - or Shift held, outside a Vim mode where Shift runs commands.
   _capsWanted(this: CursorSmithPlugin): boolean {
     if (!this.look.capsLook || Platform.isMobile) return false;
-    if (!this._capsOn && !this._shiftHeld) return false;
+    if (this._capsOn) return true;
+    if (!this._shiftHeld) return false;
     const mode = this.lookVimMode();
     return !mode || mode === "insert" || mode === "replace";
   },
@@ -80,7 +95,8 @@ export const effectsCapsMethods = {
     return a !== (this._capsWanted() ? 1 : 0);
   },
 
-  // A color the cursor is painted in, flipped as far as the look is in.
+  // A color the cursor is painted in, as far as the look is in: a white or
+  // gray one toward the accent (capsColor); the canvas's turn does the rest.
   _capsFlip(this: CursorSmithPlugin, hex: string): string {
     const k = this.capsAmount(performance.now());
     return k > 0 ? capsColor(hex, k, this._capsAccent()) : hex;
@@ -106,6 +122,19 @@ export const effectsCapsMethods = {
     }
     this._capsAccentCache = { hex, t: now };
     return hex;
+  },
+
+  // Every effect at once: the canvas's hue turned half the wheel as far as
+  // the look is in (a CSS filter: the compositor's work, nothing redrawn).
+  // Written only on change, as applyCanvasBlend's blend is.
+  _capsCanvas(this: CursorSmithPlugin, now: number) {
+    const el = this.canvas;
+    if (!el) return;
+    const k = this.capsAmount(now);
+    const want = k > 0 ? `hue-rotate(${Math.round(180 * k)}deg)` : "";
+    if (this._capsFilter === want) return;
+    this._capsFilter = want;
+    el.style.filter = want;
   },
 
   // Grows what is painted next from the cursor's foot (cx, foot), as far as

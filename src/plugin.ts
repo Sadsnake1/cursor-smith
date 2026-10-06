@@ -171,6 +171,8 @@ export default class CursorSmithPlugin extends Plugin {
   declare _eatenLetterFx: EffectsMethods["_eatenLetterFx"];
   declare _capsKey: EffectsMethods["_capsKey"];
   declare _capsBlur: EffectsMethods["_capsBlur"];
+  declare _capsPointer: EffectsMethods["_capsPointer"];
+  declare _capsCanvas: EffectsMethods["_capsCanvas"];
   declare _capsWanted: EffectsMethods["_capsWanted"];
   declare capsAmount: EffectsMethods["capsAmount"];
   declare capsMoving: EffectsMethods["capsMoving"];
@@ -676,6 +678,8 @@ export default class CursorSmithPlugin extends Plugin {
   _shiftHeld = false;
   _caps: { amt: number; at: number } | null = null;
   _capsAccentCache: { hex: string; t: number } | null = null;
+  // The hue turn last written on the canvas (_capsCanvas).
+  _capsFilter = "";
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
@@ -1106,6 +1110,7 @@ export default class CursorSmithPlugin extends Plugin {
     this.registeredDocuments.add(doc);
     
     const onMouseMove = (e: MouseEvent) => {
+      this._capsPointer(e);
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
       // Which window's coordinates those are (the torch's target reads it).
@@ -1117,7 +1122,7 @@ export default class CursorSmithPlugin extends Plugin {
     };
     // Any of these means the picture may be about to change: snap the render
     // loops out of idle so the very next frame reflects it.
-    const onActivity = (e: Event) => this._markActivity(e && e.type ? e.type : "activity");
+    const onActivity = (e: Event) => { if (e instanceof MouseEvent) this._capsPointer(e); this._markActivity(e && e.type ? e.type : "activity"); };
     // Everything below used to hang off `keydown` alone, and that is exactly
     // why none of it worked on a phone.
     //

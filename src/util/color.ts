@@ -181,18 +181,32 @@ export function rgbTupleToHex([r, g, b]: number[]): string {
   return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
 }
 
-// A cursor color flipped for Caps Lock and Shift (effects-caps.ts), `k` of
-// the way there: the opposite hue at the same saturation and brightness
-// (HSV, so the flip is as bright as the cursor was - a straight RGB inverse
-// turns a light cursor dark, lost on a dark theme), mixed in RGB. A white,
-// gray or black cursor has no opposite hue: it flips to `accent` instead.
-// Hex in, hex out. Pure.
+// A color through CSS's hue-rotate(`deg`) - the filter's own matrix, in
+// sRGB, as Chromium applies it. Half a turn is its own inverse. Hex in, hex
+// out. Pure.
+export function hueTurn(hex: string, deg: number): string {
+  const rgb = parseColorTuple(hex);
+  if (!rgb) return hex;
+  const a = Math.cos((deg * Math.PI) / 180), b = Math.sin((deg * Math.PI) / 180);
+  const m = [
+    [0.213 + a * 0.787 - b * 0.213, 0.715 - a * 0.715 - b * 0.715, 0.072 - a * 0.072 + b * 0.928],
+    [0.213 - a * 0.213 + b * 0.143, 0.715 + a * 0.285 + b * 0.140, 0.072 - a * 0.072 - b * 0.283],
+    [0.213 - a * 0.213 - b * 0.787, 0.715 - a * 0.715 + b * 0.715, 0.072 + a * 0.928 + b * 0.072],
+  ];
+  return rgbTupleToHex(m.map((r) => r[0] * rgb[0] + r[1] * rgb[1] + r[2] * rgb[2]));
+}
+
+// Caps Lock and Shift (effects-caps.ts) turn the hue of the whole canvas
+// half the wheel (`k` of half), so the cursor and every effect flip to
+// their opposite colors. A white, gray or black cursor has no hue to turn:
+// it is painted `k` of the way to the accent's half-turn instead, which the
+// canvas's turn brings back to the accent. Any other color as it is. Hex in,
+// hex out. Pure.
 export function capsColor(hex: string, k: number, accent: string): string {
   if (!(k > 0)) return hex;
   const rgb = parseColorTuple(hex);
-  if (!rgb) return hex;
-  const [h, s, v] = rgbToHsv(rgb);
-  const to = s < 0.12 ? (parseColorTuple(accent) || rgb) : hsvToRgb([h + 180, s, v]);
+  if (!rgb || rgbToHsv(rgb)[1] >= 0.12) return hex;
+  const to = parseColorTuple(hueTurn(accent, 180)) || rgb;
   const m = Math.min(1, k);
   return rgbTupleToHex([0, 1, 2].map((i) => rgb[i] + (to[i] - rgb[i]) * m));
 }

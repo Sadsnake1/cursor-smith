@@ -505,7 +505,7 @@ button.cursor-smith-pcard-use:hover {
   position: absolute;
   bottom: 0;
   width: 1px;
-  height: calc(100% + 3.5px);
+  height: calc(100% + 2px);
   background: inherit;
   border-radius: inherit;
 }

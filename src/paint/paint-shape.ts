@@ -24,15 +24,15 @@ import type CursorSmithPlugin from "../plugin";
 
 // The Underline's serifs (1.7.7, "add serifs for the underline cursor too
 // (just how line has them)"): a tick standing up from each end of the bar,
-// as thick as a Line's serif on a stem the bar's thickness (`t`), as tall
-// above the bar as a Line's serif reaches to one side of its stem (`len`,
-// half the letter's width, clamped the same way). Up only: down, they would
-// reach into the line below - and up, the bar is a U when the Vacuum pulls
-// (effects-rabbithole.ts). Pure.
+// as thick as a Line's serif on a stem the bar's thickness (`t`), small
+// ("make the underline serifs smaller"): about a third of the letter's
+// width above the bar (`len`), no more than an eighth of the line, never
+// under 1.5 px. Up only: down, they would reach into the line below - and
+// up, the bar is a U when the Vacuum pulls (effects-rabbithole.ts). Pure.
 export function underSerifSize(barH: number, lineH: number, charW?: number) {
   const t = Math.max(1, Math.round(Math.min(barH * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO)));
-  const raw = charW && charW > 0 ? charW : barH * 7;
-  const len = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO)) / 2;
+  const raw = charW && charW > 0 ? charW : barH * 3;
+  const len = Math.max(1.5, Math.min(0.3 * raw, 0.12 * lineH));
   return { t, len };
 }
 
@@ -496,6 +496,8 @@ export const paintShapeMethods = {
       if (isUnderline && settings.energyEffect && settings.gradientEnabled && settings.energyAurora
           && (settings.underlineSerifs || this._holeOn())) {
         const room = underSerifSize(rh, active.h, active.actualCharWidth).len + rw;
+        px = rx - rw / 2;
+        pw = rw * 2;
         py = ry - room;
         ph = rh + room + rw;
       }

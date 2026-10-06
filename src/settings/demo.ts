@@ -1748,7 +1748,7 @@ export class DemoStrip {
         // The eater its own size; with Motion smear on (eaterSmear), its own
         // shape stretched behind it as a trail, as the engine's (eaterTrail).
         const r = r0;
-        if (look.smear && look.eaterSmear !== false && !d.eatM.exit && stretch > 0.5) trail = { x: r0.x + r0.w, y: r0.y, w: Math.min(stretch, EATER_TRAIL_CW * px), h: r0.h };
+        if (look.smear && look.eaterSmear !== false && d.eatM.kind !== "backman" && !d.eatM.exit && stretch > 0.5) trail = { x: r0.x + r0.w, y: r0.y, w: Math.min(stretch, EATER_TRAIL_CW * px), h: r0.h };
         ex = r.x; ew = r.w; eatShape = true;
         Object.assign(styles, { transform: `translateX(${r.x.toFixed(2)}px)`, width: `${r.w.toFixed(2)}px`, height: `${r.h.toFixed(2)}px`, top: `${r.y.toFixed(2)}px` });
         // A hollow box's border gives way to the line and the floor.

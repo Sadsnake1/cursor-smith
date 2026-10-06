@@ -207,7 +207,9 @@ export const effectsEatersMethods = {
     // lines); then the cursor's own smear behind it, which on a Box was a
     // ghost box over the Vacuum's floor ("it leavs a ghost like a box on top
     // of it").
-    const trail = !e.back && this.look.smear && this.look.eaterSmear !== false ? this._eaterTrail(form, own, now, EATER_TRAIL_CW * cw) : null;
+    // Not Back-man's: on the creature it read as a fast trail, not a smear
+    // ("remove the smear from the eating creature").
+    const trail = !e.back && e.kind !== "backman" && this.look.smear && this.look.eaterSmear !== false ? this._eaterTrail(form, own, now, EATER_TRAIL_CW * cw) : null;
     if (this._perf && this._perf.del) { this._perf.del.eater++; if (trail) this._perf.del.trail++; }
     if (trail) {
       // In slices, each fainter than the one before (eaterTrailAlpha), the

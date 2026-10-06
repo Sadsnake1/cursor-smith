@@ -1689,9 +1689,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     }, { depth: 1, when: pop }));
     effects.push(toggle("Shredded letters", "Show the letters going through the blades and falling as ribbons. Off, they simply vanish.", "shredderLetters",
       { depth: 2, when: () => pop() && eater() === "shredder" }));
-    // Whichever eater: stretched with Motion smear as it moves (effects-eaters.ts).
+    // Shredder and Portal: a trail behind them with Motion smear on
+    // (effects-eaters.ts). Not Back-man: the creature has none.
     effects.push(toggle("Smear", "Leaves Motion smear's trail behind it as it eats.", "eaterSmear",
-      { depth: 2, when: () => pop() && eater() !== "none", needs: { when: on("smear"), hint: "Needs Motion smear." } }));
+      { depth: 2, when: () => pop() && eater() !== "none" && eater() !== "backman", needs: { when: on("smear"), hint: "Needs Motion smear." } }));
     effects.push(row("Letters on delete", "Deleted letters burst apart or float away.", (st) => {
       st.addDropdown((d) => d.addOptions(LETTER_NAMES).setValue(letterChoiceOf(lookNow())).onChange(async (v) => { await choose(LETTER_KEYS, v); }));
     }, { depth: 1, when: pop }));

@@ -28,7 +28,7 @@ section("Vacuum: the pull, the stretch, the bounce");
   const start = at(0), pulling = at(0.25), near = at(0.5), through = at(0.8), gone = at(1);
   ok("a letter is pulled down from where it stood, faster and faster", start.foot === 14.8 && start.sx === 1 && start.sy === 1 && start.phase === 0 && pulling.foot > 14.8 && pulling.foot - 14.8 < (22 - 14.8) / 4 && near.foot - pulling.foot > pulling.foot - 14.8);
   ok("...stretching tall and thin toward the floor (about its foot)", near.phase === 0 && near.sy > 1.3 && near.sx < 0.8 && pulling.sy > 1 && pulling.sy < near.sy);
-  ok("...then through it, thinner still, straight (no turn), its top past the floor by the end", through.phase === 2 && through.foot > 22 && through.sx < near.sx && through.rot === 0 && gone.done && gone.foot - 2 * l.half * gone.sy * gone.k > 22);
+  ok("...then through it, thinner still, turning and shrinking as it sinks (the Portal's spin), its top past the floor by the end", through.phase === 2 && through.foot > 22 && through.sx < near.sx && Math.abs(through.rot) > Math.abs(near.rot) && Math.abs(gone.rot) >= T.HOLE_SPIN && gone.k <= 1 - T.HOLE_SHRINK + 1e-9 && Math.sign(gone.rot) === T.holeSpinDir(l.char) && gone.done && gone.foot - 2 * l.half * gone.sy * gone.k > 22);
   const sp = { sag: 0, v: 0 };
   let low = 0;
   for (let k = 0; k < 30; k++) { T.holeSpring(sp, 1 / 60, T.HOLE_SAG); low = Math.max(low, sp.sag); }

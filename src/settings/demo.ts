@@ -65,7 +65,7 @@ import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeGap, holeOutline, holeSpring } from "../effects/effects-rabbithole";
+import { HOLE_FALL_MS, HOLE_KICK, HOLE_RIPPLE_KICK, HOLE_SAG, HOLE_SWELL, holeFall, holeFlash, holeOutline, holeRipple, holeSpinDir, holeSpring, holeSwell, holeTop } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -794,7 +794,7 @@ interface Demo {
   // the caret wears now (to put it back once).
   shredRun: { t0: number; t: number } | null;
   cut: number;
-  holeSp: { sag: number; v: number; at: number } | null;
+  holeSp: { sag: number; v: number; r2: number; v2: number; r3: number; v3: number; landT: number; at: number } | null;
   holeAt: [number, number];
   holeWeighed: boolean;
   // The caret's morph into its eater's shape and back (effects-eaters.ts).
@@ -1282,9 +1282,10 @@ export class DemoStrip {
     if (eatKind === "shredder") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
     if (eatKind === "rabbithole") {
       // A light tap on the floor.
-      const sp = d.holeSp || (d.holeSp = { sag: 0, v: 0, at: now });
-      if (now > sp.at) { holeSpring(sp, (now - sp.at) / 1000, 0); sp.at = now; }
+      const sp = d.holeSp || (d.holeSp = { sag: 0, v: 0, r2: 0, v2: 0, r3: 0, v3: 0, landT: -1e9, at: now });
+      if (now > sp.at) { holeSpring(sp, (now - sp.at) / 1000, 0); holeRipple(sp, (now - sp.at) / 1000); sp.at = now; }
       sp.v += 0.25 * HOLE_KICK;
+      sp.v3 += 0.3 * HOLE_RIPPLE_KICK[1];
     }
     d.keyT = now;
     d.keyKind = "back";
@@ -1489,7 +1490,13 @@ export class DemoStrip {
         if (f.phase === 2 && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", d.holeAt[0] - cw / 2, 15, now)); }
         if (f.phase >= 1) {
           d.holeWeighed = true;
-          if (!p.landed && d.holeSp) { p.landed = true; d.holeSp.v += HOLE_KICK; }
+          if (!p.landed && d.holeSp) {
+            p.landed = true;
+            d.holeSp.v += HOLE_KICK;
+            d.holeSp.v2 += holeSpinDir(p.ch ?? "") * HOLE_RIPPLE_KICK[0];
+            d.holeSp.v3 += HOLE_RIPPLE_KICK[1];
+            d.holeSp.landT = now;
+          }
         }
         p.el.setCssStyles({
           transformOrigin: "50% 80%",
@@ -1819,19 +1826,24 @@ export class DemoStrip {
       // The floor's spring: down while a letter weighs on it, back up past
       // straight after, settling (holeSpring).
       const sp = d.holeSp;
-      if (this.last > sp.at) { holeSpring(sp, (this.last - sp.at) / 1000, d.holeWeighed ? HOLE_SAG : 0); sp.at = this.last; }
+      if (this.last > sp.at) { holeSpring(sp, (this.last - sp.at) / 1000, d.holeWeighed ? HOLE_SAG : 0); holeRipple(sp, (this.last - sp.at) / 1000); sp.at = this.last; }
       const bh = parseFloat(styles.height) || d.geo.ulH, top = parseFloat(styles.top) || 0;
-      const sag = sp.sag * ew;
-      d.holeAt = [ex + ew / 2, top + sag];
-      const resting = !d.holeWeighed && Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && !d.particles.some((q) => q.kind === "hole");
+      const shape = { sag: sp.sag * ew, r2: sp.r2 * ew, r3: sp.r3 * ew, swell: HOLE_SWELL * bh * holeSwell(this.last - sp.landT) };
+      d.holeAt = [ex + ew / 2, top + holeTop(ew / 2, ew, shape)];
+      const still = Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && Math.abs(sp.r2) < 0.003 && Math.abs(sp.v2) < 0.05 && Math.abs(sp.r3) < 0.003 && Math.abs(sp.v3) < 0.05;
+      const resting = !d.holeWeighed && still && this.last - sp.landT > 250 && !d.particles.some((q) => q.kind === "hole");
       if (resting) d.holeSp = null;
       else {
         // The floor as the engine's outline (holeOutline), drawn in a caret
-        // as tall as it reaches, up or down.
-        const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
-        const path = holeOutline(ew, bh, sag, d.shape.radius, holeGap(sag, ew)).map((c) =>
+        // as tall as it reaches, up or down; its shimmer over it.
+        const cmds = holeOutline(ew, bh, shape, d.shape.radius);
+        const ys = cmds.flatMap((c) => (c[0] === "Z" ? [] : c[0] === "Q" ? [c[2], c[4]] : [c[2]]));
+        const up = Math.max(0, -Math.min(0, ...ys)), H = Math.max(bh, ...ys) + up + 1;
+        const path = cmds.map((c) =>
           c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(c[1])} ${n2(up + c[2])} ${n2(c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(c[1])} ${n2(up + c[2])}`).join(" ");
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/></svg>`;
+        const flash = holeFlash(this.last - sp.landT);
+        const shine = flash > 0.01 ? `<path d='${path}' fill='white' fill-opacity='${flash.toFixed(3)}'/>` : "";
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/>${shine}</svg>`;
         Object.assign(styles, {
           height: `${n2(H)}px`, top: `${n2(top - up)}px`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",

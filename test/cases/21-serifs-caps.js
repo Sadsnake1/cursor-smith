@@ -87,16 +87,24 @@ section("Vacuum: no serifs");
   const round = T.holeOutline(9, 3, 2.7, 1.5);
   ok("rounded: its corners curves (Rounded corners), inside the bar's ends", pts(round).every((p) => p[0] >= 0 && p[0] <= 9) && round[0][2] === 1.5);
   const src = fs.readFileSync(srcPath("demo.ts"), "utf8");
-  ok("the preview draws the same outline, its gap too", /holeOutline\(ew, bh, sag, d\.shape\.radius, holeGap\(sag, ew\)\)/.test(src));
-  // The Portal opens ("the underline vacuum needs to open a bit. so a gap
-  // could work"): a gap in the floor's middle, wider the deeper it dips.
-  ok("a Portal's gap: none at rest or bulging up, HOLE_GAP of the floor at the full dip, between", T.holeGap(0, 9) === 0 && T.holeGap(-2, 9) === 0 && Math.abs(T.holeGap(T.HOLE_SAG * 9, 9) - T.HOLE_GAP * 9) < 1e-9 && T.holeGap(T.HOLE_SAG * 9 / 2, 9) > 0 && T.holeGap(T.HOLE_SAG * 9 / 2, 9) < T.HOLE_GAP * 9 && T.holeGap(99, 9) === T.HOLE_GAP * 9);
-  const open = T.holeOutline(9, 2, 2.7, 0, T.holeGap(2.7, 9));
-  const subpaths = open.filter((c) => c[0] === "M").length;
-  const xs = open.filter((c) => c[0] !== "Z").flatMap((c) => (c[0] === "Q" ? [c[1], c[3]] : [c[1]]));
-  const gapL = (9 - T.holeGap(2.7, 9)) / 2, gapR = (9 + T.holeGap(2.7, 9)) / 2;
-  ok("...the floor in two halves either side of it, nothing drawn in the opening", subpaths === 2 && xs.every((x) => x <= gapL + 1e-9 || x >= gapR - 1e-9), xs);
-  ok("...whole again when it closes", T.holeOutline(9, 2, 0.1, 0, T.holeGap(0.1, 9)).filter((c) => c[0] === "M").length === 1 && T.holeOutline(9, 2, -1, 0, T.holeGap(-1, 9)).filter((c) => c[0] === "M").length === 1);
+  ok("the preview draws the same outline (its ripple and swell too), its shimmer over it", /holeOutline\(ew, bh, shape, d\.shape\.radius\)/.test(src) && /fill='white' fill-opacity/.test(src));
+  // The Portal ("remove that gap, make the wobble more like a portal of
+  // something that the letter drops through"): one surface, rippling.
+  const ripple = T.holeOutline(9, 2, { sag: 1.5, r2: 0.8, r3: 0.5 }, 0);
+  ok("no gap: one outline, whole, however it ripples", ripple.filter((c) => c[0] === "M").length === 1);
+  const tops = [1, 2, 3, 4, 5, 6, 7, 8].map((x) => T.holeTop(x, 9, { sag: 1.5, r2: 0.8, r3: 0.5 }));
+  const turns = tops.slice(1, -1).filter((y, i) => (y - tops[i]) * (tops[i + 2] - y) < 0).length;
+  ok("...its top edge waves (the ripple on the dip), its ends where they were", turns >= 1 && Math.abs(T.holeTop(0, 9, { sag: 1.5, r2: 0.8, r3: 0.5 })) < 1e-9 && Math.abs(T.holeTop(9, 9, { sag: 1.5, r2: 0.8, r3: 0.5 })) < 1e-9, tops);
+  const sp = { r2: 0, v2: T.HOLE_RIPPLE_KICK[0], r3: 0, v3: T.HOLE_RIPPLE_KICK[1] };
+  let peak = 0;
+  for (let i = 0; i < 20; i++) { T.holeRipple(sp, 0.02); peak = Math.max(peak, Math.abs(sp.r2) + Math.abs(sp.r3)); }
+  const after = Math.abs(sp.r2) + Math.abs(sp.r3);
+  for (let i = 0; i < 100; i++) T.holeRipple(sp, 0.02);
+  ok("...a landing sets it rippling, and it settles within a couple of seconds", peak > 0.02 && after < peak && Math.abs(sp.r2) + Math.abs(sp.r3) < 0.002, [peak, after]);
+  const thick = T.holeOutline(9, 2, { sag: 0, swell: 1.8 }, 0);
+  const ys = thick.flatMap((c) => (c[0] === "Z" ? [] : c[0] === "Q" ? [c[2], c[4]] : [c[2]]));
+  ok("the swell: the floor thicker at its middle, a little up and more down, at its fullest just after the landing", Math.min(...ys) < 0 && Math.max(...ys) > 2 + 0.5 && T.holeSwell(0) === 0 && T.holeSwell(50) > T.holeSwell(15) && T.holeSwell(50) > T.holeSwell(300) && T.holeSwell(5000) === 0);
+  ok("the shimmer: a flash at the landing, gone over HOLE_FLASH_MS", T.holeFlash(0) === T.HOLE_FLASH && T.holeFlash(T.HOLE_FLASH_MS / 2) > 0 && T.holeFlash(T.HOLE_FLASH_MS) === 0 && T.holeFlash(-1) === 0);
 }
 
 section("Caps Lock and Shift");

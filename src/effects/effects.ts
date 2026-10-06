@@ -15,6 +15,8 @@ import { effectsEvaporateMethods } from "./effects-evaporate";
 import { effectsDeleteMethods } from "./effects-delete";
 import { effectsXoutMethods } from "./effects-xout";
 import { effectsBackManMethods } from "./effects-backman";
+import { effectsShredderMethods } from "./effects-shredder";
+import { effectsRabbitHoleMethods } from "./effects-rabbithole";
 
 export const effectsMethods = {
   ...effectsFireMethods,
@@ -26,5 +28,7 @@ export const effectsMethods = {
   ...effectsDeleteMethods,
   ...effectsXoutMethods,
   ...effectsBackManMethods,
+  ...effectsShredderMethods,
+  ...effectsRabbitHoleMethods,
 };
 export type EffectsMethods = typeof effectsMethods;

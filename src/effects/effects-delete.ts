@@ -27,7 +27,7 @@ export const effectsDeleteMethods = {
   // Whether anything wants a deletion's letters: the Pop effects' three,
   // and Typewriter's X-out.
   _deletionFxOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._xoutOn() || this._backManOn();
+    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._xoutOn() || this._backManOn() || this._shredderOn() || this._holeOn();
   },
 
   // The note as it is now, for the next deletion to read from; kept only
@@ -67,6 +67,15 @@ export const effectsDeleteMethods = {
     // burst goes on there, as before it).
     if (this._backManOn() && letters) {
       this.spawnBackManMeal(letters);
+      return true;
+    }
+    // ...as do a Line's Shredder and an Underline's Rabbit hole.
+    if (this._shredderOn() && letters) {
+      this.spawnShreds(letters);
+      return true;
+    }
+    if (this._holeOn() && letters) {
+      this.spawnHoleMeal(letters);
       return true;
     }
     if (letters && this._evaporateOn()) this.spawnEvaporate(letters);

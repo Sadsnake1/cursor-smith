@@ -138,6 +138,8 @@ export const DEFAULT_SETTINGS = {
   typewriterSoundBell: true,      // ...Enter at the end of a line rings the machine's margin bell
   typewriterTape: false,          // The correction (1.7.2 a tape; the X-out in 1.7.3): deleted letters overtyped with x
   backMan: false,                 // Pop effects' Back-man (1.7.7): a Box cursor eats the letters Backspace and Delete take
+  shredder: false,                // Pop effects' Shredder (1.7.7): a Line cursor shreds them into ribbons
+  rabbitHole: false,              // Pop effects' Rabbit hole (1.7.7): an Underline opens into a hole that swallows them
   backspaceEvaporate: false, // Pop effects' Backspace evaporation: deleted letters rise and fade (Backspace and Delete)
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
@@ -529,6 +531,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "typewriterTape",
   // Pop effects' Back-man (1.7.7). Appended, off by default.
   "backMan",
+  // Pop effects' Shredder and Rabbit hole (1.7.7). Appended, off by default.
+  "shredder", "rabbitHole",
 ];
 
 // ---------------------------------------------------------------------------

@@ -146,6 +146,8 @@ export interface Look {
   typewriterSoundBell: boolean;
   typewriterTape: boolean;
   backMan: boolean;
+  shredder: boolean;
+  rabbitHole: boolean;
   backspaceEvaporate: boolean;
   popLetters: boolean;
   popRainbow: boolean;

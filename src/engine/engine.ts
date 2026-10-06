@@ -997,6 +997,9 @@ export const engineMethods = {
       this.typewriterMoving(nowT) ||
       // So is Back-man's chomp, past the last bite.
       this.backManMoving(nowT) ||
+      // ...and Shredder's blades and ribbons, Rabbit hole's hole.
+      this.shredMoving(nowT) ||
+      this.holeMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting
       // out its stagger delay, which paints nothing yet but must not be
       // allowed to drop the loop into the idle heartbeat - the volley

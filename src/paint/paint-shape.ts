@@ -416,7 +416,11 @@ export const paintShapeMethods = {
     // Line + serifs = classic I-beam. Only for the Line style: an underline
     // is already a horizontal bar, so capping it with two more reads as a
     // stack of lines rather than a glyph.
-    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen;
+    // Shredder's blades (a Line's) and Rabbit hole's hole (an Underline's):
+    // effects-shredder.ts, effects-rabbithole.ts. Blades have no serifs.
+    const shred = isUnderline ? null : this.shredPose(now);
+    const hole = isUnderline ? this.holePose(now) : null;
+    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen && !shred;
     const serifs = wantSerifs ? this.serifQuads(active, rx, rw, ry, rh) : null;
 
     if (gsGen) {
@@ -434,6 +438,20 @@ export const paintShapeMethods = {
         pw = Math.max(rx + rw, serifs.right) - px;
       }
       ctx.fillStyle = this._bodyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
+      if (shred) {
+        // The letters cut where the line is going (the caret's own place),
+        // then the blades over them.
+        const cut = (this.lastActive ? this.lastActive.x : rx) + rw / 2;
+        this.drawShreds(ctx, cut, shred, now);
+        this.drawShredLine(ctx, rx, ry, rw, rh, ctx.fillStyle, shred, now);
+        ctx.restore();
+        return;
+      }
+      if (hole) {
+        this.drawHole(ctx, rx, ry, rw, rh, ctx.fillStyle, hole, now);
+        ctx.restore();
+        return;
+      }
 
       // Stem and serifs go into ONE path and take ONE fill.
       //

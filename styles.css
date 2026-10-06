@@ -487,6 +487,12 @@ button.cursor-smith-pcard-use:hover {
 .cursor-smith-pcard-caret-line.is-serif::after {
   bottom: 0;
 }
+/* Shredder's blades (demo.ts) are drawn in the caret's background: the
+   serifs give way to them. */
+.cursor-smith-pcard-caret-line.is-shred::before,
+.cursor-smith-pcard-caret-line.is-shred::after {
+  display: none;
+}
 .cursor-smith-pcard-caret-underline {
   top: 16px;
   height: 2px;

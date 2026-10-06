@@ -196,7 +196,7 @@ section("Back-man: the bites");
 
 section("Back-man: the setting");
 {
-  ok("a look key, appended last, off by default", T.LOOK_KEYS[T.LOOK_KEYS.length - 1] === "backMan" && T.DEFAULT_SETTINGS.backMan === false);
+  ok("a look key, appended (Shredder and Rabbit hole after it), off by default", T.LOOK_KEYS.slice(-3).join() === "backMan,shredder,rabbitHole" && T.DEFAULT_SETTINGS.backMan === false);
   const rows = renderPanel({ popEffects: true, cursorStyle: "Box" });
   const i = rows.findIndex((r) => r.name === "Back-man");
   const row = rows[i];

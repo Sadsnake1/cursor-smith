@@ -49,6 +49,8 @@ import type {
 import { measureMethods } from "./engine/measure";
 import { effectsMethods } from "./effects/effects";
 import type { BackManState } from "./effects/effects-backman";
+import type { ShredState } from "./effects/effects-shredder";
+import type { HoleState } from "./effects/effects-rabbithole";
 import { paintMethods } from "./paint/paint";
 import { torchMethods } from "./torch/torch";
 import type { MeasureMethods } from "./engine/measure";
@@ -148,6 +150,19 @@ export default class CursorSmithPlugin extends Plugin {
   declare _xoutOn: EffectsMethods["_xoutOn"];
   declare _backManOn: EffectsMethods["_backManOn"];
   declare _backManBite: EffectsMethods["_backManBite"];
+  declare _shredderOn: EffectsMethods["_shredderOn"];
+  declare _shredBite: EffectsMethods["_shredBite"];
+  declare spawnShreds: EffectsMethods["spawnShreds"];
+  declare shredPose: EffectsMethods["shredPose"];
+  declare shredMoving: EffectsMethods["shredMoving"];
+  declare drawShreds: EffectsMethods["drawShreds"];
+  declare drawShredLine: EffectsMethods["drawShredLine"];
+  declare _holeOn: EffectsMethods["_holeOn"];
+  declare _holeBite: EffectsMethods["_holeBite"];
+  declare spawnHoleMeal: EffectsMethods["spawnHoleMeal"];
+  declare holePose: EffectsMethods["holePose"];
+  declare holeMoving: EffectsMethods["holeMoving"];
+  declare drawHole: EffectsMethods["drawHole"];
   declare _backManSelected: EffectsMethods["_backManSelected"];
   declare spawnBackManMeal: EffectsMethods["spawnBackManMeal"];
   declare backManPose: EffectsMethods["backManPose"];
@@ -634,6 +649,10 @@ export default class CursorSmithPlugin extends Plugin {
   xouts!: XoutRun[];
   // Back-man's spell of bites (effects-backman.ts), or null.
   _backMan: BackManState | null = null;
+  // Shredder's run of cutting (effects-shredder.ts), Rabbit hole's of
+  // eating (effects-rabbithole.ts), or null.
+  _shred: ShredState | null = null;
+  _hole: HoleState | null = null;
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
@@ -1154,6 +1173,9 @@ export default class CursorSmithPlugin extends Plugin {
         // a word (Ctrl, or Option on a Mac), a line (Cmd) or a selection in
         // one big bite.
         this._backManBite(k === "Delete" ? 1 : -1, e.ctrlKey || e.altKey || e.metaKey || this._backManSelected());
+        // A Line's Shredder cuts, an Underline's Rabbit hole opens.
+        this._shredBite();
+        this._holeBite();
       }
       // Enter flag: consumed by the next commitMove() so a Thunderstrike can
       // be aimed at the caret's NEW line. Keyed off the keystroke rather than
@@ -1191,6 +1213,8 @@ export default class CursorSmithPlugin extends Plugin {
       if (t.startsWith("delete")) {
         noteKeystroke("delete");
         this._backManBite(t.includes("Forward") ? 1 : -1, /^delete(Word|SoftLine|HardLine|EntireSoftLine|ByCut|ByDrag)/.test(t) || this._backManSelected());
+        this._shredBite();
+        this._holeBite();
       }
       else if (t === "insertLineBreak" || t === "insertParagraph") noteKeystroke("enter");
       else if (t === "insertText" || t === "insertCompositionText" ||

@@ -1588,6 +1588,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // that eats what Backspace and Delete take. A Box's only.
     effects.push(toggle("Back-man", "Backspace and Delete turn the Box cursor into a hungry little creature that gulps down the letters.", "backMan",
       { depth: 1, gate: true, when: pop, needs: { when: isStyle("Box"), hint: "Needs the Box cursor, in Appearance." } }));
+    // Shredder and Rabbit hole (1.7.7): the Line's and the Underline's ways
+    // of eating the same.
+    effects.push(toggle("Shredder", "Backspace and Delete break the Line cursor into blades that cut the letters into falling ribbons.", "shredder",
+      { depth: 1, gate: true, when: pop, needs: { when: isStyle("Line"), hint: "Needs the Line cursor, in Appearance." } }));
+    effects.push(toggle("Rabbit hole", "Backspace and Delete open the Underline cursor into a hole that swallows the letters.", "rabbitHole",
+      { depth: 1, gate: true, when: pop, needs: { when: isStyle("Underline"), hint: "Needs the Underline cursor, in Appearance." } }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],
@@ -1601,7 +1607,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // gate is on the four effects, NOT on popEffects. The group can be on
     // with every effect inside it off, and that is exactly the state where
     // a Rainbow toggle is a switch that visibly does nothing.
-    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("backspaceEvaporate") || !!get("thunderstrike") || !!get("fireworks") || !!get("backMan"));
+    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("backspaceEvaporate") || !!get("thunderstrike") || !!get("fireworks") || !!get("backMan") || !!get("shredder") || !!get("rabbitHole"));
     effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
 
     // Typewriter: an effect of its own since the day it was made (1.6.7) -

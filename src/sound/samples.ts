@@ -116,7 +116,7 @@ export const SOUND_MACHINES: SoundMachine[] = [
   // Akko Lavender Purple, from OmaVibes by Mohammed Shareef (github.com/mshareef-git/omavibes), MIT
   {
     id: "akkolavender",
-    label: "Lavenders",
+    label: "Purples",
     kind: "keyboard",
     onset: 0.04038,
     sounds: [["strike",0.04,0.175],["strike",0.295,0.125],["strike",0.5,0.13],["strike",0.71,0.13],["strike",0.92,0.105],["strike",1.105,0.1],["strike",1.285,0.15],["strike",1.515,0.115],["space",1.71,0.13],["back",1.92,0.14],["enter",2.14,0.15]],

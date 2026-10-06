@@ -18,7 +18,7 @@ section("Sounds: the machines");
      TW.map((m) => m.label).join() === "Hermes 3000,Erika 5 (1940),IBM Selectric II,L. C. Smith (1946),Mercedes (1934),Olivetti Lettera 35,Olympia (1956),Royal Portable (1936),Sears Electric Twelve,Smith-Corona Corsair" &&
      M[0].id === "hermes3000" && T.DEFAULT_SOUND_MACHINE === "hermes3000" && T.DEFAULT_SETTINGS.typewriterSoundVoice === "hermes3000" && new Set(M.map((m) => m.id)).size === M.length, M.map((m) => m.label));
   ok("then eleven keyboards (the list pruned 2026-10-06, the Kalimba and the horse among them) and nothing else, the kinds in order",
-     KB.map((m) => m.label).join() === "Lavenders,Creams,Reds,Browns,Blues,Greens,Buckling Springs,Ink Blacks,Pinks,Kalimba,Actual Horse" &&
+     KB.map((m) => m.label).join() === "Purples,Creams,Reds,Browns,Blues,Greens,Buckling Springs,Ink Blacks,Pinks,Kalimba,Actual Horse" &&
      OTHER.length === 0 && TW.length + KB.length + OTHER.length === M.length &&
      M.map((m) => m.kind).join() === [...TW, ...KB, ...OTHER].map((m) => m.kind).join(), M.map((m) => m.kind));
   ok("...the one that plays notes is never detuned: the Kalimba", M.filter((m) => m.tonal).map((m) => m.id).join() === "kalimba");

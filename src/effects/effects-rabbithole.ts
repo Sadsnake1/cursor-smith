@@ -52,6 +52,9 @@ export const HOLE_GLOW = 0.6;
 export const HOLE_TINT = 0.45;
 // How long the floor stays after the last key or letter.
 export const HOLE_HOLD_MS = 200;
+// A letter still going down when the next key comes: through by this long
+// after it (Back-man's and the Shredder's are hurried the same way).
+export const HOLE_RUSH_MS = 60;
 // Where in its way the letters' effect plays for a letter: Burst as it
 // goes through, Evaporate once it is gone.
 export const HOLE_BURST_AT = 0.5;
@@ -60,29 +63,38 @@ const MEAL_MAX = 12;
 
 // A letter going down: where its middle stood, half its height (from its
 // middle to its foot), its font and color, when it set off.
+// ax: the floor's left when it was taken (the deletion's own cell) - the
+// letter keeps its place to the floor, not the page: the text after the
+// caret slides into where it stood, and a held Backspace's letters, left
+// behind as the caret went on, fell over the next word with the floor
+// stretched under it.
+// rush: when the next key hurried it through.
 // fx: the letters' effect played for it.
-export interface HoleLetter { char: string; cx: number; cy: number; half: number; w: number; old: CaretRecord; font: string; color: string; t0: number; fx?: boolean }
+export interface HoleLetter { char: string; cx: number; cy: number; half: number; w: number; old: CaretRecord; font: string; color: string; t0: number; ax?: number; rush?: number; fx?: boolean }
 // The letters, and the last key or the last letter's end (the floor stays
 // HOLE_HOLD_MS after). floor: where the floor's middle was last drawn (its
-// top edge: the letters' effect plays there).
-export interface HoleState { at: number; letters: HoleLetter[]; floor?: { x: number; y: number } }
+// top edge: the letters' effect plays there) and its left.
+export interface HoleState { at: number; letters: HoleLetter[]; floor?: { x: number; y: number; left: number } }
 export interface HolePose { letters: HoleLetter[] }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
-// A letter at `now`, the floor's top edge at `fy`: where its foot is (x,
-// foot - straight down from where it stood, slow to start, faster as it
-// goes in), how much of it is through the floor (through, 0 none, 1 all),
-// which part of its way it is on (0 above, 2 going through) and whether it
-// is gone. Pure.
-export function holeFall(l: HoleLetter, fy: number, now: number) {
+// A letter at `now`, the floor's top edge at `fy` and its left at `left`
+// (if given): where its foot is (x, foot - straight down, where it stood
+// against the floor, slow to start, faster as it goes in; through
+// HOLE_RUSH_MS after a key hurried it), how much of it is through the floor
+// (through, 0 none, 1 all), which part of its way it is on (0 above, 2 going
+// through) and whether it is gone. Pure.
+export function holeFall(l: HoleLetter, fy: number, now: number, left?: number) {
   const u = clamp01((now - l.t0) / HOLE_FALL_MS);
+  const v = Math.max(clamp01(u / (1 - HOLE_REACH)), l.rush !== undefined ? clamp01((now - l.rush) / HOLE_RUSH_MS) : 0);
   const foot0 = l.cy + l.half;
   const tall = HOLE_TALL * l.half;
-  const foot = foot0 + (Math.max(0, fy - foot0) + tall + 1) * smooth(clamp01(u / (1 - HOLE_REACH)));
+  const foot = foot0 + (Math.max(0, fy - foot0) + tall + 1) * smooth(v);
   const through = clamp01((foot - fy) / tall);
-  return { x: l.cx, foot, through, phase: through > 0 ? 2 : 0, done: u >= 1 };
+  const x = l.cx + (left !== undefined && l.ax !== undefined ? left - l.ax : 0);
+  return { x, foot, through, phase: through > 0 ? 2 : 0, done: u >= 1 || (l.rush !== undefined && now - l.rush >= HOLE_RUSH_MS) };
 }
 
 // How far the floor reaches under a letter that stood away from it, `u` of
@@ -105,12 +117,15 @@ export const effectsRabbitHoleMethods = {
     return this._eaterOn() === "rabbithole";
   },
 
-  // A key that deletes (Backspace or Delete): the floor out.
+  // A key that deletes (Backspace or Delete): the floor out, and the
+  // letters still going down hurried through.
   _holeBite(this: CursorSmithPlugin) {
     if (!this._holeOn()) return;
     const now = performance.now();
-    if (this._hole) this._hole.at = now;
-    else this._hole = { at: now, letters: [] };
+    if (this._hole) {
+      this._hole.at = now;
+      for (const l of this._hole.letters) if (l.rush === undefined) l.rush = now;
+    } else this._hole = { at: now, letters: [] };
   },
 
   // What the key took (effects-delete.ts): the letters, each dropping from
@@ -125,9 +140,11 @@ export const effectsRabbitHoleMethods = {
     // From a glyph's middle to its foot (the baseline): about 0.3 of the font.
     const half = 0.3 * (old.fontSize || 16);
     const now = performance.now();
+    // The deletion's own cell - where the floor is now: the nearest letter's.
+    const ax = deleted.letters.length ? deleted.letters[0].x : undefined;
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
-      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, w: l.w, old, font, color, t0: now });
+      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, w: l.w, old, font, color, t0: now, ax });
       s.at = Math.max(s.at, now + HOLE_FALL_MS);
     }
   },
@@ -145,12 +162,13 @@ export const effectsRabbitHoleMethods = {
       const u = (now - l.t0) / HOLE_FALL_MS;
       if (l.fx || fx === "vanish" || u < (fx === "burst" ? HOLE_BURST_AT : EVAPORATE_AT)) continue;
       l.fx = true;
-      // Where it went in: its own cell (it drops straight), at the floor.
+      // Where it went in: its own cell against the floor, at the floor.
       const fy = s.floor ? s.floor.y : l.cy + l.half;
+      const shift = s.floor && l.ax !== undefined ? s.floor.left - l.ax : 0;
       const h = l.old.h || 20;
-      this._eatenLetterFx(l.char, l.w, l.old, l.cx - l.w / 2, fy - (fx === "burst" ? 0.6 : 0.5) * h);
+      this._eatenLetterFx(l.char, l.w, l.old, l.cx - l.w / 2 + shift, fy - (fx === "burst" ? 0.6 : 0.5) * h);
     }
-    s.letters = s.letters.filter((l) => now - l.t0 < HOLE_FALL_MS);
+    s.letters = s.letters.filter((l) => now - l.t0 < HOLE_FALL_MS && !(l.rush !== undefined && now - l.rush >= HOLE_RUSH_MS));
     if (!s.letters.length && now - s.at >= HOLE_HOLD_MS) { this._hole = null; return null; }
     return { letters: s.letters };
   },
@@ -168,17 +186,17 @@ export const effectsRabbitHoleMethods = {
   // nearest the floor takes the cursor's color (HOLE_TINT).
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
     const top = y;
-    if (this._hole) this._hole.floor = { x: x + w / 2, y: top };
+    if (this._hole) this._hole.floor = { x: x + w / 2, y: top, left: x };
     const rgb = parseColorTuple(typeof paint === "string" ? paint : this.getActiveColor()) || [255, 255, 255];
     const tint = (a: number) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
     let glow = 0, right = x + w;
     for (const l of pose.letters) {
-      const f = holeFall(l, top, now);
+      const f = holeFall(l, top, now, x);
       if (f.done) continue;
       glow = Math.max(glow, holeGlow(f.through));
       const reach = holeSpan((now - l.t0) / HOLE_FALL_MS);
-      right = Math.max(right, x + w + Math.max(0, l.cx + l.w / 2 - x - w) * reach);
-      const far = 6 * Math.max(l.w, Math.abs(l.cx - x) + w);
+      right = Math.max(right, x + w + Math.max(0, f.x + l.w / 2 - x - w) * reach);
+      const far = 6 * Math.max(l.w, Math.abs(f.x - x) + w);
       ctx.save();
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
@@ -204,7 +222,7 @@ export const effectsRabbitHoleMethods = {
         ctx.fillText(l.char, f.x, f.foot - l.half);
       }
       ctx.restore();
-      this._markDirty(l.cx - 2 * l.w, Math.min(l.cy, top) - 2 * l.w - 4 * l.half, 4 * l.w, Math.abs(top - l.cy) + 4 * l.w + 8 * l.half);
+      this._markDirty(f.x - 2 * l.w, Math.min(l.cy, top) - 2 * l.w - 4 * l.half, 4 * l.w, Math.abs(top - l.cy) + 4 * l.w + 8 * l.half);
     }
     const bw = right - x;
     const r = this.cornerRadius(Math.min(bw, h));

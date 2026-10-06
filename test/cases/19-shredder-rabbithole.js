@@ -73,6 +73,13 @@ section("Portal: straight through");
   ok("a word's letter away from the floor drops straight down where it stood too", fs2.every((f) => f.x === far.cx) && fs2[40].done);
   ok("...the floor reaching under it before it goes in, and back only once it is through", T.holeSpan(0) === 0 && T.holeSpan(first / 40) === 1 && T.holeSpan(last / 40) === 1 && T.holeSpan(1) === 0 && T.holeSpan(0.92) > 0 && T.holeSpan(0.92) < 1, [first, last]);
   ok("the glow: none until it goes in, at its height half through, none once gone", T.holeGlow(0) === 0 && T.holeGlow(1) === 0 && Math.abs(T.holeGlow(0.5) - 1) < 1e-9 && T.holeGlow(0.25) > 0.5);
+  // A held Backspace: the text after the caret slides into where a letter
+  // stood, and the letters left behind fell over the next word with the
+  // floor stretched under it. A letter keeps its place to the floor.
+  const anchored = { ...l, ax: 100 };
+  ok("a letter keeps its place to the floor: the floor 9 px on, the letter too", T.holeFall(anchored, 22, 0.3 * F, 91).x === 104.5 - 9 && T.holeFall(anchored, 22, 0.3 * F, 100).x === 104.5 && T.holeFall(anchored, 22, 0.3 * F).x === 104.5);
+  const hurried = { ...l, rush: 0.1 * F };
+  ok("hurried by the next key: from where it was (no jump), through and gone HOLE_RUSH_MS after it", Math.abs(T.holeFall(hurried, 22, 0.1 * F).foot - T.holeFall(l, 22, 0.1 * F).foot) < 1e-9 && T.holeFall(hurried, 22, 0.1 * F + T.HOLE_RUSH_MS).through === 1 && T.holeFall(hurried, 22, 0.1 * F + T.HOLE_RUSH_MS).done && !T.holeFall(l, 22, 0.1 * F + T.HOLE_RUSH_MS).done);
 }
 
 section("Shredder and Vacuum: the runs");
@@ -108,7 +115,21 @@ section("Shredder and Vacuum: the runs");
     ul._holeBite();
     ul.spawnHoleMeal({ letters: [{ char: "b", x: 200, w: 9 }], forward: false, old: { top: 0, h: 24, textColor: "#eee", fontSize: 16 } });
     let q = ul.holePose(now);
-    ok("Backspace on an Underline: the floor out, the letter dropping from the middle of its cell", !!q && q.letters.length === 1 && q.letters[0].cx === 204.5 && q.letters[0].cy === 12 && q.letters[0].half === 4.8);
+    ok("Backspace on an Underline: the floor out, the letter dropping from the middle of its cell, its place to the floor kept (its own cell's left)", !!q && q.letters.length === 1 && q.letters[0].cx === 204.5 && q.letters[0].cy === 12 && q.letters[0].half === 4.8 && q.letters[0].ax === 200);
+    {
+      // The next key: the letter still going down is hurried, and gone
+      // HOLE_RUSH_MS after it.
+      const held = makeEngine({ cursorStyle: "Underline", popEffects: true, rabbitHole: true });
+      held.styleFor = (k) => held.look[k];
+      held.fontString = () => "16px x";
+      held.getActiveColor = () => "#ccc";
+      held._holeBite();
+      held.spawnHoleMeal({ letters: [{ char: "b", x: 200, w: 9 }], forward: false, old: { top: 0, h: 24, textColor: "#eee", fontSize: 16 } });
+      now += 33;
+      held._holeBite();
+      ok("a held key: the letter still going down hurried by the next, gone HOLE_RUSH_MS after it", held._hole.letters[0].rush === now && held.holePose(now + T.HOLE_RUSH_MS - 1).letters.length === 1 && held.holePose(now + T.HOLE_RUSH_MS).letters.length === 0);
+      now -= 33;
+    }
     now += 0.6 * T.HOLE_FALL_MS;
     q = ul.holePose(now);
     ok("...going through, the floor still there", !!q && q.letters.length === 1 && Object.keys(q).join() === "letters");

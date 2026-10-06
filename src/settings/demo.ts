@@ -706,6 +706,8 @@ interface Particle {
   // A Portal letter's copy in the cursor's color, seen only nearest the
   // floor (the portal's light, HOLE_TINT).
   tint?: boolean;
+  // A Portal letter's place to the floor: the floor's left when it was taken.
+  ax?: number;
   // A Shredder letter hurried through by the next key (shredFeed); which
   // of its ribbon's cross-cut bits it is (Burst: shredChip), or none.
   rush?: number;
@@ -811,6 +813,8 @@ interface Demo {
   // through; holeCells: the frame's letters' cells (left, right), each
   // with how far the floor reaches under it (holeSpan).
   holeRun: { at: number } | null;
+  // The floor's left as last painted (a letter keeps its place to it).
+  holeLeft: number;
   holeAt: [number, number];
   holeGlow: number;
   holeCells: [number, number, number][];
@@ -917,7 +921,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, hotType: 0, hotTypeT: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeRun: null, holeAt: [0, 0], holeGlow: 0, holeCells: [], eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, hotType: 0, hotTypeT: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeRun: null, holeLeft: 0, holeAt: [0, 0], holeGlow: 0, holeCells: [], eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
       vim: null,
     };
     // Vim: the mode's badge in the stage's corner, the Visual selection under
@@ -1303,7 +1307,11 @@ export class DemoStrip {
       // The letters still going in hurried through (the engine's).
       for (const q of d.particles) if (q.kind === "shred" && q.rush === undefined && now - q.t0 < SHRED_FEED_MS) q.rush = now;
     }
-    if (eatKind === "rabbithole") d.holeRun = { at: now };
+    if (eatKind === "rabbithole") {
+      d.holeRun = { at: now };
+      // The letters still going down hurried through (the engine's).
+      for (const q of d.particles) if (q.kind === "hole" && q.rush === undefined) q.rush = now;
+    }
     d.keyT = now;
     d.keyKind = "back";
     d.keyHeavy = false;
@@ -1350,11 +1358,15 @@ export class DemoStrip {
       }
       if (hole) {
         // (At 11 it was through the floor before it fell.)
-        if (k < 12 && this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") && d.holeRun) {
+        // Its place to the floor: the floor is at the first letter's cell.
+        const ax = (letters[0]?.at ?? at) * cw;
+        const fell = k < 12 ? this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") : null;
+        if (fell && d.holeRun) {
+          fell.ax = ax;
           d.holeRun.at = Math.max(d.holeRun.at, now + HOLE_FALL_MS);
           // ...and its copy in the portal's light.
           const lit = this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, d.color, now, ch, 0, "hole");
-          if (lit) lit.tint = true;
+          if (lit) { lit.tint = true; lit.ax = ax; }
         }
         return;
       }
@@ -1519,11 +1531,11 @@ export class DemoStrip {
         // span's foot (its baseline) is 9.6 px down, its middle 6.
         const cw = d.stepPx || 7;
         const fy = d.geo ? d.geo.top + d.geo.h - d.geo.ulH : d.holeAt[1];
-        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, fy, now);
-        if (!p.tint) {
-          if (age >= HOLE_BURST_AT && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 15, now)); }
+        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0, ax: p.ax, rush: p.rush }, fy, now, d.holeRun ? d.holeLeft : undefined);
+        if (!p.tint && !f.done) {
+          if (age >= HOLE_BURST_AT && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", f.x - cw / 2, 15, now)); }
           d.holeGlow = Math.max(d.holeGlow, holeGlow(f.through));
-          d.holeCells.push([p.x, p.x + cw, holeSpan(age)]);
+          d.holeCells.push([f.x - cw / 2, f.x + cw / 2, holeSpan(age)]);
         }
         // The floor's top edge in the span's own place (the light's copy:
         // the band above it, HOLE_TINT of the letter).
@@ -1857,6 +1869,7 @@ export class DemoStrip {
     if (eatKind === "rabbithole" && d.holeRun && d.geo) {
       const top = parseFloat(styles.top) || 0;
       d.holeAt = [ex + ew / 2, top];
+      d.holeLeft = ex;
       if (this.last - d.holeRun.at >= HOLE_HOLD_MS && !d.particles.some((q) => q.kind === "hole")) d.holeRun = null;
       else {
         // The floor still, as the engine's (drawHole): reaching along to

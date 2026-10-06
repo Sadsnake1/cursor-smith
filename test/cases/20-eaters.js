@@ -131,7 +131,7 @@ section("The combos: the letters' effect where the eater is done with them");
     const hole = mk({ rabbitHole: true, backspaceDisintegrate: true });
     hole._holeBite();
     hole.spawnHoleMeal(deleted);
-    hole._hole.floor = { x: 95, y: 24 };
+    hole._hole.floor = { x: 95, y: 24, left: 91 };
     hole.holePose(now + 0.3 * T.HOLE_FALL_MS);
     ok("Vacuum and Burst: nothing while it drops", hole.fired.length === 0);
     hole.holePose(now + 0.7 * T.HOLE_FALL_MS);
@@ -239,4 +239,8 @@ section("The performance report names the eaters");
   const src = require("fs").readFileSync(srcPath("engine.ts"), "utf8");
   const eater = src.indexOf('? "eater"'), sec = src.indexOf('? "secondaries"');
   ok("an eater's frames are \"eater\", ahead of the catch-all \"secondaries\"", eater > 0 && sec > eater && /this\._eat \|\| this\._backMan \|\| this\._shred \|\| this\._hole \? "eater"/.test(src));
+  // Glitch "on jumps": a held Backspace reaching the row above swapped the
+  // eater for a glitching bar for the burst's length (seen live).
+  const shape = require("fs").readFileSync(srcPath("paint-shape.ts"), "utf8");
+  ok("an eater wins over Signal Glitch, on the Line and Underline and on the Box", /const gsGen = this\.eaterMoving\(now\) \? null : this\._glitchNow\(now\);/.test(shape) && /const gsBox = this\.eaterMoving\(now\) \? null : this\._glitchNow\(now\);/.test(shape));
 }

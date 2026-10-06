@@ -470,7 +470,10 @@ export const paintShapeMethods = {
     // does most of the visible work here; for Underline the bar is wide and it
     // is the slicing that dominates. Both go through the same routine as the
     // Box style so the effect is recognisably the same feature everywhere.
-    const gsGen = this._glitchNow(now);
+    // Not while an eater has the cursor: a delete jumping to the row above
+    // (Glitch "on jumps") swapped Back-man, the blades or the floor for a
+    // glitching bar for the burst's length.
+    const gsGen = this.eaterMoving(now) ? null : this._glitchNow(now);
 
     // Grown from its foot while Caps Lock is on or Shift held
     // (effects-caps.ts).
@@ -592,7 +595,8 @@ export const paintShapeMethods = {
       // glow armed above still applies, so the break-up keeps its halo.
       // Resolved before paintStyle so a burst skips the (possibly expensive,
       // e.g. Aurora's per-pixel raster) beam paint it's about to discard.
-      const gsBox = this._glitchNow(now);
+      // Not while an eater has the box (see drawGenericCaret).
+      const gsBox = this.eaterMoving(now) ? null : this._glitchNow(now);
 
       if (gsBox) {
         this.paintGlitchRect(

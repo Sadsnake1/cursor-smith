@@ -72,7 +72,7 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 Turn on **Sounds** on its own page, pick a category, then a sound. Press play to hear it before you type.
 
 - **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
-- **Keyboards:** Purples, Creams, Reds, Browns, Blues, Greens, Buckling Springs, Ink Blacks, Pinks, a Kalimba, and an Actual Horse. Every key sounds from where it sits on the board.
+- **Keyboards:** Purples, Creams, Reds, Browns, Blues, Greens, Blacks, Pinks, Buckling Springs, a Kalimba, and an Actual Horse. Every key sounds from where it sits on the board.
 
 Ready to annoy some people? Try it out!
 

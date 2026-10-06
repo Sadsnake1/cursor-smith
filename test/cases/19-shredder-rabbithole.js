@@ -1,7 +1,7 @@
 // Pop effects' Shredder (a Line's) and Rabbit hole (an Underline's), 1.7.7:
 // what Backspace and Delete take, cut into ribbons by the Line broken into
 // blades, or pulled down into the hole the Underline opens into. The pure
-// parts (shredDash, shredBlades, shredFeed; holeOpen, holeShape,
+// parts (shredDash, shredBlades, shredFeed; holeOpen, holeSag,
 // holeFall), the runs and the poses, the deletion, the settings, the
 // drawing.
 // One of the files test/test.js runs in order; see test/lib.js.
@@ -22,9 +22,8 @@ section("Shredder: the blades and the ribbons");
 
 section("Rabbit hole: the hole and the fall");
 {
-  ok("the hole opens fast and closes over the hold's end", T.holeOpen(0, 0) === 0 && T.holeOpen(T.HOLE_OPEN_MS, 0) === 1 && T.holeOpen(500, T.HOLE_HOLD_MS) === 0 && T.holeOpen(500, T.HOLE_HOLD_MS - 60) === 0.5);
-  const shut = T.holeShape(0, 9, 2), wide = T.holeShape(1, 9, 2);
-  ok("shut: the bar itself; open: wider than the bar and deep", shut.rx === 4.5 && shut.ry === 1 && wide.rx > 4.5 && wide.ry > 3 && wide.cx === 4.5 && wide.cy === 1);
+  ok("the dip sags fast and straightens over the hold's end", T.holeOpen(0, 0) === 0 && T.holeOpen(T.HOLE_OPEN_MS, 0) === 1 && T.holeOpen(500, T.HOLE_HOLD_MS) === 0 && T.holeOpen(500, T.HOLE_HOLD_MS - 60) === 0.5);
+  ok("straight at rest; at its deepest it sags just a bit - under a third of a letter", T.holeSag(0, 9) === 0 && Math.abs(T.holeSag(1, 9) - T.HOLE_SAG * 9) < 1e-9 && T.HOLE_SAG <= 0.35 && T.holeSag(0.5, 9) < T.holeSag(1, 9));
   const l = { char: "a", cx: 104.5, cy: 10, font: "16px x", color: "#ddd", t0: 0 };
   const a = T.holeFall(l, 104.5, 23, 0), b = T.holeFall(l, 104.5, 23, T.HOLE_FALL_MS / 2), c = T.holeFall(l, 104.5, 23, T.HOLE_FALL_MS);
   ok("a letter: from where it stood, pulled down into the hole faster and faster, shrinking and swirling", a.y === 10 && a.k === 1 && a.rot === 0 && b.y > 10 && b.y - 10 < (23 - 10) / 2 && b.k < 1 && b.rot > 0 && c.done && c.y === 23 && c.k < 0.2);
@@ -134,6 +133,8 @@ section("Shredder and Rabbit hole: drawn");
   const h = { char: "b", cx: 104.5, cy: 10, font: "16px x", color: "#ddd", t0: 0 };
   T.EngineProto.drawHole.call(plugin, ctx, 100, 22, 9, 2, "#f80", { open: 1, letters: [h] }, T.HOLE_FALL_MS / 2);
   const kinds = calls.filter((c) => ["fill", "stroke", "fillText", "clip"].includes(c[0])).map((c) => c[0]).join();
-  ok("the Underline as a hole: the dark inside, the far rim, the letter clipped to above the bar and the hole, the near rim", kinds === "fill,fill,stroke,clip,fillText,stroke", kinds);
-  ok("...the rims at the bar's thickness, in its paint", calls.some((c) => c[0] === "set lineWidth" && c[1] === 2) && calls.some((c) => c[0] === "set strokeStyle" && c[1] === "#f80"));
+  ok("the Underline sagging: the letter, clipped to above the bar, then the bar - no hole, no circle", kinds === "clip,fillText,stroke" && !calls.some((c) => c[0] === "ellipse" || c[0] === "arc"), kinds);
+  const bend = calls.filter((c) => c[0] === "quadraticCurveTo").pop();
+  ok("...the bar a shallow curve: its ends where they were, its middle down a little, at its thickness in its paint",
+     !!bend && bend[3] === 109 && bend[4] === 23 && bend[2] > 23 && bend[2] - 23 <= 2 * 0.35 * 9 && calls.some((c) => c[0] === "set lineWidth" && c[1] === 2) && calls.some((c) => c[0] === "set strokeStyle" && c[1] === "#f80"));
 }

@@ -57,7 +57,7 @@ import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color"
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_HOLD_MS, holeFall, holeOpen, holeShape } from "../effects/effects-rabbithole";
+import { HOLE_FALL_MS, HOLE_HOLD_MS, holeFall, holeOpen, holeSag } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -1313,9 +1313,9 @@ export class DemoStrip {
       d.bmOn = false;
     }
     // Shredder (a Line's) and Rabbit hole (an Underline's), as the engine
-    // draws them: the line as blades, buzzing; the bar opened into a dark
-    // hole, its rim the bar's color and thickness (the caret widened and
-    // heightened for it, drawn in its background).
+    // draws them: the line as blades, buzzing; the bar sagging into a
+    // shallow dip, its color and thickness (the caret heightened for it,
+    // drawn in its background).
     const n2 = (v: number) => v.toFixed(2);
     let eat: "" | "shred" | "hole" = "";
     if (d.style === "line" && d.shredRun && look.popEffects && look.shredder && d.geo) {
@@ -1338,15 +1338,13 @@ export class DemoStrip {
       const r = d.holeRun, last = this.last - r.t;
       const open = last >= HOLE_HOLD_MS ? 0 : holeOpen(Math.max(0, this.last - r.t0), last);
       const bh = parseFloat(styles.height) || d.geo.ulH, top = parseFloat(styles.top) || 0;
-      const sh = holeShape(open, width, bh);
-      d.holeAt = [from + sh.cx, top + sh.cy + sh.ry * 0.3];
+      const sag = holeSag(open, width);
+      d.holeAt = [from + width / 2, top + bh / 2 + sag + bh];
       if (open > 0.01) {
-        const m = Math.ceil(sh.rx - width / 2 + bh) + 1, v = Math.ceil(sh.ry + bh);
-        const W = width + 2 * m, H = 2 * v;
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(W)} ${n2(H)}'><ellipse cx='${n2(m + sh.cx)}' cy='${v}' rx='${n2(sh.rx)}' ry='${n2(sh.ry)}' fill='rgba(0,0,0,0.55)'/><ellipse cx='${n2(m + sh.cx)}' cy='${n2(v + sh.ry * 0.15)}' rx='${n2(sh.rx * 0.7)}' ry='${n2(sh.ry * 0.65)}' fill='rgba(0,0,0,0.85)'/><ellipse cx='${n2(m + sh.cx)}' cy='${v}' rx='${n2(sh.rx)}' ry='${n2(sh.ry)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
+        const H = bh + Math.ceil(sag) + 1;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(width)} ${n2(H)}'><path d='M0 ${n2(bh / 2)} Q${n2(width / 2)} ${n2(bh / 2 + 2 * sag)} ${n2(width)} ${n2(bh / 2)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
         Object.assign(styles, {
-          width: `${n2(W)}px`, height: `${n2(H)}px`, top: `${n2(top + sh.cy - v)}px`,
-          transform: `${styles.transform} translateX(${-m}px)`,
+          height: `${n2(H)}px`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
           backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
         });

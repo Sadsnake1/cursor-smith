@@ -6,21 +6,21 @@
 // Pop effects' Rabbit hole (1.7.7, asked as "Portal. It sucks the letters
 // in or something like that. Find a better name"): while Backspace or
 // Delete eats the text, the Underline cursor - the floor under the letter -
-// opens into a little dark hole, and the letters it takes are pulled down
-// into it, swirling and shrinking, out of sight past its near rim; then
-// the hole closes back into the bar. An Underline's only: Back-man is the
-// Box's, Shredder the Line's.
+// sags into a shallow dip ("dont make the cursor a circle, make it curved
+// concave just a bit"; it was a dark ellipse for a day), and the letters it
+// takes are pulled down into it, swirling and shrinking, out of sight as
+// they pass through the bar; then it straightens. An Underline's only:
+// Back-man is the Box's, Shredder the Line's.
 import type { DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
-// How long the hole takes to open, a letter its fall, how long the hole
-// stays open after the last key (its last 120 ms closing), how far it
-// widens and deepens at its widest (a letter's width).
+// How long the dip takes to sag, a letter its fall, how long the dip stays
+// after the last key (its last 120 ms straightening), how deep it sags at
+// its deepest (a letter's width - "just a bit").
 export const HOLE_OPEN_MS = 90;
 export const HOLE_FALL_MS = 300;
 export const HOLE_HOLD_MS = 380;
-export const HOLE_WIDEN = 0.3;
-export const HOLE_DEPTH = 0.45;
+export const HOLE_SAG = 0.3;
 const MEAL_MAX = 12;
 
 // A letter going down: where its middle stood, its font and color, when it
@@ -32,18 +32,16 @@ export interface HolePose { open: number; letters: HoleLetter[] }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-// How open the hole is (0 the bar, 1 wide open), `first` ms into the run
-// and `last` ms after its last key. Pure.
+// How far the dip has sagged (0 the bar straight, 1 its deepest), `first`
+// ms into the run and `last` ms after its last key. Pure.
 export function holeOpen(first: number, last: number): number {
   return Math.min(clamp01(first / HOLE_OPEN_MS), last < HOLE_HOLD_MS - 120 ? 1 : clamp01((HOLE_HOLD_MS - last) / 120));
 }
 
-// The hole in an Underline's w x h bar, `open` open: its middle and its
-// radii, px from the bar's top left - as wide as the bar and a little
-// wider, as deep as the bar shut. Pure.
-export function holeShape(open: number, w: number, h: number) {
-  const o = clamp01(open);
-  return { cx: w / 2, cy: h / 2, rx: (w / 2) * (1 + HOLE_WIDEN * o), ry: Math.max(h / 2, o * HOLE_DEPTH * w) };
+// How far an Underline w wide sags at its middle, `open` sagged, px: its
+// ends stay where they are, its middle drops - a shallow curve. Pure.
+export function holeSag(open: number, w: number): number {
+  return HOLE_SAG * w * clamp01(open);
 }
 
 // A letter pulled from its place (cx, cy) into the hole at (hx, hy), at
@@ -102,40 +100,29 @@ export const effectsRabbitHoleMethods = {
     return !!this.holePose(now);
   },
 
-  // The Underline as a hole, in its bar (x, y, w, h) and its own paint: the
-  // dark inside, the far rim, the letters going in (seen above the bar and
-  // in the hole, out of sight past the near rim), the near rim - the rims
-  // at the bar's thickness.
+  // The Underline sagging, in its bar (x, y, w, h) and its own paint: the
+  // letters going in first (seen above the bar's top edge, curved as the
+  // bar is; out of sight once through it), then the bar along the curve -
+  // its ends where they were, its middle down, its thickness the bar's.
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
-    const s = holeShape(pose.open, w, h);
-    const cx = x + s.cx, cy = y + s.cy;
-    ctx.save();
-    ctx.shadowBlur = 0;
-    ctx.shadowColor = "transparent";
-    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, s.rx, s.ry, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-    ctx.beginPath();
-    ctx.ellipse(cx, cy + s.ry * 0.15, s.rx * 0.7, s.ry * 0.65, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = paint;
-    ctx.lineWidth = h;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, s.rx, s.ry, 0, Math.PI, Math.PI * 2);
-    ctx.stroke();
+    const sag = holeSag(pose.open, w);
+    const cx = x + w / 2, mid = y + h / 2, top = y;
     for (const l of pose.letters) {
-      const f = holeFall(l, cx, cy + s.ry * 0.3, now);
+      const f = holeFall(l, cx, mid + sag + h, now);
       if (f.done) continue;
       const far = 6 * Math.max(w, Math.abs(l.cx - cx) + w);
       ctx.save();
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
+      // Above the bar's top edge, along its curve.
       ctx.beginPath();
-      ctx.rect(cx - far, cy - far, 2 * far, far);
-      ctx.ellipse(cx, cy, s.rx, s.ry, 0, 0, Math.PI * 2);
+      ctx.moveTo(x - far, top - far);
+      ctx.lineTo(x + w + far, top - far);
+      ctx.lineTo(x + w + far, top);
+      ctx.lineTo(x + w, top);
+      ctx.quadraticCurveTo(cx, top + 2 * sag, x, top);
+      ctx.lineTo(x - far, top);
+      ctx.closePath();
       ctx.clip();
       ctx.translate(f.x, f.y);
       ctx.rotate(f.rot);
@@ -146,10 +133,15 @@ export const effectsRabbitHoleMethods = {
       ctx.textBaseline = "middle";
       ctx.fillText(l.char, 0, 0);
       ctx.restore();
-      this._markDirty(Math.min(l.cx, cx) - w * 2, Math.min(l.cy, cy) - w * 2, Math.abs(l.cx - cx) + w * 4, Math.abs(l.cy - cy) + w * 4);
+      this._markDirty(Math.min(l.cx, cx) - w * 2, Math.min(l.cy, mid) - w * 2, Math.abs(l.cx - cx) + w * 4, Math.abs(l.cy - mid) + w * 4);
     }
+    // The bar along the curve (its lowest point `sag` below its ends).
+    ctx.strokeStyle = paint;
+    ctx.lineWidth = h;
+    ctx.lineCap = "butt";
     ctx.beginPath();
-    ctx.ellipse(cx, cy, s.rx, s.ry, 0, 0, Math.PI);
+    ctx.moveTo(x, mid);
+    ctx.quadraticCurveTo(cx, mid + 2 * sag, x + w, mid);
     ctx.stroke();
   },
 };

@@ -374,10 +374,12 @@ export const DEFAULT_SETTINGS = {
   // hideNativeCaret), so deliberately NOT a per-Vim-mode look key.
   noteEditorOnly: false,
   // The Randomizer's dials (1.7.7, randomize.ts): how a roll is made, not a
-  // look - not in LOOK_KEYS, so never in a preset or a share code.
-  rollChaos: 35,
-  rollColor: 60,
-  rollMotion: 50,
+  // look - not in LOOK_KEYS, so never in a preset or a share code. Chaos
+  // 1 to 11 ("only the chaos up to 11, the rest up to 10"), Color and
+  // Motion 1 to 10 (dialToRoll takes them to the roll's 0 to 100).
+  rollChaos: 4,
+  rollColor: 6,
+  rollMotion: 5,
   // Which effects a roll may pick, by key (ROLL_TOGGLES); a key not here is
   // let in, but the torch's. Replaced whole on a write, never changed in
   // place (this object is the defaults' own).
@@ -619,6 +621,15 @@ export const LOOK_KEYS: (keyof Look)[] = [
 // touches keys that are actually present, and never clobbers a new-style key
 // that already holds a value.
 // ---------------------------------------------------------------------------
+// The Randomizer's dials' tops: Chaos goes to 11.
+export const ROLL_CHAOS_MAX = 11, ROLL_DIAL_MAX = 10;
+
+// A dial's value (1 to `max`) as the roll's 0 to 100. Pure.
+export function dialToRoll(v: number, max: number): number {
+  const d = Math.max(1, Math.min(max, Number(v) || 1));
+  return ((d - 1) / (max - 1)) * 100;
+}
+
 export function migrateLegacyKeys(src: LegacySettings): LegacySettings;
 export function migrateLegacyKeys(src: LegacySettings | null | undefined): LegacySettings | null | undefined;
 export function migrateLegacyKeys(src: LegacySettings | null | undefined): LegacySettings | null | undefined {
@@ -651,6 +662,17 @@ export function migrateLegacyKeys(src: LegacySettings | null | undefined): Legac
   delete o.boxTranslucency;
   delete o.boxTranslucentMode;
   delete o.boxLens;
+  // The Randomizer's dials were 0 to 100 (in fives) for a day; they are 1 to
+  // 11 (Chaos) and 1 to 10 now. A value past the top is an old one, mapped
+  // across; anything under 1 is 1.
+  const dial = (key: string, max: number) => {
+    const v = o[key];
+    if (typeof v !== "number") return;
+    o[key] = v > max ? Math.max(1, Math.min(max, Math.floor((v / 100) * (max - 1)) + 1)) : Math.max(1, Math.round(v));
+  };
+  dial("rollChaos", ROLL_CHAOS_MAX);
+  dial("rollColor", ROLL_DIAL_MAX);
+  dial("rollMotion", ROLL_DIAL_MAX);
   // Text Crawl, removed outright. Its keys are deleted rather than left in
   // place so a config saved while it existed doesn't carry five dead settings
   // forever - same treatment as the box-translucency keys above.

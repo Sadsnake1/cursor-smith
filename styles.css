@@ -440,6 +440,18 @@ button.cursor-smith-pcard-use:hover {
 .cursor-smith-pcard-demo {
   margin-right: 6px;
 }
+/* The torch over a demo (a preset with it): dark but for a pool of light on
+   the caret, drawn inline; under the caret, its ghosts and its particles. */
+.cursor-smith-pcard-torch {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 0;
+}
 /* A particle: a pixel thrown, risen or burnt, moved and faded inline. */
 .cursor-smith-pcard-particle {
   position: absolute;

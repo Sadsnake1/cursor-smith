@@ -66,7 +66,10 @@ section("Randomizer: the dials");
   ok("the dials are settings, not looks: in no preset or share code",
      ["rollChaos", "rollColor", "rollMotion", "rollEffects"].every((k) => k in T.DEFAULT_SETTINGS && !T.LOOK_KEYS.includes(k)) && !("rollSounds" in T.DEFAULT_SETTINGS) &&
      JSON.stringify(T.DEFAULT_SETTINGS.rollEffects) === "{}" &&
-     T.DEFAULT_SETTINGS.rollChaos === 35 && T.DEFAULT_SETTINGS.rollColor === 60 && T.DEFAULT_SETTINGS.rollMotion === 50);
+     T.DEFAULT_SETTINGS.rollChaos === 4 && T.DEFAULT_SETTINGS.rollColor === 6 && T.DEFAULT_SETTINGS.rollMotion === 5);
+  ok("the dials: Chaos 1 to 11, Color and Motion 1 to 10, taken to the roll's 0 to 100", T.ROLL_CHAOS_MAX === 11 && T.ROLL_DIAL_MAX === 10 && T.dialToRoll(1, 11) === 0 && T.dialToRoll(11, 11) === 100 && T.dialToRoll(6, 11) === 50 && T.dialToRoll(10, 10) === 100 && T.dialToRoll(1, 10) === 0 && T.dialToRoll(99, 11) === 100);
+  const mig = T.migrateLegacyKeys({ rollChaos: 35, rollColor: 60, rollMotion: 50 });
+  ok("...a config from when they went to 100 mapped across; one already on the new scale kept", mig.rollChaos === 4 && mig.rollColor === 6 && mig.rollMotion === 5 && T.migrateLegacyKeys({ rollChaos: 100, rollColor: 100 }).rollChaos === 11 && T.migrateLegacyKeys({ rollColor: 100 }).rollColor === 10 && T.migrateLegacyKeys({ rollChaos: 7 }).rollChaos === 7 && T.migrateLegacyKeys({ rollChaos: 0 }).rollChaos === 1, mig);
 }
 
 // A plugin enough for rollCursor: settings, a Vim panel or not, the engine
@@ -112,12 +115,12 @@ section("Randomizer: the effects it can roll");
 
 section("Randomizer: rolling");
 later(async () => {
-  const p = rollPlugin({ cursorStyle: "Line", colorDark: "#abcdef", hotHead: true, rollChaos: 100, rollColor: 100, rollMotion: 100 });
+  const p = rollPlugin({ cursorStyle: "Line", colorDark: "#abcdef", hotHead: true, rollChaos: 11, rollColor: 10, rollMotion: 10 });
   const { vim, look } = await p.rollCursor();
   ok("a roll lands on the global look (no Vim panel), all of it", vim === false && Object.entries(look).every(([k, v]) => p.settings[k] === v) && p.settings.torchEffect === false);
   ok("...saved, the engine restarted, the torch's engine stopped (the torch was on)", p.calls.join() === "save,enable,torch-off", p.calls);
   ok("...no preset in use after it", p._activePresetName === "");
-  ok("...the dials' own settings untouched", p.settings.rollChaos === 100 && p.settings.rollColor === 100);
+  ok("...the dials' own settings untouched", p.settings.rollChaos === 11 && p.settings.rollColor === 10);
   const first = T.pickLook(p.settings);
   await p.rollCursor();
   ok("...and another roll, another cursor (no undo: none kept)", T.LOOK_KEYS.some((k) => JSON.stringify(p.settings[k]) !== JSON.stringify(first[k])) && !("_rollUndo" in p) && typeof p.undoRoll === "undefined");
@@ -132,10 +135,10 @@ later(async () => {
      T.LOOK_KEYS.every((k) => JSON.stringify(v.settings[k]) === JSON.stringify(global[k])) && v.settings.vimActivePreset === "");
   ok("...and it answers the look of the mode whose tab is open (the preview plays it)", JSON.stringify(T.pickLook(r1.look)) === JSON.stringify(T.pickLook(Object.fromEntries(Object.keys(r1.look).map((k) => [k, v.settings.vimModes.insert[k]])))));
 
-  const full = rollPlugin({ rollChaos: 100, rollColor: 100, rollMotion: 100 });
+  const full = rollPlugin({ rollChaos: 11, rollColor: 10, rollMotion: 10 });
   await full.rollCursor();
-  ok("Chaos at 100: every effect", T.ROLL_EFFECTS.every((k) => full.settings[k]));
-  const kept = rollPlugin({ rollChaos: 100, rollEffects: { hotHead: false, popEffects: false } });
+  ok("Chaos at 11: every effect", T.ROLL_EFFECTS.every((k) => full.settings[k]));
+  const kept = rollPlugin({ rollChaos: 11, rollEffects: { hotHead: false, popEffects: false } });
   await kept.rollCursor();
   ok("...but not what the switches keep out", !kept.settings.hotHead && !kept.settings.popEffects && kept.settings.typewriter);
 });
@@ -154,7 +157,8 @@ section("Randomizer: its page");
   const roll = named("Roll");
   ok("Randomize alone: no Undo", roll.buttons.length === 1 && roll.buttons[0]._text === "Randomize");
   const chaos = named("Chaos");
-  ok("the dials are 0 - 100 sliders on their settings, each with its reset", chaos.sliders[0]._limits.min === 0 && chaos.sliders[0]._limits.max === 100 && chaos.sliders[0]._value === 35 && chaos.extras.length === 1);
+  const color = named("Color");
+  ok("the dials are sliders on their settings, each with its reset: Chaos 1 to 11, the others 1 to 10", chaos.sliders[0]._limits.min === 1 && chaos.sliders[0]._limits.max === 11 && chaos.sliders[0]._value === 4 && chaos.extras.length === 1 && color.sliders[0]._limits.min === 1 && color.sliders[0]._limits.max === 10);
   const head = rows.findIndex((r) => r.name === "Effects it can roll");
   const switches = rows.slice(head + 1, head + 10);
   ok("then a switch per effect a roll may pick, under its own subheading, the Effects page's names, out of settings search - no torch, no bracket tether",
@@ -241,21 +245,31 @@ section("Randomizer: the preview's script");
   let typos = 0, ok1 = true, okMoves = true, okEnd = true, fast = true;
   for (const line of T.SCRIPT_LINES) for (let seed = 1; seed <= 30; seed++) {
     const acts = T.scriptFor(line, T.seededRandom(seed * 7919 + line.length));
-    const clearAt = acts.findIndex((a) => a.do === "clear");
-    const r = play(acts.slice(0, clearAt));
+    // Up to the last move (back to the end): the typing and the play.
+    const lastMove = acts.map((a) => a.do).lastIndexOf("move");
+    const r = play(acts.slice(0, lastMove + 1));
     if (r.b !== line) ok1 = false;
-    if (r.at !== line.length || acts[acts.length - 1].do !== "clear") okEnd = false;
-    if (!r.moves.every((m) => m.to >= 0 && m.to <= line.length) || r.moves.length < 5) okMoves = false;
-    const backs = acts.filter((a) => a.do === "back").length;
+    const tail = acts.slice(lastMove + 1);
+    if (r.at !== line.length || play(acts).b !== "" || tail.filter((a) => a.do === "back").length !== line.length || !tail.filter((a) => a.do === "back").every((a) => a.ms === T.SCRIPT_BACK_MS) || acts.some((a) => a.do === "clear")) okEnd = false;
+    if (!r.moves.every((m) => m.to >= 0 && m.to <= line.length) || r.moves.length < 7) okMoves = false;
+    const backs = acts.slice(0, lastMove).filter((a) => a.do === "back").length;
     if (backs) typos++;
     if (acts.filter((a) => a.do === "type").some((a) => a.ms > 75)) fast = false;
   }
   ok("every script types its line exactly, typos and all put right", ok1);
   ok("...typos now and then, not always (a neighboring key, backspaced)", typos > 3 * T.SCRIPT_LINES.length && typos < T.SCRIPT_LINES.length * 30, typos);
   ok("...typed fast (under 75 ms a key)", fast);
-  ok("...then plays with the cursor - five or more moves, all inside the line - and ends at the line's end, cleared", okMoves && okEnd);
+  ok("...then plays with the cursor - random jumps and a crawl, all inside the line - back to its end, and backspaces the whole line fast (no clear)", okMoves && okEnd);
   const jumps = T.scriptFor("Obsidian made me do it.", T.seededRandom(3)).filter((a) => a.do === "move");
-  ok("...quick jumps (under 350 ms) and single steps (75 ms)", jumps.every((a) => a.ms === 75 || (a.ms >= 230 && a.ms <= 340) || a.ms === 620), jumps.map((a) => a.ms));
+  const steps = jumps.filter((a) => a.ms === 75);
+  ok("...quick jumps (under 350 ms), then a crawl of single steps (75 ms, three or more, one way)", jumps.every((a) => a.ms === 75 || (a.ms >= 230 && a.ms <= 340) || a.ms === 420) && steps.length >= 3 && jumps.slice(-1)[0].ms === 420, jumps.map((a) => a.ms));
+  let anyLetter = false;
+  for (let seed = 1; seed < 40 && !anyLetter; seed++) {
+    const line = "Obsidian made me do it.";
+    const edges = new Set([0, line.length, 8, 9, 13, 14, 16, 17, 19, 20]);
+    anyLetter = T.scriptFor(line, T.seededRandom(seed)).some((a) => a.do === "move" && a.ms > 75 && a.ms < 420 && !edges.has(a.to));
+  }
+  ok("...the jumps random: some land inside a word, not only on its edges", anyLetter);
   const typo = T.scriptFor("The quick brown fox... you know the rest.", T.seededRandom(11));
   const i = typo.findIndex((a) => a.do === "back");
   ok("a typo is a key next to the right one", i < 0 || (() => { const r = play(typo.slice(0, i)); const line = "The quick brown fox... you know the rest."; let k = 0; while (r.b[k] === line[k]) k++; return "wqesrtfygdhujikolpaszxcvbnm".includes(r.b[k].toLowerCase()) && r.b[k] !== line[k]; })());
@@ -271,8 +285,8 @@ section("Randomizer: the preview's script");
   run(600);
   ok("it plays: letters typed, the caret at the text's end", s.buffer.length >= 6 && s.target === s.buffer.length && lines[0].startsWith(s.buffer.slice(0, 3)), s.buffer);
   run(20000);
-  ok("...lines one after another, each cleared, every key an event (typed, backspaced, cleared)",
-     lines.length >= 2 && events.filter((e) => e.do === "clear").length >= 1 && events.filter((e) => e.do === "type").length > 30 && events.every((e) => ["type", "back", "clear"].includes(e.do)), [lines.length, events.length]);
+  ok("...lines one after another, each backspaced away, every key an event (typed, backspaced)",
+     lines.length >= 2 && events.filter((e) => e.do === "back").length >= lines[0].length && events.filter((e) => e.do === "type").length > 30 && events.every((e) => ["type", "back"].includes(e.do)), [lines.length, events.length]);
 }
 
 section("Randomizer: the preview's caret, as the engine's");

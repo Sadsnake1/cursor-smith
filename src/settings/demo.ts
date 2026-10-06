@@ -41,8 +41,9 @@
 // popping out, fireworks on Space, the typewriter's dip, what is deleted
 // evaporating.
 //
-// Only the preset in use plays (the ticked card), and only DEMO_CYCLES
-// passes over its name; then it glides to the idle spot and rests. Every
+// Only the preset in use plays (the ticked card), its script once
+// (cardScript: its name typed, a jump, backspaced, typed again); then it
+// glides to the idle spot and rests. Every
 // other card sits still at the idle spot: one space past the end of the
 // name (the user's placement). A strip of seven carets all typing at
 // once was annoying (the user's word). One requestAnimationFrame loop per strip
@@ -148,8 +149,6 @@ const POOL = 60;
 // rectangle) - as [width, height] in squares.
 const FIRE_UNIT = 2.6;
 const FIRE_SHAPES: [number, number][] = [[2, 4], [3, 3], [2, 3], [3, 2], [1, 4], [2, 2], [1, 3], [3, 1], [2, 1], [1, 2], [1, 1]];
-// How many passes over the name the card in use plays before it rests.
-export const DEMO_CYCLES = 2;
 
 export interface DemoState {
   // Where the caret is asked to be: the letter index, 0 .. n.
@@ -260,8 +259,11 @@ const NEAR: Record<string, string> = {
 // A line's script: typed at a typist's pace; now and then (two at most, not
 // in the first letters) a neighboring key hit instead, a letter or two
 // more before it is noticed, then backspaced and put right; a hold; a play
-// with the cursor - quick jumps to word edges, runs of single steps; back
-// to the end, a hold, cleared, a short rest.
+// with the cursor - quick jumps to random spots (a word's edge, or any
+// letter), then a crawl, a few single steps one way; back to the end, and
+// the whole line backspaced fast; a short rest ("make the caret jump
+// through it randomly, crawl a bit of then, then backspace the whole line
+// fast, then repeat").
 export function scriptFor(line: string, rand: () => number): ScriptAction[] {
   const out: ScriptAction[] = [];
   const typeMs = () => Math.round(38 + rand() * 34);
@@ -284,23 +286,44 @@ export function scriptFor(line: string, rand: () => number): ScriptAction[] {
   const n = line.length;
   const edges = Array.from(new Set([0, n, ...Array.from(line.matchAll(/\S+/g), (m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]).flat()])).sort((a, b) => a - b);
   let at = n;
-  const plays = 5 + Math.floor(rand() * 3);
-  for (let p = 0; p < plays; p++) {
-    if (rand() < 0.35) {
-      const dir = rand() < 0.5 ? -1 : 1;
-      const k = 2 + Math.floor(rand() * 3);
-      for (let j = 0; j < k; j++) { at = Math.max(0, Math.min(n, at + dir)); out.push({ do: "move", to: at, ms: 75 }); }
-    } else {
-      let to = edges[Math.floor(rand() * edges.length) % edges.length];
-      if (to === at) to = edges[(edges.indexOf(to) + 1) % edges.length];
-      at = to;
-      out.push({ do: "move", to: at, ms: Math.round(230 + rand() * 110) });
-    }
+  const jumps = 3 + Math.floor(rand() * 3);
+  for (let p = 0; p < jumps; p++) {
+    let to = rand() < 0.5 ? edges[Math.floor(rand() * edges.length) % edges.length] : Math.floor(rand() * (n + 1));
+    if (to === at) to = (at + 1 + Math.floor(rand() * Math.max(1, n))) % (n + 1);
+    at = to;
+    out.push({ do: "move", to: at, ms: Math.round(230 + rand() * 110) });
   }
-  out.push({ do: "move", to: n, ms: 620 });
-  out.push({ do: "clear", ms: 380 });
+  // The crawl: away from the nearer end, so it has room.
+  const dir = at > n / 2 ? -1 : 1;
+  const crawl = 3 + Math.floor(rand() * 4);
+  for (let j = 0; j < crawl; j++) { at = Math.max(0, Math.min(n, at + dir)); out.push({ do: "move", to: at, ms: 75 }); }
+  out.push({ do: "move", to: n, ms: 420 });
+  for (let i = 0; i < n; i++) out.push({ do: "back", ms: SCRIPT_BACK_MS });
+  out.push({ do: "hold", ms: 450 });
   return out;
 }
+
+// The pace of the whole line backspaced (a held key is about 33 ms).
+export const SCRIPT_BACK_MS = 30;
+
+// A preset card's script ("type the name first. then jump then backspace
+// them and then write them again and leave the caret at rest"): the name
+// typed, a jump to its start and back to its end, every letter backspaced,
+// the name typed again; then the card rests. Every effect, in a few seconds.
+export function cardScript(name: string): ScriptAction[] {
+  const n = name.length;
+  const out: ScriptAction[] = [];
+  for (const ch of name) out.push({ do: "type", ch, ms: CARD_TYPE_MS });
+  out.push({ do: "hold", ms: 350 });
+  out.push({ do: "move", to: 0, ms: 380 });
+  out.push({ do: "move", to: n, ms: 380 });
+  for (let i = 0; i < n; i++) out.push({ do: "back", ms: CARD_BACK_MS });
+  out.push({ do: "hold", ms: 300 });
+  for (const ch of name) out.push({ do: "type", ch, ms: CARD_TYPE_MS });
+  out.push({ do: "hold", ms: 250 });
+  return out;
+}
+const CARD_TYPE_MS = 90, CARD_BACK_MS = 80;
 
 // The caret asked to a new spot: a CRT ghost left where it was, and the
 // moment kept (Don't blink while typing).
@@ -537,8 +560,7 @@ interface Shape {
 interface Demo {
   el: HTMLElement;
   shape: Shape;
-  // Passes completed, and whether the demo has come to rest.
-  cycles: number;
+  // Whether the demo has come to rest.
   done: boolean;
   particles: Particle[];
   pool: HTMLElement[];
@@ -559,6 +581,13 @@ interface Demo {
   // the Box's letter copy's), the jumps, the particles it may have, its
   // scale, and the last keystroke for the typewriter's dip.
   script: boolean;
+  // A preset card in use (1.7.7): it plays cardScript once - its name
+  // shown as far as it has been typed - then rests; and whether it has.
+  card: boolean;
+  cardPlayed: boolean;
+  // The torch's darkness over the demo, its pool of light on the caret
+  // (a preset with the torch), or null.
+  torch: HTMLElement | null;
   name: string;
   written: HTMLElement | null;
   rest: HTMLElement | null;
@@ -659,6 +688,10 @@ export class DemoStrip {
     }
     const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" + (script ? " cursor-smith-roll-demo" : "") });
     const text = demo.createSpan({ cls: "cursor-smith-pcard-text cursor-smith-pcard-name", text: script ? "" : name });
+    // The torch (a preset with it): the demo darkened, a pool of light on
+    // the caret ("if the demo pill has torch crt darken the demo pill"),
+    // under the caret and its effects as the real torch is.
+    const torch = look.torchEffect ? demo.createSpan({ cls: "cursor-smith-pcard-torch", attr: { "aria-hidden": "true" } }) : null;
     // The pill's sentence in two halves, the unwritten one invisible: the
     // letters keep their places (and the measure its width) as they appear.
     const written = script ? text.createSpan({ text: "" }) : null;
@@ -721,7 +754,7 @@ export class DemoStrip {
       if (script) { innerWritten = inner.createSpan({ text: "" }); innerRest = inner.createSpan({ cls: "cursor-smith-roll-unwritten", text: name }); }
     }
     const d: Demo = {
-      el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
+      el: demo, shape, card: !script && play && !reduced, cardPlayed: false, torch, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
       script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
@@ -771,9 +804,11 @@ export class DemoStrip {
         else continue;
       }
       if (!d.scaled) this.fit(d);
-      if (!d.done && d.script) {
+      if (!d.done && (d.script || d.card)) {
         const before = d.state.target;
         stepScript(d.state, d.look, dt, now, () => this.nextLine(d));
+        // A card's script played out: it heads for the idle spot and rests.
+        if (d.card && d.cardPlayed && !d.state.queue.length && d.state.wait <= 0) { d.done = true; d.state.target = idleAt(d.n); }
         if (d.state.target !== before) this.onMove(d, before, now);
         // A jump lands (two letters or more, the engine's jump): Hot-head
         // flares where the caret came down.
@@ -785,18 +820,6 @@ export class DemoStrip {
         }
         d.state.events.length = 0;
         if (d.look.hotHead) this.burn(d, dt, now);
-        this.emit(d, dt, now);
-      } else if (!d.done) {
-        const before = d.state.target;
-        const phaseBefore = d.state.phase;
-        step(d.state, d.look, d.n, dt, now);
-        if (d.state.target !== before) this.onMove(d, before, now);
-        if (d.state.target === before + 1 && phaseBefore === "type") this.onType(d, before, d.name.charAt(before) || " ", now);
-        else if (Math.abs(d.state.target - before) >= 2 && d.look.hotHead) d.burns.push({ x: d.state.target, t: now });
-        if (d.look.hotHead) this.burn(d, dt, now);
-        // A pass ends as the caret reaches the end of the name; after the
-        // last one the demo heads for the idle spot and rests.
-        if (phaseBefore === "type" && d.state.phase === "holdEnd" && ++d.cycles >= DEMO_CYCLES) { d.done = true; d.state.target = idleAt(d.n); }
         this.emit(d, dt, now);
       } else {
         step(d.state, d.look, d.n, dt, now, true);
@@ -824,6 +847,11 @@ export class DemoStrip {
   // The preview's line again, with a new script (other typos, other play):
   // the next line waits for the next roll.
   private nextLine(d: Demo): ScriptAction[] {
+    if (d.card) {
+      if (d.cardPlayed) return [];
+      d.cardPlayed = true;
+      return cardScript(d.name);
+    }
     return scriptFor(d.line, Math.random);
   }
 
@@ -887,7 +915,7 @@ export class DemoStrip {
     const fade = look.hotHeadFade ?? 620;
     const heightMul = (look.hotHeadHeight ?? 0.55) / 0.55;
     const spread = (look.hotHeadSpread ?? 4) * 0.1 * cw;
-    const right = ((d.script ? d.state.buffer.length : d.n) + 0.5) * cw;
+    const right = ((d.script || d.card ? d.state.buffer.length : d.n) + 0.5) * cw;
     for (; d.fireAcc >= 1; d.fireAcc--) {
       let r = Math.random() * sum, bi = 0;
       while (bi < d.burns.length - 1 && (r -= weights[bi]) > 0) bi++;
@@ -1331,10 +1359,27 @@ export class DemoStrip {
     const to = Math.max(s.lead, s.trail) * px;
     // A stretch of at most two letters, so the caret stays inside the cell.
     const stretch = Math.min(to - from, px * 2);
+    // A card playing its script: its name shown as far as it has been typed
+    // (and the letter copy in a Box with it); all of it once it rests.
+    if (d.card) {
+      const clip = d.done ? "" : `inset(0 calc(100% - ${(s.buffer.length * px).toFixed(2)}px) 0 0)`;
+      d.text.setCssStyles({ clipPath: clip });
+      d.inner?.setCssStyles({ clipPath: clip });
+    }
     // The preview's caret is a letter wide (a Box, an Underline) or its
     // Line thickness, as the engine's; the cards' a hair under a letter.
     const base = d.style === "line" ? (d.geo ? d.geo.lineW : d.shape.thick) : d.geo ? px : Math.max(1, px - 1);
     const width = base + stretch;
+    // The torch: dark but for a pool of light on the caret, the preset's
+    // darkness and its light's color, the pool scaled to the demo.
+    if (d.torch) {
+      const look = d.look;
+      const r = Math.max(10, Math.min(40, (look.overlayRadius ?? 250) * 0.09));
+      const [lr, lg, lb] = hexToRgbTuple(look.overlayColor || "#ff963c");
+      const glow = `rgba(${lr}, ${lg}, ${lb}, ${(0.35 * Math.max(0, Math.min(1, look.overlayIntensity ?? 0.5))).toFixed(2)})`;
+      const dark = Math.max(0, Math.min(1, look.overlayDarkness ?? 0.92)).toFixed(2);
+      d.torch.setCssStyles({ background: `radial-gradient(circle ${r.toFixed(1)}px at ${(from + width / 2).toFixed(1)}px 50%, ${glow} 0%, transparent 55%, rgba(0, 0, 0, ${dark}) 100%)` });
+    }
     // Heat warms a flat fill; a gradient keeps its colors (as the engine's
     // custom ramp flattens a gradient, the demo leaves it be).
     const heated = cold < 1 && !d.shape.gradient;

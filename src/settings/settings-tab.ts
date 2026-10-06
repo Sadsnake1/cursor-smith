@@ -1,7 +1,7 @@
 import { PluginSettingTab, Platform, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
-import { EATER_KEYS, LETTER_KEYS, eaterChoiceOf, letterChoiceOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
+import { EATER_KEYS, LETTER_KEYS, ROLL_CHAOS_MAX, ROLL_DIAL_MAX, eaterChoiceOf, letterChoiceOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
 import type { EaterChoice, LetterChoice } from "./settings";
 import { SOUND_MACHINES } from "../sound/samples";
 import type { SoundKind } from "../sound/samples";
@@ -994,11 +994,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   rollPage(): SettingDefinitionPage {
     const plugin = this.plugin;
     const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow()];
+    // Chaos goes to 11; Color and Motion to 10.
     const dial = (name: string, desc: string, key: "rollChaos" | "rollColor" | "rollMotion") => this.row(name, desc, (s) => {
       let handle: SliderComponent | null = null;
       s.addSlider((sl) => {
         handle = sl;
-        sl.setLimits(0, 100, 5).setValue(plugin.settings[key]).onChange(async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); });
+        sl.setLimits(1, key === "rollChaos" ? ROLL_CHAOS_MAX : ROLL_DIAL_MAX, 1).setValue(plugin.settings[key]).onChange(async (v) => { plugin.settings[key] = v; await plugin.saveSettings(); });
       }).addExtraButton((btn) => btn
         .setIcon("rotate-ccw")
         .setTooltip(`Restore default (${DEFAULT_SETTINGS[key]})`)

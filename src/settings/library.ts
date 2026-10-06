@@ -15,6 +15,9 @@ import {
   cloneVimModes,
   presetWithDefaults,
   vimModeSnapshot,
+  ROLL_CHAOS_MAX,
+  ROLL_DIAL_MAX,
+  dialToRoll,
 } from "./settings";
 import { codeToPreset, codeToVimPreset } from "./share";
 import { rollLook } from "./randomize";
@@ -79,7 +82,7 @@ export const libraryMethods = {
   // it, and Save keeps one you like.
   async rollCursor(this: CursorSmithPlugin): Promise<{ vim: boolean; look: Partial<Look> }> {
     const s = this.settings;
-    const opts: RollOptions = { chaos: s.rollChaos, color: s.rollColor, motion: s.rollMotion, allow: s.rollEffects };
+    const opts: RollOptions = { chaos: dialToRoll(s.rollChaos, ROLL_CHAOS_MAX), color: dialToRoll(s.rollColor, ROLL_DIAL_MAX), motion: dialToRoll(s.rollMotion, ROLL_DIAL_MAX), allow: s.rollEffects };
     let shown: Partial<Look>;
     const vim = this.isVimUiMode();
     if (vim) {

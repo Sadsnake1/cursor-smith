@@ -61,7 +61,7 @@ import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backMan
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
-import { eaterChoiceOf, letterChoiceOf } from "./settings";
+import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
 import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeOutline, holeSpring } from "../effects/effects-rabbithole";
@@ -111,6 +111,38 @@ function gradientCss(style: string, stops: string[]): string {
 
 // How long Shift is held for a capital the preview types.
 const CAPS_HOLD_MS = 220;
+
+// A caret (or a CRT ghost) dressed in a shape: its fill or outline, its
+// corners, its thickness along the style's narrow axis; what a previous
+// shape set and this one does not, put back.
+function dressCaret(el: HTMLElement, shape: Shape, style: string, alpha: string) {
+  const st: Record<string, string> = { opacity: alpha, borderRadius: `${shape.radius}px`, border: "", borderImage: "", width: "", height: "", top: "" };
+  if (shape.hollowWidth) {
+    st.backgroundColor = "transparent";
+    st.backgroundImage = "";
+    st.border = `${shape.hollowWidth}px solid ${shape.fill}`;
+    if (shape.gradient) { st.borderImage = `${shape.gradient} 1`; st.borderRadius = "0"; }
+  } else {
+    st.backgroundColor = shape.fill;
+    st.backgroundImage = shape.gradient ?? "";
+  }
+  if (style === "line") st.width = `${shape.thick}px`;
+  if (style === "underline") { st.height = `${shape.thick}px`; st.top = `${18 - shape.thick}px`; }
+  el.setCssStyles(st);
+}
+
+// A caret placed as the engine measures it (geometryOf): the line box for a
+// Box, the line span for a Line, the foot for an Underline.
+function placeCaret(el: HTMLElement, look: Partial<Look>, style: string, shape: Shape) {
+  const g = geometryOf(look);
+  if (style === "line") el.setCssStyles({ top: `${g.lineTop}px`, height: `${g.lineH}px`, width: `${g.lineW}px` });
+  else if (style === "underline") el.setCssStyles({ top: `${g.top + g.h - g.ulH}px`, height: `${g.ulH}px` });
+  else el.setCssStyles({ top: `${g.top}px`, height: `${g.h}px` });
+  el.setCssStyles({ borderWidth: shape.hollowWidth ? `${g.outline}px` : "" });
+}
+
+// One Vim mode's look for the preview, and its colors for the theme.
+export interface VimLook { look: Partial<Look>; color: string; ramp: string[]; gradient: string[] }
 
 // The caret as the engine draws it (measure.ts: lineSpan, caretThickness,
 // underlineThickness; paint-shape.ts: the outline), at the preview's size:
@@ -239,6 +271,26 @@ export const SCRIPT_LINES = [
 ];
 export const SCRIPT_MAX = 44;
 
+// The preview's lines with Vim on (1.7.7): Vim's own jokes.
+export const VIM_LINES = [
+  "How do I exit Vim? Asking for a friend.",
+  "hjkl is my cardio.",
+  "i for insert, Esc for regret.",
+  "dd: delete the evidence.",
+  ":wq and pretend nothing happened.",
+  "I've been in Vim since 2019. Send help.",
+  "Normal mode? Never heard of her.",
+  "Esc Esc Esc Esc Esc. Just in case.",
+  "Yank it, put it, love it.",
+  "ciw: change it, whatever it was.",
+  "Real writers use :q!",
+  "u u u u u. Undo my whole life.",
+  "Visual mode: see what you did there.",
+  "Replace mode is my love language.",
+  "gg to the top, G to the bottom.",
+  "This line was typed with 47 keystrokes.",
+];
+
 // One step of the script, and the wait after it (ms). A move is a jump
 // (word to word) or a step (one letter, an arrow key's).
 export type ScriptAction =
@@ -246,8 +298,13 @@ export type ScriptAction =
   | { do: "back"; ms: number }
   | { do: "move"; to: number; ms: number }
   | { do: "hold"; ms: number }
-  | { do: "clear"; ms: number };
-export interface ScriptEvent { do: "type" | "back" | "clear"; ch: string; at: number }
+  | { do: "clear"; ms: number }
+  // Vim's (vimScriptFor): a mode entered, a selection begun at `from` (-1
+  // none), the command line's text.
+  | { do: "mode"; mode: string; ms: number }
+  | { do: "select"; from: number; ms: number }
+  | { do: "cmd"; text: string; ms: number };
+export interface ScriptEvent { do: "type" | "back" | "clear" | "mode" | "select" | "cmd"; ch: string; at: number }
 
 // The keys next to each letter (QWERTY): where a typo lands.
 const NEAR: Record<string, string> = {
@@ -305,6 +362,46 @@ export function scriptFor(line: string, rand: () => number): ScriptAction[] {
 
 // The pace of the whole line backspaced (a held key is about 33 ms).
 export const SCRIPT_BACK_MS = 30;
+
+// A Vim session over a line (1.7.7, "the writing of the lines needs to
+// change too to display modes"): Normal; i, the line typed in Insert; Esc,
+// a few hops back a word at a time and back to the end; v from the last
+// word's start, the selection grown over it, d - eaten, back to Normal; R,
+// the word typed back over in Replace; Esc; :wq in Command; then the line
+// backspaced away fast. Each step in its mode's look (the preview wears it).
+export function vimScriptFor(line: string, rand: () => number): ScriptAction[] {
+  const out: ScriptAction[] = [];
+  const n = line.length;
+  const typeMs = () => Math.round(38 + rand() * 34);
+  const starts = Array.from(line.matchAll(/\S+/g), (m) => m.index ?? 0);
+  const last = starts.length ? starts[starts.length - 1] : 0;
+  out.push({ do: "mode", mode: "normal", ms: 450 });
+  out.push({ do: "mode", mode: "insert", ms: 250 });
+  for (const ch of line) out.push({ do: "type", ch, ms: typeMs() });
+  out.push({ do: "hold", ms: 320 });
+  out.push({ do: "mode", mode: "normal", ms: 380 });
+  const back = starts.filter((i) => i < last).reverse().slice(0, 2 + Math.floor(rand() * 2));
+  for (const to of back) out.push({ do: "move", to, ms: 280 });
+  out.push({ do: "move", to: n, ms: 380 });
+  out.push({ do: "move", to: last, ms: 300 });
+  out.push({ do: "mode", mode: "visual", ms: 120 });
+  out.push({ do: "select", from: last, ms: 40 });
+  out.push({ do: "move", to: n, ms: 560 });
+  out.push({ do: "select", from: -1, ms: 0 });
+  for (let i = last; i < n; i++) out.push({ do: "back", ms: 34 });
+  out.push({ do: "mode", mode: "normal", ms: 380 });
+  out.push({ do: "mode", mode: "replace", ms: 220 });
+  for (const ch of line.slice(last)) out.push({ do: "type", ch, ms: typeMs() + 25 });
+  out.push({ do: "mode", mode: "normal", ms: 420 });
+  out.push({ do: "mode", mode: "command", ms: 160 });
+  for (const text of [":", ":w", ":wq"]) out.push({ do: "cmd", text, ms: 170 });
+  out.push({ do: "hold", ms: 420 });
+  out.push({ do: "cmd", text: "", ms: 0 });
+  out.push({ do: "mode", mode: "normal", ms: 220 });
+  for (let i = 0; i < n; i++) out.push({ do: "back", ms: SCRIPT_BACK_MS });
+  out.push({ do: "hold", ms: 450 });
+  return out;
+}
 
 // A preset card's script ("type the name first. then jump then backspace
 // them and then write them again and leave the caret at rest"): the name
@@ -394,6 +491,12 @@ export function stepScript(s: DemoState, look: Partial<Look>, dt: number, now: n
       s.buffer = "";
       moveTo(s, look, 0, now);
       s.phase = "clear";
+    } else if (a.do === "mode") {
+      s.events.push({ do: "mode", ch: a.mode, at: s.buffer.length });
+    } else if (a.do === "select") {
+      s.events.push({ do: "select", ch: "", at: a.from });
+    } else if (a.do === "cmd") {
+      s.events.push({ do: "cmd", ch: a.text, at: 0 });
     } else {
       s.phase = "holdEnd";
     }
@@ -581,6 +684,10 @@ interface Demo {
   // the Box's letter copy's), the jumps, the particles it may have, its
   // scale, and the last keystroke for the typewriter's dip.
   script: boolean;
+  // A Vim session (the Randomizer with Vim on): the modes' looks, the one
+  // worn, the mode's badge, the Visual selection (from where, -1 none), the
+  // command line's text.
+  vim: { looks: Record<string, VimLook>; mode: string; badge: HTMLElement; sel: HTMLElement; selFrom: number; cmd: string } | null;
   // A preset card in use (1.7.7): it plays cardScript once - its name
   // shown as far as it has been typed - then rests; and whether it has.
   card: boolean;
@@ -675,12 +782,15 @@ export class DemoStrip {
 
   // Builds the demo into `host` and starts it. `color` is the preset's
   // color for the current theme; `heatStops` its four heat stops for it.
-  add(host: HTMLElement, name: string, look: Partial<Look>, color: string, heatStops: string[], gradientStops: string[], reduced: boolean, play: boolean, script = false) {
+  // `vim`: the five modes' looks - the preview plays a Vim session in them
+  // (vimScriptFor), its lines Vim's (VIM_LINES).
+  add(host: HTMLElement, name: string, look: Partial<Look>, color: string, heatStops: string[], gradientStops: string[], reduced: boolean, play: boolean, script = false, vim: Record<string, VimLook> | null = null) {
     // The preview: its line, at random but not the last roll's; also what
     // the letters are measured on.
     if (script) {
-      do name = SCRIPT_LINES[Math.floor(Math.random() * SCRIPT_LINES.length)];
-      while (name === this.lastLine && SCRIPT_LINES.length > 1);
+      const lines = vim ? VIM_LINES : SCRIPT_LINES;
+      do name = lines[Math.floor(Math.random() * lines.length)];
+      while (name === this.lastLine && lines.length > 1);
       this.lastLine = name;
     }
     const demo = host.createSpan({ cls: "cursor-smith-pcard-demo" + (script ? " cursor-smith-roll-demo" : "") });
@@ -693,24 +803,12 @@ export class DemoStrip {
     // The letter width is measured on the first frame; 8px is the shape's
     // first guess until then.
     const shape = shapeOf(look, color, gradientStops, 8);
-    const dress = (el: HTMLElement, alpha: string) => {
-      const st: Record<string, string> = { opacity: alpha, borderRadius: `${shape.radius}px` };
-      if (shape.hollowWidth) {
-        st.backgroundColor = "transparent";
-        st.backgroundImage = "";
-        st.border = `${shape.hollowWidth}px solid ${shape.fill}`;
-        if (shape.gradient) { st.borderImage = `${shape.gradient} 1`; st.borderRadius = "0"; }
-      } else {
-        st.backgroundColor = shape.fill;
-        st.backgroundImage = shape.gradient ?? "";
-      }
-      if (style === "line") st.width = `${shape.thick}px`;
-      if (style === "underline") { st.height = `${shape.thick}px`; st.top = `${18 - shape.thick}px`; }
-      el.setCssStyles(st);
-    };
+    const dress = (el: HTMLElement, alpha: string) => dressCaret(el, shape, style, alpha);
     const ghosts: HTMLElement[] = [];
-    if (look.crtEffect && (look.trailLength ?? 0) > 0) {
-      for (let i = 0; i < Math.min(30, look.trailLength ?? 0); i++) {
+    // With Vim, as many ghosts as the mode with the longest trail.
+    const trail = vim ? Math.max(0, ...Object.values(vim).map((v) => (v.look.crtEffect ? v.look.trailLength ?? 0 : 0))) : look.crtEffect ? look.trailLength ?? 0 : 0;
+    if (trail > 0) {
+      for (let i = 0; i < Math.min(30, trail); i++) {
         const g = demo.createSpan({ cls: `cursor-smith-pcard-ghost cursor-smith-pcard-caret-${style}`, attr: { "aria-hidden": "true" } });
         dress(g, "0");
         ghosts.push(g);
@@ -720,17 +818,8 @@ export class DemoStrip {
     dress(caret, String(shape.alphaScale));
     // The caret the engine measures (the cards' too, since the preview's
     // was made real: "improve the demo presets pills too", the user).
-    {
-      const g = geometryOf(look);
-      const real = (el: HTMLElement) => {
-        if (style === "line") el.setCssStyles({ top: `${g.lineTop}px`, height: `${g.lineH}px`, width: `${g.lineW}px` });
-        else if (style === "underline") el.setCssStyles({ top: `${g.top + g.h - g.ulH}px`, height: `${g.ulH}px` });
-        else el.setCssStyles({ top: `${g.top}px`, height: `${g.h}px` });
-        if (shape.hollowWidth) el.setCssStyles({ borderWidth: `${g.outline}px` });
-      };
-      real(caret);
-      for (const gh of ghosts) real(gh);
-    }
+    placeCaret(caret, look, style, shape);
+    for (const gh of ghosts) placeCaret(gh, look, style, shape);
     if (look.crtEffect && look.glow) caret.setCssStyles({ boxShadow: `0 0 6px ${shape.fill}` });
     // A Box shows the letter it sits on, as "letter inside" does: the name
     // again inside the caret, clipped to it, in the color mode's color
@@ -739,7 +828,8 @@ export class DemoStrip {
     // where the real letter shows through.
     let inner: HTMLElement | null = null;
     let innerWritten: HTMLElement | null = null, innerRest: HTMLElement | null = null;
-    if (style === "box" && look.showChar !== false && !shape.hollowWidth && !look.cursorTranslucent) {
+    // (Not with Vim: the caret changes shape mid-play.)
+    if (!vim && style === "box" && look.showChar !== false && !shape.hollowWidth && !look.cursorTranslucent) {
       inner = caret.createSpan({ cls: "cursor-smith-pcard-caret-text", text: script ? "" : name });
       // Over the real letters: the caret's top is the line box's, not 5px.
       inner.setCssStyles({ top: `-${PREVIEW_TOP}px` });
@@ -749,7 +839,16 @@ export class DemoStrip {
     const d: Demo = {
       el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
       script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      vim: null,
     };
+    // Vim: the mode's badge in the stage's corner, the Visual selection under
+    // the letters, Normal's look to start in.
+    if (vim && script) {
+      const badge = host.createSpan({ cls: "cursor-smith-roll-mode", attr: { "aria-hidden": "true" } });
+      const sel = demo.createSpan({ cls: "cursor-smith-roll-select", attr: { "aria-hidden": "true" } });
+      d.vim = { looks: vim, mode: "", badge, sel, selFrom: -1, cmd: "" };
+      this.wearMode(d, "normal");
+    }
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
       // Still, at the idle spot - painted now with a guessed letter width,
@@ -809,6 +908,9 @@ export class DemoStrip {
         for (const ev of d.state.events) {
           if (ev.do === "type") this.onType(d, ev.at, ev.ch, now);
           else if (ev.do === "back") this.onBack(d, ev.at, ev.ch, now);
+          else if (ev.do === "mode") this.wearMode(d, ev.ch);
+          else if (ev.do === "select") { if (d.vim) d.vim.selFrom = ev.at; }
+          else if (ev.do === "cmd") { if (d.vim) { d.vim.cmd = ev.ch; this.paintBadge(d); } }
           else this.onClear(d, d.painted, now);
         }
         d.state.events.length = 0;
@@ -840,6 +942,7 @@ export class DemoStrip {
   // The preview's line again, with a new script (other typos, other play):
   // the next line waits for the next roll.
   private nextLine(d: Demo): ScriptAction[] {
+    if (d.vim) return vimScriptFor(d.line, Math.random);
     if (d.card) {
       if (d.cardPlayed) return [];
       d.cardPlayed = true;
@@ -980,6 +1083,41 @@ export class DemoStrip {
     d.flipAmt = capsEase(d.flipAmt, on, this.last - d.flipAt);
     d.flipAt = this.last;
     return d.flipAmt;
+  }
+
+  // A Vim mode worn (vimScriptFor's "mode"): its look, its colors, its
+  // shape on the caret and the ghosts, its name on the badge.
+  private wearMode(d: Demo, mode: string) {
+    const v = d.vim;
+    const m = v && v.looks[mode];
+    if (!v || !m || v.mode === mode) return;
+    v.mode = mode;
+    d.look = m.look;
+    d.color = m.color;
+    d.heatStops = m.ramp;
+    d.stops = m.gradient;
+    d.style = String(m.look.cursorStyle || "Box").toLowerCase();
+    d.shape = shapeOf(m.look, m.color, m.gradient, d.stepPx || 8);
+    d.geo = geometryOf(m.look);
+    d.caret.className = `cursor-smith-pcard-caret cursor-smith-pcard-caret-${d.style}` + (d.shape.serifs ? " is-serif" : "");
+    dressCaret(d.caret, d.shape, d.style, String(d.shape.alphaScale));
+    placeCaret(d.caret, m.look, d.style, d.shape);
+    d.caret.setCssStyles({ boxShadow: m.look.crtEffect && m.look.glow ? `0 0 6px ${d.shape.fill}` : "" });
+    for (const g of d.ghosts) {
+      g.className = `cursor-smith-pcard-ghost cursor-smith-pcard-caret-${d.style}`;
+      dressCaret(g, d.shape, d.style, "0");
+      placeCaret(g, m.look, d.style, d.shape);
+    }
+    this.paintBadge(d);
+  }
+
+  // The mode's badge: its name (and the command line's text), in its color.
+  private paintBadge(d: Demo) {
+    const v = d.vim;
+    if (!v) return;
+    const fill = d.shape.fill;
+    v.badge.setText((VIM_MODE_LABELS[v.mode] || v.mode) + (v.cmd ? `  ${v.cmd}` : ""));
+    v.badge.setCssStyles({ backgroundColor: fill, color: readableGlyphColor(fill, "contrast") });
   }
 
   // Obsidian's accent as hex (what a canvas reads it back as), read once.
@@ -1352,6 +1490,16 @@ export class DemoStrip {
     const to = Math.max(s.lead, s.trail) * px;
     // A stretch of at most two letters, so the caret stays inside the cell.
     const stretch = Math.min(to - from, px * 2);
+    // Vim's Visual selection: from where it began to the caret, in the
+    // mode's color, faint.
+    if (d.vim) {
+      const v = d.vim;
+      if (v.selFrom >= 0) {
+        const a = Math.min(v.selFrom, s.lead), b = Math.max(v.selFrom, s.lead);
+        const [r, g, bl] = hexToRgbTuple(d.shape.fill.startsWith("#") ? d.shape.fill : "#888888");
+        v.sel.setCssStyles({ display: "block", left: `${(a * px).toFixed(2)}px`, width: `${((b - a) * px).toFixed(2)}px`, backgroundColor: `rgba(${r}, ${g}, ${bl}, 0.3)` });
+      } else v.sel.setCssStyles({ display: "none" });
+    }
     // A card playing its script: its name shown as far as it has been typed
     // (and the letter copy in a Box with it); all of it once it rests.
     if (d.card) {

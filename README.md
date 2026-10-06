@@ -127,13 +127,13 @@ Enable the plugin, Vim mode on or off, your presets, and the mode you're editing
 
 ## Randomizer
 
-Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it types silly lines, fixes its own typos and plays with the cursor. Roll again until you like one, then save it as a preset.
+Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it types silly lines, fixes its own typos, jumps around, then backspaces it all. Roll again until you like one, then hit **Save as preset** right under it. Keep one **Shape** if you like, or let the dice pick.
 
-Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Your sound stays as you set it.
+Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 1 you get one, at 11 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Your sound stays as you set it.
 
 Below them, a switch for every effect: turn one off and the dice never pick it. The Torch is off until you let it in.
 
-With Vim mode on, every mode gets a new cursor of its own.
+With Vim mode on, the dice roll a family: one style shared by every mode, each in its own Vim shape (a box in Normal, a line in Insert, an underline in Replace) and its own color. The preview plays a little Vim session in them, mode badge and all, with Vim jokes of its own.
 
 ## Presets
 

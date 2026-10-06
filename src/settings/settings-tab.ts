@@ -9,6 +9,7 @@ import { soundMachine } from "../sound/sound";
 import { SHARE_VERSION, SHARE_VERSION_VIM, presetToCode, vimPresetToCode } from "./share";
 import { readableGlyphColor } from "../util/color";
 import { DemoStrip } from "./demo";
+import type { VimLook } from "./demo";
 import { ROLL_TOGGLES, rollAllowed } from "./randomize";
 import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "../types";
 
@@ -995,12 +996,20 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           void plugin.saveSettings();
         }));
     });
-    // The shape a roll keeps, or any.
-    items.push(this.row("Shape", "Roll only this cursor shape, or any.", (s) => {
-      s.addDropdown((d) => d.addOptions({ any: "Any shape", Box: "Box", Line: "Line", Underline: "Underline" })
-        .setValue(plugin.settings.rollShape || "any")
-        .onChange(async (v) => { plugin.settings.rollShape = v; await plugin.saveSettings(); }));
-    }));
+    // The shape a roll keeps, or any - with Vim on, the modes' shapes.
+    if (plugin.isVimUiMode()) {
+      items.push(this.row("Mode shapes", "Vim's own: a box in Normal, a line in Insert, an underline in Replace. Or one for all.", (s) => {
+        s.addDropdown((d) => d.addOptions({ vim: "Vim's own", any: "Any (one for all)", Box: "Box", Line: "Line", Underline: "Underline" })
+          .setValue(plugin.settings.rollVimShape || "vim")
+          .onChange(async (v) => { plugin.settings.rollVimShape = v; await plugin.saveSettings(); }));
+      }));
+    } else {
+      items.push(this.row("Shape", "Roll only this cursor shape, or any.", (s) => {
+        s.addDropdown((d) => d.addOptions({ any: "Any shape", Box: "Box", Line: "Line", Underline: "Underline" })
+          .setValue(plugin.settings.rollShape || "any")
+          .onChange(async (v) => { plugin.settings.rollShape = v; await plugin.saveSettings(); }));
+      }));
+    }
     items.push(dial("Chaos", "From one quiet effect to all of them at once.", "rollChaos"));
     items.push(dial("Color", "From a single calm color to gradients and rainbows.", "rollColor"));
     items.push(dial("Motion", "From a still cursor to one that glides, smears and trails.", "rollMotion"));
@@ -1051,8 +1060,16 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     if (!this._rollDemos) this._rollDemos = new DemoStrip();
     // One demo at a time: the last one, wherever its stage went, is let go.
     this._rollDemos.reset();
-    const look: Partial<Look> = plugin.isVimUiMode() ? plugin.settings.vimModes[plugin._vimEditMode] ?? plugin.settings : plugin.settings;
     const dark = plugin.isDarkTheme();
+    // With Vim on: a Vim session, every mode in its own look.
+    if (plugin.isVimUiMode()) {
+      const looks: Record<string, VimLook> = {};
+      for (const mode of VIM_MODE_KEYS) { const look = plugin.effectiveSettings(mode); looks[mode] = Object.assign({ look }, this.demoColors(look, dark)); }
+      const n = looks.normal;
+      this._rollDemos.add(stage, "", n.look, n.color, n.ramp, n.gradient, plugin.reducedMotion(), true, true, looks);
+      return;
+    }
+    const look: Partial<Look> = plugin.settings;
     const { color, ramp, gradient } = this.demoColors(look, dark);
     this._rollDemos.add(stage, "", look, color, ramp, gradient, plugin.reducedMotion(), true, true);
   }

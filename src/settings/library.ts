@@ -20,7 +20,7 @@ import {
   dialToRoll,
 } from "./settings";
 import { codeToPreset, codeToVimPreset } from "./share";
-import { rollLook } from "./randomize";
+import { rollLook, rollVimLooks } from "./randomize";
 import type { RollOptions } from "./randomize";
 import type { CursorSmithSettings, Look } from "../types";
 
@@ -88,10 +88,11 @@ export const libraryMethods = {
     if (vim) {
       const edit = VIM_MODE_KEYS.includes(this._vimEditMode) ? this._vimEditMode : "normal";
       shown = {};
+      // One family (rollVimLooks): a shared roll, each mode turned its way.
+      const family = rollVimLooks(Object.assign({}, opts, { vimShape: s.rollVimShape }));
       for (const mode of VIM_MODE_KEYS) {
-        const rolled = rollLook(opts);
-        Object.assign(s.vimModes[mode], rolled);
-        if (mode === edit) shown = rolled;
+        Object.assign(s.vimModes[mode], family[mode]);
+        if (mode === edit) shown = family[mode];
       }
       s.vimActivePreset = "";
     } else {

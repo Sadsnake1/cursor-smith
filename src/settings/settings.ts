@@ -382,6 +382,8 @@ export const DEFAULT_SETTINGS = {
   rollMotion: 5,
   // The shape a roll keeps (Box, Line, Underline), or "any".
   rollShape: "any",
+  // With Vim on, the modes' shapes: Vim's own ("vim"), one for all, or any.
+  rollVimShape: "vim",
   // Which effects a roll may pick, by key (ROLL_TOGGLES); a key not here is
   // let in, but the torch's. Replaced whole on a write, never changed in
   // place (this object is the defaults' own).

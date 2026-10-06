@@ -337,3 +337,51 @@ section("Randomizer: the preview's caret, as the engine's");
      at({ blinkStopAfter: 2 }, 1450 + 60000).alpha === 1 && at({ blinkStopAfter: 2 }, 3000).alpha < 0.5 &&
      [2800, 3000, 3200].every((t) => at({ blinkBreathing: true }, t).alpha === 1 && at({ blinkBreathing: true }, t).breath > 0.5));
 }
+
+section("Randomizer with Vim: one family, a Vim session");
+{
+  const modes = ["normal", "insert", "visual", "replace", "command"];
+  const hueOf = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return 0; let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; return h < 0 ? h + 360 : h; };
+  const near = (a, b, tol) => { const d = Math.abs(((a - b) % 360 + 540) % 360 - 180); return d <= tol; };
+  let shapesOk = true, colorsOk = true, fxOk = true, familyOk = true;
+  for (let k = 0; k < 40; k++) {
+    const f = T.rollVimLooks({ chaos: 100, color: 60, motion: 80 }, T.seededRandom(400 + k));
+    if (!modes.every((m) => f[m].cursorStyle === T.VIM_SHAPES[m].cursorStyle) || f.visual.boxHollow !== true || f.normal.boxHollow !== false) shapesOk = false;
+    if (!modes.every((m) => near(hueOf(f[m].colorDark), T.VIM_HUES[m], 32))) colorsOk = false;
+    if (["normal", "visual", "command"].some((m) => f[m].hotHead || f[m].typewriter || f[m].speedDemon || f[m].popLetters || f[m].fireworks) || f.visual.popEffects || f.command.popEffects || f.command.smoothEnabled || f.command.smear || f.command.crtEffect || f.command.glow) fxOk = false;
+    if (f.insert.smear !== f.normal.smear || f.insert.smoothEnabled !== f.visual.smoothEnabled || f.insert.hotHead !== f.replace.hotHead) familyOk = false;
+  }
+  ok("Vim's own shapes: a box in Normal, a line in Insert, a hollow box in Visual, an underline in Replace, a line in Command", shapesOk);
+  ok("...each mode near its usual color (Normal blue, Insert green, Visual yellow, Replace red, Command purple)", colorsOk);
+  ok("...the typing effects in Insert and Replace only; Visual without Pop effects; Command plain and still", fxOk);
+  ok("...one family: the motion and the effects shared where they fit", familyOk);
+  const one = T.rollVimLooks({ chaos: 50, color: 50, motion: 50, vimShape: "Underline" }, T.seededRandom(7));
+  ok("one shape for all: every mode an Underline", modes.every((m) => one[m].cursorStyle === "Underline"));
+  const anyShape = T.rollVimLooks({ chaos: 50, color: 50, motion: 50, vimShape: "any" }, T.seededRandom(8));
+  ok("any: every mode the roll's one shape", new Set(modes.map((m) => anyShape[m].cursorStyle)).size === 1);
+
+  ok("Vim's lines: unique, every one short enough to keep the preview's size", T.VIM_LINES.length >= 12 && new Set(T.VIM_LINES).size === T.VIM_LINES.length && T.VIM_LINES.every((l) => l.length <= T.SCRIPT_MAX), T.VIM_LINES.filter((l) => l.length > T.SCRIPT_MAX));
+  let typedOk = true, endOk = true, modesOk = true, visualOk = true, cmdOk = true;
+  for (const line of T.VIM_LINES) for (let seed = 1; seed <= 12; seed++) {
+    const acts = T.vimScriptFor(line, T.seededRandom(seed * 31 + line.length));
+    let b = "", at = 0, mode = "", sel = -1, cmd = "";
+    const seen = [];
+    for (const a of acts) {
+      if (a.do === "type") { b += a.ch; at = b.length; }
+      else if (a.do === "back") { b = b.slice(0, -1); at = b.length; }
+      else if (a.do === "move") { at = Math.max(0, Math.min(b.length, a.to)); }
+      else if (a.do === "mode") { mode = a.mode; if (seen[seen.length - 1] !== mode) seen.push(mode); if (mode === "normal" && seen.length === 3 && b !== line) typedOk = false; }
+      else if (a.do === "select") { sel = a.from; if (sel >= 0 && mode !== "visual") visualOk = false; }
+      else if (a.do === "cmd") { cmd = a.text; if (cmd && mode !== "command") cmdOk = false; }
+    }
+    if (b !== "" || sel !== -1 || cmd !== "") endOk = false;
+    if (seen.join() !== "normal,insert,normal,visual,normal,replace,normal,command,normal") modesOk = false;
+  }
+  ok("a Vim session: the line typed in Insert, whole, before the first Esc", typedOk);
+  ok("...modes in order: Normal, Insert, Normal, Visual, Normal, Replace, Normal, Command, Normal", modesOk);
+  ok("...the selection begun in Visual, :wq typed in Command", visualOk && cmdOk);
+  ok("...and every line backspaced away at the end, the selection and the command line cleared", endOk);
+  const src = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8");
+  ok("the page: with Vim on, a Mode shapes choice (Vim's own by default) and the five modes' looks to the preview", T.DEFAULT_SETTINGS.rollVimShape === "vim" && /row\("Mode shapes"/.test(src) && /looks\[mode\] = Object\.assign\(\{ look \}/.test(src));
+  ok("...the roll itself one family", /rollVimLooks\(Object\.assign\(\{\}, opts, \{ vimShape: s\.rollVimShape \}\)\)/.test(require("fs").readFileSync(srcPath("library.ts"), "utf8")));
+}

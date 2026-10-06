@@ -1089,6 +1089,28 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
 }
 /* The text low in the box: what rises off it (fire, fireworks, popped
    letters) has room before the edge. */
+/* With Vim on (demo.ts, vimScriptFor): the mode's name in the stage's
+   corner, in the mode's color; the Visual selection under the letters. */
+.cursor-smith-roll-mode {
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: pre;
+}
+.cursor-smith-roll-select {
+  position: absolute;
+  top: 2px;
+  height: 18px;
+  border-radius: 2px;
+  pointer-events: none;
+  display: none;
+}
 .cursor-smith-roll-stage .cursor-smith-roll-demo {
   position: absolute;
   left: 18px;

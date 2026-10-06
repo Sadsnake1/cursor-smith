@@ -224,7 +224,7 @@ export const SCRIPT_LINES = [
   "pick me, pick meeee",
   "Calculating...10^254 cursor choices...",
   "Smoooooooooooooooooooking!",
-  "Once a plain caret. Then, something strange.",
+  "Once a plain caret. Then something happened.",
 ];
 export const SCRIPT_MAX = 44;
 

@@ -404,6 +404,10 @@ export interface XoutRun {
   closeT: number; bg: string | null;
   fontSize: number; fontFamily: string; fontWeight: string; fontStyle: string;
   textColor: string;
+  // The rest of the row as last measured (drawXout): for this document,
+  // anchor and content width, each letter and its x from the anchor's, and
+  // the content's right edge from it too.
+  rest?: { doc: unknown; at: number; width: number; items: [string, number][]; edge: number };
 }
 // Where Typewriter holds the caret at a moment: shifted by dx, dy and
 // squashed to sy of its height about its bottom edge.
@@ -485,3 +489,7 @@ declare module "@codemirror/view" {
     coordsAtPos(pos: number, side?: number): CMRect | null;
   }
 }
+
+// The gradient's stops worked out for one frame (paint-color.ts,
+// gradientStops): for that frame, look, look generation, theme and heat.
+export interface StopsMemo { seq: number; look: CursorSmithSettings; gen: number; dark: boolean; heat: number; out: string[]; rgb: number[][] | null }

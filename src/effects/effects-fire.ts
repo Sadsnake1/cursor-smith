@@ -35,6 +35,7 @@ import {
   HOT_HEAD_JITTER_DOWN,
   HOT_HEAD_JITTER_UP,
   HOT_HEAD_LIFT,
+  HOT_HEIGHT_SCALE,
   HOT_LIFE_FLOOR,
   HOT_SHAPE_EASE,
   HOT_HSV,
@@ -367,7 +368,7 @@ export const effectsFireMethods = {
 
     const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 4);
     const fadeMs = Math.max(120, this.styleFor("hotHeadFade") ?? FLAME_MAX_LIFETIME);
-    const heightMul = Math.max(0.05, this.styleFor("hotHeadHeight") ?? 0.55);
+    const heightMul = Math.max(0.05, this.styleFor("hotHeadHeight") ?? 0.55) * HOT_HEIGHT_SCALE;
     const perLength = FLAME_PER_LENGTH * ((this.styleFor("hotHeadTrail") ?? 0) / 10);
     const qtyEarly = Math.max(0, this.styleFor("hotHeadQuantity") ?? 1);
 

@@ -6,7 +6,7 @@ import { DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset, seedPrese
 import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook, soundsApart, whenAllows } from "./settings/settings";
 import { CursorSmithSettingTab } from "./settings/settings-tab";
 import type { Text as DocText } from "@codemirror/state";
-import type {
+import type { StopsMemo,
   Bounds,
   BurnMark,
   CaretCoords,
@@ -237,6 +237,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare getBaseColor: PaintMethods["getBaseColor"];
   declare isDarkTheme: PaintMethods["isDarkTheme"];
   declare gradientStops: PaintMethods["gradientStops"];
+  declare _stopsRgb: PaintMethods["_stopsRgb"];
   declare sampleRamp: PaintMethods["sampleRamp"];
   declare createCursorGradient: PaintMethods["createCursorGradient"];
   declare cursorPaint: PaintMethods["cursorPaint"];
@@ -417,6 +418,9 @@ export default class CursorSmithPlugin extends Plugin {
   _auroraCtx!: CanvasRenderingContext2D | null;
   _auroraImg!: ImageData | null;
   _auroraLut!: Float32Array | null;
+  _frameSeq!: number;
+  _stopsHeat!: StopsMemo | null;
+  _stopsCold!: StopsMemo | null;
   _canvasBlend!: string;
   _canvasDpr!: number;
   _canvasGear!: string;

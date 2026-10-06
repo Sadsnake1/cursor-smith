@@ -102,8 +102,8 @@ section("palette: Toggle Vim mode");
       await toCua.toggleUiMode();
       ok("both directions say which mode you landed in", T.Notice.messages.length === 2,
          T.Notice.messages);
-      ok("...naming Vim", /vim/i.test(T.Notice.messages[0] || ""), T.Notice.messages[0]);
-      ok("...and naming CUA", /cua/i.test(T.Notice.messages[1] || ""), T.Notice.messages[1]);
+      ok("...Vim mode on, then off, as the settings' switch says it", T.Notice.messages.join() === "Cursor-Smith: Vim mode on,Cursor-Smith: Vim mode off" || T.Notice.messages.join() === "Cursor-Smith: Vim mode off,Cursor-Smith: Vim mode on", T.Notice.messages);
+      ok("...never CUA", !T.Notice.messages.some((m) => /cua/i.test(m)), T.Notice.messages);
       ok("the open settings panel is refreshed", toVim.refreshed === 1, toVim.refreshed);
     });
   }

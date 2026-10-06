@@ -68,7 +68,12 @@ export const paintEnergyMethods = {
       const rw = x1 - x0, rh = y1 - y0;
       if (!(rw > 0.5) || !(rh > 0.5)) return null;
 
-      const dpr = (this.canvas?.ownerDocument?.defaultView || window).devicePixelRatio || 1;
+      // One bitmap pixel per CSS pixel at most, not per device pixel: the
+      // field is a few slow waves across the cursor, smoothed when the
+      // pattern is drawn, and the shape's edges are the path's, not the
+      // bitmap's. A phone at 2.8x computed 8 times the pixels for nothing
+      // (the pixel loop was the biggest cost of a frame there, HANDOFF 1.63).
+      const dpr = Math.min(1, (this.canvas?.ownerDocument?.defaultView || window).devicePixelRatio || 1);
       const pw = Math.max(1, Math.round(rw * dpr));
       const ph = Math.max(1, Math.round(rh * dpr));
       // Hard ceiling on rasterisation cost. A caret-sized rect is ~1-3k pixels

@@ -121,7 +121,7 @@ export const hotQuant = (v: number, levels: number) => Math.round(Math.max(0, Ma
 // their own positions off the lattice. They are the haze above the flame.
 // Their own budget, so they never starve the chunks.
 export const HOT_SPARKS_PER_CHUNK = 1;
-export const HOT_SPARK_MAX = 60;
+export const HOT_SPARK_MAX = 40;                // 60 until 1.7.7
 // Both caps are PER CARET. The ember pool is shared by every caret and the
 // primary spawns first each frame, so with its fire sitting at the cap a
 // secondary could never light at all - which is what "hot-head has no
@@ -152,7 +152,7 @@ export const HOT_FINE_CHANCE = 0.4;
 // never showed, because with Smooth Movement the drawn caret eases across a
 // jump and never travels far in one frame.
 export const HOT_ENGULF_MS = 260;
-export const HOT_ENGULF_RATE = 200;           // particles per second at the landing, at Quantity 1
+export const HOT_ENGULF_RATE = 110;           // particles per second at the landing, at Quantity 1 (200 until 1.7.7)
 export const HOT_ENGULF_PAD_X = 1.1;          // how far beside the caret, in character widths
 export const HOT_SPARK_LIFT = 1.9;     // times the chunk's buoyancy
 export const HOT_SPARK_RISE = 5;       // cw/s of extra upward start
@@ -165,7 +165,8 @@ export const FLAME_LEVELS = 16;
 // instead of being tuned for one zoom level.
 // 110, up from 50: the trail behind a moving caret needs its own budget (see
 // HOT_TRAIL_* below), or it only ever gets what the head leaves over.
-export const FLAME_MAX_NUM = 110;
+// 110 until 1.7.7: the cap a dense fire meets, lowered with the rates below.
+export const FLAME_MAX_NUM = 70;
 export const FLAME_MAX_LIFETIME = 620;         // ms, default fade time
 // Upstream particle_lifetime_distribution_exponent. lifetime = max * rand^n
 // skews toward zero, so most particles are short-lived specks and a minority
@@ -189,8 +190,13 @@ export const HOT_SHAPE_EASE = 1.6;
 // wall.
 // 190 until 1.6.4; 125 with the longer lives (FLAME_LIFETIME_EXP) keeps about
 // as many alive as before.
-export const FLAME_PER_SECOND = 125;           // steady emission while burning
-export const FLAME_PER_LENGTH = 0.8;           // extra particles per cw of caret travel
+// 70 and 0.5 since 1.7.7 ("too strong even on lower sliders", desktop and
+// phone): about half the fire at every Quantity, the sliders' scale kept.
+export const FLAME_PER_SECOND = 70;            // steady emission while burning
+export const FLAME_PER_LENGTH = 0.5;           // extra particles per cw of caret travel
+// How high the flames climb at a given Flame height: four fifths of what
+// they did until 1.7.7, with the rates above.
+export const HOT_HEIGHT_SCALE = 0.8;
 export const FLAME_SPREAD = 0.5;               // cw, lateral scatter at the emit point
 // The start is a kick UP, within HOT_START_CONE either side of straight up.
 // It used to be a full disc plus a fifth of the caret's own velocity, so fire

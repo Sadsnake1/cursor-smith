@@ -55,6 +55,7 @@ import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { Platform } from "obsidian";
+import { FLAME_PER_SECOND, HOT_HEIGHT_SCALE } from "../effects/fire";
 import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
@@ -1055,10 +1056,10 @@ export class DemoStrip {
     const weights = d.burns.map((b) => Math.max(0, 1 - (now - b.t) / linger));
     const sum = weights.reduce((a, b) => a + b, 0);
     if (sum <= 0) return;
-    d.fireAcc += (dt / 1000) * 125 * 0.75 * (look.hotHeadQuantity ?? 1) * Math.min(1.6, 0.45 + 0.55 * sum);
+    d.fireAcc += (dt / 1000) * FLAME_PER_SECOND * 0.75 * (look.hotHeadQuantity ?? 1) * Math.min(1.6, 0.45 + 0.55 * sum);
     const cw = d.stepPx || 7;
     const fade = look.hotHeadFade ?? 620;
-    const heightMul = (look.hotHeadHeight ?? 0.55) / 0.55;
+    const heightMul = ((look.hotHeadHeight ?? 0.55) / 0.55) * HOT_HEIGHT_SCALE;
     const spread = (look.hotHeadSpread ?? 4) * 0.1 * cw;
     const right = ((d.script || d.card ? d.state.buffer.length : d.n) + 0.5) * cw;
     for (; d.fireAcc >= 1; d.fireAcc--) {

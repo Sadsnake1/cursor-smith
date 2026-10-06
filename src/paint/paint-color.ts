@@ -11,7 +11,7 @@ import { hexToRgbTuple, hexToRgba } from "../util/color";
 import { GLOW_HEAT_GAIN, SPEED_RAMP_LIFTOFF } from "../constants";
 import { easeInOutSine } from "../util/motion";
 import { DEFAULT_SETTINGS } from "../settings/settings";
-import type { CursorSmithSettings, SettingKey } from "../types";
+import type { StopsMemo, CursorSmithSettings, SettingKey } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
 export const paintColorMethods = {
@@ -66,13 +66,25 @@ export const paintColorMethods = {
   // `applyHeat` exists for the callers that need the stops as the user
   // configured them - anything that is about to run them through heatColor
   // itself, and would otherwise apply the ramp twice.
+  //
+  // Worked out once a frame (the frame's number, _frameSeq, set by the
+  // tick) for the same look, theme and heat: the aurora's table alone asked
+  // 96 times a frame, each time flipping every stop for Caps Lock, reading
+  // the theme and running the heat ramp - a third of a phone's frame with
+  // every effect on (HANDOFF 1.63). Outside a frame (seq 0): every call.
+  // The array handed back is shared - read it, never change it.
   gradientStops(this: CursorSmithPlugin, applyHeat = true): string[] {
     const s = this.look;
+    const dark = this.isDarkTheme();
+    const seq = this._frameSeq | 0;
+    const heat = this.heat || 0;
+    const memo = applyHeat ? this._stopsHeat : this._stopsCold;
+    if (seq > 0 && memo && memo.seq === seq && memo.look === s && memo.gen === (this._lookGen | 0) && memo.dark === dark && memo.heat === heat) return memo.out;
     const n = Math.max(2, Math.min(4, Math.round(s.gradientCount || 2)));
     // One ramp per theme, same as colorDark/colorLight: a ramp tuned for a
     // dark background usually washes out on a light one. gradientCount is
     // shared, so both ramps always have the same number of stops.
-    const prefix = this.isDarkTheme() ? "gradientDark" : "gradientLight";
+    const prefix = dark ? "gradientDark" : "gradientLight";
     const out = [];
     for (let i = 1; i <= n; i++) {
       const key = prefix + i;
@@ -95,7 +107,16 @@ export const paintColorMethods = {
       }
       out.push(hex);
     }
+    const next: StopsMemo = { seq, look: s, gen: this._lookGen | 0, dark, heat, out, rgb: null };
+    if (applyHeat) this._stopsHeat = next; else this._stopsCold = next;
     return out;
+  },
+
+  // The stops as [r, g, b], parsed once with them (gradientStops' memo).
+  _stopsRgb(this: CursorSmithPlugin, stops: string[]): number[][] {
+    const memo = this._stopsHeat;
+    if (memo && memo.out === stops) return memo.rgb || (memo.rgb = stops.map((h) => hexToRgbTuple(h)));
+    return stops.map((h) => hexToRgbTuple(h));
   },
 
   // Colour at a position along the ramp (0 = first stop, 1 = last), as an
@@ -114,7 +135,7 @@ export const paintColorMethods = {
     if (!this.look.gradientEnabled) {
       return hexToRgbTuple(this.getActiveColor() || "#39ff14");
     }
-    const stops = this.gradientStops();
+    const stops = this._stopsRgb(this.gradientStops());
     const lerp = (a: number[], b: number[], f: number) => [
       a[0] + (b[0] - a[0]) * f,
       a[1] + (b[1] - a[1]) * f,
@@ -126,12 +147,12 @@ export const paintColorMethods = {
       const p = wrapped * stops.length;
       const i = Math.floor(p) % stops.length;
       const j = (i + 1) % stops.length;
-      return lerp(hexToRgbTuple(stops[i]), hexToRgbTuple(stops[j]), p - Math.floor(p));
+      return lerp(stops[i], stops[j], p - Math.floor(p));
     }
 
     const p = Math.max(0, Math.min(1, pos)) * (stops.length - 1);
     const i = Math.min(stops.length - 2, Math.floor(p));
-    return lerp(hexToRgbTuple(stops[i]), hexToRgbTuple(stops[i + 1]), p - i);
+    return lerp(stops[i], stops[i + 1], p - i);
   },
 
   // A CanvasGradient spanning the given rect, running along the cursor's

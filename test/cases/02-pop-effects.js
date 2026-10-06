@@ -943,6 +943,36 @@ section("Typewriter (1.7.2): capitals strike deeper, the return timed to its sou
         now = d.xouts[0].closeT + CLOSE; d.drawXout();
         ok("...then gone", d.xouts.length === 0);
       }
+      // The rest of the row is measured once per edit, not every frame (a
+      // coordsAtPos a letter was most of a phone's frame, HANDOFF 1.63).
+      {
+        let calls = 0;
+        const v = fakeView("0123456789012345678901234567890123456789rest of the line goes on here");
+        const co = v.coordsAtPos;
+        v.coordsAtPos = (p) => { calls++; return co(p); };
+        const d = withView(mk({ typewriterTape: true }), v);
+        d.ctx = recorder([]);
+        d.spawnXout(deleted);
+        now += 10; calls = 0; d.drawXout();
+        const firstCalls = calls;
+        now += 10; calls = 0; d.drawXout();
+        ok("the rest of the row: a few measurements for 29 letters (its last found by halving), then none the next frame - only where the run starts", firstCalls <= 8 && calls === 1, [firstCalls, calls]);
+        v.state = { doc: Object.assign({}, v.state.doc) };
+        now += 10; calls = 0; d.drawXout();
+        ok("...and measured again after an edit (a new document)", calls === firstCalls, [calls, firstCalls]);
+        // A wrapped line: from position 50 the text is on the next row.
+        const w = fakeView("0123456789012345678901234567890123456789rest of the line goes on here");
+        const wco = w.coordsAtPos;
+        w.coordsAtPos = (p) => (p >= 50 ? { left: 0, top: 74, bottom: 98 } : wco(p));
+        const e = withView(mk({ typewriterTape: true }), w);
+        const ops = [];
+        e.ctx = recorder(ops);
+        e.spawnXout(deleted);
+        now += 10; e.drawXout();
+        const drawn = ops.filter((o) => /^[^x]@/.test(o) || /^x@1/.test(o)).map((o) => o.split("@")[0]).join("");
+        ok("...a wrapped line held apart only to its row's end, each letter where the page has it", e.xouts[0].rest.items.length === 10 && e.xouts[0].rest.items.map(([ch]) => ch).join("") === "rest of th" &&
+           e.xouts[0].rest.items.every(([, dx], i) => Math.abs(dx - i * 9) < 1e-9), [drawn, e.xouts[0].rest.items]);
+      }
       // At a line's end nothing is held apart; with no solid page color
       // behind the text there is nothing to cover it with.
       {

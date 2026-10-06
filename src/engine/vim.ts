@@ -46,8 +46,9 @@ export const vimMethods = {
       await this.setVimModeEnabled(next);
       // The status bar indicator only exists in Vim mode, so switching TO CUA
       // would otherwise be a silent no-feedback command - it removes the one
-      // thing that was showing the mode. Say which mode you landed in.
-      new Notice(`Cursor-Smith: ${next ? "Vim" : "CUA / Normal"} mode`);
+      // thing that was showing the mode. Say it as the settings' switch is
+      // named: Vim mode, on or off (not "CUA / Normal").
+      new Notice(`Cursor-Smith: Vim mode ${next ? "on" : "off"}`);
       this.refreshSettingTab();
     } finally {
       // In a finally, not after the await: setVimModeEnabled swallows its own

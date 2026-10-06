@@ -378,6 +378,9 @@ export const engineMethods = {
         perf.rafPrev = 0;
       }
       const tTick = perf ? performance.now() : 0;
+      // This frame's number: what is worked out once a frame (the gradient's
+      // stops, gradientStops) is keyed on it.
+      this._frameSeq = (this._frameSeq | 0) + 1;
       // The whole frame is wrapped so a single bad frame (e.g. a transient
       // null during window refocus, a detached node mid-layout) can never
       // kill the rAF loop permanently - that's exactly the "cursor

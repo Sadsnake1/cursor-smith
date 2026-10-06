@@ -136,20 +136,51 @@ export const effectsXoutMethods = {
       // letters.
       if (r.bg) {
         const open = r.w * (1 - closed);
-        const rest: [string, number][] = [];
-        const lineEnd = doc.lineAt(at).to;
-        let pos = at;
-        for (let k = 0; k < XOUT_MAX_TEXT && pos < lineEnd; k++) {
-          const cc = view.coordsAtPos(pos, 1);
-          if (!cc || Math.abs(cc.top - rowTop) > 2) break;
-          const ch = String.fromCodePoint(doc.sliceString(pos, pos + 2).codePointAt(0) ?? 32);
-          rest.push([ch, cc.left]);
-          pos += ch.length;
+        // Where each letter of the rest of the row stands, measured once per
+        // edit, not every frame: a coordsAtPos a letter (a DOM range each),
+        // up to XOUT_MAX_TEXT of them, was most of a frame while Backspace
+        // was held on a phone (HANDOFF 1.63). Kept relative to the anchor,
+        // so a scroll moves them with it.
+        const width = view.contentDOM.clientWidth;
+        let measured = r.rest && r.rest.doc === doc && r.rest.at === at && r.rest.width === width ? r.rest : null;
+        if (!measured) {
+          // Two places measured, not one a letter: where the row's last
+          // letter stands (found by halving, a few measurements), and the
+          // anchor's own. The letters between are spaced by their widths in
+          // the run's font, stretched to land on the last one exactly.
+          const items: [string, number][] = [];
+          const lineEnd = doc.lineAt(at).to;
+          const limit = Math.min(lineEnd, at + XOUT_MAX_TEXT);
+          const onRow = (p: number) => {
+            const cc = view.coordsAtPos(p, 1);
+            return cc && Math.abs(cc.top - rowTop) <= 2 ? cc : null;
+          };
+          let lo = at, hi = limit - 1;
+          while (lo < hi) {
+            const mid = Math.ceil((lo + hi) / 2);
+            if (onRow(mid)) lo = mid; else hi = mid - 1;
+          }
+          const lastC = limit > at ? onRow(lo) : null;
+          if (lastC) {
+            let acc = 0;
+            for (let pos = at; pos <= lo && pos < lineEnd;) {
+              const ch = String.fromCodePoint(doc.sliceString(pos, pos + 2).codePointAt(0) ?? 32);
+              items.push([ch, acc]);
+              acc += ctx.measureText(ch).width;
+              pos += ch.length;
+            }
+            const span = items.length ? items[items.length - 1][1] : 0;
+            const k = span > 0 ? (lastC.left - x0) / span : 1;
+            for (const it of items) it[1] *= k;
+          }
+          let edge = Infinity;
+          try { edge = view.contentDOM.getBoundingClientRect().right - x0; } catch { edge = Infinity; /* no layout to read */ }
+          measured = r.rest = { doc, at, width, items, edge };
         }
+        const rest: [string, number][] = measured.items.map(([ch, dx]) => [ch, x0 + dx]);
         if (rest.length) {
           const last = rest[rest.length - 1];
-          let edge = Infinity;
-          try { edge = view.contentDOM.getBoundingClientRect().right; } catch { edge = Infinity; /* no layout to read */ }
+          const edge = x0 + measured.edge;
           right = Math.min(edge, Math.max(right, last[1] + ctx.measureText(last[0]).width + r.w) + 1);
           ctx.globalAlpha = 1;
           ctx.fillStyle = r.bg;

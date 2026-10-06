@@ -1,4 +1,4 @@
-import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
+import { PluginSettingTab, Platform, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
 import { EATER_KEYS, LETTER_KEYS, eaterChoiceOf, letterChoiceOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
@@ -1456,6 +1456,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // The same 0.1 px steps and 7 px ceiling as the Line's (1.6.6).
     appearance.push(slider("Underline thickness", "Underline thickness in pixels. 0 fits the line height.",
       "underlineWidthPx", [0, 7, 0.1], { depth: 1, fallback: 0, when: underline }));
+    // The Underline's own serifs (1.7.7): a tick up at each end.
+    appearance.push(toggle("Underline serifs", "Adds a small tick at each end of the underline.", "underlineSerifs", { depth: 1, when: underline }));
     appearance.push(toggle("Show letter inside cursor", "Shows the letter inside the block, colors flipped.",
       "showChar", { depth: 1, gate: true, when: box }));
     appearance.push(dropdown("Letter color",
@@ -1499,6 +1501,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       "cursorTranslucent"));
     appearance.push(toggle("Rounded corners", "Softens the corners: rounded bars for Line and Underline, a gentle curve for Box.",
       "cursorRounded"));
+    // Caps Lock and Shift (1.7.7, effects-caps.ts): desktop only - a phone's
+    // keyboard reports neither key.
+    appearance.push(toggle("Caps Lock and Shift", "While Caps Lock is on or Shift is held, the cursor turns its opposite color and grows a little.",
+      "capsLook", { when: () => !Platform.isMobile }));
     // --- Blinking ------------------------------------------------------------
     card = "Blinking";
     const blinking = [];

@@ -135,9 +135,10 @@ export const effectsEatersMethods = {
     } else if (hole) {
       this.drawHole(ctx, r.x, r.y, r.w, r.h, paint, hole, now);
     } else {
-      // Going back: the plain shape, between the eater's and its own.
+      // Going back: the plain shape, between the eater's and its own, its
+      // corners rounded as Rounded corners rounds it.
       ctx.beginPath();
-      ctx.rect(r.x, r.y, r.w, r.h);
+      this.traceRoundedRect(ctx, r.x, r.y, r.w, r.h, this.cornerRadius(Math.min(r.w, r.h)));
       if (stroke > 0) {
         ctx.strokeStyle = paint;
         ctx.lineWidth = stroke;

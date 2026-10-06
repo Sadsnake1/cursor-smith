@@ -1002,6 +1002,8 @@ export const engineMethods = {
       this.holeMoving(nowT) ||
       // ...and the morph into an eater's shape and back.
       this.eaterMoving(nowT) ||
+      // ...and Caps Lock and Shift's look easing in or out.
+      this.capsMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting
       // out its stagger delay, which paints nothing yet but must not be
       // allowed to drop the loop into the idle heartbeat - the volley

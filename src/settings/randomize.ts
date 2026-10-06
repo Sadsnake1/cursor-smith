@@ -85,7 +85,9 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   // sounds switch was taken out).
   const out: Record<string, unknown> = {};
   const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
-  for (const k of LOOK_KEYS) if (!TORCH_KEYS.has(k) && !SOUND_KEYS.has(k)) out[k] = defaults[k];
+  // Caps Lock and Shift is kept as it is, like the sounds: a signal, not a
+  // look to roll.
+  for (const k of LOOK_KEYS) if (!TORCH_KEYS.has(k) && !SOUND_KEYS.has(k) && k !== "capsLook") out[k] = defaults[k];
   out.torchEffect = false;
   for (const k of [...ROLL_EFFECTS, "smear", "popLetters", "glow", "bracketTether"]) out[k] = false;
   const look = out as Partial<Look>;
@@ -94,7 +96,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   const style = rand() < 0.45 ? "Box" : rand() < 0.65 ? "Line" : "Underline";
   look.cursorStyle = style;
   if (style === "Line") { look.caretWidthPx = any(1.5, 3 + 3 * chaos, 0.1); look.lineSerifs = chance(0.1 + 0.25 * chaos); }
-  if (style === "Underline") look.underlineWidthPx = any(1.5, 3 + 2 * chaos, 0.1);
+  if (style === "Underline") { look.underlineWidthPx = any(1.5, 3 + 2 * chaos, 0.1); look.underlineSerifs = chance(0.1 + 0.25 * chaos); }
   if (style === "Box") { look.boxHollow = !full && rand() < 0.15; look.boxHollowWidth = any(1.5, 3, 0.1); look.showChar = true; }
   look.cursorRounded = rand() < 0.35;
   look.cursorTranslucent = !full && rand() < 0.12;

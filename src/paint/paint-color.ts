@@ -48,7 +48,8 @@ export const paintColorMethods = {
   // colour go through getActiveColor.
   getBaseColor(this: CursorSmithPlugin): string {
     if (this.look.gradientEnabled) return this.gradientStops(false)[0];
-    return this.isDarkTheme() ? this.look.colorDark : this.look.colorLight;
+    // Flipped while Caps Lock is on or Shift held (effects-caps.ts).
+    return this._capsFlip(this.isDarkTheme() ? this.look.colorDark : this.look.colorLight);
   },
 
   // Which theme the cursor is being drawn against. Read off the document that
@@ -75,7 +76,8 @@ export const paintColorMethods = {
     const out = [];
     for (let i = 1; i <= n; i++) {
       const key = prefix + i;
-      let hex = (s[key as SettingKey] || (DEFAULT_SETTINGS as CursorSmithSettings)[key as SettingKey]) as string;
+      // Flipped while Caps Lock is on or Shift held (effects-caps.ts).
+      let hex = this._capsFlip((s[key as SettingKey] || (DEFAULT_SETTINGS as CursorSmithSettings)[key as SettingKey]) as string);
       // Speed Demon drives the whole cursor along a cold → white-hot ramp as
       // you type. Running every stop through it keeps a gradient cursor
       // heating up like a flat one does, instead of sitting frozen at its

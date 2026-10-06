@@ -53,7 +53,10 @@
 import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
-import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
+import { Platform } from "obsidian";
+import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
+import { CAPS_GROW, capsEase } from "../effects/effects-caps";
+import { underSerifSize } from "../paint/paint-shape";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
@@ -61,7 +64,7 @@ import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeSpring } from "../effects/effects-rabbithole";
+import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeArm, holeFall, holeOutline, holeSpring } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -76,8 +79,7 @@ const ROUNDED_BLOCK_FRACTION = 0.25;
 export function shapeOf(look: Partial<Look>, color: string, stops: string[], px: number): Shape {
   const style = String(look.cursorStyle || "Box").toLowerCase();
   const gradientOn = !!look.gradientEnabled && stops.length >= 2;
-  const angle = style === "underline" ? 90 : 180;
-  const gradient = gradientOn ? `linear-gradient(${angle}deg, ${stops.map((c, i) => `${c} ${Math.round((i / (stops.length - 1)) * 100)}%`).join(", ")})` : null;
+  const gradient = gradientOn ? gradientCss(style, stops) : null;
   const thick = style === "line"
     ? Math.max(1, Math.min(5, Math.round((look.caretWidthPx ?? 2) * 0.75)))
     : style === "underline"
@@ -95,10 +97,20 @@ export function shapeOf(look: Partial<Look>, color: string, stops: string[], px:
     thick,
     hollowWidth,
     radius,
-    serifs: style === "line" && !!look.lineSerifs,
+    serifs: style === "line" ? !!look.lineSerifs : style === "underline" && !!look.underlineSerifs,
     alphaScale: (look.cursorOpacity ?? 1) * (look.cursorTranslucent ? TRANSLUCENT_ALPHA : 1),
   };
 }
+
+// A gradient caret's paint: top to bottom, or left to right on an
+// Underline (along its longer side, as the engine's).
+function gradientCss(style: string, stops: string[]): string {
+  const angle = style === "underline" ? 90 : 180;
+  return `linear-gradient(${angle}deg, ${stops.map((c, i) => `${c} ${Math.round((i / (stops.length - 1)) * 100)}%`).join(", ")})`;
+}
+
+// How long Shift is held for a capital the preview types.
+const CAPS_HOLD_MS = 220;
 
 // The caret as the engine draws it (measure.ts: lineSpan, caretThickness,
 // underlineThickness; paint-shape.ts: the outline), at the preview's size:
@@ -568,6 +580,15 @@ interface Demo {
   geo: Geometry | null;
   keyHeavy: boolean;
   breath: number;
+  // Caps Lock and Shift (effects-caps.ts): the gradient's stops (to flip
+  // them), until when Shift is held (a capital typed), the look's eased
+  // amount and when it was eased, whether the caret wears it now (to put
+  // it back once).
+  stops: string[];
+  capsUntil: number;
+  capsAmt: number;
+  capsAt: number;
+  capsShown: boolean;
   // Back-man (effects-backman.ts): its run of chewing (backManChew), its
   // bend's spring, its mouth's corner (x, for the letters going in), and
   // whether the caret wears it now (to put the caret back once).
@@ -600,6 +621,8 @@ export class DemoStrip {
   private demos: Demo[] = [];
   private raf = 0;
   private last = 0;
+  // Obsidian's accent as hex (the flip of a white or gray caret), read once.
+  private accent = "";
   private win: Window | null = null;
   // The pill's wait for its page to come back (a slow poll, not a frame
   // loop spinning for nothing).
@@ -694,7 +717,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -912,6 +935,31 @@ export class DemoStrip {
     }
   }
 
+  // Caps Lock and Shift's look now: on while Shift is held for a capital
+  // (Caps Lock and Shift on, on a desktop), eased as the engine's.
+  private capsNow(d: Demo): number {
+    if (!d.look.capsLook || Platform.isMobile) return 0;
+    d.capsAmt = capsEase(d.capsAmt, this.last < d.capsUntil, this.last - d.capsAt);
+    d.capsAt = this.last;
+    return d.capsAmt;
+  }
+
+  // Obsidian's accent as hex (what a canvas reads it back as), read once.
+  private accentHex(d: Demo): string {
+    if (this.accent) return this.accent;
+    let hex = "#ffb000";
+    const v = getComputedStyle(d.caret).getPropertyValue("--interactive-accent").trim();
+    const ctx = v ? createEl("canvas").getContext("2d") : null;
+    if (ctx) {
+      ctx.fillStyle = hex;
+      ctx.fillStyle = v;
+      const got = String(ctx.fillStyle);
+      if (got[0] === "#") hex = got;
+    }
+    this.accent = hex;
+    return hex;
+  }
+
   // The preview, a letter written: it pops out of the caret (Popping
   // letters), Space sends fireworks up, the typewriter dips.
   private onType(d: Demo, i: number, ch: string, now: number) {
@@ -920,6 +968,8 @@ export class DemoStrip {
     d.keyT = now;
     d.keyKind = "type";
     d.keyHeavy = ch !== ch.toLowerCase() && ch === ch.toUpperCase();
+    // A capital is typed with Shift held: the Caps look, a moment.
+    if (d.keyHeavy) d.capsUntil = now + CAPS_HOLD_MS;
     if (look.hotHead) d.burns.push({ x: i, t: now });
     // Popping letters: thrown up and spinning, falling back (0.45 s), or
     // risen straight up and faded (0.65 s).
@@ -1269,7 +1319,13 @@ export class DemoStrip {
     // Heat warms a flat fill; a gradient keeps its colors (as the engine's
     // custom ramp flattens a gradient, the demo leaves it be).
     const heated = cold < 1 && !d.shape.gradient;
-    const color = heated ? heatColor(d.color, d.heatStops, 1 - cold) : d.shape.fill;
+    const own = heated ? heatColor(d.color, d.heatStops, 1 - cold) : d.shape.fill;
+    // Caps Lock and Shift (effects-caps.ts), on the capitals the preview
+    // types: the caret flipped to its opposite color and grown from its
+    // foot, easing in and out.
+    const caps = this.capsNow(d);
+    const accent = caps > 0 ? this.accentHex(d) : "";
+    const color = caps > 0 ? capsColor(own, caps, accent) : own;
     // The preview's text, written so far (typos and all), a letter an
     // element; the unwritten half only ever held the first line, to measure
     // the letters by.
@@ -1310,13 +1366,25 @@ export class DemoStrip {
     }
     // Breathing: the blink as a change of size, about the middle.
     if (d.breath > 0) sy *= 1 - (look.blinkBreathDepth ?? 0.2) * d.breath;
+    const grow = caps > 0 ? ` scale(${(1 + CAPS_GROW * caps).toFixed(3)})` : "";
     const styles: Record<string, string> = {
-      transform: dip || advance ? `translate(${(from + advance).toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`,
+      transform: (dip || advance ? `translate(${(from + advance).toFixed(2)}px, ${dip.toFixed(2)}px)` : `translateX(${from.toFixed(2)}px)`) + grow,
       width: `${width.toFixed(2)}px`,
       opacity: String(d.shape.alphaScale * alpha),
     };
     if (d.shape.hollowWidth) styles.borderColor = color;
     else if (heated) styles.backgroundColor = color;
+    if (caps > 0 || d.capsShown) {
+      // Flipped (its gradient's every stop, the letter inside readable on
+      // it) - or, once, back as it was.
+      const flip = caps > 0;
+      const grad = d.shape.gradient && flip ? gradientCss(d.style, d.stops.map((c) => capsColor(c, caps, accent))) : d.shape.gradient;
+      styles.transformOrigin = flip ? "50% 100%" : "";
+      if (d.shape.hollowWidth) { styles.borderColor = color; if (grad) styles.borderImage = `${grad} 1`; }
+      else { styles.backgroundColor = color; styles.backgroundImage = grad ?? ""; }
+      if (d.inner) d.inner.setCssStyles({ color: readableGlyphColor(color, d.look.glyphColorMode ?? "contrast") });
+      d.capsShown = flip;
+    }
     if (d.look.crtEffect && d.look.glow) styles.boxShadow = `0 0 6px ${color}`;
     if (d.look.energyEffect) {
       // A band of light sliding along the caret, top to bottom, at the
@@ -1448,9 +1516,15 @@ export class DemoStrip {
       const resting = !d.holeWeighed && Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && !d.particles.some((q) => q.kind === "hole");
       if (resting) d.holeSp = null;
       else {
-        // The curve drawn in a caret as tall as it reaches, up or down.
-        const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='M0 ${n2(up + bh / 2)} Q${n2(ew / 2)} ${n2(up + bh / 2 + 2 * sag)} ${n2(ew)} ${n2(up + bh / 2)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
+        // The floor as the engine's outline (holeOutline), its arms
+        // standing up as it dips - from the Underline's serifs when it has
+        // them - drawn in a caret as tall as it reaches, up and down.
+        const size = underSerifSize(bh, d.geo.lineH, ew);
+        const arm = holeArm(d.style === "underline" && d.shape.serifs ? size.len : 0, sag, ew);
+        const up = arm + Math.max(0, -sag), H = up + bh + Math.max(0, sag) + 1;
+        const path = holeOutline(ew, bh, sag, arm, size.t, d.shape.radius, d.look.cursorRounded ? size.t / 2 : 0).map((c) =>
+          c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(c[1])} ${n2(up + c[2])} ${n2(c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(c[1])} ${n2(up + c[2])}`).join(" ");
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/></svg>`;
         Object.assign(styles, {
           height: `${n2(H)}px`, top: `${n2(top - up)}px`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
@@ -1463,8 +1537,8 @@ export class DemoStrip {
     if (!eat && d.eatOn) {
       Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "" });
     }
-    // A Line's serifs give way while an eater has it.
-    if (d.style === "line") d.caret.toggleClass("is-shred", eatShape);
+    // A Line's serifs, and an Underline's, give way while an eater has it.
+    if (d.style === "line" || d.style === "underline") d.caret.toggleClass("is-shred", eatShape);
     d.eatOn = eat;
     d.caret.setCssStyles(styles);
     // The letter copy inside a Box stays over the real letters: it is

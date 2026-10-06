@@ -388,7 +388,8 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
     blinkingEnabled: true, blinkBreathing: true, smoothEnabled: true,
     smoothAdaptive: true, cursorStyle: "Box", boxHollow: true, showChar: true,
   };
-  const allowed = new Set(["CRT", "Vim", "Obsidian", "Obsidian's", "CUA", "I-beam", "Hot-head", "Speed", "Rainbow"]);
+  // Key names keep their capitals: "Caps Lock and Shift".
+  const allowed = new Set(["CRT", "Vim", "Obsidian", "Obsidian's", "CUA", "I-beam", "Hot-head", "Speed", "Rainbow", "Lock", "Shift"]);
   const offenders = [];
   for (const r of panelRows(wideOpen)) {
     if (!r.name) continue;

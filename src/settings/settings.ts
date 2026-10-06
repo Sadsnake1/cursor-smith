@@ -214,6 +214,10 @@ export const DEFAULT_SETTINGS = {
   // gravity) - see the note in spawnFlamePixels.
   backspaceDisintegrate: false,
   lineSerifs: false,             // Line cursor: add horizontal serifs (I-beam look)
+  underlineSerifs: false,        // Underline cursor: a tick up at each end (1.7.7)
+  // Caps Lock and Shift (1.7.7, desktop): the cursor flips to its opposite
+  // color and grows a little while Caps Lock is on or Shift is held.
+  capsLook: false,
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing
   // setup (and a fresh install) keeps exactly the look it had.
@@ -556,6 +560,9 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "shredder", "rabbitHole",
   // Shredder's "Shredded letters" (1.7.7). Appended, on by default.
   "shredderLetters",
+  // The Underline's serifs, and Caps Lock and Shift (1.7.7). Appended, off by
+  // default.
+  "underlineSerifs", "capsLook",
 ];
 
 // ---------------------------------------------------------------------------

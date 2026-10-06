@@ -169,6 +169,14 @@ export default class CursorSmithPlugin extends Plugin {
   declare eaterMoving: EffectsMethods["eaterMoving"];
   declare drawEater: EffectsMethods["drawEater"];
   declare _eatenLetterFx: EffectsMethods["_eatenLetterFx"];
+  declare _capsKey: EffectsMethods["_capsKey"];
+  declare _capsBlur: EffectsMethods["_capsBlur"];
+  declare _capsWanted: EffectsMethods["_capsWanted"];
+  declare capsAmount: EffectsMethods["capsAmount"];
+  declare capsMoving: EffectsMethods["capsMoving"];
+  declare _capsFlip: EffectsMethods["_capsFlip"];
+  declare _capsAccent: EffectsMethods["_capsAccent"];
+  declare _capsGrow: EffectsMethods["_capsGrow"];
   declare _backManSelected: EffectsMethods["_backManSelected"];
   declare spawnBackManMeal: EffectsMethods["spawnBackManMeal"];
   declare backManPose: EffectsMethods["backManPose"];
@@ -245,6 +253,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare auroraPattern: PaintMethods["auroraPattern"];
   declare createEnergyGradient: PaintMethods["createEnergyGradient"];
   declare serifQuads: PaintMethods["serifQuads"];
+  declare underSerifQuads: PaintMethods["underSerifQuads"];
   declare drawGenericCaret: PaintMethods["drawGenericCaret"];
   declare _paintTrail: PaintMethods["_paintTrail"];
   declare _armGlow: PaintMethods["_armGlow"];
@@ -661,6 +670,12 @@ export default class CursorSmithPlugin extends Plugin {
   _hole: HoleState | null = null;
   // The cursor's morph into an eater's shape and back (effects-eaters.ts).
   _eat: EaterState | null = null;
+  // Caps Lock and Shift (effects-caps.ts): the keys as last seen, the look's
+  // eased amount, Obsidian's accent as last read.
+  _capsOn = false;
+  _shiftHeld = false;
+  _caps: { amt: number; at: number } | null = null;
+  _capsAccentCache: { hex: string; t: number } | null = null;
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;
@@ -1164,6 +1179,7 @@ export default class CursorSmithPlugin extends Plugin {
     // burst caused by unrelated caret movement that arrived late.
     const onKeyDown = (e: KeyboardEvent) => {
       this._markActivity("key");
+      this._capsKey(e);
       const k = e.key;
       // The IME sentinel. Nothing useful here - beforeinput will carry the
       // actual edit - and acting on it would charge every mobile keystroke as
@@ -1254,6 +1270,10 @@ export default class CursorSmithPlugin extends Plugin {
     
     doc.addEventListener("mousemove", onMouseMove);
     doc.addEventListener("keydown", onKeyDown, true);
+    // Caps Lock and Shift (effects-caps.ts): letting go of Shift is a keyup,
+    // and so is Caps Lock going off on a Mac.
+    const onKeyUp = (e: KeyboardEvent) => this._capsKey(e);
+    doc.addEventListener("keyup", onKeyUp, true);
     // Capture phase, like keydown: CodeMirror handles beforeinput itself and
     // may stop it, and an effect that vanishes inside the editor but works in
     // a search box would be worse than one that never worked at all.
@@ -1300,6 +1320,7 @@ export default class CursorSmithPlugin extends Plugin {
     // ...and a window coming back moves a loop left waiting on a hidden one
     // (_rehomeLoops, issue #39) - on focus, and on becoming visible.
     const onWindowFocusChange = () => { this._rehomeLoops(); this._markActivity("window focus"); };
+    const onWindowBlur = () => this._capsBlur();
     const onVisibility = () => { if (doc.visibilityState === "visible") this._rehomeLoops(); };
     doc.addEventListener("visibilitychange", onVisibility);
     const win = doc.defaultView;
@@ -1307,6 +1328,7 @@ export default class CursorSmithPlugin extends Plugin {
       win.addEventListener("resize", onResize);
       win.addEventListener("focus", onWindowFocusChange);
       win.addEventListener("blur", onWindowFocusChange);
+      win.addEventListener("blur", onWindowBlur);
     }
 
     // The workspace's window-close event (wired in onload) only fires for
@@ -1330,6 +1352,7 @@ export default class CursorSmithPlugin extends Plugin {
     this._docCleanups.set(doc, () => {
       doc.removeEventListener("mousemove", onMouseMove);
       doc.removeEventListener("keydown", onKeyDown, true);
+      doc.removeEventListener("keyup", onKeyUp, true);
       doc.removeEventListener("beforeinput", onBeforeInput, true);
       doc.removeEventListener("compositionend", onCompositionEnd, true);
       doc.removeEventListener("selectionchange", onSelectionChange);
@@ -1345,6 +1368,7 @@ export default class CursorSmithPlugin extends Plugin {
         win.removeEventListener("resize", onResize);
         win.removeEventListener("focus", onWindowFocusChange);
         win.removeEventListener("blur", onWindowFocusChange);
+        win.removeEventListener("blur", onWindowBlur);
         if (onPageHide) win.removeEventListener("pagehide", onPageHide);
       }
     });

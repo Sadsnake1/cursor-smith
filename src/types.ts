@@ -173,6 +173,8 @@ export interface Look {
   bracketTether: boolean;
   bracketTetherStrength: number;
   lineSerifs: boolean;
+  underlineSerifs: boolean;
+  capsLook: boolean;
   boxHollow: boolean;
   boxHollowWidth: number;
   underlineWidthPx: number;

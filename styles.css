@@ -497,6 +497,28 @@ button.cursor-smith-pcard-use:hover {
   top: 16px;
   height: 2px;
 }
+/* An Underline's serifs: a tick up at each end, in the caret's own paint;
+   they give way to an eater (the Vacuum draws its own, as a U). */
+.cursor-smith-pcard-caret-underline.is-serif::before,
+.cursor-smith-pcard-caret-underline.is-serif::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: calc(100% + 3.5px);
+  background: inherit;
+  border-radius: inherit;
+}
+.cursor-smith-pcard-caret-underline.is-serif::before {
+  left: 0;
+}
+.cursor-smith-pcard-caret-underline.is-serif::after {
+  right: 0;
+}
+.cursor-smith-pcard-caret-underline.is-shred::before,
+.cursor-smith-pcard-caret-underline.is-shred::after {
+  display: none;
+}
 /* The letter under a Box caret: the name again, inside the caret and
    clipped to it, moved back by the caret's own offset (inline) so it lies
    over the real letters; its color is inline (black or white). */

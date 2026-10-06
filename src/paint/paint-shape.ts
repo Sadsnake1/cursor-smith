@@ -4,8 +4,9 @@
 // them exactly as before. `this` is the plugin.
 //
 // The caret's body: rounded corners, the quad tracer the solid and hollow
-// styles share, the rects, the I-beam's serifs, and the two painters (Line
-// and Underline through drawGenericCaret, Box through drawBoxCursor).
+// styles share, the rects, the I-beam's serifs (and the Underline's), and
+// the two painters (Line and Underline through drawGenericCaret, Box
+// through drawBoxCursor).
 
 import { readableGlyphColor } from "../util/color";
 import {
@@ -20,6 +21,40 @@ import {
 } from "../constants";
 import type { CaretRecord, Pt, Quad } from "../types";
 import type CursorSmithPlugin from "../plugin";
+
+// The Underline's serifs (1.7.7, "add serifs for the underline cursor too
+// (just how line has them)"): a tick standing up from each end of the bar,
+// as thick as a Line's serif on a stem the bar's thickness (`t`), as tall
+// above the bar as a Line's serif reaches to one side of its stem (`len`,
+// half the letter's width, clamped the same way). Up only: down, they would
+// reach into the line below - and up, the bar is a U when the Vacuum pulls
+// (effects-rabbithole.ts). Pure.
+export function underSerifSize(barH: number, lineH: number, charW?: number) {
+  const t = Math.max(1, Math.round(Math.min(barH * SERIF_STEM_RATIO, lineH * SERIF_HEIGHT_RATIO)));
+  const raw = charW && charW > 0 ? charW : barH * 7;
+  const len = Math.max(SERIF_MIN_SPAN_PX, Math.min(raw, lineH * SERIF_MAX_SPAN_RATIO)) / 2;
+  return { t, len };
+}
+
+// A point on the smeared edge from `a` to `b`: half the caret's own size
+// along it (`own`) back from its leading end - the end toward the travel
+// direction `dir` - so a serif rides the caret's real footprint at the
+// head of a smear (see serifQuads). An edge no longer than `own` (no
+// smear along it) gives its middle.
+function leadAnchor(a: Pt, b: Pt, dir: Pt | null, own: number) {
+  const ex = b.x - a.x, ey = b.y - a.y;
+  const len = Math.hypot(ex, ey);
+  if (!(len > 0.001)) return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  // `a` leads only if the edge runs against the direction of travel.
+  const aLeads = !!dir && (ex * dir.x + ey * dir.y) < 0;
+  const lead = aLeads ? a : b;
+  const sign = aLeads ? -1 : 1;
+  const back = Math.min(len, own) / 2;
+  return {
+    x: lead.x - sign * (ex / len) * back,
+    y: lead.y - sign * (ey / len) * back,
+  };
+}
 
 export const paintShapeMethods = {
   // The corner radius for a shape whose narrow axis is `minor` px.
@@ -228,21 +263,7 @@ export const paintShapeMethods = {
     // old behaviour everywhere it was already correct.
     const c = this.cursorCorners(rx, ry, rw, lineH);
     const dir = this._smearDir;
-    const anchor = (a: Pt, b: Pt) => {
-      const ex = b.x - a.x, ey = b.y - a.y;
-      const len = Math.hypot(ex, ey);
-      if (!(len > 0.001)) return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      // `a` leads only if the edge runs against the direction of travel.
-      const aLeads = !!dir && (ex * dir.x + ey * dir.y) < 0;
-      const lead = aLeads ? a : b;
-      const sign = aLeads ? -1 : 1;
-      const back = Math.min(len, stem) / 2;
-      return {
-        x: lead.x - sign * (ex / len) * back,
-        y: lead.y - sign * (ey / len) * back,
-      };
-    };
-    const top = anchor(c.tl, c.tr), bot = anchor(c.bl, c.br);
+    const top = leadAnchor(c.tl, c.tr, dir, stem), bot = leadAnchor(c.bl, c.br, dir, stem);
     const topCx = top.x, topCy = top.y;
     const botCx = bot.x, botCy = bot.y;
 
@@ -274,6 +295,33 @@ export const paintShapeMethods = {
       // on the stem's width - otherwise a rounded Box-sized radius would eat
       // the whole bracket.
       radius: this.cornerRadius(thickness),
+    };
+  },
+
+  // The Underline's serifs (underSerifSize), as quads to add to the bar's
+  // path: a tick up from each end of the caret's own footprint, its free
+  // end tapered on the inside like a Line serif's bracket, level. Under a
+  // smear they ride the head of it, as the Line's do (issue #25): across,
+  // the caret's own width back from the lead of the bar's long edges; up
+  // and down, its own thickness back from the lead of its ends (leadAnchor)
+  // - so a stretched bar trails behind the two ticks. `top`: the highest
+  // they reach.
+  underSerifQuads(this: CursorSmithPlugin, active: CaretRecord, rx: number, rw: number, ry: number, rh: number) {
+    const { t, len } = underSerifSize(rh, active.h, active.actualCharWidth);
+    const c = this.cursorCorners(rx, ry, rw, rh);
+    const dir = this._smearDir;
+    const cx = (leadAnchor(c.tl, c.tr, dir, rw).x + leadAnchor(c.bl, c.br, dir, rw).x) / 2;
+    const cy = (leadAnchor(c.tl, c.bl, dir, rh).y + leadAnchor(c.tr, c.br, dir, rh).y) / 2;
+    const x0 = cx - rw / 2, x1 = cx + rw / 2;
+    const tip = cy - rh / 2 - len, foot = cy + rh / 2;
+    const inset = (len * SERIF_TAPER) / 2;
+    return {
+      quads: [
+        { tl: { x: x0, y: tip }, tr: { x: x0 + t, y: tip + inset }, br: { x: x0 + t, y: foot }, bl: { x: x0, y: foot } },
+        { tl: { x: x1 - t, y: tip + inset }, tr: { x: x1, y: tip }, br: { x: x1, y: foot }, bl: { x: x1 - t, y: foot } },
+      ],
+      top: tip,
+      radius: this.cornerRadius(t),
     };
   },
 
@@ -413,14 +461,19 @@ export const paintShapeMethods = {
     // Box style so the effect is recognisably the same feature everywhere.
     const gsGen = this._glitchNow(now);
 
-    // Line + serifs = classic I-beam. Only for the Line style: an underline
-    // is already a horizontal bar, so capping it with two more reads as a
-    // stack of lines rather than a glyph.
+    // Grown from its foot while Caps Lock is on or Shift held
+    // (effects-caps.ts).
+    this._capsGrow(ctx, rx + rw / 2, ry + rh, now);
+
+    // Line + serifs = classic I-beam. An Underline's serifs are its own
+    // (since 1.7.7): a tick up at each end - capping it with two more bars
+    // would read as a stack of lines rather than a glyph.
     // An eater (effects-eaters.ts) has the cursor while it eats what
-    // Backspace and Delete take: no serifs then.
+    // Backspace and Delete take: no serifs then (the Vacuum draws its own).
     const eating = this.eaterMoving(now);
-    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen && !eating;
-    const serifs = wantSerifs ? this.serifQuads(active, rx, rw, ry, rh) : null;
+    const wantSerifs = (isUnderline ? settings.underlineSerifs : settings.lineSerifs) && !gsGen && !eating;
+    const serifs = wantSerifs && !isUnderline ? this.serifQuads(active, rx, rw, ry, rh) : null;
+    const ticks = wantSerifs && isUnderline ? this.underSerifQuads(active, rx, rw, ry, rh) : null;
 
     if (gsGen) {
       this.paintGlitchRect(ctx, rx, ry, rw, rh, color, 0.9 * blinkAlpha * bodyOpacity, gsGen);
@@ -431,12 +484,22 @@ export const paintShapeMethods = {
       // stem's width to either side - so a stem-sized pattern left most of
       // each serif outside the bitmap, painting it fully transparent. The
       // serifs simply did not exist in that mode.
-      let px = rx, pw = rw;
+      let px = rx, pw = rw, py = ry, ph = rh;
       if (serifs) {
         px = Math.min(rx, serifs.left);
         pw = Math.max(rx + rw, serifs.right) - px;
       }
-      ctx.fillStyle = this._bodyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
+      // The same for an Underline's ticks and the Vacuum's arms and dip,
+      // above and below the bar - for Aurora's pattern only: a gradient
+      // runs along the bar and reaches them anyway, and a taller rect would
+      // turn it on its side (createCursorGradient).
+      if (isUnderline && settings.energyEffect && settings.gradientEnabled && settings.energyAurora
+          && (settings.underlineSerifs || this._holeOn())) {
+        const room = underSerifSize(rh, active.h, active.actualCharWidth).len + rw;
+        py = ry - room;
+        ph = rh + room + rw;
+      }
+      ctx.fillStyle = this._bodyPaint(px, py, pw, ph, color, 0.9 * blinkAlpha * bodyOpacity);
       // The gap the caret stands at: a Line is drawn centered on it.
       const gx = isUnderline ? rx : rx + rw / 2;
       if (this.drawEater(ctx, { x: rx, y: ry, w: rw, h: rh }, gx, ctx.fillStyle, 0, 0, now)) {
@@ -465,6 +528,9 @@ export const paintShapeMethods = {
       );
       if (serifs) {
         for (const q of serifs.quads) this.traceQuad(ctx, q, serifs.radius);
+      }
+      if (ticks) {
+        for (const q of ticks.quads) this.traceQuad(ctx, q, ticks.radius);
       }
       ctx.fill();
     }
@@ -504,6 +570,9 @@ export const paintShapeMethods = {
       // glow at all: a shadow inherits the alpha of the shape casting it -
       // don't reintroduce one).
       this._armGlow(ctx, color, 10 * blinkAlpha);
+      // Grown from its foot while Caps Lock is on or Shift held
+      // (effects-caps.ts).
+      this._capsGrow(ctx, active.x + renderW / 2, active.top + active.h, now);
 
       // Signal Glitch takes over the body of the cursor entirely while a burst
       // is live - it replaces the fill/stroke rather than layering on top,
@@ -590,6 +659,8 @@ export const paintShapeMethods = {
           && glyphAlpha >= 0.01) {
         ctx.save();
         ctx.globalAlpha = glyphAlpha;
+        // Grown with its box.
+        this._capsGrow(ctx, active.x + renderW / 2, active.top + active.h, now);
         // `color` is the box's own fill (getActiveColor, so heat- and
         // gradient-resolved). With Gradient on this is the ramp's FIRST stop
         // rather than the exact shade under the glyph - the fill varies across

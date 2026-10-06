@@ -18,6 +18,7 @@ import { effectsBackManMethods } from "./effects-backman";
 import { effectsShredderMethods } from "./effects-shredder";
 import { effectsRabbitHoleMethods } from "./effects-rabbithole";
 import { effectsEatersMethods } from "./effects-eaters";
+import { effectsCapsMethods } from "./effects-caps";
 
 export const effectsMethods = {
   ...effectsFireMethods,
@@ -32,5 +33,6 @@ export const effectsMethods = {
   ...effectsShredderMethods,
   ...effectsRabbitHoleMethods,
   ...effectsEatersMethods,
+  ...effectsCapsMethods,
 };
 export type EffectsMethods = typeof effectsMethods;

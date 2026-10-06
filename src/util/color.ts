@@ -181,6 +181,22 @@ export function rgbTupleToHex([r, g, b]: number[]): string {
   return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
 }
 
+// A cursor color flipped for Caps Lock and Shift (effects-caps.ts), `k` of
+// the way there: the opposite hue at the same saturation and brightness
+// (HSV, so the flip is as bright as the cursor was - a straight RGB inverse
+// turns a light cursor dark, lost on a dark theme), mixed in RGB. A white,
+// gray or black cursor has no opposite hue: it flips to `accent` instead.
+// Hex in, hex out. Pure.
+export function capsColor(hex: string, k: number, accent: string): string {
+  if (!(k > 0)) return hex;
+  const rgb = parseColorTuple(hex);
+  if (!rgb) return hex;
+  const [h, s, v] = rgbToHsv(rgb);
+  const to = s < 0.12 ? (parseColorTuple(accent) || rgb) : hsvToRgb([h + 180, s, v]);
+  const m = Math.min(1, k);
+  return rgbTupleToHex([0, 1, 2].map((i) => rgb[i] + (to[i] - rgb[i]) * m));
+}
+
 export function invertColor(colorStr: string) {
   const nums = (colorStr || "").match(/[\d.]+/g);
   if (!nums || nums.length < 3) return "#000000";

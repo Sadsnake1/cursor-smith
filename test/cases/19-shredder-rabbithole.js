@@ -120,7 +120,7 @@ section("Shredder and Vacuum: they have the letters");
 
 section("Shredder and Vacuum: the settings");
 {
-  ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-3).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
+  ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-5, -2).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
   const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "Cursor on delete").dropdowns[0];
   ok("choices of \"Cursor on delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Vacuum");
   const on = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });
@@ -139,7 +139,7 @@ section("Shredder and Vacuum: drawn");
     get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }),
     set: (o, k, v) => { o[k] = v; calls.push(["set " + String(k), v]); return true; },
   });
-  const plugin = { _markDirty() {}, look: {} };
+  const plugin = { _markDirty() {}, look: {}, styleFor: () => "Underline", cornerRadius: () => 0 };
   T.EngineProto.drawShredLine.call(plugin, ctx, 100, 0, 2, 24, "#f80", { dash: 1, letters: [] }, 0);
   ok("the Line as blades: six rects in one fill, in the line's paint", calls.filter((c) => c[0] === "rect").length === 6 && calls.filter((c) => c[0] === "fill").length === 1);
   calls.length = 0;
@@ -150,8 +150,20 @@ section("Shredder and Vacuum: drawn");
   const h = { char: "b", cx: 104.5, cy: 10, half: 4.8, font: "16px x", color: "#ddd", t0: 0, landed: true };
   T.EngineProto.drawHole.call(plugin, ctx, 100, 22, 9, 2, "#f80", { sag: T.HOLE_SAG, letters: [h] }, T.HOLE_FALL_MS / 2);
   const kinds = calls.filter((c) => ["fill", "stroke", "fillText", "clip"].includes(c[0])).map((c) => c[0]).join();
-  ok("the Underline dipping: the letter (stretched as it is pulled), clipped to above the bar, then the bar - no hole, no circle", kinds === "clip,fillText,stroke" && !calls.some((c) => c[0] === "ellipse" || c[0] === "arc") && calls.some((c) => c[0] === "scale" && c[2] > c[1]), kinds);
-  const bend = calls.filter((c) => c[0] === "quadraticCurveTo").pop();
-  ok("...the bar a shallow curve: its ends where they were, its middle down a little, at its thickness in its paint",
-     !!bend && bend[3] === 109 && bend[4] === 23 && bend[2] > 23 && bend[2] - 23 <= 2 * 0.35 * 9 && calls.some((c) => c[0] === "set lineWidth" && c[1] === 2) && calls.some((c) => c[0] === "set strokeStyle" && c[1] === "#f80"));
+  ok("the Underline dipping: the letter (stretched as it is pulled), clipped to above the bar, then the bar, one fill - no hole, no circle", kinds === "clip,fillText,fill" && !calls.some((c) => c[0] === "ellipse" || c[0] === "arc") && calls.some((c) => c[0] === "scale" && c[2] > c[1]), kinds);
+  // The outline's points, after the letter: the ends of its segments and
+  // each curve's middle.
+  const at = calls.findIndex((c) => c[0] === "fillText");
+  let cur = [0, 0];
+  const pts = calls.slice(at).flatMap((c) => {
+    if (c[0] === "moveTo" || c[0] === "lineTo") { cur = [c[1], c[2]]; return [cur]; }
+    if (c[0] !== "quadraticCurveTo") return [];
+    const mid = [0.25 * cur[0] + 0.5 * c[1] + 0.25 * c[3], 0.25 * cur[1] + 0.5 * c[2] + 0.25 * c[4]];
+    cur = [c[3], c[4]];
+    return [mid, cur];
+  });
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  ok("...the bar a shallow curve: its ends where they were, its middle down a little, in its paint",
+     Math.min(...xs) === 100 && Math.max(...xs) === 109 && Math.max(...ys) > 24 && Math.max(...ys) - 24 <= 0.35 * 9 && calls.some((c) => c[0] === "set fillStyle" && c[1] === "#f80"));
+  ok("...its ends standing up as arms: a U", pts.some((p) => p[0] === 100 && p[1] < 22 - 3) && pts.some((p) => p[0] === 109 && p[1] < 22 - 3));
 }

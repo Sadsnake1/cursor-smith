@@ -14,9 +14,14 @@
 // just a bit"; a dark ellipse for a day) - and it goes through, thinner,
 // out of sight; then the floor springs back up past straight and wobbles
 // to rest. A floor: on a Box or a Line the cursor morphs into one
-// first (effects-eaters.ts).
+// first (effects-eaters.ts). As it pulls, its ends stand up into arms - a
+// U ("add two serifs to the underline so it look like a U when pulling") -
+// from the Underline's own serifs when it has them (underSerifSize).
 import type { CaretRecord, DeletedLetters } from "../types";
 import { letterChoiceOf } from "../settings/settings";
+import { SERIF_TAPER } from "../constants";
+import { underSerifSize } from "../paint/paint-shape";
+import type { BackManCmd } from "./effects-backman";
 import type CursorSmithPlugin from "../plugin";
 
 // A letter's way in: pulled down to the floor (to LAND of the way), then
@@ -35,6 +40,10 @@ export const HOLE_HZ = 5;
 export const HOLE_DAMPING = 0.3;
 export const HOLE_KICK = 6;
 const MEAL_MAX = 12;
+// How fast the arms stand up as the floor dips (px of arm a px of dip), and
+// how tall they get above their rest (a share of the floor's width).
+export const HOLE_ARM_PULL = 2;
+const HOLE_ARM_MAX = 0.9;
 
 // A letter going down: where its middle stood, half its height (from its
 // middle to its foot), its font and color, when it set off, whether it has
@@ -79,6 +88,50 @@ export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
   const c = (u - SINK) / (1 - SINK);
   const sx = 0.6 - 0.35 * c, sy = 1 + HOLE_STRETCH + 0.4 * c, k = 1 - 0.2 * c;
   return { x: fx, foot: fy + 2 * l.half * sy * k * Math.pow(c, 1.2) + 1, sx, sy, k, rot: 0, alpha: 1, phase: 2, done: u >= 1 };
+}
+
+// How tall the floor's arms stand above its top edge: `base` at rest (the
+// Underline's serifs, 0 without them), taller as the floor dips `sag` px - a
+// U as it pulls - and back down as it springs back up past straight. Pure.
+export function holeArm(base: number, sag: number, w: number): number {
+  return base + Math.min(HOLE_ARM_MAX * w, HOLE_ARM_PULL * Math.max(0, sag));
+}
+
+// The floor as one outline, in a box from its left end's top edge (0, 0):
+// `w` wide, `h` thick, its middle dipped `sag` px (its top and bottom edges
+// the same parabola, the bar's ends where they were), and, with `arm` > 0,
+// an arm `t` thick standing `arm` above each end, its free end tapered on
+// the inside like a serif. Corners rounded by `corner` (the bar's) and
+// `armCorner` (an arm's, on its own thickness), as Rounded corners rounds
+// the cursor: one fill, so no overlap is painted twice. Pure.
+export function holeOutline(w: number, h: number, sag: number, arm: number, t: number, corner = 0, armCorner = 0): BackManCmd[] {
+  const f = (x: number) => 4 * sag * (x / w) * (1 - x / w);
+  const df = (x: number) => 4 * sag * (1 / w - (2 * x) / (w * w));
+  // The parabola from x = a to x = b, dy below the top edge: a quadratic
+  // whose control is where the tangents at its ends meet.
+  const para = (a: number, b: number, dy: number): BackManCmd => ["Q", (a + b) / 2, dy + f(a) + (df(a) * (b - a)) / 2, b, dy + f(b)];
+  const out: BackManCmd[] = [];
+  if (!(arm > 0.3) || w < 2 * t + 1) {
+    const r = Math.max(0, Math.min(corner, h / 2, w / 2));
+    out.push(["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, f(r)], para(r, w - r, 0), ["Q", w, 0, w, r],
+      ["L", w, h - r], ["Q", w, h, w - r, h + f(w - r)], para(w - r, r, h), ["Q", 0, h, 0, h - r], ["Z"]);
+    return out;
+  }
+  const a = arm, i = (a * SERIF_TAPER) / 2;
+  const top = -a + i, len = Math.hypot(t, i);
+  const ra = Math.max(0, Math.min(armCorner, t / 2, (a - i) / 2));
+  const rb = Math.max(0, Math.min(corner, armCorner, h / 2, t));
+  const ux = t / len, uy = i / len;
+  out.push(
+    ["M", 0, h - rb], ["L", 0, -a + ra],
+    // The left arm: its outer top corner, the tapered top, its inner corner.
+    ["Q", 0, -a, ra * ux, -a + ra * uy], ["L", t - ra * ux, top - ra * uy], ["Q", t, top, t, top + ra],
+    ["L", t, f(t)], para(t, w - t, 0), ["L", w - t, top + ra],
+    // The right arm, mirrored.
+    ["Q", w - t, top, w - t + ra * ux, top - ra * uy], ["L", w - ra * ux, -a + ra * uy], ["Q", w, -a, w, -a + ra],
+    ["L", w, h - rb], ["Q", w, h, w - rb, h + f(w - rb)], para(w - rb, rb, h), ["Q", 0, h, 0, h - rb], ["Z"],
+  );
+  return out;
 }
 
 export const effectsRabbitHoleMethods = {
@@ -158,7 +211,7 @@ export const effectsRabbitHoleMethods = {
   // the letters first (seen above the bar's top edge, curved as the bar is;
   // out of sight once through it), then the bar along the curve - its ends
   // where they were, its middle down (or up, springing back), its thickness
-  // the bar's.
+  // the bar's - with its arms (holeArm), all one fill (holeOutline).
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
     const sag = pose.sag * w;
     const cx = x + w / 2, mid = y + h / 2, top = y;
@@ -193,13 +246,21 @@ export const effectsRabbitHoleMethods = {
       ctx.restore();
       this._markDirty(Math.min(l.cx, cx) - w * 2, Math.min(l.cy, mid) - w * 2, Math.abs(l.cx - cx) + w * 4, Math.abs(l.cy - mid) + w * 4);
     }
-    // The bar along the curve (its lowest point `sag` below its ends).
-    ctx.strokeStyle = paint;
-    ctx.lineWidth = h;
-    ctx.lineCap = "butt";
+    // The bar along the curve (its lowest point `sag` below its ends), its
+    // arms up from its ends: the Underline's serifs at rest when it has
+    // them, standing taller as it dips.
+    const a = this.animActive;
+    const size = underSerifSize(h, a ? a.h : 6 * h, a ? a.actualCharWidth : w);
+    const serifs = this.styleFor("cursorStyle") === "Underline" && !!this.look.underlineSerifs;
+    const arm = holeArm(serifs ? size.len : 0, sag, w);
+    ctx.fillStyle = paint;
     ctx.beginPath();
-    ctx.moveTo(x, mid);
-    ctx.quadraticCurveTo(cx, mid + 2 * sag, x + w, mid);
-    ctx.stroke();
+    for (const c of holeOutline(w, h, sag, arm, size.t, this.cornerRadius(Math.min(w, h)), this.cornerRadius(size.t))) {
+      if (c[0] === "M") ctx.moveTo(x + c[1], y + c[2]);
+      else if (c[0] === "L") ctx.lineTo(x + c[1], y + c[2]);
+      else if (c[0] === "Q") ctx.quadraticCurveTo(x + c[1], y + c[2], x + c[3], y + c[4]);
+      else ctx.closePath();
+    }
+    ctx.fill();
   },
 };

@@ -15,7 +15,7 @@
 // cursor's choice on delete (eaterChoiceOf, settings.ts).
 import type CursorSmithPlugin from "../plugin";
 import { eaterChoiceOf, letterChoiceOf } from "../settings/settings";
-import type { CaretRecord, DeletedLetters } from "../types";
+import type { CaretState, CaretRecord, DeletedLetters } from "../types";
 import type { EaterChoice } from "../settings/settings";
 
 export const EATER_IN_MS = 90;
@@ -48,43 +48,67 @@ export function eaterForm(kind: Eater, gx: number, top: number, h: number, cw: n
   return { x: gx, y: top + h - uh, w: cw, h: uh };
 }
 
-// The trail an eater leaves with Motion smear on (eaterSmear): a streak in
-// its own height, from its edge out to where the smear reaches, at most
-// EATER_TRAIL_CW letters, fading from EATER_TRAIL_ALPHA of its paint at the
-// eater to nothing at the tail - "a smear trail", not a faint box beside it
-// ("The shredder doesn't leave a smear trail": a flat translucent block a
-// letter long read as one).
+// The trail an eater leaves with Motion smear on (eaterSmear): what it has
+// passed over along its row in the last EATER_TRAIL_MS, beyond where it is
+// now (EATER_TRAIL_CW letters at most), in its own height, each stretch
+// fading with how long ago it was there - from EATER_TRAIL_ALPHA of its
+// paint to nothing. Kept from its path, not from the smear spring's reach
+// at the moment: one slow Backspace on a phone moved the spring a letter
+// for a tenth of a second ("On phone it doesn't work", "no smear work on
+// deleting one phone").
 export const EATER_TRAIL_ALPHA = 0.6;
-export const EATER_TRAIL_CW = 6;
+export const EATER_TRAIL_CW = 8;
+export const EATER_TRAIL_MS = 280;
 
-// An eater's trail: the row band of its rect `r` (y, h), and a run each
-// side the smear's quad `q` reaches past the cursor's own rect `own` -
-// [from x, to x, dir] from the eater's edge out to the quad's far end
-// (`maxReach` px at most), dir +1 going right. None without a smear, with
-// one that reaches nowhere past the cursor (at rest: a trail there was a
-// ghost of the cursor over the Vacuum's floor), or one across rows (a
-// Backspace joining two lines). Pure.
-export function eaterTrail(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null, maxReach: number): { y: number; h: number; runs: [number, number, number][] } | null {
-  if (!q) return null;
-  const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x], ys = [q.tl.y, q.tr.y, q.br.y, q.bl.y];
-  const up = Math.max(0, own.y - Math.min(...ys)), down = Math.max(0, Math.max(...ys) - (own.y + own.h));
-  if (up > own.h * 0.5 || down > own.h * 0.5) return null;
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const runs: [number, number, number][] = [];
-  if (maxX - (own.x + own.w) >= 0.5) {
-    const from = r.x + r.w, to = Math.min(maxX, from + maxReach);
-    if (to - from >= 0.5) runs.push([from, to, 1]);
+// One frame of an eater's path: when, and the stretch of its row it covered
+// (its own rect, and the smear's reach past the cursor's box).
+export interface EaterPathPoint { t: number; x0: number; x1: number }
+
+// A frame's stretch: the eater's rect `r` widened by how far the smear's
+// quad `q` reaches past the cursor's own rect `own`, each way - not at
+// all when the quad spans rows (a Backspace joining two lines). Pure.
+export function eaterPathPoint(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null, t: number): EaterPathPoint {
+  let left = 0, right = 0;
+  if (q) {
+    const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x], ys = [q.tl.y, q.tr.y, q.br.y, q.bl.y];
+    const up = Math.max(0, own.y - Math.min(...ys)), down = Math.max(0, Math.max(...ys) - (own.y + own.h));
+    if (up <= own.h * 0.5 && down <= own.h * 0.5) {
+      left = Math.max(0, own.x - Math.min(...xs));
+      right = Math.max(0, Math.max(...xs) - (own.x + own.w));
+    }
   }
-  if (own.x - minX >= 0.5) {
-    const to = r.x, from = Math.max(minX, to - maxReach);
-    if (to - from >= 0.5) runs.push([from, to, -1]);
-  }
-  return runs.length ? { y: r.y, h: r.h, runs } : null;
+  return { t, x0: r.x - left, x1: r.x + r.w + right };
 }
 
-// How strong a trail is `f` of the way from the eater (0) to its tail (1).
-export function eaterTrailAlpha(f: number): number {
-  return EATER_TRAIL_ALPHA * Math.pow(1 - Math.max(0, Math.min(1, f)), 1.6);
+// The trail's runs: [from x, to x, dir] each way the path covered past the
+// eater's rect `r` within EATER_TRAIL_MS of `now`, `maxReach` px at most;
+// none when it covered nothing past it (at rest: no ghost). Pure.
+export function eaterTrailRuns(r: Rect, pts: EaterPathPoint[], now: number, maxReach: number): [number, number, number][] {
+  let lo = r.x, hi = r.x + r.w;
+  for (const p of pts) {
+    if (now - p.t >= EATER_TRAIL_MS) continue;
+    if (p.x0 < lo) lo = p.x0;
+    if (p.x1 > hi) hi = p.x1;
+  }
+  const runs: [number, number, number][] = [];
+  if (hi - (r.x + r.w) >= 0.5) runs.push([r.x + r.w, Math.min(hi, r.x + r.w + maxReach), 1]);
+  if (r.x - lo >= 0.5) runs.push([Math.max(lo, r.x - maxReach), r.x, -1]);
+  return runs;
+}
+
+// How long ago the path last covered `x` (Infinity: not in it). Pure.
+export function eaterPathAge(pts: EaterPathPoint[], x: number, now: number): number {
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    if (p.x0 - 0.01 <= x && x <= p.x1 + 0.01) return now - p.t;
+  }
+  return Infinity;
+}
+
+// A stretch of trail's strength, `age` ms after the eater was there.
+export function eaterTrailAlpha(age: number): number {
+  if (!(age < EATER_TRAIL_MS)) return 0;
+  return EATER_TRAIL_ALPHA * Math.pow(1 - Math.max(0, age) / EATER_TRAIL_MS, 1.4);
 }
 
 // A rect between `a` (k 0) and `b` (k 1). Pure.
@@ -101,6 +125,22 @@ export function eaterMorph(sinceIn: number, sinceOut: number): number {
 }
 
 export const effectsEatersMethods = {
+  // This caret's eater's trail this frame: its path (kept on the caret's
+  // own state, so several cursors keep theirs) given this frame's stretch,
+  // then the runs past where it is. A path from another row, or one gone
+  // stale (the eater was away), starts afresh.
+  _eaterTrail(this: CursorSmithPlugin, r: Rect, own: Rect, now: number, maxReach: number): { y: number; h: number; runs: [number, number, number][]; pts: EaterPathPoint[] } | null {
+    const st = this._caret as (CaretState & { _eatPath?: { y: number; pts: EaterPathPoint[] } }) | undefined;
+    if (!st) return null;
+    let path = st._eatPath;
+    const last = path && path.pts[path.pts.length - 1];
+    if (!path || !last || Math.abs(path.y - r.y) > 2 || now - last.t > 120) path = st._eatPath = { y: r.y, pts: [] };
+    path.pts.push(eaterPathPoint(r, own, this.smearCorners(), now));
+    while (path.pts.length && now - path.pts[0].t >= EATER_TRAIL_MS) path.pts.shift();
+    const runs = eaterTrailRuns(r, path.pts, now, maxReach);
+    return runs.length ? { y: r.y, h: r.h, runs, pts: path.pts } : null;
+  },
+
   // The eater chosen, with Pop effects on, or null.
   _eaterOn(this: CursorSmithPlugin): Eater | null {
     return this.look.popEffects ? eaterOf(eaterChoiceOf(this.look)) : null;
@@ -167,7 +207,7 @@ export const effectsEatersMethods = {
     // lines); then the cursor's own smear behind it, which on a Box was a
     // ghost box over the Vacuum's floor ("it leavs a ghost like a box on top
     // of it").
-    const trail = !e.back && this.look.smear && this.look.eaterSmear !== false ? eaterTrail(r, own, this.smearCorners(), EATER_TRAIL_CW * cw) : null;
+    const trail = !e.back && this.look.smear && this.look.eaterSmear !== false ? this._eaterTrail(form, own, now, EATER_TRAIL_CW * cw) : null;
     if (this._perf && this._perf.del) { this._perf.del.eater++; if (trail) this._perf.del.trail++; }
     if (trail) {
       // In slices, each fainter than the one before (eaterTrailAlpha), the
@@ -177,10 +217,12 @@ export const effectsEatersMethods = {
       const base = ctx.globalAlpha * (stroke > 0 ? 0.5 : 1);
       ctx.fillStyle = paint;
       for (const [from, to, dir] of trail.runs) {
-        const len = to - from, n = Math.max(3, Math.min(12, Math.round(len / 3)));
+        const len = to - from, n = Math.max(3, Math.min(16, Math.round(len / 3)));
         for (let i = 0; i < n; i++) {
-          ctx.globalAlpha = base * eaterTrailAlpha((i + 0.5) / n);
           const sx = dir > 0 ? from + (len * i) / n : to - (len * (i + 1)) / n;
+          const a = eaterTrailAlpha(eaterPathAge(trail.pts, sx + len / n / 2, now));
+          if (a <= 0.005) continue;
+          ctx.globalAlpha = base * a;
           ctx.fillRect(sx, trail.y, len / n + 0.25, trail.h);
         }
       }

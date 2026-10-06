@@ -170,7 +170,14 @@ export const effectsShredderMethods = {
         glyph();
         ctx.restore();
       }
-      this._markDirty(cut - far, l.top - l.h, far + l.w + 2, 3 * l.h + f.dy);
+      // All it may paint, for the next frame's clear: the part not yet
+      // through, anywhere up to \`far\` right of the cut - a word taken in one
+      // go has letters standing well past it (a phone's held Backspace soon
+      // deletes word by word), and marking one letter's width left the rest
+      // on the page - and the ribbons left of it, fanned up and down by the
+      // shear and fallen (or risen) by dy.
+      const fan = SHRED_FAN * ((SHRED_RIBBONS - 1) / 2) * far;
+      this._markDirty(cut - far - 2, l.top - l.h - fan - Math.max(0, -f.dy), 2 * far + 4, 3 * l.h + 2 * fan + Math.abs(f.dy));
     }
   },
 

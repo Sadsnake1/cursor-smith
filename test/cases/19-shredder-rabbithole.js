@@ -146,6 +146,20 @@ section("Shredder and Vacuum: drawn");
   const l = { char: "a", x: 100, w: 9, top: 0, h: 24, font: "16px x", color: "#ddd", t0: 0 };
   T.EngineProto.drawShreds.call(plugin, ctx, 100, { dash: 1, letters: [l] }, T.SHRED_FEED_MS / 2);
   ok("a letter half through: drawn whole past the cut, and as five sheared ribbons before it", calls.filter((c) => c[0] === "fillText").length === 1 + T.SHRED_RIBBONS && calls.filter((c) => c[0] === "transform").length === T.SHRED_RIBBONS && calls.filter((c) => c[0] === "clip").length === 1 + T.SHRED_RIBBONS);
+  // A word taken in one go (a phone's held Backspace deletes word by word):
+  // its last letter stood far right of the cut. All it may paint is marked
+  // for the next clear - the part not yet through, up to 4 line heights past
+  // the cut, and the ribbons fanned before it; one letter's width past the
+  // cut left the rest on the page ("letter artifacts ... when the deletion
+  // of words began").
+  {
+    const marks = [];
+    const p2 = Object.assign({}, plugin, { _markDirty: (x, y, w, h2) => marks.push({ x, y, w, h: h2 }) });
+    const far = { char: "z", x: 100 + 70, w: 9, top: 0, h: 24, font: "16px x", color: "#ddd", t0: 0 };
+    T.EngineProto.drawShreds.call(p2, ctx, 100, { dash: 1, letters: [far] }, 10);
+    const m = marks[0];
+    ok("a word's far letter: everything it may paint marked - the unfed part up to 4 line heights past the cut, the fanned ribbons before it", !!m && m.x <= 100 - 4 * 24 && m.x + m.w >= 100 + 4 * 24 && m.y < -24 && m.y + m.h > 2 * 24, m);
+  }
   calls.length = 0;
   const h = { char: "b", cx: 104.5, cy: 10, half: 4.8, font: "16px x", color: "#ddd", t0: 0, landed: true };
   T.EngineProto.drawHole.call(plugin, ctx, 100, 22, 9, 2, "#f80", { sag: T.HOLE_SAG, letters: [h] }, T.HOLE_FALL_MS / 2);

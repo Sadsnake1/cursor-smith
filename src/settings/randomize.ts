@@ -156,6 +156,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
     const eats: EaterChoice = chance(0.3 + 0.4 * chaos) ? pick<EaterChoice>(["backman", "shredder", "rabbithole"]) : "none";
     const lets: LetterChoice = pick<LetterChoice>(["burst", "burst", "evaporate", ...(full && eats === "none" ? [] : ["vanish" as LetterChoice])]);
     for (const [choice, key] of EATER_KEYS) (look as Record<string, unknown>)[key] = choice === eats;
+    look.eaterInvert = eats !== "none" && chance(0.15 + 0.2 * chaos);
     for (const [choice, key] of LETTER_KEYS) (look as Record<string, unknown>)[key] = choice === lets;
     look.shredderLetters = rand() < 0.8;
     look.thunderstrike = chance(0.2 + 0.6 * chaos);

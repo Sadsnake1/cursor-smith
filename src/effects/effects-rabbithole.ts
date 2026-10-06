@@ -186,6 +186,8 @@ export const effectsRabbitHoleMethods = {
       if (f.done) continue;
       const far = 6 * Math.max(w, Math.abs(l.cx - cx) + w);
       ctx.save();
+      // Its own color, whatever turns the floor's (eaterInvert).
+      ctx.filter = "none";
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
       // Above the bar's top edge, along its curve.

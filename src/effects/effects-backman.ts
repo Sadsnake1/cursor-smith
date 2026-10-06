@@ -381,6 +381,8 @@ export const effectsBackManMethods = {
     for (const { m, e } of pose.meal) {
       const cx = m.cx + (mx - m.cx) * e, cy = m.cy + (my - m.cy) * e, k = Math.max(0.05, 1 - 0.8 * e);
       ctx.save();
+      // Its own color, whatever turns Back-man's (eaterInvert).
+      ctx.filter = "none";
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
       ctx.font = m.font;

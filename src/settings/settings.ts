@@ -224,6 +224,8 @@ export const DEFAULT_SETTINGS = {
   capsLookShift: true,
   capsLookInvert: true,
   capsLookGrow: true,
+  // The eaters (Back-man, Shredder, Vacuum) in their opposite colors (1.7.7).
+  eaterInvert: false,
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
   // which is what this style did before the slider existed, so an existing
   // setup (and a fresh install) keeps exactly the look it had.
@@ -570,6 +572,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   // default.
   "underlineSerifs", "capsLook",
   "capsLookCapsLock", "capsLookShift", "capsLookInvert", "capsLookGrow",
+  // The eaters' colors inverted (1.7.7). Appended, off by default.
+  "eaterInvert",
 ];
 
 // ---------------------------------------------------------------------------

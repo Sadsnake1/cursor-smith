@@ -11,7 +11,7 @@ const fs = require("fs");
 
 section("Underline serifs");
 {
-  ok("look keys, appended: the serifs and Caps Lock and Shift off, its parts on", T.LOOK_KEYS.slice(-6).join() === "underlineSerifs,capsLook,capsLookCapsLock,capsLookShift,capsLookInvert,capsLookGrow" && T.DEFAULT_SETTINGS.underlineSerifs === false && T.DEFAULT_SETTINGS.capsLook === false &&
+  ok("look keys, appended: the serifs and Caps Lock and Shift off, its parts on", T.LOOK_KEYS.slice(T.LOOK_KEYS.indexOf("underlineSerifs"), T.LOOK_KEYS.indexOf("underlineSerifs") + 6).join() === "underlineSerifs,capsLook,capsLookCapsLock,capsLookShift,capsLookInvert,capsLookGrow" && T.LOOK_KEYS.indexOf("underlineSerifs") > T.LOOK_KEYS.indexOf("shredderLetters") && T.DEFAULT_SETTINGS.underlineSerifs === false && T.DEFAULT_SETTINGS.capsLook === false &&
      ["capsLookCapsLock", "capsLookShift", "capsLookInvert", "capsLookGrow"].every((k) => T.DEFAULT_SETTINGS[k] === true));
   const s = T.underSerifSize(3, 24, 9);
   ok("a tick as thick as a Line's serif on the bar (no thicker than it), small: a third of the letter", s.t === 2 && s.t <= 3 && Math.abs(s.len - 2.7) < 1e-9, s);
@@ -203,4 +203,44 @@ section("Caps Lock and Shift");
   ok("...hidden with it off", !sub || !sub.def.visible());
   const roll = T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(3));
   ok("the Randomizer keeps it as it is", !("capsLook" in roll));
+}
+
+section("The eaters' colors inverted");
+{
+  ok("a look key, appended, off by default", T.LOOK_KEYS.indexOf("eaterInvert") > T.LOOK_KEYS.indexOf("capsLookGrow") && T.DEFAULT_SETTINGS.eaterInvert === false);
+  const rows = (look) => renderPanel({ popEffects: true, ...look });
+  // The Effects card's (Appearance has one too, Caps Lock and Shift's): the last.
+  const inv = (rs) => rs[rs.map((x) => x.name).lastIndexOf("Invert colors")];
+  const r1 = rows({ backMan: true });
+  const at = r1.map((x) => x.name).lastIndexOf("Invert colors");
+  ok("a setting under the eater's choice, shown with an eater chosen, hidden with none", at > r1.findIndex((x) => x.name === "Cursor on delete") && at < r1.findIndex((x) => x.name === "Letters on delete") && r1[at].def.visible() &&
+     !inv(rows({})).def.visible() && inv(rows({ rabbitHole: true })).def.visible());
+
+  // drawEater with each painter stubbed: what the canvas's filter is as each draws.
+  const run = (kind, m, invert, paint = "rgba(255, 128, 0, 0.9)") => {
+    const e = makeEngine({ eaterInvert: invert, popEffects: true });
+    e._eaterNow = () => ({ kind, back: false, m });
+    e.animActive = { x: 100, top: 40, w: 9, h: 24, actualCharWidth: 9 };
+    e._capsAccent = () => "#7f6df2";
+    const seen = {};
+    const ctx = { filter: "none" };
+    e.backManPose = () => ({}); e.shredPose = () => ({}); e.holePose = () => ({});
+    e.drawBackMan = (c, x, y, w, h, p) => { seen.body = c.filter; seen.paint = p; };
+    e.drawShreds = (c) => { seen.letters = c.filter; };
+    e.drawShredLine = (c, x, y, w, h, p) => { seen.body = c.filter; seen.paint = p; };
+    e.drawHole = (c, x, y, w, h, p) => { seen.body = c.filter; seen.paint = p; };
+    const drew = e.drawEater(ctx, { x: 100, y: 40, w: 9, h: 24 }, 100, paint, 0, 0, 1000);
+    return { drew, after: ctx.filter, ...seen };
+  };
+  const bm = run("backman", 1, true), half = run("rabbithole", 0.5, true), off = run("backman", 1, false);
+  ok("on: the eater's hue turned half the wheel, the canvas's filter put back after", bm.drew && bm.body === "hue-rotate(180deg)" && bm.after === "none");
+  ok("...as far as it has the caret (half morphed in, a quarter turn)", half.body === "hue-rotate(90deg)");
+  const sh = run("shredder", 1, true);
+  ok("...the Shredder's blades turned, the letters it cuts not", sh.body === "hue-rotate(180deg)" && sh.letters === "none");
+  ok("off: nothing turned", off.body === "none" && off.paint === "rgba(255, 128, 0, 0.9)");
+  const gray = run("rabbithole", 1, true, "rgba(204, 204, 204, 0.9)");
+  ok("a white or gray cursor's eater painted toward the accent's half-turn (shown as the accent), its alpha kept", gray.paint !== "rgba(204, 204, 204, 0.9)" && /, 0\.9\)$/.test(gray.paint), gray.paint);
+  const src = (n) => fs.readFileSync(srcPath(n), "utf8");
+  ok("the letters Back-man and the Vacuum eat are drawn unturned", /ctx\.filter = "none";/.test(src("effects-backman.ts")) && /ctx\.filter = "none";/.test(src("effects-rabbithole.ts")));
+  ok("the preview turns its eater the same way", /look\.eaterInvert \? em : 0/.test(src("demo.ts")));
 }

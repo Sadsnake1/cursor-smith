@@ -56,7 +56,7 @@ import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL
 import { Platform } from "obsidian";
 import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 import { capsEase, capsScale } from "../effects/effects-caps";
-import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
+import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
@@ -605,7 +605,7 @@ interface Demo {
   // The caret's morph into its eater's shape and back (effects-eaters.ts).
   eatM: { kind: Eater; t0: number; exit: number } | null;
   eatOn: "" | "shred" | "hole";
-  bm: { bend: number; v: number; at: number };
+  bm: { bend: number; v: number; at: number; eye?: number };
   bmOn: boolean;
   burns: { x: number; t: number }[];
   fireAcc: number;
@@ -1452,10 +1452,12 @@ export class DemoStrip {
     let bm: (ReturnType<typeof backManBite> & { bend: number }) | null = null;
     if (eatKind === "backman" && d.eatM && !d.eatM.exit && d.geo) {
       const b = d.bm;
-      if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.at = this.last; }
       const c = d.bmChew;
       const bite = c ? backManBite(Math.max(0, this.last - c.c0), c.t - c.c0, c.big) : null;
-      if ((bite && !bite.done) || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) bm = { ...(bite && !bite.done ? bite : backManBite(1e9)), bend: b.bend };
+      // The eye eased as the engine's: quick to shut, slow to open.
+      const eye = backManEyeEase(b.eye ?? 0, bite && !bite.done ? bite.squint : 0, this.last - b.at);
+      if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.eye = eye; b.at = this.last; }
+      if ((bite && !bite.done) || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) bm = { ...(bite && !bite.done ? bite : backManBite(1e9)), bend: b.bend, squint: eye };
     }
     const n = (v: number) => v.toFixed(2);
     if (bm && d.geo) {

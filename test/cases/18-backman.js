@@ -76,6 +76,14 @@ section("Back-man: the bite and the gulp");
   ok("...with a happy squint, shut at its height", sMax > 0.99 && sT > fT && sT < bT + 40 && T.backManEye(-1, 0, T.backManBite(sT).squint, 9, 24).closed, sT);
   const end = T.backManBite(T.BACKMAN_HOLD_MS);
   ok("...all over by the end of the hold", end.open === 0 && end.front === 0 && end.back === 0 && end.squint === 0 && end.done);
+  let shut = 0;
+  for (let ms = 0; ms <= T.BACKMAN_HOLD_MS; ms += 2) if (T.backManEye(-1, 0, T.backManBite(ms).squint, 9, 24).closed) shut += 2;
+  ok("...the eye shut a good while (a quarter of a second and more), outlasting the gulp", shut >= 250 && T.BACKMAN_HOLD_MS > T.BACKMAN_GULP_MS + 0.6 * T.BACKMAN_CHOMP_MS + 150, shut);
+  let s = 1, t = 0;
+  for (; s > 0.3 && t < 1000; t += 10) s = T.backManEyeEase(s, 0, 10);
+  let c = 0, u = 0;
+  for (; c < 0.7 && u < 1000; u += 10) c = T.backManEyeEase(c, 1, 10);
+  ok("the eye as shown: quick to shut, slow to open (a quick bite between does not flick it open)", u < t && t >= 80 && T.backManEyeEase(1, 0, 0) === 1, [u, t]);
 }
 
 section("Back-man: chewing at its own pace");
@@ -159,8 +167,8 @@ section("Back-man: the bites");
     now = last + T.BACKMAN_HOLD_MS - 1;
     p = e.backManPose(now);
     ok("after the last bite: the mouth shut, the bend easing back", !!p && p.open === 0 && Math.abs(p.bend) < atBite / 2, [atBite, p]);
-    now = last + 500;
-    ok("...and a Box again within half a second", e.backManPose(now) === null && !e.backManMoving(now));
+    now = last + 750;
+    ok("...and a Box again within three quarters of a second (its eye open again first)", e.backManPose(now) === null && !e.backManMoving(now));
     now += 1500;
     e._backManBite(1);
     now += T.BACKMAN_CHOMP_MS / 2;

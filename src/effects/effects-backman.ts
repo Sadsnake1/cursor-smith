@@ -29,7 +29,14 @@ import type CursorSmithPlugin from "../plugin";
 export const BACKMAN_CHOMP_MS = 140;
 export const BACKMAN_GULP_MS = 220;
 const GULP_FROM = 0.6;
-export const BACKMAN_HOLD_MS = Math.round(GULP_FROM * BACKMAN_CHOMP_MS + BACKMAN_GULP_MS);
+// The happy squint, from the gulp on: quick to shut, held, slow to open -
+// longer than the gulp ("make the eye last a bit longer because it's too
+// eye tireing. and it's eye closing a bit longer"; it was a sine bump
+// over the gulp, shut for an eighth of a second). Shares of it: shutting,
+// then held shut.
+export const BACKMAN_SQUINT_MS = 420;
+const SQUINT_SHUT = 0.2, SQUINT_HELD = 0.5;
+export const BACKMAN_HOLD_MS = Math.round(GULP_FROM * BACKMAN_CHOMP_MS + BACKMAN_SQUINT_MS);
 export const BACKMAN_GROW = 0.18;
 // A big bite (a word, a line, a selection) against a letter's: its chomp
 // and its gulp this much slower, its swell this much bigger, its kick this
@@ -51,7 +58,8 @@ const MEAL_MAX = 12;
 export interface BackManMorsel { char: string; cx: number; cy: number; w: number; old: CaretRecord; font: string; color: string; t0: number; t1: number }
 // c0: when this run of chewing began; t: the last key; big: a big bite.
 // mouth, head: where they were last drawn (the letters' effect plays there).
-export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[]; mouth?: { x: number; y: number }; head?: { x: number; y: number } }
+// eye: the squint as shown (backManEyeEase).
+export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[]; mouth?: { x: number; y: number }; head?: { x: number; y: number }; eye?: number }
 // open: the mouth; front, back: the gulp's swell of each side; squint: the
 // eye's happy squint (1 shut); g: how far the gulp has gone (0 to 1 while
 // it goes); meal: the letters going in, each with how far it has gone (e,
@@ -63,23 +71,41 @@ export interface BackManPose {
 
 // A bump from 0 up to 1 and back over [a, b] of `g`, 0 outside.
 const hump = (g: number, a: number, b: number) => (g > a && g < b ? Math.sin((Math.PI * (g - a)) / (b - a)) : 0);
+const smooth = (x: number) => { const c = Math.max(0, Math.min(1, x)); return c * c * (3 - 2 * c); };
+// The squint `q` of its way through (0 to 1): shutting, held shut, opening.
+const squintAt = (q: number) => q <= 0 || q >= 1 ? 0
+  : q < SQUINT_SHUT ? smooth(q / SQUINT_SHUT)
+  : q < SQUINT_SHUT + SQUINT_HELD ? 1
+  : smooth((1 - q) / (1 - SQUINT_SHUT - SQUINT_HELD));
+
+// The eye as shown, eased toward the squint over `dt` ms: shutting fast,
+// opening slowly - so quick bites one after another (the eye open between
+// them for a moment) do not flick it open and shut. Pure, shared with the
+// previews.
+export function backManEyeEase(cur: number, target: number, dt: number): number {
+  const tau = target > cur ? 30 : 80;
+  const next = target + (cur - target) * Math.exp(-Math.max(0, dt) / tau);
+  return Math.abs(next - target) < 0.005 ? target : next;
+}
 
 // The chewing `tn` ms into a run that began with a key, its last key `tk`
 // ms in (0: one key): the mouth chomps at its own pace, one chomp after
 // another while keys keep coming, and finishes the chomp the last key fell
 // in (one key, one chomp; a held key, about seven a second, never a flicker
 // of half bites); then the gulp's swell - the front first, then the back,
-// as it goes down - and the squint that goes with it. `big`: a big bite.
-// `end`: when the last chomp shuts; `done`: the gulp over. Pure, shared
-// with the previews.
+// as it goes down - and the squint that goes with it, outlasting it
+// (BACKMAN_SQUINT_MS). `big`: a big bite. `end`: when the last chomp
+// shuts; `done`: the gulp and the squint over. Pure, shared with the
+// previews.
 export function backManBite(tn: number, tk = 0, big = false) {
   const ch = BACKMAN_CHOMP_MS * (big ? BACKMAN_BIG.chomp : 1);
   const gulp = BACKMAN_GULP_MS * (big ? BACKMAN_BIG.gulp : 1);
   const grow = BACKMAN_GROW * (big ? BACKMAN_BIG.grow : 1);
   const end = Math.max(1, Math.ceil((Math.max(0, tk) + ch) / ch)) * ch;
   const open = tn >= 0 && tn < end ? Math.sin((Math.PI * (tn % ch)) / ch) : 0;
-  const g = (tn - (end - ch) - GULP_FROM * ch) / gulp;
-  return { open, front: grow * hump(g, 0, 0.55), back: grow * hump(g, 0.35, 1), squint: hump(g, 0.05, 0.95), g, end, done: g >= 1 };
+  const from = tn - (end - ch) - GULP_FROM * ch;
+  const g = from / gulp, q = from / (BACKMAN_SQUINT_MS * (big ? BACKMAN_BIG.gulp : 1));
+  return { open, front: grow * hump(g, 0, 0.55), back: grow * hump(g, 0.35, 1), squint: squintAt(q), g, end, done: g >= 1 && q >= 1 };
 }
 
 // A key at `now` on a run of chewing (`c`, or none): a new run when there
@@ -263,7 +289,9 @@ export const effectsBackManMethods = {
     if (!s || !this._backManOn()) return null;
     // A frame stamped a hair before the key still shows the bite's start.
     const b = backManBite(Math.max(0, now - s.c0), s.t - s.c0, s.big);
-    if (now > s.at) { backManSpring(s, (now - s.at) / 1000); s.at = now; }
+    // The eye, eased toward the squint (over the same step as the bend).
+    const eye = backManEyeEase(s.eye ?? 0, b.squint, now - s.at);
+    if (now > s.at) { backManSpring(s, (now - s.at) / 1000); s.eye = eye; s.at = now; }
     // A letter down: the letters' effect - Burst as crumbs from the mouth as
     // the jaws shut on it, Evaporate as its ghost rising from the head. Before
     // all else: a frame late (a pause) still plays it.
@@ -275,13 +303,13 @@ export const effectsBackManMethods = {
       else { const at = s.head || { x: m.cx, y: m.cy - h / 2 }; this._eatenLetterFx(m.char, m.w, m.old, at.x - m.w / 2, at.y - 0.85 * h); }
     }
     s.meal = s.meal.filter((m) => now < m.t1);
-    const settled = Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05;
+    const settled = Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05 && eye < 0.05;
     if (b.done && settled) { this._backMan = null; return null; }
     const meal = s.meal.map((m) => {
       const u = Math.max(0, Math.min(1, (now - m.t0) / Math.max(1, m.t1 - m.t0)));
       return { m, e: 1 - (1 - u) * (1 - u) };
     });
-    return { open: b.open, front: b.front, back: b.back, squint: b.squint, g: b.g, dir: s.dir, bend: s.bend, meal };
+    return { open: b.open, front: b.front, back: b.back, squint: eye, g: b.g, dir: s.dir, bend: s.bend, meal };
   },
 
   // Whether it is still about (the frame governor keeps the frames coming

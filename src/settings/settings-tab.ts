@@ -1005,9 +1005,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           void plugin.saveSettings();
         }));
     });
-    items.push(dial("Chaos", "How many effects, and how strong. At 100, all of them at once.", "rollChaos"));
-    items.push(dial("Color", "From one calm color to gradients and rainbows.", "rollColor"));
-    items.push(dial("Motion", "How likely gliding, smear and trails are, and how far they go.", "rollMotion"));
+    items.push(dial("Chaos", "How many effects, and how strong.", "rollChaos"));
+    items.push(dial("Color", "From one color to rainbows.", "rollColor"));
+    items.push(dial("Motion", "From still to always on the move.", "rollMotion"));
     // A switch per effect a roll may pick (not the torch or the bracket
     // tether: never rolled). Each with the Effects page's name and icon; out
     // of settings search (the Effects page's rows carry the same names).
@@ -1065,7 +1065,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const plugin = this.plugin;
     return {
       name: "Roll",
-      desc: "Replaces the cursor you're editing. Save it in Presets if you like it.",
+      desc: "A whole new cursor. Keep it in Presets.",
       render: (setting) => {
         this.resetRow(setting);
         setting.settingEl.addClass("cursor-smith-roll-buttons-row");
@@ -1582,7 +1582,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // and share codes read as they did. Next to Popping letters: the pair
     // that fires per character, one for adding and one for removing.
     const EATER_NAMES: Record<EaterChoice, string> = { none: "Nothing", backman: "Back-man", shredder: "Shredder", rabbithole: "Rabbit hole" };
-    const LETTER_NAMES: Record<LetterChoice, string> = { vanish: "Just vanish", burst: "Burst", evaporate: "Evaporate" };
+    const LETTER_NAMES: Record<LetterChoice, string> = { vanish: "None", burst: "Burst", evaporate: "Evaporate" };
     for (const [, key] of [...EATER_KEYS, ...LETTER_KEYS]) { owns(key); gates.add(key); }
     const lookNow = () => ({ backMan: !!get("backMan"), shredder: !!get("shredder"), rabbitHole: !!get("rabbitHole"), backspaceEvaporate: !!get("backspaceEvaporate"), backspaceDisintegrate: !!get("backspaceDisintegrate") });
     const eater = () => eaterChoiceOf(lookNow());
@@ -1592,12 +1592,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       refresh();
       return Promise.all(writes.map((w) => Promise.resolve(w)));
     };
-    effects.push(row("Cursor on delete", "What your cursor does as Backspace and Delete take the letters: it can eat them.", (st) => {
+    effects.push(row("Cursor on delete", "Your cursor eats the letters you delete.", (st) => {
       st.addDropdown((d) => d.addOptions(EATER_NAMES).setValue(eater()).onChange(async (v) => { await choose(EATER_KEYS, v); }));
     }, { depth: 1, when: pop }));
     effects.push(toggle("Shredded letters", "Show the letters going through the blades and falling as ribbons. Off, they simply vanish.", "shredderLetters",
       { depth: 2, when: () => pop() && eater() === "shredder" }));
-    effects.push(row("Letters on delete", "What happens to the letters you delete: they burst, evaporate, or just go.", (st) => {
+    effects.push(row("Letters on delete", "Deleted letters burst apart or float away.", (st) => {
       st.addDropdown((d) => d.addOptions(LETTER_NAMES).setValue(letterChoiceOf(lookNow())).onChange(async (v) => { await choose(LETTER_KEYS, v); }));
     }, { depth: 1, when: pop }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));

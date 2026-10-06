@@ -1,5 +1,5 @@
 // On delete (1.7.7): two choices - the cursor's (Nothing, Back-man,
-// Shredder, Rabbit hole) and the letters' (Just vanish, Burst, Evaporate),
+// Shredder, Rabbit hole) and the letters' (None, Burst, Evaporate),
 // every pair working together - kept in the five switches they replaced
 // (eaterChoiceOf, letterChoiceOf); the eaters on any cursor (the cursor
 // morphs from its own shape into its eater's and back); and the combos (the

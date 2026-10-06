@@ -184,6 +184,8 @@ export interface Look {
   flameTrailWhen: string;
   crtGlitchWhen: string;
   eaterSmear: boolean;
+  crtTrailWhen: string;
+  speedDemonWhen: string;
   boxHollow: boolean;
   boxHollowWidth: number;
   underlineWidthPx: number;

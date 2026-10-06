@@ -311,3 +311,16 @@ section("The torch flips with the rest");
   e._capsCanvas(e._deleteT + 210);
   ok("...a glow layer rebuilt meanwhile catches up on the next frame", e.glowEl.style.filter === "hue-rotate(180deg)");
 }
+
+section("When: the CRT ghosts and Speed demon");
+{
+  ok("look keys, appended; as before by default", T.LOOK_KEYS.indexOf("crtTrailWhen") > T.LOOK_KEYS.indexOf("eaterSmear") && T.LOOK_KEYS.indexOf("speedDemonWhen") === T.LOOK_KEYS.indexOf("crtTrailWhen") + 1 &&
+     T.DEFAULT_SETTINGS.crtTrailWhen === "both" && T.DEFAULT_SETTINGS.speedDemonWhen === "both");
+  const rows = renderPanel({ crtEffect: true, speedDemon: true });
+  const under = (name, parent) => { const i = rows.findIndex((x) => x.name === name); return i > rows.findIndex((x) => x.name === parent) && (!rows[i].def.visible || rows[i].def.visible()); };
+  ok("a dropdown under each: Ghosts while (CRT effects), Heats while (Speed demon)", under("Ghosts while", "CRT effects") && under("Heats while", "Speed demon"));
+  const carets = fs.readFileSync(srcPath("carets.ts"), "utf8"), plugin = fs.readFileSync(srcPath("plugin.ts"), "utf8");
+  ok("the ghosts recorded by Ghosts while; a keystroke's heat by Heats while, a move's not while deleting alone",
+     carets.includes("if (whenAllows(this.look.crtTrailWhen, ") && carets.includes(")) this.pushTrail(this.lastActive, caret);") &&
+     /if \(!whenAllows\(this\.look\.speedDemonWhen, kind === "delete"\)\) return;/.test(plugin) && /this\.look\.speedDemonWhen !== "deleting"/.test(carets));
+}

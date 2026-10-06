@@ -1723,6 +1723,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(slider("Trail length", "How many ghosts are kept behind the cursor. 0 leaves none.", "trailLength", [0, 30, 1], { depth: 1, when: crt }));
     effects.push(slider("Trail fade time", "How long (in ms) each ghost takes to fade out.", "trailFadeMs", [50, 1500, 25], { depth: 1, when: crt }));
     effects.push(toggle("Glow", "A soft halo around the cursor in its own color.", "glow", { depth: 1, when: crt }));
+    effects.push(dropdown("Ghosts while", "Typing, deleting, or both.", "crtTrailWhen", WHEN_NAMES, { depth: 1, value: get("crtTrailWhen") || "both", when: crt }));
     effects.push(toggle("Neon trail", "Renders the ghosts as a glowing neon tube instead of fading boxes.", "crtNeon", { depth: 1, gate: true, when: crt }));
     effects.push(toggle("Gradient trail", "Runs the cursor's gradient along the streak, newest ghost to oldest.", "crtNeonGradient", { depth: 2, when: all(crt, on("crtNeon")), needs: needsGradient }));
     effects.push(toggle("Signal glitch", "Long jumps break up like a mistracked video signal.", "crtGlitch", { depth: 1, gate: true, when: crt }));
@@ -1735,6 +1736,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     const showDemon = shown("speedDemon");
     effects.push(toggle("Speed demon", "Heats from gray to white-hot as you type, cools when you stop.", "speedDemon", { gate: true, when: showDemon }));
     const demon = all(showDemon, on("speedDemon"));
+    effects.push(dropdown("Heats while", "Typing, deleting, or both. Deleting alone: the faster you delete, the hotter it gets.", "speedDemonWhen", WHEN_NAMES, { depth: 1, value: get("speedDemonWhen") || "both", when: demon }));
     effects.push(toggle("Fire sparks", "Throws embers off the cursor once it is hot enough.", "speedDemonSparks", { depth: 1, gate: true, when: demon }));
     const sparks = all(demon, on("speedDemonSparks"));
     effects.push(slider("Spark quantity", "How many embers per burst. 0 stops them.", "speedDemonSparkQuantity", [0, 3, 0.1], { depth: 2, fallback: 1, when: sparks }));

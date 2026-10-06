@@ -799,7 +799,9 @@ export const caretsMethods = {
     // over is a nudge and a leap across the file is a real bump, but neither
     // can slam the cursor to white-hot in one go. Keyboard-driven moves are
     // skipped here because onKeyDown already charged them.
-    if (this.look.speedDemon && this.lastActive && caret && !secondary) {
+    // Not when it heats while deleting alone (speedDemonWhen): a move is no
+    // deletion.
+    if (this.look.speedDemon && this.lastActive && caret && !secondary && this.look.speedDemonWhen !== "deleting") {
       const keyed = this._heatKeyT && performance.now() - this._heatKeyT < 150;
       if (!keyed) {
         const dist = Math.hypot(caret.x - this.lastActive.x, caret.top - this.lastActive.top);
@@ -824,7 +826,9 @@ export const caretsMethods = {
     // Record the position being left, and - if this move is a jump - the ghosts
     // bridging it to the destination, so the CRT/neon trail is continuous across
     // the leap the same commit it happens rather than one move later.
-    this.pushTrail(this.lastActive, caret);
+    // Ghosts while (crtTrailWhen): typing, deleting or both - this move a
+    // deletion's or not (the same test as below).
+    if (whenAllows(this.look.crtTrailWhen, !!(this._deletePending && performance.now() - this._deletePending < 250))) this.pushTrail(this.lastActive, caret);
     if (this.lastActive) {
       // Consume a pending Backspace/Delete keystroke if it happened
       // recently enough to plausibly be the cause of this caret move.

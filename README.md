@@ -54,8 +54,8 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 | **Bracket tether** | A line under the span between matching brackets or quotes. |
 | **Motion smear** | The cursor stretches as it moves and snaps back when it arrives. |
 | **Energy beam** | A pulse of light along the cursor; an aurora with a gradient. |
-| **CRT effects** | Phosphor ghosts behind the cursor, neon and glitch options; the glitch on jumps, deletes, or both. |
-| **Speed demon** | Heats from gray to white-hot as you type, throwing sparks. |
+| **CRT effects** | Phosphor ghosts behind the cursor while you type, delete, or both; neon and glitch options, the glitch on jumps, deletes, or both. |
+| **Speed demon** | Heats from gray to white-hot as you type, throwing sparks. Or as you delete: the faster, the hotter. |
 | **Hot-head** | Sets the text you're working on alight, in pixel-art flames, while you type, delete, or both. |
 | **Torch spotlight** | Darkens everything except a pool of warm light around the cursor. |
 

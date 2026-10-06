@@ -233,6 +233,9 @@ export const DEFAULT_SETTINGS = {
   hotHeadWhen: "both",
   flameTrailWhen: "both",
   crtGlitchWhen: "jumps",
+  // ...and the CRT ghosts and Speed demon's heat ("both" what they did).
+  crtTrailWhen: "both",
+  speedDemonWhen: "both",
   // The eaters smeared with Motion smear as they move (1.7.7): on.
   eaterSmear: true,
   // Underline cursor thickness in px. 0 = auto: scale with the line height,
@@ -462,7 +465,8 @@ export type EaterChoice = "none" | "backman" | "shredder" | "rabbithole";
 export type LetterChoice = "vanish" | "burst" | "evaporate";
 export const EATER_KEYS: [Exclude<EaterChoice, "none">, keyof Look][] = [["backman", "backMan"], ["shredder", "shredder"], ["rabbithole", "rabbitHole"]];
 export const LETTER_KEYS: [Exclude<LetterChoice, "vanish">, keyof Look][] = [["evaporate", "backspaceEvaporate"], ["burst", "backspaceDisintegrate"]];
-// When an effect goes (hotHeadWhen, flameTrailWhen; crtGlitchWhen's
+// When an effect goes (hotHeadWhen, flameTrailWhen, crtTrailWhen,
+// speedDemonWhen; crtGlitchWhen's
 // "jumps" counts as "typing"): whether it may at a moment that is a delete
 // (`deleting`) or not. Pure.
 export type EffectWhen = "both" | "typing" | "deleting" | "jumps";
@@ -595,6 +599,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "hotHeadWhen", "flameTrailWhen", "crtGlitchWhen",
   // The eaters smeared with Motion smear (1.7.7). Appended, on.
   "eaterSmear",
+  // When the CRT ghosts and Speed demon go (1.7.7). Appended.
+  "crtTrailWhen", "speedDemonWhen",
 ];
 
 // ---------------------------------------------------------------------------

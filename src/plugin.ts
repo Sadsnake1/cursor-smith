@@ -3,7 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { CARET_STATE_FIELDS, WATCHDOG_INTERVAL_MS, keystrokeHeatWeight, DEVICE_ENABLED_KEY } from "./constants";
 import { applyReducedMotion, isTextCaretHost } from "./util/motion";
 import { DEFAULT_PRESET_NAME, DEFAULT_VIM_PRESETS, applyStarterPreset, seedPresets } from "./settings/presets";
-import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook, soundsApart } from "./settings/settings";
+import { DEFAULT_SETTINGS, VIM_MODE_KEYS, cloneVimModes, migrateLegacyKeys, pickLook, soundsApart, whenAllows } from "./settings/settings";
 import { CursorSmithSettingTab } from "./settings/settings-tab";
 import type { Text as DocText } from "@codemirror/state";
 import type {
@@ -1181,6 +1181,9 @@ export default class CursorSmithPlugin extends Plugin {
       // helper for the desktop/mobile split that made "delete" earn its
       // repeat exemption the hard way.
       if (!this.look.speedDemon) return;
+      // Heats while (speedDemonWhen): typing, deleting or both - deleting
+      // alone is a meter of how fast you delete.
+      if (!whenAllows(this.look.speedDemonWhen, kind === "delete")) return;
       const weight = keystrokeHeatWeight(kind, !!opts.repeat);
       if (!weight) return;
       const bump = 0.09 * weight * (this.look.speedDemonSensitivity ?? 1);

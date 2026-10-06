@@ -454,6 +454,17 @@ section("frame caps, wake sources, geometry cache, report (the #30 tail)");
     const none = e._chromeInsets({ body: { classList: { contains: () => false } }, defaultView: { innerWidth: 1330, innerHeight: 702 }, querySelector: () => null, querySelectorAll: () => [] });
     ok("with no covers the canvas is free: 0 and Infinity", none.coverTop === 0 && none.coverBottom === Infinity, [none.coverTop, none.coverBottom]);
     ok("the selector names Word-Smith's masks and its bar", T.CARET_COVERS === ".ws-mask, .ws-status-bar");
+    // Word-Smith's title strip in Zen: a cover when painted (page mode), not when transparent.
+    const strip = (bg) => {
+      e._chromeCache = null;
+      const s = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1330, height: 40, right: 1330, bottom: 40 }) };
+      return e._chromeInsets({ body: { classList: { contains: () => false } }, defaultView: { innerWidth: 1330, innerHeight: 702, getComputedStyle: () => ({ backgroundColor: bg }) },
+        querySelector: (sel) => (sel === T.ZEN_STRIP ? s : null), querySelectorAll: () => [] }).coverTop;
+    };
+    ok("Word-Smith's Zen title strip painted (page mode: its ground, a color-mix) covers the caret down to its bottom edge",
+       strip("color(srgb 0.07 0.08 0.09)") === 40 && strip("rgb(20, 22, 26)") === 40 && T.ZEN_STRIP === ".titlebar.ws-main-titlebar");
+    ok("...transparent (Zen without page mode) it covers nothing: the text and the caret show through it", strip("rgba(0, 0, 0, 0)") === 0 && strip("transparent") === 0 && strip("color(srgb 0 0 0 / 0.2)") === 0);
+    ok("a color's alpha, every form", T.cssAlpha("rgba(1, 2, 3, 0.4)") === 0.4 && T.cssAlpha("rgb(1, 2, 3)") === 1 && T.cssAlpha("color(srgb 1 0 0 / 50%)") === 0.5 && T.cssAlpha("transparent") === 0 && T.cssAlpha("#123456") === 1);
   }
 
   // --- geometry cache ----------------------------------------------------------

@@ -211,6 +211,19 @@ export function capsColor(hex: string, k: number, accent: string): string {
   return rgbTupleToHex([0, 1, 2].map((i) => rgb[i] + (to[i] - rgb[i]) * m));
 }
 
+// How opaque a computed CSS color is, 0 to 1: rgba()'s fourth part,
+// color()'s and the modern forms' "/ alpha", "transparent" none; any
+// other color whole. Pure.
+export function cssAlpha(color: string): number {
+  const c = (color || "").trim();
+  if (!c || c === "transparent") return 0;
+  const slash = c.match(/\/\s*([\d.]+)(%?)\s*\)$/);
+  if (slash) return slash[2] ? Number(slash[1]) / 100 : Number(slash[1]);
+  const rgba = c.match(/^rgba\(([^)]*)\)$/);
+  if (rgba) { const parts = rgba[1].split(","); return parts.length >= 4 ? Number(parts[3]) : 1; }
+  return 1;
+}
+
 export function invertColor(colorStr: string) {
   const nums = (colorStr || "").match(/[\d.]+/g);
   if (!nums || nums.length < 3) return "#000000";

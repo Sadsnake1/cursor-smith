@@ -217,6 +217,10 @@ export function keystrokeHeatWeight(kind: string, repeat: boolean) {
 // bar. Only a full-width one counts (_chromeInsets); a floating pill is the
 // status-bar clip's business.
 export const CARET_COVERS = ".ws-mask, .ws-status-bar";
+// Word-Smith's title strip in Zen (fixed over the top of the window): a
+// cover too when it is painted - page mode paints it the page's ground -
+// and not when it is transparent (_chromeInsets).
+export const ZEN_STRIP = ".titlebar.ws-main-titlebar";
 
 export const GEOMETRY_TTL_MS = 400;
 

@@ -9,7 +9,8 @@
 // the caret and the clip rects the canvas is fitted to.
 
 import { View } from "obsidian";
-import { CARET_COVERS, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME } from "../constants";
+import { cssAlpha } from "../util/color";
+import { CARET_COVERS, ZEN_STRIP, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME } from "../constants";
 import { isTextCaretHost, lastGrapheme } from "../util/motion";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import type { EditorView } from "@codemirror/view";
@@ -1215,6 +1216,20 @@ export const measureMethods = {
       if (r.height <= 0 || r.width < win2.innerWidth * 0.4) continue;
       if (r.top + r.height / 2 < win2.innerHeight / 2) coverTop = Math.max(coverTop, r.bottom);
       else coverBottom = Math.min(coverBottom, r.top);
+    }
+    // Word-Smith's title strip in Zen, when it is painted ("the cursors in
+    // word-smith zen with page mode on displays over that title bar
+    // thing"): page mode paints it the page's ground, and the text scrolled
+    // under it is hidden by it - but with the masks off it is not raised
+    // over our layers, so the canvas (above the editor while a torch can be
+    // on) drew the caret over it. Transparent (Zen without page mode) it
+    // hides nothing: the text shows through it, and so does the caret.
+    const strip = doc.querySelector<HTMLElement>(ZEN_STRIP);
+    if (strip && typeof win2.getComputedStyle === "function" && this._isVisiblyRendered(strip)) {
+      const r = strip.getBoundingClientRect();
+      if (r.height > 0 && r.top <= 1 && r.width >= win2.innerWidth * 0.4 && cssAlpha(win2.getComputedStyle(strip).backgroundColor) >= 0.5) {
+        coverTop = Math.max(coverTop, r.bottom);
+      }
     }
 
     this._chromeCache = { doc, t: now, top, bottomInset, statusLeft, statusRight, coverTop, coverBottom };

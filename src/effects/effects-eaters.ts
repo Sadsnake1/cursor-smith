@@ -14,7 +14,6 @@
 // cursor already of that shape just plays it. Which one, if any, is the
 // cursor's choice on delete (eaterChoiceOf, settings.ts).
 import type CursorSmithPlugin from "../plugin";
-import { capsColor, hexToRgba } from "../util/color";
 import { eaterChoiceOf, letterChoiceOf } from "../settings/settings";
 import type { CaretRecord, DeletedLetters } from "../types";
 import type { EaterChoice } from "../settings/settings";
@@ -123,21 +122,6 @@ export const effectsEatersMethods = {
     const bm = !e.back && e.kind === "backman" ? this.backManPose(now) : null;
     const shred = !e.back && e.kind === "shredder" ? this.shredPose(now) : null;
     const hole = !e.back && e.kind === "rabbithole" ? this.holePose(now) : null;
-    // Its colors inverted (eaterInvert, "add suboptions to invert colors of
-    // back-man, shredder and vacuum"): its hue turned half the wheel as far
-    // as the cursor has become the eater (m: in as it morphs in, out as it
-    // morphs back) - a white or gray cursor painted toward the accent's
-    // half-turn, which the turn brings to the accent (capsColor). The
-    // letters it eats keep theirs (each painter draws them with no filter).
-    const inv = this.look.eaterInvert ? e.m : 0;
-    const was = ctx.filter;
-    if (inv > 0) {
-      if (typeof paint === "string") {
-        const hex = capsColor(paint, inv, this._capsAccent());
-        if (hex !== paint) { const n = paint.match(/[\d.]+/g); paint = hexToRgba(hex, n && n.length >= 4 ? Number(n[3]) : 1); }
-      }
-      ctx.filter = `hue-rotate(${Math.round(180 * inv)}deg)`;
-    }
     if (bm) {
       this.drawBackMan(ctx, r.x, r.y, r.w, r.h, paint, bm, stroke, corner);
     } else if (shred) {
@@ -146,10 +130,7 @@ export const effectsEatersMethods = {
       const la = this.lastActive;
       const style = this.styleFor("cursorStyle");
       const cut = la ? la.x + (style === "Line" ? this.caretThickness() / 2 : 0) : gx;
-      const turn = ctx.filter;
-      ctx.filter = was;
       this.drawShreds(ctx, cut, shred, now);
-      ctx.filter = turn;
       this.drawShredLine(ctx, r.x, r.y, r.w, r.h, paint, shred, now);
     } else if (hole) {
       this.drawHole(ctx, r.x, r.y, r.w, r.h, paint, hole, now);
@@ -167,7 +148,6 @@ export const effectsEatersMethods = {
         ctx.fill();
       }
     }
-    ctx.filter = was;
     return true;
   },
 };

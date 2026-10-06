@@ -179,7 +179,7 @@ export interface Look {
   capsLookShift: boolean;
   capsLookInvert: boolean;
   capsLookGrow: boolean;
-  eaterInvert: boolean;
+  deleteInvert: boolean;
   boxHollow: boolean;
   boxHollowWidth: number;
   underlineWidthPx: number;

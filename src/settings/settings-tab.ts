@@ -1512,6 +1512,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     appearance.push(toggle("Shift", "Shows it while Shift is held on its own.", "capsLookShift", { depth: 1, when: caps }));
     appearance.push(toggle("Invert colors", "Flips the cursor and its effects to their opposite colors.", "capsLookInvert", { depth: 1, when: caps }));
     appearance.push(toggle("Grow", "Makes the cursor a little bigger.", "capsLookGrow", { depth: 1, when: caps }));
+    // Backspace and Delete (1.7.7, effects-caps.ts): the same flip while you
+    // delete - any cursor, with or without an eater.
+    appearance.push(toggle("Backspace and Delete", "While you delete, the cursor and its effects turn their opposite colors.", "deleteInvert"));
     // --- Blinking ------------------------------------------------------------
     card = "Blinking";
     const blinking = [];
@@ -1610,9 +1613,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     }, { depth: 1, when: pop }));
     effects.push(toggle("Shredded letters", "Show the letters going through the blades and falling as ribbons. Off, they simply vanish.", "shredderLetters",
       { depth: 2, when: () => pop() && eater() === "shredder" }));
-    // Whichever eater: in its opposite colors (effects-eaters.ts).
-    effects.push(toggle("Invert colors", "Back-man, the Shredder and the Vacuum in their opposite colors.", "eaterInvert",
-      { depth: 2, when: () => pop() && eater() !== "none" }));
     effects.push(row("Letters on delete", "Deleted letters burst apart or float away.", (st) => {
       st.addDropdown((d) => d.addOptions(LETTER_NAMES).setValue(letterChoiceOf(lookNow())).onChange(async (v) => { await choose(LETTER_KEYS, v); }));
     }, { depth: 1, when: pop }));

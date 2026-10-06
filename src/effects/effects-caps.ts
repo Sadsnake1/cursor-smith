@@ -17,6 +17,14 @@
 // and replace (it runs commands in the others). The mouse reads Caps Lock
 // too, so it is right after coming back from another app. Phones report
 // neither key, and the setting is hidden there.
+//
+// Backspace and Delete (1.7.7, "add backspace and delete inverted colors on
+// appearence too ... so even if you dont pick an eater it works"): the same
+// flip while you delete - for a moment after each Backspace or Delete (held,
+// it stays), and for as long as an eater has the cursor. The flip is its
+// own eased channel (flipAmount), wanted by either; the grow is Caps Lock
+// and Shift's alone (capsAmount). On a phone too (the delete arrives as an
+// input event there).
 import { Platform } from "obsidian";
 import { capsColor } from "../util/color";
 import type CursorSmithPlugin from "../plugin";
@@ -27,6 +35,9 @@ import type CursorSmithPlugin from "../plugin";
 export const CAPS_GROW = 0.15;
 export const CAPS_GROW_LINE_W = 0.5, CAPS_GROW_LINE_H = 0.06;
 export const CAPS_EASE_MS = 28;
+// How long the flip stays after a Backspace or Delete (a held key repeats
+// well inside it).
+export const DELETE_INVERT_MS = 300;
 // A white or gray cursor's stand-in when Obsidian's accent cannot be read.
 const CAPS_FALLBACK = "#ffb000";
 
@@ -85,6 +96,16 @@ export const effectsCapsMethods = {
     this._capsChanged();
   },
 
+  // A Backspace or Delete (plugin.ts: the key, or the input event where
+  // keys are not reported): the flip on, for DELETE_INVERT_MS from now.
+  _deleteFlip(this: CursorSmithPlugin) {
+    const now = performance.now();
+    if (!this.look.deleteInvert) return;
+    if (!(now - this._deleteT < DELETE_INVERT_MS)) this._capsChangeT = now;
+    this._deleteT = now;
+    this._markActivity("key");
+  },
+
   // The window losing focus: a Shift held through Alt+Tab never sends its
   // keyup here.
   _capsBlur(this: CursorSmithPlugin) {
@@ -119,24 +140,49 @@ export const effectsCapsMethods = {
     return s.amt;
   },
 
-  // Whether it is still easing (the frame governor keeps the frames coming).
-  // A pure read, as the governor's must be: the amount as last drawn, against
-  // what is wanted now.
-  capsMoving(this: CursorSmithPlugin, _now: number): boolean {
-    return (this._caps ? this._caps.amt : 0) !== (this._capsWanted() ? 1 : 0);
+  // Whether the colors are wanted flipped at `now`: by Caps Lock and Shift
+  // (Invert colors on), or by a delete - the last within DELETE_INVERT_MS,
+  // or an eater (effects-eaters.ts) still having the cursor.
+  _flipWanted(this: CursorSmithPlugin, now: number): boolean {
+    const look = this.look;
+    if (look.capsLookInvert !== false && this._capsWanted()) return true;
+    if (!look.deleteInvert) return false;
+    return now - this._deleteT < DELETE_INVERT_MS || (!!this._eat && !this._eat.exit);
+  },
+
+  // How far the colors are flipped at `now` (0 none, 1 all), eased as
+  // capsAmount is - from the key that changed it, not the last frame drawn.
+  flipAmount(this: CursorSmithPlugin, now: number): number {
+    const s = this._flip || (this._flip = { amt: 0, at: now, on: false });
+    const on = this._flipWanted(now);
+    if (on !== s.on) {
+      const t = Math.min(now, Math.max(s.at, this._capsChangeT));
+      if (t > s.at) { s.amt = capsEase(s.amt, s.on, t - s.at); s.at = t; }
+      s.on = on;
+    }
+    if (now > s.at) { s.amt = capsEase(s.amt, on, now - s.at); s.at = now; }
+    return s.amt;
+  },
+
+  // Whether either is still easing (the frame governor keeps the frames
+  // coming). A pure read, as the governor's must be: the amounts as last
+  // drawn, against what is wanted now.
+  capsMoving(this: CursorSmithPlugin, now: number): boolean {
+    return (this._caps ? this._caps.amt : 0) !== (this._capsWanted() ? 1 : 0)
+      || (this._flip ? this._flip.amt : 0) !== (this._flipWanted(now) ? 1 : 0);
   },
 
   // The look's part of a static frame's signature (_frameSignature): wanted
   // or not, and how far in as last drawn.
   _capsSig(this: CursorSmithPlugin): string {
-    return (this._capsWanted() ? "C" : "c") + Math.round((this._caps ? this._caps.amt : 0) * 100);
+    return (this._capsWanted() ? "C" : "c") + Math.round((this._caps ? this._caps.amt : 0) * 100)
+      + (this._flipWanted(performance.now()) ? "F" : "f") + Math.round((this._flip ? this._flip.amt : 0) * 100);
   },
 
   // A color the cursor is painted in, as far as the look is in: a white or
   // gray one toward the accent (capsColor); the canvas's turn does the rest.
   _capsFlip(this: CursorSmithPlugin, hex: string): string {
-    if (this.look.capsLookInvert === false) return hex;
-    const k = this.capsAmount(performance.now());
+    const k = this.flipAmount(performance.now());
     return k > 0 ? capsColor(hex, k, this._capsAccent()) : hex;
   },
 
@@ -168,7 +214,11 @@ export const effectsCapsMethods = {
   _capsCanvas(this: CursorSmithPlugin, now: number) {
     const el = this.canvas;
     if (!el) return;
-    const k = this.look.capsLookInvert === false ? 0 : this.capsAmount(now);
+    // Both channels advanced every frame drawn: the grow's too, which only
+    // the painters read - with Grow off it would never settle, and the frame
+    // governor would keep the loop hot for it (capsMoving).
+    this.capsAmount(now);
+    const k = this.flipAmount(now);
     const want = k > 0 ? `hue-rotate(${Math.round(180 * k)}deg)` : "";
     if (this._capsFilter === want) return;
     this._capsFilter = want;

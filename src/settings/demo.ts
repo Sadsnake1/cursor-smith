@@ -55,7 +55,7 @@ import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { Platform } from "obsidian";
 import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
-import { capsEase, capsScale } from "../effects/effects-caps";
+import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
@@ -589,8 +589,11 @@ interface Demo {
   capsAt: number;
   capsShown: boolean;
   capsFilter: string;
-  // The eater's hue turn last written on the caret (eaterInvert).
-  eatTurn: string;
+  // Backspace and Delete: until when the last delete flips the colors, the
+  // flip's eased amount and when it was eased.
+  delUntil: number;
+  flipAmt: number;
+  flipAt: number;
   // Back-man (effects-backman.ts): its run of chewing (backManChew), its
   // bend's spring, its mouth's corner (x, for the letters going in), and
   // whether the caret wears it now (to put the caret back once).
@@ -719,7 +722,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", eatTurn: "", bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -946,6 +949,18 @@ export class DemoStrip {
     return d.capsAmt;
   }
 
+  // How far the colors are flipped: by a capital typed (Caps Lock and
+  // Shift's Invert colors), or a delete - for DELETE_INVERT_MS after it, or
+  // while the eater has the caret (the engine's).
+  private flipNow(d: Demo, caps: number): number {
+    const look = d.look;
+    const on = (caps > 0 && this.last < d.capsUntil && look.capsLookInvert !== false)
+      || (!!look.deleteInvert && (this.last < d.delUntil || (!!d.eatM && !d.eatM.exit)));
+    d.flipAmt = capsEase(d.flipAmt, on, this.last - d.flipAt);
+    d.flipAt = this.last;
+    return d.flipAmt;
+  }
+
   // Obsidian's accent as hex (what a canvas reads it back as), read once.
   private accentHex(d: Demo): string {
     if (this.accent) return this.accent;
@@ -990,6 +1005,8 @@ export class DemoStrip {
   // The preview, a typo backspaced: the letter evaporates or bursts apart,
   // as Backspace's effects do; the typewriter dips for the key.
   private onBack(d: Demo, at: number, ch: string, now: number) {
+    // Backspace and Delete's flip, for a moment (flipNow).
+    d.delUntil = now + DELETE_INVERT_MS;
     // Back-man's bite: chewed at its own pace, kicking its bend leftward,
     // where it eats.
     // The eater chosen in "When you delete", whatever the caret's style.
@@ -1327,7 +1344,7 @@ export class DemoStrip {
     // (the preview's hue turned, as the engine's canvas), a white or gray
     // caret to the accent, the caret grown from its foot, easing in and out.
     const caps = this.capsNow(d);
-    const invert = caps > 0 && d.look.capsLookInvert !== false ? caps : 0;
+    const invert = this.flipNow(d, caps);
     const turn = invert > 0 ? `hue-rotate(${Math.round(180 * invert)}deg)` : "";
     if (d.capsFilter !== turn) { d.capsFilter = turn; d.el.setCssStyles({ filter: turn }); }
     const accent = invert > 0 ? this.accentHex(d) : "";
@@ -1381,10 +1398,10 @@ export class DemoStrip {
     };
     if (d.shape.hollowWidth) styles.borderColor = color;
     else if (heated) styles.backgroundColor = color;
-    if (caps > 0 || d.capsShown) {
+    if (caps > 0 || invert > 0 || d.capsShown) {
       // Flipped (a white or gray one, its gradient's every stop, the letter
       // inside readable on it) - or, once, back as it was.
-      const flip = caps > 0;
+      const flip = caps > 0 || invert > 0;
       const grad = d.shape.gradient && invert > 0 ? gradientCss(d.style, d.stops.map((c) => capsColor(c, invert, accent))) : d.shape.gradient;
       styles.transformOrigin = flip ? (sc.foot ? "50% 100%" : "50% 50%") : "";
       if (d.shape.hollowWidth) { styles.borderColor = color; if (grad) styles.borderImage = `${grad} 1`; }
@@ -1429,7 +1446,7 @@ export class DemoStrip {
     // effect plays in that, and it morphs back. ex, ew: the shape's left
     // and width for the eaters below.
     const eatKind = look.popEffects ? eaterOf(eaterChoiceOf(look)) : null;
-    let ex = from, ew = width, eatShape = false, inv = 0;
+    let ex = from, ew = width, eatShape = false;
     if (d.geo) {
       const c0 = d.bmChew;
       const live = eatKind === "backman" ? (!!c0 && !backManBite(Math.max(0, this.last - c0.c0), c0.t - c0.c0, c0.big).done) || Math.abs(d.bm.bend) >= 0.004 || Math.abs(d.bm.v) >= 0.05
@@ -1444,20 +1461,13 @@ export class DemoStrip {
         const g = d.geo;
         const gx = d.style === "line" ? from + lineShift : from;
         const own = { x: from, y: parseFloat(styles.top) || 0, w: width, h: parseFloat(styles.height) || 0 };
-        const em = eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1);
-        const r = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH), em);
+        const r = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
         ex = r.x; ew = r.w; eatShape = true;
-        // Its colors inverted as far as it has the caret (the engine's).
-        inv = look.eaterInvert ? em : 0;
         Object.assign(styles, { transform: `translateX(${r.x.toFixed(2)}px)`, width: `${r.w.toFixed(2)}px`, height: `${r.h.toFixed(2)}px`, top: `${r.y.toFixed(2)}px` });
         // A hollow box's border gives way to the line and the floor.
         if (d.shape.hollowWidth && d.eatM.kind !== "backman") styles.borderColor = "transparent";
       }
     }
-    // A white or gray caret's eater toward the accent's half-turn (the turn
-    // brings it to the accent); any other color as it is.
-    const eatColor = inv > 0 ? capsColor(color, inv, this.accentHex(d)) : color;
-    if (inv > 0 && eatColor !== color && !d.shape.hollowWidth) styles.backgroundColor = eatColor;
     let bm: (ReturnType<typeof backManBite> & { bend: number }) | null = null;
     if (eatKind === "backman" && d.eatM && !d.eatM.exit && d.geo) {
       const b = d.bm;
@@ -1487,7 +1497,7 @@ export class DemoStrip {
       const eyePath = poly(eye.shape);
       const glintPath = eye.glint ? " " + poly(eye.glint) : "";
       if (d.shape.hollowWidth) {
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n(wide)} ${n(high)}' preserveAspectRatio='none'><path d='${outline}' fill='none' stroke='${inv > 0 ? eatColor : d.shape.fill}' stroke-width='${n(sw)}' stroke-linejoin='round'/><path d='${eyePath}' fill='${inv > 0 ? eatColor : d.shape.fill}'/></svg>`;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n(wide)} ${n(high)}' preserveAspectRatio='none'><path d='${outline}' fill='none' stroke='${d.shape.fill}' stroke-width='${n(sw)}' stroke-linejoin='round'/><path d='${eyePath}' fill='${d.shape.fill}'/></svg>`;
         Object.assign(styles, {
           borderColor: "transparent", borderImage: "none", backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
           backgroundSize: "100% 100%", backgroundOrigin: "border-box", backgroundRepeat: "no-repeat",
@@ -1518,7 +1528,7 @@ export class DemoStrip {
         Object.assign(styles, {
           transform: `${styles.transform} translateX(${n2(Math.sin(this.last * 0.11) * 0.5 * dash)}px)`,
           backgroundColor: "transparent", backgroundSize: "100% 100%",
-          backgroundImage: `repeating-linear-gradient(to bottom, ${eatColor} 0px, ${eatColor} ${n2(len)}px, transparent ${n2(len)}px, transparent ${n2(pitch)}px)`,
+          backgroundImage: `repeating-linear-gradient(to bottom, ${color} 0px, ${color} ${n2(len)}px, transparent ${n2(len)}px, transparent ${n2(pitch)}px)`,
         });
         eat = "shred";
       }
@@ -1540,7 +1550,7 @@ export class DemoStrip {
         const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
         const path = holeOutline(ew, bh, sag, d.shape.radius).map((c) =>
           c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(c[1])} ${n2(up + c[2])} ${n2(c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(c[1])} ${n2(up + c[2])}`).join(" ");
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${eatColor}'/></svg>`;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/></svg>`;
         Object.assign(styles, {
           height: `${n2(H)}px`, top: `${n2(top - up)}px`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
@@ -1550,10 +1560,6 @@ export class DemoStrip {
       }
     }
     d.holeWeighed = false;
-    // The eater's colors inverted (eaterInvert): its hue turned as far as it
-    // has the caret; written only on change.
-    const eatTurn = inv > 0 ? `hue-rotate(${Math.round(180 * inv)}deg)` : "";
-    if (eatTurn !== d.eatTurn) { styles.filter = eatTurn; d.eatTurn = eatTurn; }
     if (!eat && d.eatOn) {
       Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "" });
     }

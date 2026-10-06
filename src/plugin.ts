@@ -178,6 +178,9 @@ export default class CursorSmithPlugin extends Plugin {
   declare _capsWanted: EffectsMethods["_capsWanted"];
   declare capsAmount: EffectsMethods["capsAmount"];
   declare capsMoving: EffectsMethods["capsMoving"];
+  declare _deleteFlip: EffectsMethods["_deleteFlip"];
+  declare _flipWanted: EffectsMethods["_flipWanted"];
+  declare flipAmount: EffectsMethods["flipAmount"];
   declare _capsFlip: EffectsMethods["_capsFlip"];
   declare _capsAccent: EffectsMethods["_capsAccent"];
   declare _capsGrow: EffectsMethods["_capsGrow"];
@@ -679,6 +682,10 @@ export default class CursorSmithPlugin extends Plugin {
   _capsOn = false;
   _shiftHeld = false;
   _caps: { amt: number; at: number; on: boolean } | null = null;
+  // Backspace and Delete: the last delete, and the flip's eased amount
+  // (Caps Lock and Shift's too).
+  _deleteT = -1e9;
+  _flip: { amt: number; at: number; on: boolean } | null = null;
   // When the keys last changed (the ease starts there).
   _capsChangeT = 0;
   _capsAccentCache: { hex: string; t: number } | null = null;
@@ -1209,6 +1216,8 @@ export default class CursorSmithPlugin extends Plugin {
         // A Line's Shredder cuts, an Underline's Rabbit hole opens.
         this._shredBite();
         this._holeBite();
+        // Backspace and Delete's flip (effects-caps.ts).
+        this._deleteFlip();
       }
       // Enter flag: consumed by the next commitMove() so a Thunderstrike can
       // be aimed at the caret's NEW line. Keyed off the keystroke rather than
@@ -1248,6 +1257,7 @@ export default class CursorSmithPlugin extends Plugin {
         this._backManBite(t.includes("Forward") ? 1 : -1, /^delete(Word|SoftLine|HardLine|EntireSoftLine|ByCut|ByDrag)/.test(t) || this._backManSelected());
         this._shredBite();
         this._holeBite();
+        this._deleteFlip();
       }
       else if (t === "insertLineBreak" || t === "insertParagraph") noteKeystroke("enter");
       else if (t === "insertText" || t === "insertCompositionText" ||

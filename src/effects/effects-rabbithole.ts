@@ -3,11 +3,14 @@
 // CursorSmithPlugin.prototype, so every `this.x` read and every test reach
 // them exactly as before. `this` is the plugin.
 //
-// Pop effects' Vacuum (1.7.7; asked as "Portal. It sucks the letters in",
-// named Rabbit hole, renamed when "it does not look like a rabbit hole" -
-// the code keeps the old names, rabbitHole and hole*, as the saved
-// settings do): the Underline cursor - the floor under the letter - sucks
-// the letters Backspace or Delete takes down into it. A letter is pulled
+// Pop effects' Portal (1.7.7; asked as "Portal. It sucks the letters in",
+// named Rabbit hole, then Vacuum when "it does not look like a rabbit
+// hole", then Portal again when "the underline vacuum needs to open a bit.
+// so a gap could work. and maybe rename it to Portal" - the code keeps the
+// old names, rabbitHole and hole*, as the saved settings do): the
+// Underline cursor - the floor under the letter - sucks the letters
+// Backspace or Delete takes down into it, opening as it does: a gap in its
+// middle (HOLE_GAP of it at most) the letter goes through. A letter is pulled
 // down, faster and faster, stretching tall and thin toward it (no streaks:
 // the user's word); the floor dips in one quick pull as the letter goes in
 // - a shallow dip ("dont make the cursor a circle, make it curved concave
@@ -31,6 +34,16 @@ const LAND = 0.55, SINK = LAND;
 // thinner as much).
 export const HOLE_SAG = 0.3;
 export const HOLE_STRETCH = 0.5;
+// How wide the floor opens, at most, as a letter goes in: this much of the
+// floor's width, the gap opening and closing with the dip.
+export const HOLE_GAP = 0.6;
+
+// The gap in a floor `w` wide dipped `sag` px: none at rest or bulging up,
+// HOLE_GAP of it at the full dip. Pure.
+export function holeGap(sag: number, w: number): number {
+  if (!(sag > 0) || !(w > 0)) return 0;
+  return Math.min(1, sag / (HOLE_SAG * w)) * HOLE_GAP * w;
+}
 // The floor's spring: its frequency (Hz) and damping ratio (0.3: it springs
 // back past straight and wobbles), the kick a landing gives it and a key's
 // tap (letter widths a second).
@@ -88,19 +101,30 @@ export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
 // `w` wide, `h` thick, its middle dipped `sag` px (its top and bottom edges
 // the same parabola, the bar's ends where they were), its corners rounded
 // by `corner` as Rounded corners rounds the cursor. Pure.
-export function holeOutline(w: number, h: number, sag: number, corner = 0): BackManCmd[] {
+//
+// With a `gap` (holeGap) the bar is two halves either side of its middle,
+// each still on the curve - their inner ends dipping into the opening.
+export function holeOutline(w: number, h: number, sag: number, corner = 0, gap = 0): BackManCmd[] {
   const f = (x: number) => 4 * sag * (x / w) * (1 - x / w);
   const df = (x: number) => 4 * sag * (1 / w - (2 * x) / (w * w));
   // The parabola from x = a to x = b, dy below the top edge: a quadratic
   // whose control is where the tangents at its ends meet.
   const para = (a: number, b: number, dy: number): BackManCmd => ["Q", (a + b) / 2, dy + f(a) + (df(a) * (b - a)) / 2, b, dy + f(b)];
+  if (gap >= 0.5) {
+    const a = Math.max(0, (w - gap) / 2), b = Math.min(w, (w + gap) / 2);
+    const r = Math.max(0, Math.min(corner, h / 2, a / 2));
+    return [
+      ["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, f(r)], para(r, a, 0), ["L", a, h + f(a)], para(a, r, h), ["Q", 0, h, 0, h - r], ["Z"],
+      ["M", b, f(b)], para(b, w - r, 0), ["Q", w, 0, w, r], ["L", w, h - r], ["Q", w, h, w - r, h + f(w - r)], para(w - r, b, h), ["Z"],
+    ];
+  }
   const r = Math.max(0, Math.min(corner, h / 2, w / 2));
   return [["M", 0, h - r], ["L", 0, r], ["Q", 0, 0, r, f(r)], para(r, w - r, 0), ["Q", w, 0, w, r],
     ["L", w, h - r], ["Q", w, h, w - r, h + f(w - r)], para(w - r, r, h), ["Q", 0, h, 0, h - r], ["Z"]];
 }
 
 export const effectsRabbitHoleMethods = {
-  // On for the look showing: Pop effects and Vacuum the cursor's choice on
+  // On for the look showing: Pop effects and Portal the cursor's choice on
   // delete - on any cursor (effects-eaters.ts morphs it into a floor).
   _holeOn(this: CursorSmithPlugin): boolean {
     return this._eaterOn() === "rabbithole";
@@ -179,6 +203,8 @@ export const effectsRabbitHoleMethods = {
   // the bar's - one fill (holeOutline), rounded as Rounded corners rounds it.
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
     const sag = pose.sag * w;
+    // The opening: wider the deeper it dips, closed at rest.
+    const gap = holeGap(sag, w);
     const cx = x + w / 2, mid = y + h / 2, top = y;
     if (this._hole) this._hole.floor = { x: cx, y: top + sag };
     for (const l of pose.letters) {
@@ -197,6 +223,9 @@ export const effectsRabbitHoleMethods = {
       ctx.quadraticCurveTo(cx, top + 2 * sag, x, top);
       ctx.lineTo(x - far, top);
       ctx.closePath();
+      // ...and down through the opening, to the bar's foot: the letter seen
+      // going through the gap, gone below it.
+      if (gap >= 0.5) ctx.rect(cx - gap / 2, top, gap, h + sag + 1);
       ctx.clip();
       // About its foot: squashed onto the floor, shrunk and turned going
       // through.
@@ -214,7 +243,7 @@ export const effectsRabbitHoleMethods = {
     // The bar along the curve (its lowest point `sag` below its ends).
     ctx.fillStyle = paint;
     ctx.beginPath();
-    for (const c of holeOutline(w, h, sag, this.cornerRadius(Math.min(w, h)))) {
+    for (const c of holeOutline(w, h, sag, this.cornerRadius(Math.min(w, h)), gap)) {
       if (c[0] === "M") ctx.moveTo(x + c[1], y + c[2]);
       else if (c[0] === "L") ctx.lineTo(x + c[1], y + c[2]);
       else if (c[0] === "Q") ctx.quadraticCurveTo(x + c[1], y + c[2], x + c[3], y + c[4]);

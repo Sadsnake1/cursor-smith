@@ -122,7 +122,7 @@ section("Shredder and Vacuum: the settings");
 {
   ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(T.LOOK_KEYS.indexOf("shredder"), T.LOOK_KEYS.indexOf("shredder") + 3).join() === "shredder,rabbitHole,shredderLetters" && T.LOOK_KEYS.indexOf("shredder") > T.LOOK_KEYS.indexOf("backMan") && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
   const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "Cursor on delete").dropdowns[0];
-  ok("choices of \"Cursor on delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Vacuum");
+  ok("choices of \"Cursor on delete\", on any cursor (the floor one called Portal)", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Portal");
   const on = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });
   const sub = on.find((r) => r.name === "Shredded letters");
   ok("Shredded letters: under the choice, shown with Shredder chosen, on any cursor", !!sub && on.findIndex((r) => r.name === "Shredded letters") === on.findIndex((r) => r.name === "Cursor on delete") + 1 && sub.def.visible() && on.cardKeys.Effects.includes("shredderLetters"));

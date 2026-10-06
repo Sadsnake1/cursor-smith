@@ -65,7 +65,7 @@ import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeOutline, holeSpring } from "../effects/effects-rabbithole";
+import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeGap, holeOutline, holeSpring } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -1835,7 +1835,7 @@ export class DemoStrip {
         // The floor as the engine's outline (holeOutline), drawn in a caret
         // as tall as it reaches, up or down.
         const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
-        const path = holeOutline(ew, bh, sag, d.shape.radius).map((c) =>
+        const path = holeOutline(ew, bh, sag, d.shape.radius, holeGap(sag, ew)).map((c) =>
           c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n2(c[1])} ${n2(up + c[2])} ${n2(c[3])} ${n2(up + c[4])}` : `${c[0]}${n2(c[1])} ${n2(up + c[2])}`).join(" ");
         const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='${path}' fill='${color}'/></svg>`;
         Object.assign(styles, {

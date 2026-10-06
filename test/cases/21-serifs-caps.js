@@ -87,7 +87,16 @@ section("Vacuum: no serifs");
   const round = T.holeOutline(9, 3, 2.7, 1.5);
   ok("rounded: its corners curves (Rounded corners), inside the bar's ends", pts(round).every((p) => p[0] >= 0 && p[0] <= 9) && round[0][2] === 1.5);
   const src = fs.readFileSync(srcPath("demo.ts"), "utf8");
-  ok("the preview draws the same outline", /holeOutline\(ew, bh, sag, d\.shape\.radius\)/.test(src));
+  ok("the preview draws the same outline, its gap too", /holeOutline\(ew, bh, sag, d\.shape\.radius, holeGap\(sag, ew\)\)/.test(src));
+  // The Portal opens ("the underline vacuum needs to open a bit. so a gap
+  // could work"): a gap in the floor's middle, wider the deeper it dips.
+  ok("a Portal's gap: none at rest or bulging up, HOLE_GAP of the floor at the full dip, between", T.holeGap(0, 9) === 0 && T.holeGap(-2, 9) === 0 && Math.abs(T.holeGap(T.HOLE_SAG * 9, 9) - T.HOLE_GAP * 9) < 1e-9 && T.holeGap(T.HOLE_SAG * 9 / 2, 9) > 0 && T.holeGap(T.HOLE_SAG * 9 / 2, 9) < T.HOLE_GAP * 9 && T.holeGap(99, 9) === T.HOLE_GAP * 9);
+  const open = T.holeOutline(9, 2, 2.7, 0, T.holeGap(2.7, 9));
+  const subpaths = open.filter((c) => c[0] === "M").length;
+  const xs = open.filter((c) => c[0] !== "Z").flatMap((c) => (c[0] === "Q" ? [c[1], c[3]] : [c[1]]));
+  const gapL = (9 - T.holeGap(2.7, 9)) / 2, gapR = (9 + T.holeGap(2.7, 9)) / 2;
+  ok("...the floor in two halves either side of it, nothing drawn in the opening", subpaths === 2 && xs.every((x) => x <= gapL + 1e-9 || x >= gapR - 1e-9), xs);
+  ok("...whole again when it closes", T.holeOutline(9, 2, 0.1, 0, T.holeGap(0.1, 9)).filter((c) => c[0] === "M").length === 1 && T.holeOutline(9, 2, -1, 0, T.holeGap(-1, 9)).filter((c) => c[0] === "M").length === 1);
 }
 
 section("Caps Lock and Shift");

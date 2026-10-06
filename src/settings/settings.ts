@@ -380,6 +380,8 @@ export const DEFAULT_SETTINGS = {
   rollChaos: 4,
   rollColor: 6,
   rollMotion: 5,
+  // The shape a roll keeps (Box, Line, Underline), or "any".
+  rollShape: "any",
   // Which effects a roll may pick, by key (ROLL_TOGGLES); a key not here is
   // let in, but the torch's. Replaced whole on a write, never changed in
   // place (this object is the defaults' own).

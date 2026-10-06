@@ -3,7 +3,7 @@
 // (randomize.ts, rolled with a seed here), what applying one does and
 // takes back (library.ts), and its page.
 // One of the files test/test.js runs in order; see test/lib.js.
-const { T, Plugin, ok, section, later, renderPanel } = require("../lib");
+const { T, Plugin, ok, section, later, renderPanel, srcPath } = require("../lib");
 const { renderWholePanel } = require("../panel_harness");
 
 const roll = (o, seed) => T.rollLook(Object.assign({ chaos: 35, color: 60, motion: 50 }, o), T.seededRandom(seed));
@@ -69,6 +69,9 @@ section("Randomizer: the dials");
      T.DEFAULT_SETTINGS.rollChaos === 4 && T.DEFAULT_SETTINGS.rollColor === 6 && T.DEFAULT_SETTINGS.rollMotion === 5);
   ok("the dials: Chaos 1 to 11, Color and Motion 1 to 10, taken to the roll's 0 to 100", T.ROLL_CHAOS_MAX === 11 && T.ROLL_DIAL_MAX === 10 && T.dialToRoll(1, 11) === 0 && T.dialToRoll(11, 11) === 100 && T.dialToRoll(6, 11) === 50 && T.dialToRoll(10, 10) === 100 && T.dialToRoll(1, 10) === 0 && T.dialToRoll(99, 11) === 100);
   const mig = T.migrateLegacyKeys({ rollChaos: 35, rollColor: 60, rollMotion: 50 });
+  ok("a Shape to keep: any by default", T.DEFAULT_SETTINGS.rollShape === "any" && !T.LOOK_KEYS.includes("rollShape"));
+  for (const sh of ["Box", "Line", "Underline"]) ok(`...${sh}: every roll a ${sh}`, Array.from({ length: 60 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50, shape: sh }, T.seededRandom(900 + k))).every((l) => l.cursorStyle === sh));
+  ok("...any: all three come up", new Set(Array.from({ length: 80 }, (_, k) => T.rollLook({ chaos: 50, color: 50, motion: 50, shape: "any" }, T.seededRandom(70 + k)).cursorStyle)).size === 3);
   ok("...a config from when they went to 100 mapped across; one already on the new scale kept", mig.rollChaos === 4 && mig.rollColor === 6 && mig.rollMotion === 5 && T.migrateLegacyKeys({ rollChaos: 100, rollColor: 100 }).rollChaos === 11 && T.migrateLegacyKeys({ rollColor: 100 }).rollColor === 10 && T.migrateLegacyKeys({ rollChaos: 7 }).rollChaos === 7 && T.migrateLegacyKeys({ rollChaos: 0 }).rollChaos === 1, mig);
 }
 
@@ -156,6 +159,12 @@ section("Randomizer: its page");
      !!demo && !!demo.querySelector(".cursor-smith-pcard-caret") && T.SCRIPT_LINES.includes(demo.querySelector(".cursor-smith-roll-unwritten").text));
   const roll = named("Roll");
   ok("Randomize alone: no Undo", roll.buttons.length === 1 && roll.buttons[0]._text === "Randomize");
+  const save = named("Save");
+  const at = rows.findIndex((r) => r.name === "Roll");
+  ok("Save under Roll: one button, Save as preset (the preset strip's prompt)", !!save && rows.findIndex((r) => r.name === "Save") === at + 1 && save.buttons.length === 1 && /Save as preset/.test(save.buttons[0]._text || save.buttons[0].buttonEl?.textContent || "Save as preset") &&
+     /more\("save", "Save", \(\) => this\.savePresetPrompt\(vim\)\)/.test(require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8")));
+  const shapeRow = named("Shape");
+  ok("a Shape dropdown under it: any shape, or Box, Line, Underline", !!shapeRow && shapeRow.dropdowns[0]._value === "any" && Object.keys(shapeRow.dropdowns[0]._options).join() === "any,Box,Line,Underline");
   const chaos = named("Chaos");
   const color = named("Color");
   ok("the dials are sliders on their settings, each with its reset: Chaos 1 to 11, the others 1 to 10", chaos.sliders[0]._limits.min === 1 && chaos.sliders[0]._limits.max === 11 && chaos.sliders[0]._value === 4 && chaos.extras.length === 1 && color.sliders[0]._limits.min === 1 && color.sliders[0]._limits.max === 10);

@@ -663,21 +663,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         // many there are: a full-width item breaks the wrapping row before
         // them (styles.css). They used to wrap along with the presets.
         strip.createDiv({ cls: "cursor-smith-pcard-break" });
-        more("save", "Save", () => {
-          // A name that is already taken warns once and keeps the prompt;
-          // OK again with the same name replaces the preset.
-          let warned = "";
-          new PresetPrompt(this.app, vim ? "Save these five mode cursors as" : "Save this look as", vim ? "Vim preset name" : "Preset name", async (name) => {
-            if (!name) return false;
-            if (name in library && warned !== name) {
-              warned = name;
-              return `A preset named ${name} exists. OK again to replace it.`;
-            }
-            if (vim) await plugin.saveVimPreset(name); else await plugin.saveUserPreset(name);
-            this.update();
-            return true;
-          }).open();
-        });
+        more("save", "Save", () => this.savePresetPrompt(vim));
         more("download", "Import", () => {
           new PresetPrompt(this.app, vim ? "Import a Vim share code" : "Import a share code", "Paste the code here", async (code) => {
             if (!code) return false;
@@ -993,7 +979,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // cursor got out of the box, and typing to see it was a chore.)
   rollPage(): SettingDefinitionPage {
     const plugin = this.plugin;
-    const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow()];
+    const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow(), this.rollSaveRow()];
     // Chaos goes to 11; Color and Motion to 10.
     const dial = (name: string, desc: string, key: "rollChaos" | "rollColor" | "rollMotion") => this.row(name, desc, (s) => {
       let handle: SliderComponent | null = null;
@@ -1009,6 +995,12 @@ export class CursorSmithSettingTab extends PluginSettingTab {
           void plugin.saveSettings();
         }));
     });
+    // The shape a roll keeps, or any.
+    items.push(this.row("Shape", "Roll only this cursor shape, or any.", (s) => {
+      s.addDropdown((d) => d.addOptions({ any: "Any shape", Box: "Box", Line: "Line", Underline: "Underline" })
+        .setValue(plugin.settings.rollShape || "any")
+        .onChange(async (v) => { plugin.settings.rollShape = v; await plugin.saveSettings(); }));
+    }));
     items.push(dial("Chaos", "From one quiet effect to all of them at once.", "rollChaos"));
     items.push(dial("Color", "From a single calm color to gradients and rainbows.", "rollColor"));
     items.push(dial("Motion", "From a still cursor to one that glides, smears and trails.", "rollMotion"));
@@ -1029,7 +1021,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     return this.page("Randomizer", "dices", "Roll a whole new cursor, calm or full chaos.", [this.section("Randomizer", items)],
       () => {
         const out = ROLL_TOGGLES.filter((k) => !rollAllowed(plugin.settings.rollEffects, k)).length;
-        return `Chaos ${plugin.settings.rollChaos}` + (out ? ` · ${ROLL_TOGGLES.length - out} effects` : "");
+        const shape = plugin.settings.rollShape && plugin.settings.rollShape !== "any" ? `${plugin.settings.rollShape} · ` : "";
+        return shape + `Chaos ${plugin.settings.rollChaos}` + (out ? ` · ${ROLL_TOGGLES.length - out} effects` : "");
       });
   }
 
@@ -1064,12 +1057,53 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     this._rollDemos.add(stage, "", look, color, ramp, gradient, plugin.reducedMotion(), true, true);
   }
 
+  // Save the look being edited as a preset - the five Vim mode cursors as a
+  // Vim preset - named in a prompt. A name that is already taken warns once
+  // and keeps the prompt; OK again with the same name replaces the preset.
+  // The preset strip's Save and the Randomizer's.
+  savePresetPrompt(vim: boolean, saved?: (name: string) => void) {
+    const plugin = this.plugin;
+    const library = vim ? plugin.getVimPresets() : plugin.getUserPresets();
+    let warned = "";
+    new PresetPrompt(this.app, vim ? "Save these five mode cursors as" : "Save this look as", vim ? "Vim preset name" : "Preset name", async (name) => {
+      if (!name) return false;
+      if (name in library && warned !== name) {
+        warned = name;
+        return `A preset named ${name} exists. OK again to replace it.`;
+      }
+      if (vim) await plugin.saveVimPreset(name); else await plugin.saveUserPreset(name);
+      saved?.(name);
+      this.update();
+      return true;
+    }).open();
+  }
+
+  // Save, under Roll ("also add the save button under roll"): the cursor
+  // just rolled kept as a preset, without going to Presets.
+  rollSaveRow(): SettingDefinitionRender {
+    return {
+      name: "Save",
+      desc: "Keep this cursor as a preset.",
+      render: (setting) => {
+        this.resetRow(setting);
+        setting.addButton((b) => {
+          b.setButtonText("Save as preset").onClick(() => {
+            this.savePresetPrompt(this.plugin.isVimUiMode(), (name) => { setting.setDesc(`Saved as ${name}.`); });
+          });
+          b.buttonEl.empty();
+          setIcon(b.buttonEl.createSpan({ cls: "cursor-smith-roll-dice" }), "save");
+          b.buttonEl.createSpan({ text: "Save as preset" });
+        });
+      },
+    };
+  }
+
   // Randomize, and what the last roll came out as (no Undo: the user's word).
   rollButtonsRow(): SettingDefinitionRender {
     const plugin = this.plugin;
     return {
       name: "Roll",
-      desc: "Rolls a brand-new cursor. If you like it, save it in Presets.",
+      desc: "Rolls a brand-new cursor. If you like it, save it below.",
       render: (setting) => {
         this.resetRow(setting);
         setting.settingEl.addClass("cursor-smith-roll-buttons-row");

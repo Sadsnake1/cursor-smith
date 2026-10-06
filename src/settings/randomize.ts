@@ -27,6 +27,9 @@ export interface RollOptions {
   // Per effect (ROLL_TOGGLES' keys): false keeps it out of the roll. A key
   // not there is allowed, but the torch's.
   allow?: Partial<Record<string, boolean>>;
+  // The cursor's shape, kept (Box, Line or Underline), or any ("any", or
+  // none given).
+  shape?: string;
 }
 
 // The effects a roll chooses among - the Effects rail's, but the torch and
@@ -93,7 +96,10 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   const look = out as Partial<Look>;
 
   // Shape.
-  const style = rand() < 0.45 ? "Box" : rand() < 0.65 ? "Line" : "Underline";
+  // The shape asked for (the Shape dropdown, "a shape dropdown will help
+  // people"), or one at random.
+  const asked = opts.shape === "Box" || opts.shape === "Line" || opts.shape === "Underline" ? opts.shape : null;
+  const style = asked ?? (rand() < 0.45 ? "Box" : rand() < 0.65 ? "Line" : "Underline");
   look.cursorStyle = style;
   if (style === "Line") { look.caretWidthPx = any(1.5, 3 + 3 * chaos, 0.1); look.lineSerifs = chance(0.1 + 0.25 * chaos); }
   if (style === "Underline") { look.underlineWidthPx = any(1.5, 3 + 2 * chaos, 0.1); look.underlineSerifs = chance(0.1 + 0.25 * chaos); }

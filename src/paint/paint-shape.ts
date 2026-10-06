@@ -513,7 +513,8 @@ export const paintShapeMethods = {
       ctx.fillStyle = this._bodyPaint(px, py, pw, ph, color, 0.9 * blinkAlpha * bodyOpacity);
       // The gap the caret stands at: a Line is drawn centered on it.
       const gx = isUnderline ? rx : rx + rw / 2;
-      if (this.drawEater(ctx, { x: rx, y: ry, w: rw, h: rh }, gx, ctx.fillStyle, 0, 0, now)) {
+      const bodyAlpha = 0.9 * blinkAlpha * bodyOpacity;
+      if (this.drawEater(ctx, { x: rx, y: ry, w: rw, h: rh }, gx, ctx.fillStyle, 0, 0, now, (x, y, w, h) => this._bodyPaint(x, y, w, h, color, bodyAlpha))) {
         ctx.restore();
         return;
       }
@@ -602,7 +603,7 @@ export const paintShapeMethods = {
       const paintStyle = this._bodyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity);
       // An eater (effects-eaters.ts) has the box while it eats: Back-man, or
       // the box morphed into Shredder's line or Rabbit hole's floor.
-      if (this.drawEater(ctx, { x: active.x, y: active.top, w: renderW, h: active.h }, active.x, paintStyle, hollow ? strokeW : 0, this.cornerRadius(Math.min(renderW, active.h)), now)) {
+      if (this.drawEater(ctx, { x: active.x, y: active.top, w: renderW, h: active.h }, active.x, paintStyle, hollow ? strokeW : 0, this.cornerRadius(Math.min(renderW, active.h)), now, (x, y, w, h) => this._bodyPaint(x, y, w, h, color, 0.9 * blinkAlpha * bodyOpacity))) {
         // drawn
       } else if (hollow) {
         // Stroke exactly the path the solid style fills, so the outline

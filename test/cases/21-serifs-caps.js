@@ -75,7 +75,7 @@ section("Portal: a still floor");
   ok("the engine's floor: no spring, no ripple, no dip, the letter neither turned nor scaled", !["holeSpring", "holeRipple", "HOLE_SAG", "HOLE_SPIN", "ctx.rotate", "ctx.scale", "ctx.translate"].some((w) => eng.includes(w)));
   const src = fs.readFileSync(srcPath("demo.ts"), "utf8");
   ok("the preview's the same: the engine's fall (holeFall), the letter cut off at the floor's top edge, the floor lit (holeGlow) - no outline drawn, no turn",
-     src.includes("holeFall(") && src.includes("clipPath: `polygon(-100% -100%, 200% -100%, 200% ${cut}px, -100% ${cut}px)`") && src.includes("holeGlow(f.through)") && !["holeOutline", "holeSpring", "rotate(${f."].some((w) => src.includes(w)));
+     src.includes("holeFall(") && src.includes("clipPath: `polygon(-100% ${from.toFixed(1)}px, 200% ${from.toFixed(1)}px, 200% ${cut.toFixed(1)}px, -100% ${cut.toFixed(1)}px)`") && src.includes("holeGlow(f.through)") && !["holeOutline", "holeSpring", "rotate(${f."].some((w) => src.includes(w)));
 }
 
 section("Caps Lock and Shift");

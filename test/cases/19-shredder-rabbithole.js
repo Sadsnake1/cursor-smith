@@ -172,11 +172,13 @@ section("Shredder and Vacuum: the settings");
 section("Shredder and Vacuum: drawn");
 {
   const calls = [];
-  const ctx = new Proxy({}, {
+  // A gradient: what its stops were.
+  const grad = (...a) => { const g = { stops: [], addColorStop: (o, c) => g.stops.push([o, c]) }; calls.push(["createLinearGradient", ...a, g]); return g; };
+  const ctx = new Proxy({ createLinearGradient: grad }, {
     get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }),
     set: (o, k, v) => { o[k] = v; calls.push(["set " + String(k), v]); return true; },
   });
-  const plugin = { _markDirty() {}, look: {}, styleFor: () => "Underline", cornerRadius: () => 0 };
+  const plugin = { _markDirty() {}, look: {}, styleFor: () => "Underline", cornerRadius: () => 0, getActiveColor: () => "#ff8800" };
   T.EngineProto.drawShredLine.call(plugin, ctx, 100, 0, 2, 24, "#f80", { dash: 1, letters: [] }, 0);
   ok("the Line as blades: six rects in one fill, in the line's paint", calls.filter((c) => c[0] === "rect").length === 6 && calls.filter((c) => c[0] === "fill").length === 1);
   calls.length = 0;
@@ -208,8 +210,11 @@ section("Shredder and Vacuum: drawn");
   T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: [h] }, T.HOLE_FALL_MS / 2);
   const kinds = calls.filter((c) => ["fill", "stroke", "fillText", "clip"].includes(c[0])).map((c) => c[0]).join();
   const lit = calls.filter((c) => c[0] === "set fillStyle" && /^rgba\(255, 255, 255, /.test(c[1]));
-  const soft = calls.find((c) => c[0] === "set shadowColor" && /^rgba\(255, 136, 0, /.test(c[1]));
-  ok("...half through: the floor haloed soft in its own color and lit white over it", kinds === "clip,fillText,fill,fill" && lit.length === 1 && parseFloat(lit[0][1].split(", ")[3]) > 0.2 && !!soft && calls.some((c) => c[0] === "set shadowBlur" && c[1] >= T.HOLE_HALO_MIN), kinds);
+  // "the portal just get thicker": no halo; the letter in the portal's
+  // light nearest the floor instead.
+  const light = calls.find((c) => c[0] === "createLinearGradient");
+  ok("...half through: the floor lit white over it, its thickness kept (no halo)", kinds === "clip,fillText,clip,fillText,fill,fill" && lit.length === 1 && parseFloat(lit[0][1].split(", ")[3]) > 0.2 && !calls.some((c) => c[0] === "set shadowBlur" && c[1] > 0), kinds);
+  ok("...the letter's part nearest the floor in the floor's color, fading up from it", !!light && light[2] < 22 && light[4] === 22 && light[5].stops.length === 2 && light[5].stops[0][1] === "rgba(255, 136, 0, 0)" && light[5].stops[1][1] === "rgba(255, 136, 0, 1)" && calls.some((c) => c[0] === "rect" && Math.abs(c[2] + c[4] - 22) < 1e-9 && c[4] < 10), light);
   // A word taken at once: its letters to the right of the floor.
   calls.length = 0;
   const word = [0, 1, 2].map((k) => ({ ...h, cx: 104.5 + 9 * k }));

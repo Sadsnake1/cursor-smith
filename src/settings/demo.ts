@@ -66,7 +66,7 @@ import type { Eater } from "../effects/effects-eaters";
 import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_CROSS, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_JOLT, SHRED_RIBBONS, SHRED_SPIN, shredChip, shredDash, shredFeed, shredJolt, shredRibbon, shredThrough } from "../effects/effects-shredder";
-import { HOLE_BURST_AT, HOLE_FALL_MS, HOLE_GLOW, HOLE_HALO, HOLE_HALO_ALPHA, HOLE_HALO_MIN, HOLE_HOLD_MS, holeFall, holeGlow, holeSpan } from "../effects/effects-rabbithole";
+import { HOLE_BURST_AT, HOLE_FALL_MS, HOLE_GLOW, HOLE_HOLD_MS, HOLE_TALL, HOLE_TINT, holeFall, holeGlow, holeSpan } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -703,6 +703,9 @@ interface Particle {
   ch?: string;
   fired?: boolean;
   rot?: number;
+  // A Portal letter's copy in the cursor's color, seen only nearest the
+  // floor (the portal's light, HOLE_TINT).
+  tint?: boolean;
   // A Shredder letter hurried through by the next key (shredFeed); which
   // of its ribbon's cross-cut bits it is (Burst: shredChip), or none.
   rush?: number;
@@ -1347,7 +1350,12 @@ export class DemoStrip {
       }
       if (hole) {
         // (At 11 it was through the floor before it fell.)
-        if (k < 12 && this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") && d.holeRun) d.holeRun.at = Math.max(d.holeRun.at, now + HOLE_FALL_MS);
+        if (k < 12 && this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") && d.holeRun) {
+          d.holeRun.at = Math.max(d.holeRun.at, now + HOLE_FALL_MS);
+          // ...and its copy in the portal's light.
+          const lit = this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, d.color, now, ch, 0, "hole");
+          if (lit) lit.tint = true;
+        }
         return;
       }
       if (look.typewriter && look.typewriterTape) {
@@ -1512,15 +1520,19 @@ export class DemoStrip {
         const cw = d.stepPx || 7;
         const fy = d.geo ? d.geo.top + d.geo.h - d.geo.ulH : d.holeAt[1];
         const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, fy, now);
-        if (age >= HOLE_BURST_AT && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 15, now)); }
-        d.holeGlow = Math.max(d.holeGlow, holeGlow(f.through));
-        d.holeCells.push([p.x, p.x + cw, holeSpan(age)]);
-        // The floor's top edge in the span's own place.
-        const cut = (fy - (f.foot - 9.6)).toFixed(1);
+        if (!p.tint) {
+          if (age >= HOLE_BURST_AT && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", p.x, 15, now)); }
+          d.holeGlow = Math.max(d.holeGlow, holeGlow(f.through));
+          d.holeCells.push([p.x, p.x + cw, holeSpan(age)]);
+        }
+        // The floor's top edge in the span's own place (the light's copy:
+        // the band above it, HOLE_TINT of the letter).
+        const cut = fy - (f.foot - 9.6), band = HOLE_TINT * HOLE_TALL * 3.6;
+        const from = p.tint ? cut - band : -100;
         p.el.setCssStyles({
           transform: `translate(${(f.x - cw / 2).toFixed(1)}px, ${(f.foot - 9.6).toFixed(1)}px)`,
-          clipPath: `polygon(-100% -100%, 200% -100%, 200% ${cut}px, -100% ${cut}px)`,
-          opacity: f.done ? "0" : "1",
+          clipPath: `polygon(-100% ${from.toFixed(1)}px, 200% ${from.toFixed(1)}px, 200% ${cut.toFixed(1)}px, -100% ${cut.toFixed(1)}px)`,
+          opacity: f.done ? "0" : p.tint ? "0.85" : "1",
         });
       } else if (p.kind === "xout") {
         p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (t < 0.5 ? 1 : 1 - (t - 0.5) * 2).toFixed(2) });
@@ -1843,24 +1855,22 @@ export class DemoStrip {
       if (last >= SHRED_HOLD_MS + SHRED_FEED_MS + SHRED_FALL_MS) d.shredRun = null;
     }
     if (eatKind === "rabbithole" && d.holeRun && d.geo) {
-      const top = parseFloat(styles.top) || 0, bh = parseFloat(styles.height) || d.geo.ulH;
+      const top = parseFloat(styles.top) || 0;
       d.holeAt = [ex + ew / 2, top];
       if (this.last - d.holeRun.at >= HOLE_HOLD_MS && !d.particles.some((q) => q.kind === "hole")) d.holeRun = null;
       else {
         // The floor still, as the engine's (drawHole): reaching along to
         // the right under a letter that stood away from it (a held
-        // Backspace's, still going down), lit and haloed in its own color
-        // while a letter passes.
+        // Backspace's, still going down), lit while a letter passes.
         let right = ex + ew;
         for (const [, r, k] of d.holeCells) right = Math.max(right, ex + ew + Math.max(0, r - ex - ew) * k);
         if (right > ex + ew) styles.width = `${n2(right - ex)}px`;
         const glow = d.holeGlow > 0.01 ? d.holeGlow : 0;
         const wash = `rgba(255, 255, 255, ${(HOLE_GLOW * glow).toFixed(3)})`;
-        const halo = `0 0 ${n2(Math.max(HOLE_HALO_MIN, HOLE_HALO * bh))}px color-mix(in srgb, ${color} ${(100 * HOLE_HALO_ALPHA * glow).toFixed(1)}%, transparent)`;
         Object.assign(styles, {
           backgroundColor: color, backgroundSize: "", backgroundRepeat: "",
           backgroundImage: [glow ? `linear-gradient(${wash}, ${wash})` : "", d.shape.hollowWidth ? "" : d.shape.gradient ?? ""].filter(Boolean).join(", "),
-          boxShadow: [glow ? halo : "", styles.boxShadow ?? ""].filter(Boolean).join(", "),
+          boxShadow: styles.boxShadow ?? "",
         });
         eat = "hole";
       }

@@ -11,8 +11,11 @@
 // Underline cursor - the floor under the letter - takes the letters
 // Backspace or Delete takes down through it. The floor stays still; a
 // letter drops straight down into it and is cut off at its top edge, out
-// of sight below, and the floor glows while it passes (HOLE_GLOW,
-// HOLE_HALO) - "Straight through", picked of three mockups ("do A"). What
+// of sight below - the part of it nearest the floor lit in the cursor's
+// color (HOLE_TINT), as into the portal's light - and the floor brightens
+// while it passes (HOLE_GLOW). A halo round the floor went: on a 2 px
+// Underline it read as "the portal just get thicker". "Straight through",
+// picked of three mockups ("do A"). What
 // it replaced: a gap opening for a day read as a trapdoor ("remove that
 // gap"); then a letter stretched tall, turning as it sank, over a floor
 // that dipped, rippled and sprang back read as "the letters look like
@@ -42,13 +45,11 @@ export const HOLE_TALL = 2.5;
 // first HOLE_REACH of the letter's way, back over the last.
 export const HOLE_REACH = 0.15;
 // The glow while a letter passes: white over the floor's paint, this
-// strong at its height, and a soft halo of the floor's own color round
-// it, blurred its thickness times HOLE_HALO (at least HOLE_HALO_MIN px),
-// HOLE_HALO_ALPHA strong.
+// strong at its height - the floor keeps its thickness.
 export const HOLE_GLOW = 0.6;
-export const HOLE_HALO = 2;
-export const HOLE_HALO_MIN = 4;
-export const HOLE_HALO_ALPHA = 0.8;
+// The portal's light on a letter going in: its lowest HOLE_TINT of its
+// height above the floor in the cursor's color, fading up from the floor.
+export const HOLE_TINT = 0.45;
 // How long the floor stays after the last key or letter.
 export const HOLE_HOLD_MS = 200;
 // Where in its way the letters' effect plays for a letter: Burst as it
@@ -163,11 +164,13 @@ export const effectsRabbitHoleMethods = {
   // the letters first (seen above the bar's top edge, out of sight once
   // through it), then the bar, still, rounded as Rounded corners rounds it
   // - reaching along to the right under letters that stood away from it
-  // (holeSpan), lit (HOLE_GLOW) and haloed (HOLE_HALO) while a letter
-  // passes.
+  // (holeSpan), lit (HOLE_GLOW) while a letter passes. A letter's part
+  // nearest the floor takes the cursor's color (HOLE_TINT).
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
     const top = y;
     if (this._hole) this._hole.floor = { x: x + w / 2, y: top };
+    const rgb = parseColorTuple(typeof paint === "string" ? paint : this.getActiveColor()) || [255, 255, 255];
+    const tint = (a: number) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
     let glow = 0, right = x + w;
     for (const l of pose.letters) {
       const f = holeFall(l, top, now);
@@ -188,31 +191,36 @@ export const effectsRabbitHoleMethods = {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(l.char, f.x, f.foot - l.half);
+      // ...and its part nearest the floor in the portal's light.
+      const band = HOLE_TINT * HOLE_TALL * l.half;
+      if (f.foot > top - band) {
+        ctx.beginPath();
+        ctx.rect(x - far, top - band, w + 2 * far, band);
+        ctx.clip();
+        const g = ctx.createLinearGradient(0, top - band, 0, top);
+        g.addColorStop(0, tint(0));
+        g.addColorStop(1, tint(1));
+        ctx.fillStyle = g;
+        ctx.fillText(l.char, f.x, f.foot - l.half);
+      }
       ctx.restore();
       this._markDirty(l.cx - 2 * l.w, Math.min(l.cy, top) - 2 * l.w - 4 * l.half, 4 * l.w, Math.abs(top - l.cy) + 4 * l.w + 8 * l.half);
     }
     const bw = right - x;
     const r = this.cornerRadius(Math.min(bw, h));
-    const halo = Math.max(HOLE_HALO_MIN, HOLE_HALO * h);
     ctx.fillStyle = paint;
     ctx.beginPath();
     this.traceRoundedRect(ctx, x, y, bw, h, r);
+    ctx.fill();
     if (glow > 0.01) {
-      // The halo, soft, in the floor's own color - then the light over it,
-      // the glow kept off that.
-      const rgb = parseColorTuple(typeof paint === "string" ? paint : this.getActiveColor()) || [255, 255, 255];
-      ctx.save();
-      ctx.shadowColor = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${(HOLE_HALO_ALPHA * glow).toFixed(3)})`;
-      ctx.shadowBlur = halo;
-      ctx.fill();
-      ctx.restore();
+      // The light over it, the glow kept off that.
       ctx.save();
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
       ctx.fillStyle = `rgba(255, 255, 255, ${(HOLE_GLOW * glow).toFixed(3)})`;
       ctx.fill();
       ctx.restore();
-    } else ctx.fill();
-    this._markDirty(x - 2 * halo - 2, y - 2 * halo - 2, bw + 4 * halo + 4, h + 4 * halo + 4);
+    }
+    this._markDirty(x - 4, y - 4, bw + 8, h + 8);
   },
 };

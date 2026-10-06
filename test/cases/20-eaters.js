@@ -202,3 +202,32 @@ section("The eaters with Motion smear: their own size, no trail");
   ok("no Smear setting under the eater's choice", !rows.some((x) => x.name === "Smear") && !renderPanel({ popEffects: true, rabbitHole: true }).some((x) => x.name === "Smear"));
   ok("the preview: the eater its own size, no trail", !/eatTrail|EATER_TRAIL/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
 }
+
+section("The eaters' paint: over all they cover");
+{
+  // Energy's Aurora is a pattern that ends at the rect it is built for: on
+  // an Underline (a 2 px bar) Back-man's box and the Shredder's line were
+  // seen only where they crossed the bar ("the shredder is very tiny ...
+  // even back-man is weird"). The paint is built over the eater's own room.
+  const bar = { x: 100, y: 32, w: 9, h: 2 };
+  const run = (kind) => {
+    const e = makeEngine({ popEffects: true, [kind === "backman" ? "backMan" : kind === "shredder" ? "shredder" : "rabbitHole"]: true });
+    e._eaterNow = () => ({ kind, back: false, m: 1 });
+    e.styleFor = (k) => (k === "cursorStyle" ? "Underline" : e.look[k]);
+    e.shredPose = () => ({ dash: 1, jolt: 0, letters: [] });
+    e.holePose = () => ({ letters: [{ cx: 120, w: 9 }] });
+    e.backManPose = () => ({});
+    e.drawShreds = () => {};
+    e.animActive = { x: 100, top: 10, w: 9, h: 24, actualCharWidth: 9 };
+    let shape = null, paint = null;
+    e.drawBackMan = e.drawShredLine = e.drawHole = (c, x, y, w, h, p) => { shape = { x, y, w, h }; paint = p; };
+    const asked = [];
+    e.drawEater(makePathCtx(), bar, 100, "bar's paint", 0, 0, 1000, (x, y, w, h) => { asked.push({ x, y, w, h }); return "eater's paint"; });
+    return { shape, paint, at: asked[0] };
+  };
+  const covers = (r, s) => !!r && r.x <= s.x + 1e-9 && r.y <= s.y + 1e-9 && r.x + r.w >= s.x + s.w - 1e-9 && r.y + r.h >= s.y + s.h - 1e-9;
+  const bm = run("backman"), sh = run("shredder"), ho = run("rabbithole");
+  ok("an Underline's Back-man: painted with paint built over his whole box and his bend each side", bm.paint === "eater's paint" && covers(bm.at, bm.shape) && bm.at.x < bm.shape.x - 0.5 * bm.shape.w && bm.shape.h === 24, bm);
+  ok("...its Shredder: over the whole line, not the bar", sh.paint === "eater's paint" && covers(sh.at, sh.shape) && sh.shape.h === 24, sh);
+  ok("...its Portal: over the floor and its reach right under a word", ho.paint === "eater's paint" && covers(ho.at, ho.shape) && ho.at.x + ho.at.w >= 124.5, ho);
+}

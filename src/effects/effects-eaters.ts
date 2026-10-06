@@ -14,6 +14,7 @@
 // cursor already of that shape just plays it. Which one, if any, is the
 // cursor's choice on delete (eaterChoiceOf, settings.ts).
 import type CursorSmithPlugin from "../plugin";
+import { BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW } from "./effects-backman";
 import { eaterChoiceOf, letterChoiceOf } from "../settings/settings";
 import type { CaretRecord, DeletedLetters } from "../types";
 import type { EaterChoice } from "../settings/settings";
@@ -110,8 +111,13 @@ export const effectsEatersMethods = {
   // `gx`), the effect played in it; going back, the cursor's own shape coming
   // back. `stroke`: a hollow Box's outline width (Back-man draws its
   // outline; going back, the rect is outlined). `corner`: the box's corner
-  // radius. True when it drew - the caller draws nothing of its own.
-  drawEater(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, own: Rect, gx: number, paint: string | CanvasGradient | CanvasPattern, stroke: number, corner: number, now: number): boolean {
+  // radius. `paintFor`: the cursor's paint over a given rect - built over
+  // all the eater may cover, not the cursor's own rect: Energy's Aurora is a
+  // pattern that ends at the rect it is built for, so on an Underline (a bar
+  // 2 px tall) Back-man's box and the Shredder's line were seen only where
+  // they crossed the bar ("the shredder is very tiny ... even back-man is
+  // weird"). True when it drew - the caller draws nothing of its own.
+  drawEater(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, own: Rect, gx: number, paint: string | CanvasGradient | CanvasPattern, stroke: number, corner: number, now: number, paintFor?: (x: number, y: number, w: number, h: number) => string | CanvasGradient | CanvasPattern): boolean {
     const e = this._eaterNow(now);
     const a = this.animActive;
     if (!e || !a) return false;
@@ -135,6 +141,16 @@ export const effectsEatersMethods = {
     const bm = !e.back && e.kind === "backman" ? this.backManPose(now) : null;
     const shred = !e.back && e.kind === "shredder" ? this.shredPose(now) : null;
     const hole = !e.back && e.kind === "rabbithole" ? this.holePose(now) : null;
+    if (paintFor) {
+      // The room each takes past its rect: Back-man's bend and gulp each
+      // side (BACKMAN_BEND_MAX, the big swell), the blades' jolt, the
+      // floor's reach right under a word's letters.
+      let x0 = r.x, x1 = r.x + r.w;
+      if (bm) { const g = (BACKMAN_BEND_MAX + BACKMAN_GROW * BACKMAN_BIG.grow) * r.w + 1; x0 -= g; x1 += g; }
+      else if (shred) { x0 -= 3; x1 += 3; }
+      else if (hole) for (const l of hole.letters) x1 = Math.max(x1, l.cx + l.w / 2);
+      paint = paintFor(x0, r.y, x1 - x0, r.h);
+    }
     if (bm) {
       this.drawBackMan(ctx, r.x, r.y, r.w, r.h, paint, bm, stroke, corner);
     } else if (shred) {

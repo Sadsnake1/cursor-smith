@@ -80,16 +80,18 @@ export const libraryMethods = {
   // whose tab the Vim panel shows (the preview plays it), or the global
   // one. No undo (the user: "No undo button"): no preset is in use after
   // it, and Save keeps one you like.
-  async rollCursor(this: CursorSmithPlugin): Promise<{ vim: boolean; look: Partial<Look> }> {
+  async rollCursor(this: CursorSmithPlugin): Promise<{ vim: boolean; look: Partial<Look>; family?: Record<string, Partial<Look>> }> {
     const s = this.settings;
     const opts: RollOptions = { chaos: dialToRoll(s.rollChaos, ROLL_CHAOS_MAX), color: dialToRoll(s.rollColor, ROLL_DIAL_MAX), motion: dialToRoll(s.rollMotion, ROLL_DIAL_MAX), allow: s.rollEffects, shape: s.rollShape };
     let shown: Partial<Look>;
+    let rolled: Record<string, Partial<Look>> | undefined;
     const vim = this.isVimUiMode();
     if (vim) {
       const edit = VIM_MODE_KEYS.includes(this._vimEditMode) ? this._vimEditMode : "normal";
       shown = {};
       // One family (rollVimLooks): a shared roll, each mode turned its way.
       const family = rollVimLooks(Object.assign({}, opts, { vimShape: s.rollVimShape }));
+      rolled = family;
       for (const mode of VIM_MODE_KEYS) {
         Object.assign(s.vimModes[mode], family[mode]);
         if (mode === edit) shown = family[mode];
@@ -101,7 +103,7 @@ export const libraryMethods = {
       this._activePresetName = "";
     }
     await this._lookReplaced();
-    return { vim, look: shown };
+    return { vim, look: shown, family: rolled };
   },
 
   // A whole look written at once: saved, the engine restarted on it, the
@@ -114,12 +116,17 @@ export const libraryMethods = {
     else if (!this.torchEngineActive) this.enableTorchOverlay();
   },
 
-  // The palette's roll: a notice saying so, and the panel redrawn if it is
-  // open.
+  // The command's roll (the palette, or its hotkey - "a hotkey for the
+  // randomizer too, that works for both normal and vim mode"): the global
+  // cursor, or with Vim on every mode's. A notice says what came out, and
+  // the panel is redrawn if it is open - the Randomizer page's preview
+  // playing the new cursor, its Roll row saying the same.
   async rollFromPalette(this: CursorSmithPlugin) {
-    const { vim } = await this.rollCursor();
+    const { vim, look, family } = await this.rollCursor();
+    const said = this.settingTab ? this.settingTab.rolled(look, family) : "";
     this.refreshSettingTab();
-    new Notice(vim ? "Cursor-Smith: a new cursor for every Vim mode." : "Cursor-Smith: a new cursor.");
+    const head = vim ? "Cursor-Smith rolled every Vim mode" : "Cursor-Smith rolled a new cursor";
+    new Notice(said ? `${head}: ${said}.` : `${head}.`);
   },
 
   async deleteUserPreset(this: CursorSmithPlugin, name: string) {

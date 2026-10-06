@@ -91,6 +91,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // The Randomizer's pill, and the demo loop that plays in it.
   _rollStage: HTMLElement | null = null;
   _rollDemos: DemoStrip | null = null;
+  // What the last roll came out as, for the Roll row - kept across the
+  // panel's redraws (a roll by the hotkey redraws it).
+  _rollSaid = "";
   // The effects that are on in the look the pages show (set with the
   // pages), for the Effects entry's icons; and the observer that puts
   // them there.
@@ -981,6 +984,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   rollPage(): SettingDefinitionPage {
     const plugin = this.plugin;
     const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow(), this.rollSaveRow()];
+    // The command's key, set here or under Settings -> Hotkeys: a roll from
+    // anywhere, Vim on or off.
+    items.push(this.hotkeysRow(["randomize"]));
     // Chaos goes to 11; Color and Motion to 10.
     const dial = (name: string, desc: string, key: "rollChaos" | "rollColor" | "rollMotion") => this.row(name, desc, (s) => {
       let handle: SliderComponent | null = null;
@@ -1126,10 +1132,11 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         this.resetRow(setting);
         setting.settingEl.addClass("cursor-smith-roll-buttons-row");
         const say = (text: string) => setting.setDesc(text);
+        if (this._rollSaid) say(this._rollSaid);
         setting.addButton((b) => {
           b.setButtonText("Randomize").setCta().onClick(async () => {
-            const { look } = await plugin.rollCursor();
-            say(this.rollSummary(look));
+            const { look, family } = await plugin.rollCursor();
+            say(this.rolled(look, family));
             this.playRollDemo();
           });
           // Dice, then the word.
@@ -1141,14 +1148,27 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     };
   }
 
+  // A roll, from the button or the command: what it came out as, kept for
+  // the Roll row.
+  rolled(look: Partial<Look>, family?: Record<string, Partial<Look>>): string {
+    this._rollSaid = this.rollSummary(look, family);
+    return this._rollSaid;
+  }
+
   // What a roll came out as: its shape, its colors, its effects, its sound.
-  rollSummary(look: Partial<Look>): string {
-    const parts = [String(look.cursorStyle || "Box")];
-    parts.push(look.gradientEnabled ? `${look.gradientCount ?? 2} colors` : "one color");
-    if (look.smoothEnabled) parts.push("gliding");
-    const effects = RAIL_EFFECTS.filter((e) => !!look[e.key]).map((e) => e.name);
+  // A Vim family: the modes' shapes, and every effect any mode has (Insert
+  // has the typing ones, Normal not) - no colors, each mode keeps its own.
+  rollSummary(look: Partial<Look>, family?: Record<string, Partial<Look>>): string {
+    const looks = family ? Object.values(family) : [look];
+    const any = (k: keyof Look) => looks.some((l) => !!l[k]);
+    const shapes = new Set(looks.map((l) => String(l.cursorStyle || "Box")));
+    const parts = [family && shapes.size > 1 ? "Vim's shapes" : String(look.cursorStyle || "Box")];
+    if (!family) parts.push(look.gradientEnabled ? `${look.gradientCount ?? 2} colors` : "one color");
+    if (any("smoothEnabled")) parts.push("gliding");
+    const effects = RAIL_EFFECTS.filter((e) => any(e.key)).map((e) => e.name);
     parts.push(effects.length ? effects.join(", ") : "no effects");
-    if (look.typewriterSound) parts.push("sound: " + soundMachine(look.typewriterSoundVoice).label);
+    const voiced = looks.find((l) => !!l.typewriterSound);
+    if (voiced) parts.push("sound: " + soundMachine(voiced.typewriterSoundVoice).label);
     return parts.join(" · ");
   }
 

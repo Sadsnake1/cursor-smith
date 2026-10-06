@@ -163,6 +163,24 @@ section("Randomizer: its page");
   const at = rows.findIndex((r) => r.name === "Roll");
   ok("Save under Roll: one button, Save as preset (the preset strip's prompt)", !!save && rows.findIndex((r) => r.name === "Save") === at + 1 && save.buttons.length === 1 && /Save as preset/.test(save.buttons[0]._text || save.buttons[0].buttonEl?.textContent || "Save as preset") &&
      /more\("save", "Save", \(\) => this\.savePresetPrompt\(vim\)\)/.test(require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8")));
+  const keysAt = rows.findIndex((r) => r.def && r.def.desc === "Hotkeys" && rows.indexOf(r) > at);
+  const keyCard = rows[keysAt];
+  const appWas = rows.tab.app;
+  rows.tab.app = { commands: { commands: { "cursor-smith:randomize": { name: "Cursor-Smith: Randomize" } } }, hotkeyManager: { printHotkeyForCommand: () => "" } };
+  let keyNames = [], keyChips = [];
+  if (keyCard) {
+    keyCard.def.render({ settingEl: keyCard.settingEl, controlEl: keyCard.controlEl, descEl: keyCard.descEl, nameEl: keyCard.nameEl });
+    keyNames = keyCard.descEl.querySelectorAll(".cursor-smith-keys-line").map((l) => l.children[0].text);
+    keyChips = keyCard.descEl.querySelectorAll(".cursor-smith-keys-key").map((c) => c.text);
+  }
+  rows.tab.app = appWas;
+  ok("the command's hotkey under Save: Randomize alone, its key or Blank, its plus (Vim on or off: one command)", keysAt === at + 2 && keyNames.join() === "Randomize" && keyChips.join() === "Blank" &&
+     keyCard.descEl.querySelectorAll(".cursor-smith-keys-add").length === 1, [keysAt, at, keyNames, keyChips]);
+  const fam = T.rollVimLooks({ chaos: 100, color: 50, motion: 100 }, T.seededRandom(3));
+  const famSaid = rows.tab.rollSummary(fam.normal, fam);
+  const famFx = ["hotHead", "typewriter", "speedDemon", "popEffects"].filter((k) => Object.values(fam).some((l) => l[k]));
+  ok("a Vim roll said: the modes' shapes, every effect any mode has (Insert's typing ones too), no colors", /^Vim's shapes · /.test(famSaid) && !/colou?rs?/.test(famSaid) && famFx.length > 0 && !fam.normal.hotHead &&
+     famFx.every((k) => famSaid.includes({ hotHead: "Hot-head", typewriter: "Typewriter", speedDemon: "Speed demon", popEffects: "Pop effects" }[k])), famSaid);
   const shapeRow = named("Shape");
   ok("a Shape dropdown under it: any shape, or Box, Line, Underline", !!shapeRow && shapeRow.dropdowns[0]._value === "any" && Object.keys(shapeRow.dropdowns[0]._options).join() === "any,Box,Line,Underline");
   const chaos = named("Chaos");
@@ -383,3 +401,29 @@ section("Randomizer with Vim: one family, a Vim session");
   ok("the page: with Vim on, a Mode shapes choice (Vim's own by default) and the five modes' looks to the preview", T.DEFAULT_SETTINGS.rollVimShape === "vim" && /row\("Mode shapes"/.test(src) && /looks\[mode\] = Object\.assign\(\{ look \}/.test(src));
   ok("...the roll itself one family", /rollVimLooks\(Object\.assign\(\{\}, opts, \{ vimShape: s\.rollVimShape \}\)\)/.test(require("fs").readFileSync(srcPath("library.ts"), "utf8")));
 }
+
+section("Randomizer: the command, by its hotkey");
+later(async () => {
+  const notices = T.Notice.messages;
+  notices.length = 0;
+  {
+    const said = [];
+    const p = rollPlugin({ rollChaos: 6 });
+    let refreshed = 0;
+    p.refreshSettingTab = () => { refreshed++; };
+    p.settingTab = { rolled: (look, family) => { said.push([look, family]); return "Line · one color · Hot-head"; } };
+    await p.rollFromPalette();
+    ok("a roll by the command lands on the cursor, the page told what came out and redrawn", said.length === 1 && said[0][1] === undefined && refreshed === 1 && p._activePresetName === "");
+    ok("...and a notice says it", notices[0] === "Cursor-Smith rolled a new cursor: Line · one color · Hot-head.", notices);
+    const v = rollPlugin({ vimModeEnabled: true, uiMode: "vim" }, true);
+    v.settingTab = p.settingTab;
+    await v.rollFromPalette();
+    ok("with Vim on: every mode rolled, the page given the family", said.length === 2 && !!said[1][1] && ["normal", "insert", "visual", "replace", "command"].every((m) => !!said[1][1][m]) && /^Cursor-Smith rolled every Vim mode: /.test(notices[1]), notices);
+    const bare = rollPlugin({});
+    bare.settingTab = null;
+    await bare.rollFromPalette();
+    ok("...no panel: the notice alone", notices[2] === "Cursor-Smith rolled a new cursor.", notices);
+  }
+  const src = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
+  ok("one command, a plain callback (no editor needed): the same roll from the palette or a key, Vim on or off", /id: "randomize",[\s\S]{0,80}callback: \(\) => \{ void this\.rollFromPalette\(\); \}/.test(src) && !/id: "randomize",[\s\S]{0,80}editorCallback/.test(src));
+});

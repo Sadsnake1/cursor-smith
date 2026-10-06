@@ -9,6 +9,12 @@
 import { hexToRgbTuple, hexToRgba } from "../util/color";
 import type CursorSmithPlugin from "../plugin";
 
+// The most pixels the aurora's bitmap is computed in, a frame: a caret is
+// a few hundred, a fast smear a couple of thousand.
+export const AURORA_BUDGET = 1500;
+// The aurora's waves, each split into a row's part and a column's.
+const AURORA_TERMS = 5;
+
 export const paintEnergyMethods = {
   // Chooses how the Energy Beam paints the cursor.
   //
@@ -73,14 +79,13 @@ export const paintEnergyMethods = {
       // pattern is drawn, and the shape's edges are the path's, not the
       // bitmap's. A phone at 2.8x computed 8 times the pixels for nothing
       // (the pixel loop was the biggest cost of a frame there, HANDOFF 1.63).
-      const dpr = Math.min(1, (this.canvas?.ownerDocument?.defaultView || window).devicePixelRatio || 1);
+      // And never more than AURORA_BUDGET pixels: a smear across a line (a
+      // Backspace joining two lines, a long jump) is drawn coarser, not
+      // computed in full - the one frame cost a phone 4.6 ms (HANDOFF 1.68).
+      let dpr = Math.min(1, (this.canvas?.ownerDocument?.defaultView || window).devicePixelRatio || 1);
+      if (rw * rh * dpr * dpr > AURORA_BUDGET) dpr = Math.sqrt(AURORA_BUDGET / (rw * rh));
       const pw = Math.max(1, Math.round(rw * dpr));
       const ph = Math.max(1, Math.round(rh * dpr));
-      // Hard ceiling on rasterisation cost. A caret-sized rect is ~1-3k pixels
-      // even at dpr 2; anything past this is a runaway (a smear mid-teleport
-      // across a huge window) and is not worth a per-pixel loop on the hot
-      // path, so it takes the cheap gradient for those frames instead.
-      if (pw * ph > 60000) return null;
 
       // Offscreen surface + pixel buffer are reused across frames and only
       // reallocated when the size actually changes. Allocating a fresh
@@ -123,6 +128,33 @@ export const paintEnergyMethods = {
       const a255 = Math.max(0, Math.min(255, Math.round(alpha * 255)));
       const invW = 1 / pw, invH = 1 / ph;
 
+      // The five waves below are each sin(a row's part + a column's part),
+      // so each is sin(A)cos(B) + cos(A)sin(B): the rows' and the columns'
+      // sines and cosines worked out once (AURORA_TERMS of each), and a
+      // pixel costs a few multiplications instead of five Math.sin calls -
+      // the same field, a fraction of the time (HANDOFF 1.68).
+      const K = AURORA_TERMS;
+      let rowT = this._auroraRows, colT = this._auroraCols;
+      if (!rowT || rowT.length < ph * K * 2) rowT = this._auroraRows = new Float32Array(Math.max(ph, 32) * K * 2);
+      if (!colT || colT.length < pw * K * 2) colT = this._auroraCols = new Float32Array(Math.max(pw, 32) * K * 2);
+      for (let py = 0; py < ph; py++) {
+        const v = py * invH;
+        // The row's part of each wave, in the order of the waves below.
+        const a = [v * 4.1 + t * 0.90, v * 7.3 - t * 0.60, t * 1.10 - v * 1.9, v * 2.3 + t * 0.7, (v - t * 0.6) * Math.PI * 2];
+        for (let k = 0; k < K; k++) { rowT[(py * K + k) * 2] = Math.sin(a[k]); rowT[(py * K + k) * 2 + 1] = Math.cos(a[k]); }
+      }
+      for (let px = 0; px < pw; px++) {
+        const u = px * invW;
+        // ...and the column's.
+        const b = [u * 2.3, u * 3.7, u * 5.2, u * 2.1, u * 1.4];
+        for (let k = 0; k < K; k++) { colT[(px * K + k) * 2] = Math.sin(b[k]); colT[(px * K + k) * 2 + 1] = Math.cos(b[k]); }
+      }
+      // sin(A + B) from the tables: row py's wave k, column px's.
+      const wave = (py: number, px: number, k: number) => {
+        const r = (py * K + k) * 2, c = (px * K + k) * 2;
+        return rowT[r] * colT[c + 1] + rowT[r + 1] * colT[c];
+      };
+
       for (let py = 0; py < ph; py++) {
         const v = py * invH;
         for (let px = 0; px < pw; px++) {
@@ -133,10 +165,9 @@ export const paintEnergyMethods = {
           // it's the cross terms that let a band bend as it crosses the
           // cursor. Three incommensurate frequencies so the pattern never
           // settles into a visible repeat.
-          const warp =
-            Math.sin(v * 4.1 + t * 0.90 + u * 2.3) * 0.20 +
-            Math.sin(v * 7.3 - t * 0.60 + u * 3.7) * 0.11 +
-            Math.sin(u * 5.2 + t * 1.10 - v * 1.9) * 0.15;
+          // (sin(v*4.1 + t*0.90 + u*2.3), sin(v*7.3 - t*0.60 + u*3.7),
+          // sin(u*5.2 + t*1.10 - v*1.9).)
+          const warp = wave(py, px, 0) * 0.20 + wave(py, px, 1) * 0.11 + wave(py, px, 2) * 0.15;
 
           // Base coordinate drifts along the cursor; the warp bends it.
           let s = v - t * 0.30 + warp * wav;
@@ -144,7 +175,8 @@ export const paintEnergyMethods = {
           // Second, slower read from a different stretch of the ramp, cross
           // faded in. The warp only rearranges colours - without this, two
           // stops far apart on the ramp never meet and never blend.
-          const mix = (0.5 + 0.5 * Math.sin(u * 2.1 + v * 2.3 + t * 0.7)) * 0.55;
+          // (sin(u*2.1 + v*2.3 + t*0.7).)
+          const mix = (0.5 + 0.5 * wave(py, px, 3)) * 0.55;
           let s2 = (v * 0.45 + u * 0.25) + t * 0.17 + 0.37;
 
           // Index the LUT cyclically (positive modulo: s can go negative).
@@ -159,7 +191,8 @@ export const paintEnergyMethods = {
           // Brightness wave, kept gentle for the same reason the gradient path
           // eases it: at full strength it repeatedly flattens the mix toward
           // white and black and the swirl stops being legible.
-          const pulse = 0.5 + 0.5 * Math.sin((v - t * 0.6) * Math.PI * 2 + u * 1.4);
+          // (sin((v - t*0.6) * 2pi + u*1.4).)
+          const pulse = 0.5 + 0.5 * wave(py, px, 4);
           if (pulse > 0.5) {
             const k = (pulse - 0.5) * 2 * 0.45;
             r += (255 - r) * k * 0.55;

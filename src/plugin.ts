@@ -423,6 +423,9 @@ export default class CursorSmithPlugin extends Plugin {
   _auroraCtx!: CanvasRenderingContext2D | null;
   _auroraImg!: ImageData | null;
   _auroraLut!: Float32Array | null;
+  // The aurora's per-row and per-column sines and cosines (auroraPattern).
+  _auroraRows!: Float32Array | null;
+  _auroraCols!: Float32Array | null;
   _frameSeq!: number;
   _stopsHeat!: StopsMemo | null;
   _stopsCold!: StopsMemo | null;

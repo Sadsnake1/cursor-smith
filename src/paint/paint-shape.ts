@@ -179,10 +179,20 @@ export const paintShapeMethods = {
   // caret WAS, so it has no spring state of its own), so they don't need the
   // quad machinery - but they do need to match the live caret's rounding, or
   // a rounded cursor drags a tail of little sharp boxes behind it.
+  //
+  // The canvas's own roundRect where there is one: the same shape, but one
+  // the GPU knows for a rounded rect, so a glow (shadowBlur) round it is
+  // the cheap rounded-rect blur and not a blurred mask of a general path -
+  // Rounded corners cost a phone's GPU a quarter of the frame with the CRT
+  // neon's ghosts glowing (HANDOFF 1.68).
   traceRoundedRect(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, radius: number) {
     const r = Math.min(Math.max(0, radius), Math.min(w, h) / 2);
     if (!(r > 0.01)) {
       ctx.rect(x, y, w, h);
+      return;
+    }
+    if (typeof ctx.roundRect === "function") {
+      ctx.roundRect(x, y, w, h, r);
       return;
     }
     ctx.moveTo(x + r, y);

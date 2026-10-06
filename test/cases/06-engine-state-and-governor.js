@@ -1076,3 +1076,51 @@ section("Effects stay on the text through a scroll");
   ok("no note: forgotten", e._scrollRef === null);
   ok("the tick carries them, right after the canvas is placed", /this\.ensureCanvasForView\(view\);\n\s*\/\/ What is on the text moves with it through a scroll\.\n\s*this\._scrollCarry\(view\);/.test(require("fs").readFileSync(srcPath("engine.ts"), "utf8")));
 }
+
+section("The aurora: its waves from tables, its pixels on a budget");
+{
+  // The field as it was computed until 1.7.7 (five Math.sin a pixel), to
+  // check the tables give the same colors.
+  const old = (lut, pw, ph, t, wav, a255) => {
+    const LUT = 96, out = new Uint8ClampedArray(pw * ph * 4);
+    for (let py = 0; py < ph; py++) {
+      const v = py / ph;
+      for (let px = 0; px < pw; px++) {
+        const u = px / pw;
+        const warp = Math.sin(v * 4.1 + t * 0.90 + u * 2.3) * 0.20 + Math.sin(v * 7.3 - t * 0.60 + u * 3.7) * 0.11 + Math.sin(u * 5.2 + t * 1.10 - v * 1.9) * 0.15;
+        const s = v - t * 0.30 + warp * wav;
+        const mix = (0.5 + 0.5 * Math.sin(u * 2.1 + v * 2.3 + t * 0.7)) * 0.55;
+        const s2 = (v * 0.45 + u * 0.25) + t * 0.17 + 0.37;
+        const i1 = (((Math.floor(s * LUT) % LUT) + LUT) % LUT) * 3, i2 = (((Math.floor(s2 * LUT) % LUT) + LUT) % LUT) * 3;
+        let r = lut[i1] + (lut[i2] - lut[i1]) * mix, g = lut[i1 + 1] + (lut[i2 + 1] - lut[i1 + 1]) * mix, b = lut[i1 + 2] + (lut[i2 + 2] - lut[i1 + 2]) * mix;
+        const pulse = 0.5 + 0.5 * Math.sin((v - t * 0.6) * Math.PI * 2 + u * 1.4);
+        if (pulse > 0.5) { const k = (pulse - 0.5) * 2 * 0.45; r += (255 - r) * k * 0.55; g += (255 - g) * k * 0.55; b += (255 - b) * k * 0.55; }
+        else { const k = (0.5 - pulse) * 2 * 0.45; r -= r * k * 0.45; g -= g * k * 0.45; b -= b * k * 0.45; }
+        const o = (py * pw + px) * 4;
+        out[o] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = a255;
+      }
+    }
+    return out;
+  };
+  const createElWas = globalThis.createEl, DOMMatrixWas = globalThis.DOMMatrix, nowWas = performance.now;
+  let put = null;
+  globalThis.createEl = () => ({ width: 0, height: 0, getContext: () => ({ createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }), putImageData: (img) => { put = img; } }) });
+  globalThis.DOMMatrix = class { translateSelf() { return this; } scaleSelf() { return this; } };
+  try {
+    performance.now = () => 12345;
+    const e = makeEngine({ gradientEnabled: true, energyEffect: true, energyAurora: true, energySpeed: 1, gradientCount: 3 });
+    e.canvas = { ownerDocument: { defaultView: { devicePixelRatio: 2.8 } } };
+    e.ctx = { createPattern: () => ({ setTransform() {} }) };
+    e.smearCorners = () => null;
+    const pat = e.auroraPattern(100, 50, 9, 24, 0.9, 1);
+    const want = old(e._auroraLut, put.width, put.height, 12.345, 1, Math.round(0.9 * 255));
+    let worst = 0;
+    for (let i = 0; i < want.length; i++) worst = Math.max(worst, Math.abs(want[i] - put.data[i]));
+    ok("a caret's aurora: the same colors as the five-sines-a-pixel field, at one pixel per CSS pixel (2.8x screen)", !!pat && put.width === 11 && put.height === 26 && worst <= 1, [put.width, put.height, worst]);
+    e.smearCorners = () => ({ tl: { x: 100, y: 50 }, tr: { x: 460, y: 50 }, br: { x: 460, y: 98 }, bl: { x: 100, y: 98 } });
+    e.auroraPattern(100, 50, 9, 24, 0.9, 1);
+    ok("a smear across a line: computed coarser, within AURORA_BUDGET pixels", put.width * put.height <= T.AURORA_BUDGET * 1.05 && put.width > 50, [put.width, put.height]);
+  } finally {
+    globalThis.createEl = createElWas; globalThis.DOMMatrix = DOMMatrixWas; performance.now = nowWas;
+  }
+}

@@ -605,6 +605,17 @@ section("frame governor: resting more (1.5.8)");
     ok("...and a fading ghost keeps the loop hot", on._isAnimating(performance.now()) === true);
     on.settings.crtEffect = false; on._effCache = null;
     ok("...but not once the effect is switched off under it", on._isAnimating(performance.now()) === false);
+    // Neon bridges a jump with ghosts along the way - not a deletion's: a
+    // Backspace joining two lines jumps to the end of the line above, and
+    // the streak ran the whole line.
+    const jump = (deleting) => {
+      const n = mk({ crtEffect: true, crtNeon: true, trailLength: 8 }); n.lastActive = rec(10, 34, 40);
+      n.spawnFlamePixels = () => {}; n.spawnJumpTrail = () => {}; n.spawnGlitch = () => {}; n._deletionFx = () => false;
+      if (deleting) n._deletePending = performance.now();
+      n.commitMove(rec(400, 10, 39));
+      return n.trail.length;
+    };
+    ok("neon: a jump bridged with ghosts along the way; a deletion's jump (Backspace joining lines) only its own ghost", jump(false) > 1 && jump(true) === 1, [jump(false), jump(true)]);
   }
 
   // --- blinkWindow: the same clock as blinkPhase, landing on the fades --------

@@ -321,6 +321,6 @@ section("When: the CRT ghosts and Speed demon");
   ok("a dropdown under each: Ghosts while (CRT effects), Heats while (Speed demon)", under("Ghosts while", "CRT effects") && under("Heats while", "Speed demon"));
   const carets = fs.readFileSync(srcPath("carets.ts"), "utf8"), plugin = fs.readFileSync(srcPath("plugin.ts"), "utf8");
   ok("the ghosts recorded by Ghosts while; a keystroke's heat by Heats while, a move's not while deleting alone",
-     carets.includes("if (whenAllows(this.look.crtTrailWhen, ") && carets.includes(")) this.pushTrail(this.lastActive, caret);") &&
+     carets.includes("if (whenAllows(this.look.crtTrailWhen, deletingMove)) this.pushTrail(this.lastActive, deletingMove ? null : caret);") &&
      /if \(!whenAllows\(this\.look\.speedDemonWhen, kind === "delete"\)\) return;/.test(plugin) && /this\.look\.speedDemonWhen !== "deleting"/.test(carets));
 }

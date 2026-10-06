@@ -827,8 +827,12 @@ export const caretsMethods = {
     // bridging it to the destination, so the CRT/neon trail is continuous across
     // the leap the same commit it happens rather than one move later.
     // Ghosts while (crtTrailWhen): typing, deleting or both - this move a
-    // deletion's or not (the same test as below).
-    if (whenAllows(this.look.crtTrailWhen, !!(this._deletePending && performance.now() - this._deletePending < 250))) this.pushTrail(this.lastActive, caret);
+    // deletion's or not (the same test as below). A deletion lays no bridge:
+    // a Backspace that joins two lines jumps the caret to the end of the line
+    // above, and neon's streak across that leap ran the whole line ("the crt
+    // neon effect underlines the whole line when deleting fast").
+    const deletingMove = !!(this._deletePending && performance.now() - this._deletePending < 250);
+    if (whenAllows(this.look.crtTrailWhen, deletingMove)) this.pushTrail(this.lastActive, deletingMove ? null : caret);
     if (this.lastActive) {
       // Consume a pending Backspace/Delete keystroke if it happened
       // recently enough to plausibly be the cause of this caret move.

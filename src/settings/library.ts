@@ -118,15 +118,16 @@ export const libraryMethods = {
 
   // The command's roll (the palette, or its hotkey - "a hotkey for the
   // randomizer too, that works for both normal and vim mode"): the global
-  // cursor, or with Vim on every mode's. A notice says what came out, and
-  // the panel is redrawn if it is open - the Randomizer page's preview
-  // playing the new cursor, its Roll row saying the same.
+  // cursor, or with Vim on every mode's. A plain notice ("should just be
+  // simple: Cursor Randomized" - in sentence case, as
+  // the review's lint asks), and the panel redrawn if it is open - the
+  // Randomizer page's preview playing the new cursor, its Roll row saying
+  // what came out.
   async rollFromPalette(this: CursorSmithPlugin) {
-    const { vim, look, family } = await this.rollCursor();
-    const said = this.settingTab ? this.settingTab.rolled(look, family) : "";
+    const { look, family } = await this.rollCursor();
+    if (this.settingTab) this.settingTab.rolled(look, family);
     this.refreshSettingTab();
-    const head = vim ? "Cursor-Smith rolled every Vim mode" : "Cursor-Smith rolled a new cursor";
-    new Notice(said ? `${head}: ${said}.` : `${head}.`);
+    new Notice("Cursor randomized");
   },
 
   async deleteUserPreset(this: CursorSmithPlugin, name: string) {

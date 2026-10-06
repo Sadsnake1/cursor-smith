@@ -185,7 +185,7 @@ export const DEFAULT_SETTINGS = {
   // fresh, shrinking to specks as they age - see drawHotHead.
   hotHead: false,
   hotHeadQuantity: 1,      // 0..3 multiplier on how much fire is emitted
-  hotHeadSpread: 4,        // 0..14 characters of surrounding text set alight, and
+  hotHeadSpread: 2,        // 0..14 characters (4 until 1.7.7: "subtler") of surrounding text set alight, and
                            // how long a patch of text keeps burning after the
                            // caret has moved off it
   hotHeadTrail: 6,         // 0..30 extra fire laid along the path just travelled
@@ -376,10 +376,12 @@ export const DEFAULT_SETTINGS = {
   // The Randomizer's dials (1.7.7, randomize.ts): how a roll is made, not a
   // look - not in LOOK_KEYS, so never in a preset or a share code. Chaos
   // 1 to 11 ("only the chaos up to 11, the rest up to 10"), Color and
-  // Motion 1 to 10 (dialToRoll takes them to the roll's 0 to 100).
-  rollChaos: 4,
-  rollColor: 6,
-  rollMotion: 5,
+  // Motion 1 to 10 (dialToRoll takes them to the roll's 0 to 100). All at
+  // 1 by default ("the default slider levels should be 1,1,1"; they were
+  // 4, 6 and 5): a first roll is a calm one.
+  rollChaos: 1,
+  rollColor: 1,
+  rollMotion: 1,
   // The shape a roll keeps (Box, Line, Underline), or "any".
   rollShape: "any",
   // With Vim on, the modes' shapes: Vim's own ("vim"), one for all, or any.

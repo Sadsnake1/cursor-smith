@@ -55,14 +55,14 @@ import type { Look } from "../types";
 import { blinkAlphaAt, blinkSegments, smoothCatchRate, smoothTypingRate } from "../util/motion";
 import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME, TW_SPRING_DOWN } from "../constants";
 import { Platform } from "obsidian";
-import { FLAME_PER_SECOND, HOT_HEIGHT_SCALE } from "../effects/fire";
-import { capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
+import { FLAME_PER_SECOND, HOT_FIRE_ALPHA, HOT_HEIGHT_SCALE, HOT_HSV, HOT_STOP_POS, hotTypeAt, hotTypeKicked, hotTypeShare } from "../effects/fire";
+import { hsvToRgb, capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
-import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS } from "./settings";
+import { eaterChoiceOf, letterChoiceOf, VIM_MODE_LABELS, whenAllows } from "./settings";
 import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
 import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeOutline, holeSpring } from "../effects/effects-rabbithole";
@@ -767,6 +767,9 @@ interface Demo {
   bmOn: boolean;
   burns: { x: number; t: number }[];
   fireAcc: number;
+  // How warm its typing has made Hot-head's fire, and when (as the engine's).
+  hotType: number;
+  hotTypeT: number;
   keyKind: "type" | "back";
   poolMax: number;
   scaled: boolean;
@@ -860,7 +863,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, hotType: 0, hotTypeT: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
       vim: null,
     };
     // Vim: the mode's badge in the stage's corner, the Visual selection under
@@ -1056,11 +1059,12 @@ export class DemoStrip {
     const weights = d.burns.map((b) => Math.max(0, 1 - (now - b.t) / linger));
     const sum = weights.reduce((a, b) => a + b, 0);
     if (sum <= 0) return;
-    d.fireAcc += (dt / 1000) * FLAME_PER_SECOND * 0.75 * (look.hotHeadQuantity ?? 1) * Math.min(1.6, 0.45 + 0.55 * sum);
+    d.fireAcc += (dt / 1000) * FLAME_PER_SECOND * 0.75 * (look.hotHeadQuantity ?? 1) * Math.min(1.6, 0.45 + 0.55 * sum)
+      * hotTypeShare(hotTypeAt(d.hotType, d.hotTypeT || now, now));
     const cw = d.stepPx || 7;
     const fade = look.hotHeadFade ?? 620;
     const heightMul = ((look.hotHeadHeight ?? 0.55) / 0.55) * HOT_HEIGHT_SCALE;
-    const spread = (look.hotHeadSpread ?? 4) * 0.1 * cw;
+    const spread = (look.hotHeadSpread ?? 2) * 0.1 * cw;
     const right = ((d.script || d.card ? d.state.buffer.length : d.n) + 0.5) * cw;
     for (; d.fireAcc >= 1; d.fireAcc--) {
       let r = Math.random() * sum, bi = 0;
@@ -1088,7 +1092,9 @@ export class DemoStrip {
     if (d.look.hotHeadFlat) return d.color;
     const q = Math.round(Math.max(0, Math.min(1, Math.pow(temp, 0.55))) * 3) / 3;
     const pos = q * 0.5;
-    const stops: [number, number[]][] = [[0, hexToRgbTuple(d.color.startsWith("#") ? d.color : "#ff8000")], [0.12, [255, 187, 0]], [0.42, [255, 128, 0]], [0.72, [255, 61, 13]]];
+    // The engine's ramp (HOT_STOP_POS, HOT_HSV): the cursor's color, then
+    // amber, orange, red-orange.
+    const stops: [number, number[]][] = [[0, hexToRgbTuple(d.color.startsWith("#") ? d.color : "#ff8000")], ...HOT_HSV.slice(0, 3).map((hsv, i): [number, number[]] => [HOT_STOP_POS[i + 1], hsvToRgb(hsv)])];
     let i = 0;
     while (i < stops.length - 2 && pos > stops[i + 1][0]) i++;
     const [p0, c0] = stops[i], [p1, c1] = stops[i + 1];
@@ -1190,6 +1196,7 @@ export class DemoStrip {
   // letters), Space sends fireworks up, the typewriter dips.
   private onType(d: Demo, i: number, ch: string, now: number) {
     const look = d.look;
+    this.warmFire(d, false, now);
     const x = i * d.stepPx;
     d.keyT = now;
     d.keyKind = "type";
@@ -1213,7 +1220,16 @@ export class DemoStrip {
 
   // The preview, a typo backspaced: the letter evaporates or bursts apart,
   // as Backspace's effects do; the typewriter dips for the key.
+  // A keystroke warms Hot-head's fire, as "Burns while" allows (the
+  // engine's _hotTypeKick).
+  private warmFire(d: Demo, deleting: boolean, now: number) {
+    if (!d.look.hotHead || !whenAllows(d.look.hotHeadWhen, deleting)) return;
+    d.hotType = hotTypeKicked(hotTypeAt(d.hotType, d.hotTypeT || now, now));
+    d.hotTypeT = now;
+  }
+
   private onBack(d: Demo, at: number, ch: string, now: number) {
+    this.warmFire(d, true, now);
     // Backspace and Delete's flip, for a moment (flipNow).
     d.delUntil = now + DELETE_INVERT_MS;
     // Back-man's bite: chewed at its own pace, kicking its bend leftward,
@@ -1459,7 +1475,7 @@ export class DemoStrip {
           const [sw, sh] = t < 0.78 ? FIRE_SHAPES[idx] : [1, 1];
           w = sw * FIRE_UNIT; h = sh * FIRE_UNIT;
         }
-        const alpha = (d.look.hotHeadOpacity ?? 1) * (0.45 + 0.55 * (Math.round((1 - t) * 3) / 3));
+        const alpha = (d.look.hotHeadOpacity ?? 1) * HOT_FIRE_ALPHA * (0.45 + 0.55 * (Math.round((1 - t) * 3) / 3));
         p.el.setCssStyles({
           width: `${w.toFixed(1)}px`, height: `${h.toFixed(1)}px`,
           backgroundColor: this.fireColor(d, 1 - t),

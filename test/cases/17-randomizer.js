@@ -68,7 +68,7 @@ section("Randomizer: the dials");
   ok("the dials are settings, not looks: in no preset or share code",
      ["rollChaos", "rollColor", "rollMotion", "rollEffects"].every((k) => k in T.DEFAULT_SETTINGS && !T.LOOK_KEYS.includes(k)) && !("rollSounds" in T.DEFAULT_SETTINGS) &&
      JSON.stringify(T.DEFAULT_SETTINGS.rollEffects) === "{}" &&
-     T.DEFAULT_SETTINGS.rollChaos === 4 && T.DEFAULT_SETTINGS.rollColor === 6 && T.DEFAULT_SETTINGS.rollMotion === 5);
+     T.DEFAULT_SETTINGS.rollChaos === 1 && T.DEFAULT_SETTINGS.rollColor === 1 && T.DEFAULT_SETTINGS.rollMotion === 1);
   ok("the dials: Chaos 1 to 11, Color and Motion 1 to 10, taken to the roll's 0 to 100", T.ROLL_CHAOS_MAX === 11 && T.ROLL_DIAL_MAX === 10 && T.dialToRoll(1, 11) === 0 && T.dialToRoll(11, 11) === 100 && T.dialToRoll(6, 11) === 50 && T.dialToRoll(10, 10) === 100 && T.dialToRoll(1, 10) === 0 && T.dialToRoll(99, 11) === 100);
   const mig = T.migrateLegacyKeys({ rollChaos: 35, rollColor: 60, rollMotion: 50 });
   ok("a Shape to keep: any by default", T.DEFAULT_SETTINGS.rollShape === "any" && !T.LOOK_KEYS.includes("rollShape"));
@@ -183,7 +183,7 @@ section("Randomizer: its page");
   ok("a Shape dropdown under it: any shape, or Box, Line, Underline", !!shapeRow && shapeRow.dropdowns[0]._value === "any" && Object.keys(shapeRow.dropdowns[0]._options).join() === "any,Box,Line,Underline");
   const chaos = named("Chaos");
   const color = named("Color");
-  ok("the dials are sliders on their settings, each with its reset: Chaos 1 to 11, the others 1 to 10", chaos.sliders[0]._limits.min === 1 && chaos.sliders[0]._limits.max === 11 && chaos.sliders[0]._value === 4 && chaos.extras.length === 1 && color.sliders[0]._limits.min === 1 && color.sliders[0]._limits.max === 10);
+  ok("the dials are sliders on their settings, each with its reset: Chaos 1 to 11, the others 1 to 10", chaos.sliders[0]._limits.min === 1 && chaos.sliders[0]._limits.max === 11 && chaos.sliders[0]._value === 1 && chaos.extras.length === 1 && color.sliders[0]._limits.min === 1 && color.sliders[0]._limits.max === 10);
   const head = rows.findIndex((r) => r.name === "Effects it can roll");
   const switches = rows.slice(head + 1, head + 10);
   ok("then a switch per effect a roll may pick, under its own subheading, the Effects page's names, out of settings search - no torch, no bracket tether",
@@ -412,15 +412,15 @@ later(async () => {
     p.settingTab = { rolled: (look, family) => { said.push([look, family]); return "Line · one color · Hot-head"; } };
     await p.rollFromPalette();
     ok("a roll by the command lands on the cursor, the page told what came out and redrawn", said.length === 1 && said[0][1] === undefined && refreshed === 1 && p._activePresetName === "");
-    ok("...and a notice says it", notices[0] === "Cursor-Smith rolled a new cursor: Line · one color · Hot-head.", notices);
+    ok("...and a plain notice: Cursor randomized", notices[0] === "Cursor randomized", notices);
     const v = rollPlugin({ vimModeEnabled: true, uiMode: "vim" }, true);
     v.settingTab = p.settingTab;
     await v.rollFromPalette();
-    ok("with Vim on: every mode rolled, the page given the family", said.length === 2 && !!said[1][1] && ["normal", "insert", "visual", "replace", "command"].every((m) => !!said[1][1][m]) && /^Cursor-Smith rolled every Vim mode: /.test(notices[1]), notices);
+    ok("with Vim on: every mode rolled, the page given the family", said.length === 2 && !!said[1][1] && ["normal", "insert", "visual", "replace", "command"].every((m) => !!said[1][1][m]) && notices[1] === "Cursor randomized", notices);
     const bare = rollPlugin({});
     bare.settingTab = null;
     await bare.rollFromPalette();
-    ok("...no panel: the notice alone", notices[2] === "Cursor-Smith rolled a new cursor.", notices);
+    ok("...no panel: the same notice", notices[2] === "Cursor randomized", notices);
   }
   const src = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
   ok("one command, a plain callback (no editor needed): the same roll from the palette or a key, Vim on or off", /id: "randomize",[\s\S]{0,80}callback: \(\) => \{ void this\.rollFromPalette\(\); \}/.test(src) && !/id: "randomize",[\s\S]{0,80}editorCallback/.test(src));

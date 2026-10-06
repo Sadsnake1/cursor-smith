@@ -28,6 +28,7 @@ import {
   HOT_COLOR_LEVELS,
   HOT_ENGULF_PAD_X,
   HOT_ENGULF_RATE,
+  HOT_ENGULF_LIFT,
   HOT_FINE_CHANCE,
   HOT_FINE_SCALE,
   HOT_FLAT_HUE_SPAN,
@@ -36,9 +37,13 @@ import {
   HOT_HEAD_JITTER_UP,
   HOT_HEAD_LIFT,
   HOT_HEIGHT_SCALE,
+  hotTypeAt,
+  hotTypeKicked,
+  hotTypeShare,
   HOT_LIFE_FLOOR,
   HOT_SHAPE_EASE,
   HOT_HSV,
+  HOT_FIRE_ALPHA,
   HOT_PX_DIVISOR,
   HOT_PX_MAX,
   HOT_PX_MIN,
@@ -277,7 +282,7 @@ export const effectsFireMethods = {
       const step = cwHere * HOT_TRAIL_STEP_CW;
       const n = Math.abs(markY - prevRow) < 2 ? Math.min(HOT_TRAIL_PATH_MAX, Math.floor(dist / step)) : 0;
       if (n >= 1) {
-        const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 4);
+        const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 2);
         const linger = HOT_BURN_LINGER_MS * (1 + spreadCw);
         for (let i = n; i >= 1; i--) {
           const s = (i * step) / dist;
@@ -316,6 +321,13 @@ export const effectsFireMethods = {
   _hotLit(this: CursorSmithPlugin, burns: unknown[] | undefined): boolean {
     const w = this.look.hotHeadWhen;
     return (w !== "typing" && w !== "deleting") || !!(burns && burns.length);
+  },
+
+  // A keystroke that writes or deletes (noteKeystroke), as "Burns while"
+  // allows: the fire warms (hotTypeKicked).
+  _hotTypeKick(this: CursorSmithPlugin, now: number) {
+    this._hotType = hotTypeKicked(hotTypeAt(this._hotType || 0, this._hotTypeT || now, now));
+    this._hotTypeT = now;
   },
 
   hotHeadFeeding(this: CursorSmithPlugin, nowT: number): boolean {
@@ -366,7 +378,7 @@ export const effectsFireMethods = {
     const dt = Math.max(0, Math.min(0.1, (now - (this._lastHotT || now)) / 1000));
     this._lastHotT = now;
 
-    const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 4);
+    const spreadCw = Math.max(0, this.styleFor("hotHeadSpread") ?? 2);
     const fadeMs = Math.max(120, this.styleFor("hotHeadFade") ?? FLAME_MAX_LIFETIME);
     const heightMul = Math.max(0.05, this.styleFor("hotHeadHeight") ?? 0.55) * HOT_HEIGHT_SCALE;
     const perLength = FLAME_PER_LENGTH * ((this.styleFor("hotHeadTrail") ?? 0) / 10);
@@ -387,7 +399,7 @@ export const effectsFireMethods = {
       const baseY = land.top + Math.max(0, (land.h || lh) - lfs) / 2 - lfs * HOT_HEAD_LIFT;
       for (let i = 0; i < count; i++) {
         const spark = Math.random() < 0.5;
-        const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul * 0.8;
+        const mag = FLAME_INITIAL_VELOCITY * Math.sqrt(Math.random()) * cw * heightMul * HOT_ENGULF_LIFT;
         const life0 = fadeMs * (spark ? 0.15 + 0.45 * Math.random() : 0.3 + 0.5 * Math.pow(Math.random(), 2));
         const kick = hotKick(mag);
         this.flameEmbers.push({
@@ -454,8 +466,11 @@ export const effectsFireMethods = {
     // spread should look like more fire, not like the same fire smeared out,
     // without the particle count exploding.
     const spanScale = 1 + (halfSpan * 2) / (cw * 6);
+    // As warm as the typing (hotTypeShare): a few embers cold, all of it
+    // under a fast burst.
+    const typed = hotTypeShare(hotTypeAt(this._hotType || 0, this._hotTypeT || now, now));
     const n = (FLAME_PER_SECOND * dt * spanScale * Math.min(HOT_TRAIL_EMIT_MAX, 0.55 + weightSum * 0.45)
-      + travelCw * perLength) * qty;
+      + travelCw * perLength) * qty * typed;
     let count = Math.floor(n) + (Math.random() < (n % 1) ? 1 : 0);
     count = Math.max(0, Math.min(count, chunkCap - live));
     if (count <= 0) return;
@@ -645,7 +660,7 @@ export const effectsFireMethods = {
     const now = performance.now();
     const active = this.animActive;
     const opacity = Math.max(0, Math.min(1, this.look.cursorOpacity ?? 1))
-      * Math.max(0, Math.min(1, this.styleFor("hotHeadOpacity") ?? 1));
+      * Math.max(0, Math.min(1, this.styleFor("hotHeadOpacity") ?? 1)) * HOT_FIRE_ALPHA;
     const maxLife = Math.max(120, this.styleFor("hotHeadFade") ?? FLAME_MAX_LIFETIME);
 
     const dtMs = Math.max(1, Math.min(100, now - (this._hotDrawT || now - 17)));

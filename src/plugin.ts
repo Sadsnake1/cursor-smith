@@ -200,6 +200,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare hotSyncScroll: EffectsMethods["hotSyncScroll"];
   declare updateHotHeadInertia: EffectsMethods["updateHotHeadInertia"];
   declare hotHeadFeeding: EffectsMethods["hotHeadFeeding"];
+  declare _hotTypeKick: EffectsMethods["_hotTypeKick"];
   declare _hotFeedingAt: EffectsMethods["_hotFeedingAt"];
   declare _hotLit: EffectsMethods["_hotLit"];
   declare maybeSpawnHotHead: EffectsMethods["maybeSpawnHotHead"];
@@ -478,6 +479,9 @@ export default class CursorSmithPlugin extends Plugin {
   _heatKeyT!: number;
   _hideNativeSig!: boolean | null;
   declare _hotActiveT: number;
+  // How warm the typing has made Hot-head's fire, and when (effects-fire.ts).
+  _hotType!: number;
+  _hotTypeT!: number;
   _hotDrawT!: number;
   declare _hotEmitFrom: Pt | null;
   declare _hotEngulfUntil: number;
@@ -1165,6 +1169,9 @@ export default class CursorSmithPlugin extends Plugin {
       // keys and folding them together would call down lightning on every
       // space bar press.
       if (kind === "enter" || kind === "space") this._popKeyPending = now;
+      // Hot-head's fire warms with the typing: a key that writes or deletes,
+      // as "Burns while" allows - not a held letter key, not moving about.
+      if (this.look.hotHead && kind !== "nav" && !(opts.repeat && kind === "type") && whenAllows(this.look.hotHeadWhen, kind === "delete")) this._hotTypeKick(now);
 
       // Speed Demon: any key that plausibly represents "the user is working"
       // bumps heat. Two classes, because they don't deserve the same weight:
@@ -1913,6 +1920,8 @@ export default class CursorSmithPlugin extends Plugin {
     this._glideRun = null;
     this._hotEmitFrom = null;
     this._hotActiveT = 0;
+    this._hotType = 0;
+    this._hotTypeT = 0;
     this._lastHotT = 0;
     this._hotShiftTick = 0;
     this._hotEngulfUntil = 0;

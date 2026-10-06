@@ -19,13 +19,20 @@ export const HOT_STOP_POS = [0, 0.12, 0.42, 0.72, 1];
 // cursor emits light rather than reflecting it; only hue and saturation carry
 // the temperature. The white end keeps a faint warm tint instead of being pure
 // #ffffff, so the hottest core still looks like flame.
+//
+// Toned down in 1.7.7 ("subtler", option 5): a little less saturated and
+// bright (it was 1.00 / 1.00, red-orange 0.95), so the fire glows rather
+// than glares - the hues are the same.
 export const HOT_HSV = [
-  [ 44, 1.00, 1.00],  // amber-yellow (a touch warmer than a pure 48 gold,
+  [ 44, 0.88, 0.92],  // amber-yellow (a touch warmer than a pure 48 gold,
                       // which reads green-ish next to orange)
-  [ 30, 1.00, 1.00],  // orange
-  [ 12, 0.95, 1.00],  // red-orange
+  [ 30, 0.88, 0.92],  // orange
+  [ 12, 0.84, 0.92],  // red-orange
   [ 26, 0.20, 1.00],  // white-hot, faintly warm
 ];
+// The fire a little see-through, on top of Fire opacity and the cursor's
+// own opacity (1.7.7, "subtler").
+export const HOT_FIRE_ALPHA = 0.8;
 
 // Temperature is lifted by this exponent before the ramp is sampled. A particle
 // cools linearly with its remaining life, but lifetimes are skewed short, so a
@@ -151,9 +158,13 @@ export const HOT_FINE_CHANCE = 0.4;
 // A first cut threw a burst outward from a ring around the drawn caret; it
 // never showed, because with Smooth Movement the drawn caret eases across a
 // jump and never travels far in one frame.
-export const HOT_ENGULF_MS = 260;
-export const HOT_ENGULF_RATE = 110;           // particles per second at the landing, at Quantity 1 (200 until 1.7.7)
-export const HOT_ENGULF_PAD_X = 1.1;          // how far beside the caret, in character widths
+// A smaller flare since 1.7.7 ("do smaller jump flare"): 260 ms, 200 a
+// second (110 for a while), 1.1 characters either side and 0.8 of the
+// height until then.
+export const HOT_ENGULF_MS = 180;
+export const HOT_ENGULF_RATE = 55;            // particles per second at the landing, at Quantity 1
+export const HOT_ENGULF_PAD_X = 0.5;          // how far beside the caret, in character widths
+export const HOT_ENGULF_LIFT = 0.55;          // its flames' height, against the steady fire's
 export const HOT_SPARK_LIFT = 1.9;     // times the chunk's buoyancy
 export const HOT_SPARK_RISE = 5;       // cw/s of extra upward start
 // Discrete shade steps (upstream color_levels). Quantising keeps edges crunchy.
@@ -197,6 +208,28 @@ export const FLAME_PER_LENGTH = 0.5;           // extra particles per cw of care
 // How high the flames climb at a given Flame height: four fifths of what
 // they did until 1.7.7, with the rates above.
 export const HOT_HEIGHT_SCALE = 0.8;
+// The fire follows the typing (1.7.7, "let's think on how to make the effect
+// subtler", option 2): every keystroke that writes or deletes warms it by
+// HOT_TYPE_KICK, and the warmth decays with HOT_TYPE_TAU_MS, so it settles
+// at about rate x kick x tau - 1 key a second 0.17, 3 a second 0.5, 5 a
+// second 0.84. The fire is HOT_TYPE_FLOOR of itself cold (a few embers
+// under slow typing, at rest, after a click) and all of it at full heat.
+export const HOT_TYPE_KICK = 0.14;
+export const HOT_TYPE_TAU_MS = 1200;
+export const HOT_TYPE_FLOOR = 0.15;
+// The warmth `h` set at `t`, decayed to `now`.
+export function hotTypeAt(h: number, t: number, now: number): number {
+  if (!(h > 0)) return 0;
+  return h * Math.exp(-Math.max(0, now - t) / HOT_TYPE_TAU_MS);
+}
+// The warmth after one more keystroke.
+export function hotTypeKicked(h: number): number {
+  return Math.min(1, h + HOT_TYPE_KICK);
+}
+// How much of the fire burns at warmth `h`.
+export function hotTypeShare(h: number): number {
+  return HOT_TYPE_FLOOR + (1 - HOT_TYPE_FLOOR) * Math.max(0, Math.min(1, h));
+}
 export const FLAME_SPREAD = 0.5;               // cw, lateral scatter at the emit point
 // The start is a kick UP, within HOT_START_CONE either side of straight up.
 // It used to be a full disc plus a fifth of the caret's own velocity, so fire

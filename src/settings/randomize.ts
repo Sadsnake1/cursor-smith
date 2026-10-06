@@ -232,7 +232,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   }
   if (on.has("hotHead")) {
     look.hotHeadQuantity = level(0.5, 2.5, 0.1);
-    look.hotHeadSpread = Math.round(any(2, 10, 1));
+    look.hotHeadSpread = Math.round(any(1, 4, 1));
     look.hotHeadTrail = Math.round(any(0, 20, 1));
     look.hotHeadHeight = level(0.4, 1.2, 0.05);
     look.hotHeadSpeedHeat = rand() < 0.3;

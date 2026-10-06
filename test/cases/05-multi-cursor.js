@@ -726,6 +726,8 @@ section("multi-cursor: full effects on secondary carets");
       o._hotPrev = { x: 304, y: 112, t: 0 };
       o._lastHotT = performance.now() - 16;
       o.hotBurns = [{ x: 304, y: 100, t: performance.now(), rowLeft: 0, rowRight: 900, lh: 24, fs: 16 }];
+      // Typing fast: the fire at full warmth (hotTypeShare).
+      e._hotType = 1; e._hotTypeT = performance.now();
     };
     arm(e);
     e.flameEmbers = [];
@@ -736,6 +738,40 @@ section("multi-cursor: full effects on secondary carets");
     e._secondaries = [b];
     e._withCaret(b, () => e.maybeSpawnHotHead());
     ok("a secondary still lights with the primary at the cap", e.flameEmbers.length > T.FLAME_MAX_NUM, e.flameEmbers.length);
+  }
+
+  // The fire follows the typing (1.7.7, "subtler"): each keystroke that
+  // writes or deletes warms it, the warmth cools within seconds, and the
+  // fire burns as warm as it is - a few embers cold.
+  {
+    ok("cold: HOT_TYPE_FLOOR of the fire; warm: all of it", T.hotTypeShare(0) === T.HOT_TYPE_FLOOR && T.hotTypeShare(1) === 1 && T.hotTypeShare(5) === 1);
+    const typeAt = (perS, secs) => { let h = 0, t = 0; for (let i = 0; i < perS * secs; i++) { const now = (i * 1000) / perS; h = T.hotTypeKicked(T.hotTypeAt(h, t, now)); t = now; } return h; };
+    const fast = typeAt(5, 8), mid = typeAt(3, 8), slow = typeAt(1, 8);
+    ok("5 keys a second warms it near full, 3 about half, 1 a little", fast > 0.75 && mid > 0.4 && mid < 0.65 && slow < 0.3, [fast, mid, slow]);
+    ok("...and it cools within a few seconds of stopping", T.hotTypeAt(1, 0, 3000) < 0.1 && T.hotTypeAt(0.5, 1000, 1000) === 0.5);
+    const e = mk({ hotHead: true, hotHeadQuantity: 1, hotHeadIdleMs: 0 });
+    const a = rec(300, 100, 40);
+    const burn = (warmth) => {
+      e.animActive = Object.assign({}, a);
+      e._hotEmitFrom = { x: 304, y: 112 }; e._hotVel = { x: 0, y: 0 };
+      e._hotPrev = { x: 304, y: 112, t: 0 };
+      e.flameEmbers = [];
+      let n = 0;
+      for (let i = 0; i < 30; i++) {
+        e.hotBurns = [{ x: 304, y: 100, t: performance.now(), rowLeft: 0, rowRight: 900, lh: 24, fs: 16 }];
+        e._hotType = warmth; e._hotTypeT = performance.now();
+        e._lastHotT = performance.now() - 16;
+        const before = e.flameEmbers.filter((p) => !p.spark).length;
+        e.maybeSpawnHotHead();
+        n += e.flameEmbers.filter((p) => !p.spark).length - before;
+      }
+      return n;
+    };
+    const cold = burn(0), warm = burn(1);
+    ok("the engine: cold, a few embers; under fast typing, several times the fire", warm > 15 && warm > cold * 2.5, [cold, warm]);
+    const src = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
+    ok("...warmed by a key that writes or deletes, as Burns while allows - not a held letter, not moving about", /if \(this\.look\.hotHead && kind !== "nav" && !\(opts\.repeat && kind === "type"\) && whenAllows\(this\.look\.hotHeadWhen, kind === "delete"\)\) this\._hotTypeKick\(now\);/.test(src));
+    ok("Fire spread 2 by default (4 until 1.7.7)", T.DEFAULT_SETTINGS.hotHeadSpread === 2);
   }
 
   // The path burns: a jump lays marks along the way the caret came, far
@@ -782,6 +818,8 @@ section("multi-cursor: full effects on secondary carets");
       e.animActive = Object.assign({}, a); e.lastActive = Object.assign({}, a);
       e._hotEmitFrom = { x: 404, y: 112 }; e._hotPrev = { x: 404, y: 112, t: now, row: 100 };
       e._hotActiveT = now; e.hotBurns = burns; e.flameEmbers = [];
+      // Typing fast: the fire at full warmth (hotTypeShare).
+      e._hotType = 1; e._hotTypeT = performance.now();
     };
     const glyphTop = 100 + (24 - 16) / 2;
     const lo = glyphTop - 24 * (T.HOT_HEAD_JITTER_UP + 0.01), hi = glyphTop + 16 * 0.06 + 24 * T.HOT_HEAD_JITTER_DOWN + 1e-9;

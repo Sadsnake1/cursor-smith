@@ -440,7 +440,10 @@ button.cursor-smith-pcard-use:hover {
 .cursor-smith-pcard-demo {
   margin-right: 6px;
 }
-/* A particle: a pixel thrown, risen or burnt, moved and faded inline. */
+/* A particle: a pixel thrown, risen or burnt, moved and faded inline. No
+   will-change on it, the caret or the ghosts: a layer each (160 particles
+   at Chaos 11) cost a phone more to layerize every frame than the repaint
+   they save (the Randomizer's preview lagged on the phone). */
 .cursor-smith-pcard-particle {
   position: absolute;
   left: 0;
@@ -450,7 +453,6 @@ button.cursor-smith-pcard-use:hover {
   border-radius: 1px;
   pointer-events: none;
   z-index: 2;
-  will-change: transform, opacity;
 }
 .cursor-smith-pcard-caret,
 .cursor-smith-pcard-ghost {
@@ -460,7 +462,6 @@ button.cursor-smith-pcard-use:hover {
   width: 1ch;
   height: 12px;
   border-radius: 1px;
-  will-change: transform, width;
 }
 .cursor-smith-pcard-ghost {
   z-index: 0;
@@ -1078,12 +1079,16 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   flex: 1 1 auto;
   width: 100%;
 }
+/* A rounded box, not a pill: the phone's --input-radius is a pill's, which
+   cut the Vim badge in the corner. Contained: what moves in it lays out
+   and paints only it, not the page. */
 .cursor-smith-roll-stage {
   position: relative;
   width: 100%;
   height: 92px;
   overflow: hidden;
-  border-radius: var(--input-radius, 8px);
+  contain: strict;
+  border-radius: var(--radius-m, 8px);
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
 }
@@ -1111,10 +1116,14 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   pointer-events: none;
   display: none;
 }
+/* One line, whatever the stage's width: the scale (demo.ts, fit) makes it
+   fit; wrapped, a phone's narrow stage broke it over two. */
 .cursor-smith-roll-stage .cursor-smith-roll-demo {
   position: absolute;
   left: 18px;
   top: 64%;
+  width: max-content;
+  white-space: nowrap;
   margin: 0;
   transform: translateY(-50%);
   transform-origin: left center;

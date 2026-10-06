@@ -175,6 +175,10 @@ const HOLD_END_MS = 650;
 const HOLD_START_MS = 450;
 // Particles per card, at most (the real fire needs a few dozen).
 const POOL = 60;
+// The Randomizer preview's particles: every effect at once at Chaos 11. A
+// phone gets half (each one is restyled every frame: 160 lagged there).
+const PREVIEW_POOL = 160;
+const PREVIEW_POOL_PHONE = 80;
 // The preview's Hot-head: its grid square (the engine's font size over
 // HOT_PX_DIVISOR, at the demo's 12px) and its block shapes, biggest first -
 // fire.ts's HOT_BLOCK_SHAPES, the notched ones left out (an element is a
@@ -270,6 +274,21 @@ export const SCRIPT_LINES = [
   "Once a plain caret. Then something happened.",
 ];
 export const SCRIPT_MAX = 44;
+// On a narrow stage (a phone) the preview's text stays this big at least
+// ("the text on the phone is too small"): the line is picked among those
+// that fit at it - one line, never wrapped, since every effect plays on
+// one row. Never fewer than READ_FEW lines to pick from: when fewer are
+// that short (Vim's), the READ_FEW shortest, a little smaller.
+export const READ_SCALE = 1.15;
+export const READ_FEW = 6;
+// The longest line, in letters, a stage shows at READ_SCALE: `room` px
+// wide, `step` px a letter (the text's 22px of padding after it).
+export function readableChars(room: number, step: number, lines: string[]): number {
+  if (!(room > 0) || !(step > 0) || !lines.length) return SCRIPT_MAX;
+  const fit = Math.floor((room / READ_SCALE - 22) / step);
+  const lens = lines.map((l) => l.length).sort((a, b) => a - b);
+  return Math.min(SCRIPT_MAX, Math.max(fit, lens[Math.min(lens.length, READ_FEW) - 1]));
+}
 
 // The preview's lines with Vim on (1.7.7): Vim's own jokes.
 export const VIM_LINES = [
@@ -750,6 +769,8 @@ interface Demo {
   keyKind: "type" | "back";
   poolMax: number;
   scaled: boolean;
+  // The longest line its stage shows readably (readableChars), once measured.
+  fitN: number;
   keyT: number;
   hue: number;
 }
@@ -838,7 +859,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, card: !script && play && !reduced, cardPlayed: false, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, stops: gradientStops, capsUntil: 0, capsAmt: 0, capsAt: 0, capsShown: false, capsFilter: "", delUntil: 0, flipAmt: 0, flipAt: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? (Platform.isMobile ? PREVIEW_POOL_PHONE : PREVIEW_POOL) : POOL, scaled: !script, fitN: SCRIPT_MAX, keyT: -1e9, hue: Math.random() * 360,
       vim: null,
     };
     // Vim: the mode's badge in the stage's corner, the Visual selection under
@@ -871,6 +892,12 @@ export class DemoStrip {
   }
 
   private tick = (now: number) => {
+    // At most about 60 frames a second: a 120 Hz phone painted the preview
+    // twice as often for nothing (every other frame is let by).
+    if (this.last && now - this.last < 12) {
+      this.raf = this.win ? this.win.requestAnimationFrame(this.tick) : 0;
+      return;
+    }
     const dt = this.last ? Math.min(100, now - this.last) : 16;
     this.last = now;
     // A demo whose element left the document (the strip re-rendered) is
@@ -895,7 +922,7 @@ export class DemoStrip {
         if (w > 0 && d.n > 0) d.stepPx = w / d.n;
         else continue;
       }
-      if (!d.scaled) this.fit(d);
+      if (!d.scaled) { if (d.script) this.fitLine(d); this.fit(d); }
       if (!d.done && (d.script || d.card)) {
         const before = d.state.target;
         stepScript(d.state, d.look, dt, now, () => this.nextLine(d));
@@ -951,15 +978,37 @@ export class DemoStrip {
     return scriptFor(d.line, Math.random);
   }
 
+  // The preview's line, once the letters are measured and before any is
+  // typed: one that fits its stage readably (readableChars), another picked
+  // when it does not.
+  private fitLine(d: Demo) {
+    const stage = d.el.parentElement;
+    const lines = d.vim ? VIM_LINES : SCRIPT_LINES;
+    d.fitN = readableChars(stage ? stage.clientWidth - 56 : 0, d.stepPx, lines);
+    if (d.n <= d.fitN) return;
+    const pool = lines.filter((l) => l.length <= d.fitN && l !== d.line);
+    if (!pool.length) return;
+    const line = pool[Math.floor(Math.random() * pool.length)];
+    d.name = d.line = line;
+    d.n = line.length;
+    this.lastLine = line;
+    d.rest?.setText(d.done ? "" : line);
+    d.innerRest?.setText(d.done ? "" : line);
+    // A still preview shows its line written, the caret after it.
+    if (d.done) { d.state.target = d.state.lead = d.state.trail = d.n; d.state.buffer = line; }
+  }
+
   // The preview: scaled to fill its stage, left of center (once, with the
-  // letters measured) - for the longest line, so every line has one size.
+  // letters measured) - for the longest line it may show, so every line has
+  // one size.
   private fit(d: Demo) {
     const stage = d.el.parentElement;
-    const textW = d.stepPx * SCRIPT_MAX + 22;
+    const textW = d.stepPx * (d.script ? d.fitN : SCRIPT_MAX) + 22;
     if (!stage || !(stage.clientWidth > 0) || !(textW > 0)) return;
     // About the editor's own size (its 16px over the demo's 12): bigger read
     // as a banner ("make the text smaller", the user); smaller on a phone.
-    const k = Math.max(0.7, Math.min(1.45, (stage.clientWidth - 56) / textW));
+    // Down to 0.55 on a narrow stage, so the line it picked still fits.
+    const k = Math.max(0.55, Math.min(1.45, (stage.clientWidth - 56) / textW));
     d.el.setCssStyles({ transform: `translateY(-50%) scale(${k.toFixed(3)})` });
     d.scaled = true;
   }

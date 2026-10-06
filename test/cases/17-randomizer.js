@@ -49,8 +49,10 @@ section("Randomizer: the dials");
   const mean = (ls) => ls.reduce((n, l) => n + effectsOn(l), 0) / ls.length;
   ok("Chaos 0: one effect", calm.every((l) => effectsOn(l) === 1), mean(calm));
   ok("...more as it rises", mean(calm) < mean(mid) && mean(mid) < mean(wild), [mean(calm), mean(mid), mean(wild)]);
-  const chaos = many({ chaos: 100, color: 100, motion: 100 }, 20);
-  ok("Chaos 100: every effect, all at once, with their extras", chaos.every((l) => effectsOn(l) === T.ROLL_EFFECTS.length && l.fireworks && l.thunderstrike && ["backMan", "shredder", "rabbitHole", "backspaceEvaporate", "backspaceDisintegrate"].some((k) => l[k]) && l.crtNeon && l.crtGlitch && l.glow && l.smoothEnabled && l.smear));
+  const plain = many({ chaos: 100, color: 100, motion: 100 }, 20);
+  ok("Chaos 100: every effect let in, all at once - Hot-head not, off until its switch is on", plain.every((l) => effectsOn(l) === T.ROLL_EFFECTS.length - 1 && !l.hotHead));
+  const chaos = many({ chaos: 100, color: 100, motion: 100, allow: { hotHead: true } }, 20);
+  ok("...with it on: every effect, all at once, with their extras", chaos.every((l) => effectsOn(l) === T.ROLL_EFFECTS.length && l.fireworks && l.thunderstrike && ["backMan", "shredder", "rabbitHole", "backspaceEvaporate", "backspaceDisintegrate"].some((k) => l[k]) && l.crtNeon && l.crtGlitch && l.glow && l.smoothEnabled && l.smear));
   const fireworks = (ls) => ls.filter((l) => l.popEffects).reduce((n, l) => n + l.fireworksQuantity, 0) / Math.max(1, ls.filter((l) => l.popEffects).length);
   ok("...and stronger: the higher, the more fireworks per key", fireworks(calm) < fireworks(wild), [fireworks(calm), fireworks(wild)]);
   const grey = many({ color: 0 }), rainbow = many({ color: 100 });
@@ -73,6 +75,9 @@ section("Randomizer: the dials");
   for (const sh of ["Box", "Line", "Underline"]) ok(`...${sh}: every roll a ${sh}`, Array.from({ length: 60 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50, shape: sh }, T.seededRandom(900 + k))).every((l) => l.cursorStyle === sh));
   ok("...any: all three come up", new Set(Array.from({ length: 80 }, (_, k) => T.rollLook({ chaos: 50, color: 50, motion: 50, shape: "any" }, T.seededRandom(70 + k)).cursorStyle)).size === 3);
   ok("...a config from when they went to 100 mapped across; one already on the new scale kept", mig.rollChaos === 4 && mig.rollColor === 6 && mig.rollMotion === 5 && T.migrateLegacyKeys({ rollChaos: 100, rollColor: 100 }).rollChaos === 11 && T.migrateLegacyKeys({ rollColor: 100 }).rollColor === 10 && T.migrateLegacyKeys({ rollChaos: 7 }).rollChaos === 7 && T.migrateLegacyKeys({ rollChaos: 0 }).rollChaos === 1, mig);
+  const oldFx = T.migrateLegacyKeys({ rollEffects: { torchEffect: false, popEffects: true, hotHead: true, crtEffect: false, bracketTether: false, smear: true } }).rollEffects;
+  ok("the switches first saved whole (the torch and the tether in them): Hot-head back to its default, off; the torch and the tether gone; the rest kept", JSON.stringify(oldFx) === JSON.stringify({ popEffects: true, crtEffect: false, smear: true }), oldFx);
+  ok("...a map saved since, Hot-head on by its switch: kept", T.migrateLegacyKeys({ rollEffects: { hotHead: true } }).rollEffects.hotHead === true);
 }
 
 // A plugin enough for rollCursor: settings, a Vim panel or not, the engine
@@ -100,7 +105,8 @@ function rollPlugin(settings = {}, vim = false) {
 section("Randomizer: the effects it can roll");
 {
   ok("a switch per effect a roll may pick, in the Effects page's order: no torch, no bracket tether", T.ROLL_TOGGLES.join() === "popEffects,typewriter,flameTrail,stardustEnabled,smear,energyEffect,crtEffect,speedDemon,hotHead");
-  ok("...all let in by default; the torch and the tether never, switch or not", T.ROLL_TOGGLES.every((k) => T.rollAllowed({}, k)) && T.rollAllowed(null, "hotHead") && !T.rollAllowed({ hotHead: false }, "hotHead") &&
+  ok("...all let in by default but Hot-head (too strong for a roll: let in by its switch); the torch and the tether never, switch or not",
+     T.ROLL_TOGGLES.every((k) => T.rollAllowed({}, k) === (k !== "hotHead")) && !T.rollAllowed(null, "hotHead") && T.rollAllowed({ hotHead: true }, "hotHead") && !T.rollAllowed({ hotHead: false }, "hotHead") && T.rollAllowed({ hotHead: true }, "smear") &&
      !T.rollAllowed({ torchEffect: true }, "torchEffect") && !T.rollAllowed({ bracketTether: true }, "bracketTether"));
   const noPops = many({ chaos: 80, allow: { popEffects: false, hotHead: false } }, 200);
   ok("an effect switched off is never rolled", noPops.every((l) => !l.popEffects && !l.hotHead) && noPops.some((l) => l.typewriter));
@@ -140,7 +146,10 @@ later(async () => {
 
   const full = rollPlugin({ rollChaos: 11, rollColor: 10, rollMotion: 10 });
   await full.rollCursor();
-  ok("Chaos at 11: every effect", T.ROLL_EFFECTS.every((k) => full.settings[k]));
+  ok("Chaos at 11: every effect let in - not Hot-head, off by default", T.ROLL_EFFECTS.every((k) => (k === "hotHead" ? !full.settings[k] : full.settings[k])));
+  const hot = rollPlugin({ rollChaos: 11, rollColor: 10, rollMotion: 10, rollEffects: { hotHead: true } });
+  await hot.rollCursor();
+  ok("...and with its switch on, Hot-head too", T.ROLL_EFFECTS.every((k) => hot.settings[k]));
   const kept = rollPlugin({ rollChaos: 11, rollEffects: { hotHead: false, popEffects: false } });
   await kept.rollCursor();
   ok("...but not what the switches keep out", !kept.settings.hotHead && !kept.settings.popEffects && kept.settings.typewriter);
@@ -163,19 +172,8 @@ section("Randomizer: its page");
   const at = rows.findIndex((r) => r.name === "Roll");
   ok("Save under Roll: one button, Save as preset (the preset strip's prompt)", !!save && rows.findIndex((r) => r.name === "Save") === at + 1 && save.buttons.length === 1 && /Save as preset/.test(save.buttons[0]._text || save.buttons[0].buttonEl?.textContent || "Save as preset") &&
      /more\("save", "Save", \(\) => this\.savePresetPrompt\(vim\)\)/.test(require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8")));
-  const keysAt = rows.findIndex((r) => r.def && r.def.desc === "Hotkeys" && rows.indexOf(r) > at);
-  const keyCard = rows[keysAt];
-  const appWas = rows.tab.app;
-  rows.tab.app = { commands: { commands: { "cursor-smith:randomize": { name: "Cursor-Smith: Randomize" } } }, hotkeyManager: { printHotkeyForCommand: () => "" } };
-  let keyNames = [], keyChips = [];
-  if (keyCard) {
-    keyCard.def.render({ settingEl: keyCard.settingEl, controlEl: keyCard.controlEl, descEl: keyCard.descEl, nameEl: keyCard.nameEl });
-    keyNames = keyCard.descEl.querySelectorAll(".cursor-smith-keys-line").map((l) => l.children[0].text);
-    keyChips = keyCard.descEl.querySelectorAll(".cursor-smith-keys-key").map((c) => c.text);
-  }
-  rows.tab.app = appWas;
-  ok("the command's hotkey under Save: Randomize alone, its key or Blank, its plus (Vim on or off: one command)", keysAt === at + 2 && keyNames.join() === "Randomize" && keyChips.join() === "Blank" &&
-     keyCard.descEl.querySelectorAll(".cursor-smith-keys-add").length === 1, [keysAt, at, keyNames, keyChips]);
+  ok("no hotkeys card on the page (the Behavior page's lists Randomize)", !rows.some((r) => r.def && r.def.desc === "Hotkeys" && r.page === "Randomizer") &&
+     /hotkeysRow\(\["toggle", "toggle-cua-vim-mode", "cycle-preset", "randomize"\]\)/.test(require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8")));
   const fam = T.rollVimLooks({ chaos: 100, color: 50, motion: 100 }, T.seededRandom(3));
   const famSaid = rows.tab.rollSummary(fam.normal, fam);
   const famFx = ["hotHead", "typewriter", "speedDemon", "popEffects"].filter((k) => Object.values(fam).some((l) => l[k]));
@@ -191,10 +189,10 @@ section("Randomizer: its page");
   ok("then a switch per effect a roll may pick, under its own subheading, the Effects page's names, out of settings search - no torch, no bracket tether",
      head > rows.indexOf(named("Motion")) && switches.map((r) => r.name).join() === "Pop effects,Typewriter,Pixel trail,Stardust,Motion smear,Energy beam,CRT effects,Speed demon,Hot-head" &&
      switches.every((r) => r.def.searchable === false && r.toggles.length === 1) && !rows.slice(head).some((r) => r.name === "Torch spotlight" || r.name === "Bracket tether"), switches.map((r) => r.name));
-  ok("...all on", switches.every((r) => r.toggles[0]._value === true));
+  ok("...all on but Hot-head", switches.every((r) => r.toggles[0]._value === (r.name !== "Hot-head")), switches.map((r) => r.name + ":" + r.toggles[0]._value));
   const before = T.DEFAULT_SETTINGS.rollEffects;
-  switches[8].toggles[0]._change(false);
-  ok("...a switch writes a new object (never the defaults' own)", rows.settings.rollEffects.hotHead === false && rows.settings.rollEffects !== before && JSON.stringify(T.DEFAULT_SETTINGS.rollEffects) === "{}");
+  switches[8].toggles[0]._change(true);
+  ok("...a switch writes a new object (never the defaults' own)", rows.settings.rollEffects.hotHead === true && rows.settings.rollEffects !== before && JSON.stringify(T.DEFAULT_SETTINGS.rollEffects) === "{}");
 }
 
 section("Randomizer: the pill's demo waits while its page is away");
@@ -427,3 +425,19 @@ later(async () => {
   const src = require("fs").readFileSync(srcPath("plugin.ts"), "utf8");
   ok("one command, a plain callback (no editor needed): the same roll from the palette or a key, Vim on or off", /id: "randomize",[\s\S]{0,80}callback: \(\) => \{ void this\.rollFromPalette\(\); \}/.test(src) && !/id: "randomize",[\s\S]{0,80}editorCallback/.test(src));
 });
+
+section("Randomizer: the preview on a phone");
+{
+  const step = 8.2;
+  const phone = T.readableChars(370 - 56, step, T.SCRIPT_LINES);
+  const k = (370 - 56) / (step * phone + 22);
+  ok("a phone's stage (370px): the lines that fit at a readable size, the text no smaller than READ_SCALE", phone < T.SCRIPT_MAX && k >= T.READ_SCALE - 1e-9 && T.SCRIPT_LINES.filter((l) => l.length <= phone).length >= T.READ_FEW, [phone, k]);
+  const vim = T.readableChars(370 - 56, step, T.VIM_LINES);
+  ok("...with Vim (long lines): never fewer than READ_FEW to pick from", T.VIM_LINES.filter((l) => l.length <= vim).length >= T.READ_FEW, vim);
+  ok("a desktop's stage (544px): every line, as before", T.readableChars(544 - 56, step, T.SCRIPT_LINES) === T.SCRIPT_MAX);
+  ok("unmeasured (no width, no letters yet): every line", T.readableChars(0, step, T.SCRIPT_LINES) === T.SCRIPT_MAX && T.readableChars(300, 0, T.SCRIPT_LINES) === T.SCRIPT_MAX);
+  const css = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "styles.css"), "utf8");
+  const rule = (sel) => { const i = css.indexOf(sel + " {"); return i < 0 ? "" : css.slice(i, css.indexOf("}", i)); };
+  ok("one line, never wrapped; a rounded box, not a pill; contained", /white-space: nowrap/.test(rule(".cursor-smith-roll-stage .cursor-smith-roll-demo")) && /border-radius: var\(--radius-m/.test(rule(".cursor-smith-roll-stage")) && /contain: strict/.test(rule(".cursor-smith-roll-stage")));
+  ok("no layer per particle, caret or ghost (a phone layerized them every frame)", !!rule(".cursor-smith-pcard-particle") && !/will-change/.test(rule(".cursor-smith-pcard-particle")) && !/will-change/.test(rule(".cursor-smith-pcard-caret,\n.cursor-smith-pcard-ghost")));
+}

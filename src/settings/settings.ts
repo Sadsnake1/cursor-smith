@@ -677,6 +677,18 @@ export function migrateLegacyKeys(src: LegacySettings | null | undefined): Legac
   dial("rollChaos", ROLL_CHAOS_MAX);
   dial("rollColor", ROLL_DIAL_MAX);
   dial("rollMotion", ROLL_DIAL_MAX);
+  // The Randomizer's switches were first saved whole - every effect, the
+  // torch and the bracket tether too (never rolled). That map's Hot-head on
+  // was its default, not a choice: it goes with the two, so Hot-head is off
+  // as it is by default now ("too strong"). The other switches stay.
+  const fx = o.rollEffects;
+  if (fx && typeof fx === "object" && ("torchEffect" in fx || "bracketTether" in fx)) {
+    const kept: Record<string, boolean> = Object.assign({}, fx);
+    delete kept.torchEffect;
+    delete kept.bracketTether;
+    delete kept.hotHead;
+    o.rollEffects = kept;
+  }
   // Text Crawl, removed outright. Its keys are deleted rather than left in
   // place so a config saved while it existed doesn't carry five dead settings
   // forever - same treatment as the box-translucency keys above.

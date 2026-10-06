@@ -92,8 +92,10 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   _rollStage: HTMLElement | null = null;
   _rollDemos: DemoStrip | null = null;
   // What the last roll came out as, for the Roll row - kept across the
-  // panel's redraws (a roll by the hotkey redraws it).
+  // panel's redraws (a roll by the hotkey redraws it); said only in the
+  // UI it was rolled in (a CUA roll is not the Vim modes').
   _rollSaid = "";
+  _rollSaidVim = false;
   // The effects that are on in the look the pages show (set with the
   // pages), for the Effects entry's icons; and the observer that puts
   // them there.
@@ -984,9 +986,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   rollPage(): SettingDefinitionPage {
     const plugin = this.plugin;
     const items: SettingGroupItem[] = [this.rollPillRow(), this.rollButtonsRow(), this.rollSaveRow()];
-    // The command's key, set here or under Settings -> Hotkeys: a roll from
-    // anywhere, Vim on or off.
-    items.push(this.hotkeysRow(["randomize"]));
     // Chaos goes to 11; Color and Motion to 10.
     const dial = (name: string, desc: string, key: "rollChaos" | "rollColor" | "rollMotion") => this.row(name, desc, (s) => {
       let handle: SliderComponent | null = null;
@@ -1132,7 +1131,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
         this.resetRow(setting);
         setting.settingEl.addClass("cursor-smith-roll-buttons-row");
         const say = (text: string) => setting.setDesc(text);
-        if (this._rollSaid) say(this._rollSaid);
+        if (this._rollSaid && this._rollSaidVim === plugin.isVimUiMode()) say(this._rollSaid);
         setting.addButton((b) => {
           b.setButtonText("Randomize").setCta().onClick(async () => {
             const { look, family } = await plugin.rollCursor();
@@ -1152,6 +1151,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // the Roll row.
   rolled(look: Partial<Look>, family?: Record<string, Partial<Look>>): string {
     this._rollSaid = this.rollSummary(look, family);
+    this._rollSaidVim = !!family;
     return this._rollSaid;
   }
 

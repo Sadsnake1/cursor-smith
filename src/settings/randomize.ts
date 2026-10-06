@@ -45,10 +45,13 @@ export const ROLL_TOGGLES: (keyof Look)[] = [
   "popEffects", "typewriter", "flameTrail", "stardustEnabled", "smear",
   "energyEffect", "crtEffect", "speedDemon", "hotHead",
 ];
+// Left out until its switch is turned on: Hot-head ("too strong" for a
+// roll). A switch never touched reads as this default.
+export const ROLL_OFF_BY_DEFAULT: (keyof Look)[] = ["hotHead"];
 export function rollAllowed(allow: Partial<Record<string, boolean>> | null | undefined, key: string): boolean {
   if (!ROLL_TOGGLES.includes(key as keyof Look)) return false;
   const v = allow ? allow[key] : undefined;
-  return v === undefined ? true : !!v;
+  return v === undefined ? !ROLL_OFF_BY_DEFAULT.includes(key as keyof Look) : !!v;
 }
 
 // The torch's keys: a roll leaves them alone (the torch itself off).

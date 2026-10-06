@@ -273,6 +273,32 @@ export const SCRIPT_LINES = [
   "Calculating...10^254 cursor choices...",
   "Smoooooooooooooooooooking!",
   "Once a plain caret. Then something happened.",
+  // The short ones, beside the long (1.7.7): 27 letters at most, what a
+  // phone's preview shows at a readable size (readableChars).
+  "The quick brown fox... etc.",
+  "Cursor-Smith isn't real.",
+  "Came to write. Look at me.",
+  "One more tweak. Then words.",
+  "Procrastination? Research.",
+  "Typing so fast it burns.",
+  "Chapter 1: I pick a cursor.",
+  "Writer's block? I'll blink.",
+  "Your vault wants words.",
+  "Plot twist: the cursor won.",
+  "Dear diary, I typed a lot.",
+  "Wrote 10 min. Tweaked 2 h.",
+  ">deleting Vault 3--2--1--XD",
+  "Never too many cursors...",
+  "Wingardium leviosaaaaaaaah",
+  "Did you back up your Vault?",
+  "old_Joe tried to speak...",
+  "Blink twice for help.",
+  "Cursor is in another castle",
+  "Your daily note is lonely.",
+  "Achievement: 50 cursors!!!",
+  "Dangerous to type alone!",
+  "Calculating 10^254 cursors",
+  "Once a plain caret. Then...",
 ];
 export const SCRIPT_MAX = 44;
 // On a narrow stage (a phone) the preview's text stays this big at least
@@ -299,7 +325,6 @@ export const VIM_LINES = [
   "dd: delete the evidence.",
   ":wq and pretend nothing happened.",
   "I've been in Vim since '91. Send help.",
-  "Normal mode? Never heard of her.",
   "Esc Esc Esc Esc Esc. Just in case.",
   "Yank it, put it, love it.",
   "ciw: change it, whatever it was.",
@@ -309,6 +334,18 @@ export const VIM_LINES = [
   "Replace mode is my love language.",
   "gg to the top, G to the bottom.",
   "This line was typed with 47 keystrokes.",
+  // The short ones (27 letters at most, as above).
+  "How do I exit Vim? Help!",
+  "i to insert, Esc to regret.",
+  ":wq and act normal.",
+  "Trapped in Vim since '91.",
+  "Esc Esc Esc. Just in case.",
+  "ciw: change it, whatever.",
+  "uuuuuuuuuuuu. Undo my life.",
+  "v: see what you did there",
+  "R is my love language.",
+  "gg up top, G to the bottom.",
+  "This took 47 keystrokes.",
 ];
 
 // One step of the script, and the wait after it (ms). A move is a jump

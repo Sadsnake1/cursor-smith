@@ -1011,7 +1011,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
       }));
     }
     items.push(dial("Chaos", "From one quiet effect to all of them at once.", "rollChaos"));
-    items.push(dial("Color", "From a single calm color to gradients and rainbows.", "rollColor"));
+    // Not with Vim on: every mode keeps its own colors (rollVimLooks).
+    if (!plugin.isVimUiMode()) items.push(dial("Color", "From a single calm color to gradients and rainbows.", "rollColor"));
     items.push(dial("Motion", "From a still cursor to one that glides, smears and trails.", "rollMotion"));
     // A switch per effect a roll may pick (not the torch or the bracket
     // tether: never rolled). Each with the Effects page's name and icon; out

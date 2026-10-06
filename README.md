@@ -133,7 +133,7 @@ Three sliders steer the dice. **Chaos** sets how many effects and how strong: at
 
 Below them, a switch for every effect: turn one off and the dice never pick it. The Torch is off until you let it in.
 
-With Vim mode on, the dice roll a family: one style shared by every mode, each in its own Vim shape (a box in Normal, a line in Insert, an underline in Replace) and its own color. The preview plays a little Vim session in them, mode badge and all, with Vim jokes of its own.
+With Vim mode on, the dice roll a family: one style shared by every mode, each in its own Vim shape (a box in Normal, a line in Insert, an underline in Replace). Every mode keeps its own color, roll after roll. The preview plays a little Vim session in them, mode badge and all, with Vim jokes of its own.
 
 ## Presets
 

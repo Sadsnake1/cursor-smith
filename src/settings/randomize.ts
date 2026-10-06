@@ -244,9 +244,10 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
 // - shapes: Vim's own ("vim"): a Box in Normal, a Line in Insert, a hollow
 //   Box in Visual, an Underline in Replace, a thin Line in Command; or one
 //   shape for all (Box, Line, Underline), or the roll's ("any");
-// - colors: each mode near its usual hue (Normal blue, Insert green, Visual
-//   yellow, Replace red, Command purple), the whole family turned by one
-//   shift and in one shade, so a mode reads at a glance;
+// - colors: not rolled - every mode keeps its own (its color, its
+//   gradient), so a mode reads at a glance, roll after roll ("for vim modes
+//   they keep the color, they don't switch colors randomly"); the looks
+//   come back without them (VIM_COLOR_KEYS);
 // - effects where they fit: the typing ones (Pop effects' letters and pops,
 //   Hot-head, Typewriter, Speed demon) in Insert and Replace; Normal keeps
 //   what deleting does (the eaters, the letters' end); Visual none of Pop
@@ -258,31 +259,21 @@ export const VIM_SHAPES: Record<string, Partial<Look>> = {
   replace: { cursorStyle: "Underline" },
   command: { cursorStyle: "Line", caretWidthPx: 1.5 },
 };
-export const VIM_HUES: Record<string, number> = { normal: 212, insert: 140, visual: 50, replace: 2, command: 282 };
+// What a mode keeps of its own: its colors.
+export const VIM_COLOR_KEYS: (keyof Look)[] = ["colorDark", "colorLight", "gradientEnabled", "gradientCount",
+  "gradientDark1", "gradientDark2", "gradientDark3", "gradientDark4", "gradientLight1", "gradientLight2", "gradientLight3", "gradientLight4"];
 const VIM_TYPING: (keyof Look)[] = ["hotHead", "typewriter", "speedDemon"];
 const VIM_POPS: (keyof Look)[] = ["popLetters", "fireworks", "thunderstrike"];
 const VIM_MOTION: (keyof Look)[] = ["smoothEnabled", "smear", "crtEffect", "flameTrail", "stardustEnabled", "energyEffect", "popEffects"];
 export function rollVimLooks(opts: RollOptions & { vimShape?: string }, rand: () => number = Math.random): Record<string, Partial<Look>> {
   const shape = opts.vimShape || "vim";
   const base = rollLook(Object.assign({}, opts, { shape: shape === "vim" ? "any" : shape }), rand);
-  const color = Math.max(0, Math.min(100, opts.color)) / 100;
-  const shift = (rand() - 0.5) * 50;
-  const sat = 0.62 + 0.3 * color + 0.08 * rand(), lit = 0.56 + 0.1 * rand();
-  const dark = (h: number) => rgbTupleToHex(hslToRgbTuple(h, sat, lit));
-  const light = (h: number) => rgbTupleToHex(hslToRgbTuple(h, Math.min(1, sat + 0.05), 0.3 + 0.08 * rand()));
-  const spread = 18 + 50 * color;
   const out: Record<string, Partial<Look>> = {};
   for (const mode of ["normal", "insert", "visual", "replace", "command"]) {
     const look: Partial<Look> = Object.assign({}, base);
     if (shape === "vim") Object.assign(look, VIM_SHAPES[mode]);
-    const h = VIM_HUES[mode] + shift;
-    const n = Math.max(2, Math.min(4, look.gradientCount ?? 2));
-    const hs = [0, 1, 2, 3].map((i) => h + (i * spread) / Math.max(1, n - 1));
-    look.colorDark = dark(h);
-    look.colorLight = light(h);
-    look.gradientDark1 = dark(hs[0]); look.gradientDark2 = dark(hs[1]); look.gradientDark3 = dark(hs[2]); look.gradientDark4 = dark(hs[3]);
-    look.gradientLight1 = light(hs[0]); look.gradientLight2 = light(hs[1]); look.gradientLight3 = light(hs[2]); look.gradientLight4 = light(hs[3]);
     const rec = look as Record<string, unknown>;
+    for (const k of VIM_COLOR_KEYS) delete rec[k];
     if (mode !== "insert" && mode !== "replace") { for (const k of VIM_TYPING) rec[k] = false; for (const k of VIM_POPS) rec[k] = false; }
     if (mode === "visual") rec.popEffects = false;
     if (mode === "command") { for (const k of VIM_MOTION) rec[k] = false; rec.glow = false; }

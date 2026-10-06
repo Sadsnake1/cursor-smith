@@ -132,8 +132,8 @@ later(async () => {
   const global = T.pickLook(v.settings);
   const r1 = await v.rollCursor();
   const modes = ["normal", "insert", "visual", "replace", "command"];
-  ok("Vim on: every mode rolled, each its own cursor; the global look untouched; no Vim preset in use",
-     r1.vim === true && modes.every((m) => v.settings.vimModes[m].colorDark !== "#123456") &&
+  ok("Vim on: every mode rolled, each its own cursor, each keeping its own color; the global look untouched; no Vim preset in use",
+     r1.vim === true && modes.every((m) => v.settings.vimModes[m].colorDark === "#123456") &&
      new Set(modes.map((m) => JSON.stringify(T.pickLook(v.settings.vimModes[m])))).size === 5 &&
      T.LOOK_KEYS.every((k) => JSON.stringify(v.settings[k]) === JSON.stringify(global[k])) && v.settings.vimActivePreset === "");
   ok("...and it answers the look of the mode whose tab is open (the preview plays it)", JSON.stringify(T.pickLook(r1.look)) === JSON.stringify(T.pickLook(Object.fromEntries(Object.keys(r1.look).map((k) => [k, v.settings.vimModes.insert[k]])))));
@@ -341,18 +341,16 @@ section("Randomizer: the preview's caret, as the engine's");
 section("Randomizer with Vim: one family, a Vim session");
 {
   const modes = ["normal", "insert", "visual", "replace", "command"];
-  const hueOf = (hex) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255); const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return 0; let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; return h < 0 ? h + 360 : h; };
-  const near = (a, b, tol) => { const d = Math.abs(((a - b) % 360 + 540) % 360 - 180); return d <= tol; };
   let shapesOk = true, colorsOk = true, fxOk = true, familyOk = true;
   for (let k = 0; k < 40; k++) {
     const f = T.rollVimLooks({ chaos: 100, color: 60, motion: 80 }, T.seededRandom(400 + k));
     if (!modes.every((m) => f[m].cursorStyle === T.VIM_SHAPES[m].cursorStyle) || f.visual.boxHollow !== true || f.normal.boxHollow !== false) shapesOk = false;
-    if (!modes.every((m) => near(hueOf(f[m].colorDark), T.VIM_HUES[m], 32))) colorsOk = false;
+    if (!modes.every((m) => T.VIM_COLOR_KEYS.every((k) => !(k in f[m])))) colorsOk = false;
     if (["normal", "visual", "command"].some((m) => f[m].hotHead || f[m].typewriter || f[m].speedDemon || f[m].popLetters || f[m].fireworks) || f.visual.popEffects || f.command.popEffects || f.command.smoothEnabled || f.command.smear || f.command.crtEffect || f.command.glow) fxOk = false;
     if (f.insert.smear !== f.normal.smear || f.insert.smoothEnabled !== f.visual.smoothEnabled || f.insert.hotHead !== f.replace.hotHead) familyOk = false;
   }
   ok("Vim's own shapes: a box in Normal, a line in Insert, a hollow box in Visual, an underline in Replace, a line in Command", shapesOk);
-  ok("...each mode near its usual color (Normal blue, Insert green, Visual yellow, Replace red, Command purple)", colorsOk);
+  ok("...no colors rolled: every mode keeps its own (its color, its gradient)", colorsOk);
   ok("...the typing effects in Insert and Replace only; Visual without Pop effects; Command plain and still", fxOk);
   ok("...one family: the motion and the effects shared where they fit", familyOk);
   const one = T.rollVimLooks({ chaos: 50, color: 50, motion: 50, vimShape: "Underline" }, T.seededRandom(7));

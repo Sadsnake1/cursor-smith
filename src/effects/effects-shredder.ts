@@ -11,7 +11,8 @@
 // flutter down and fade; when the last is through, the line is whole
 // again. A standing line: on a Box or an Underline the cursor morphs into
 // one first (effects-eaters.ts).
-import type { DeletedLetters } from "../types";
+import type { CaretRecord, DeletedLetters } from "../types";
+import { letterChoiceOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
 
 // A letter's way through the blades, its ribbons' fall after, how long the
@@ -26,7 +27,8 @@ const MEAL_MAX = 12;
 
 // A letter going through: its cell (x, w) and row (top, h), its font and
 // color, when it set off.
-export interface ShredLetter { char: string; x: number; w: number; top: number; h: number; font: string; color: string; t0: number }
+// popped: burst into pixels (Burst), its ribbons no more.
+export interface ShredLetter { char: string; x: number; w: number; top: number; h: number; old: CaretRecord; font: string; color: string; t0: number; popped?: boolean }
 // t0: when this run of cutting began; t: its last key.
 export interface ShredState { t0: number; t: number; letters: ShredLetter[] }
 export interface ShredPose { dash: number; letters: ShredLetter[] }
@@ -51,9 +53,10 @@ export function shredBlades(dash: number, w: number, h: number, now: number): [n
 
 // A letter fed through the cut at x `cut`, at `now`: how far it has moved
 // (toward the cut and past it, its right edge a pixel beyond at the end of
-// the feed), how far its ribbons have fallen (from a fifth of the way in),
-// how faded they are, and whether it is all gone. Pure.
-export function shredFeed(l: ShredLetter, cut: number, now: number) {
+// the feed), how far its ribbons have fallen (from a fifth of the way in;
+// with `rise`, risen - Evaporate), how faded they are, and whether it is all
+// gone. Pure.
+export function shredFeed(l: ShredLetter, cut: number, now: number, rise = false) {
   const age = now - l.t0;
   const u = clamp01(age / SHRED_FEED_MS);
   const e = u * u * (3 - 2 * u);
@@ -62,7 +65,7 @@ export function shredFeed(l: ShredLetter, cut: number, now: number) {
   const fall = Math.max(0, age - 0.2 * SHRED_FEED_MS) / 1000;
   return {
     dx: -(l.x + l.w - cut + 1) * e,
-    dy: 0.5 * (12 * l.h) * fall * fall,
+    dy: rise ? -0.5 * (4 * l.h) * fall * fall : 0.5 * (12 * l.h) * fall * fall,
     alpha: 1 - clamp01((age - SHRED_FEED_MS) / SHRED_FALL_MS),
     done: age >= SHRED_FEED_MS + SHRED_FALL_MS,
   };
@@ -97,7 +100,7 @@ export const effectsShredderMethods = {
     const now = performance.now();
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
-      s.letters.push({ char: l.char, x: l.x, w: l.w, top: old.top, h, font, color, t0: now });
+      s.letters.push({ char: l.char, x: l.x, w: l.w, top: old.top, h, old, font, color, t0: now });
     }
   },
 
@@ -122,9 +125,16 @@ export const effectsShredderMethods = {
   // fanning out from the cut, falling and fading. In the text's color, the
   // glow kept off them.
   drawShreds(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, cut: number, pose: ShredPose, now: number) {
+    // The letters' effect: Burst breaks a letter into pixels once it is all
+    // through; Evaporate sends its ribbons up instead of down.
+    const fx = this.look.popEffects ? letterChoiceOf(this.look) : "vanish";
     for (const l of pose.letters) {
-      const f = shredFeed(l, cut, now);
+      const f = shredFeed(l, cut, now, fx === "evaporate");
       if (f.done) continue;
+      if (fx === "burst" && now - l.t0 >= SHRED_FEED_MS) {
+        if (!l.popped) { l.popped = true; this._eatenLetterFx(l.char, l.w, l.old, cut - l.w - 1, l.top); }
+        continue;
+      }
       const cx = l.x + l.w / 2 + f.dx, cy = l.top + l.h / 2;
       const far = 4 * l.h;
       const glyph = () => {

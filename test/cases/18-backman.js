@@ -198,8 +198,8 @@ section("Back-man: the setting");
 {
   ok("a look key, appended (Shredder and Rabbit hole after it), off by default", T.LOOK_KEYS.slice(-4, -1).join() === "backMan,shredder,rabbitHole" && T.DEFAULT_SETTINGS.backMan === false);
   const rows = renderPanel({ popEffects: true, cursorStyle: "Line", backMan: true });
-  const dd = rows.find((r) => r.name === "When you delete").dropdowns[0];
-  ok("a choice of \"When you delete\" - on a Line as on a Box, no switch of its own, no hint", dd._value === "backman" && dd._options.backman === "Back-man" && !rows.some((r) => r.name === "Back-man") && rows.cardKeys.Effects.includes("backMan"));
+  const dd = rows.find((r) => r.name === "Cursor on delete").dropdowns[0];
+  ok("a choice of \"Cursor on delete\" - on a Line as on a Box, no switch of its own, no hint", dd._value === "backman" && dd._options.backman === "Back-man" && !rows.some((r) => r.name === "Back-man") && rows.cardKeys.Effects.includes("backMan"));
   const rolls = Array.from({ length: 300 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(500 + k)));
   ok("the Randomizer rolls it sometimes, on any cursor", rolls.some((l) => l.backMan && l.cursorStyle === "Box") && rolls.some((l) => l.backMan && l.cursorStyle !== "Box"));
 }

@@ -429,19 +429,25 @@ export const VIM_MODE_LABELS: Record<string, string> = {
 // affects how the cursor looks or behaves. Structural/housekeeping keys
 // (enabled, hideNativeCaret, presets, the vim-control keys) are intentionally
 // excluded. A per-mode config is a snapshot containing exactly these keys.
-// "When you delete" (1.7.7): what Backspace and Delete do to the letters
-// they take - one thing at a time. Kept in the five switches it replaced
-// (one on, the rest off), so every saved look, preset and share code reads
-// as it did; a look with more than one on (saved before) is the first of
-// them in DELETE_EFFECTS' order. Each value and its switch.
-export type DeleteEffect = "none" | "burst" | "evaporate" | "backman" | "shredder" | "rabbithole";
-export const DELETE_EFFECTS: [Exclude<DeleteEffect, "none">, keyof Look][] = [
-  ["backman", "backMan"], ["shredder", "shredder"], ["rabbithole", "rabbitHole"],
-  ["evaporate", "backspaceEvaporate"], ["burst", "backspaceDisintegrate"],
-];
-export function deleteEffectOf(look: Partial<Look>): DeleteEffect {
-  for (const [effect, key] of DELETE_EFFECTS) if (look[key]) return effect;
+// What Backspace and Delete do (1.7.7): two choices, one of each, every
+// pair of them working together ("combine backman with desintegrator and
+// such combos") - the cursor's (an eater: Back-man, Shredder, Rabbit hole,
+// or nothing) and the letters' (burst, evaporate, or just gone). With an
+// eater, the letters' effect plays where it is done with them (the bite,
+// the cut, the drop). Kept in the five switches they replaced, one of each
+// set on, so every saved look, preset and share code reads as it did; a
+// set with more than one on (saved before) is its first in order.
+export type EaterChoice = "none" | "backman" | "shredder" | "rabbithole";
+export type LetterChoice = "vanish" | "burst" | "evaporate";
+export const EATER_KEYS: [Exclude<EaterChoice, "none">, keyof Look][] = [["backman", "backMan"], ["shredder", "shredder"], ["rabbithole", "rabbitHole"]];
+export const LETTER_KEYS: [Exclude<LetterChoice, "vanish">, keyof Look][] = [["evaporate", "backspaceEvaporate"], ["burst", "backspaceDisintegrate"]];
+export function eaterChoiceOf(look: Partial<Look>): EaterChoice {
+  for (const [choice, key] of EATER_KEYS) if (look[key]) return choice;
   return "none";
+}
+export function letterChoiceOf(look: Partial<Look>): LetterChoice {
+  for (const [choice, key] of LETTER_KEYS) if (look[key]) return choice;
+  return "vanish";
 }
 
 export const LOOK_KEYS: (keyof Look)[] = [

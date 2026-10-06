@@ -11,7 +11,7 @@
 // disintegration. Smoke on delete, then Evaporate on delete (a part of
 // Popping letters), before the user settled the name and the place.
 import { hslToRgbString } from "../util/color";
-import { deleteEffectOf } from "../settings/settings";
+import { letterChoiceOf } from "../settings/settings";
 import type { DeletedLetters, EvaporateGlyph } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -28,7 +28,7 @@ const EVAPORATE_GROW = 0.35;
 export const effectsEvaporateMethods = {
   // Whether the effect is on: the group, then its own.
   _evaporateOn(this: CursorSmithPlugin): boolean {
-    return !!this.look.popEffects && deleteEffectOf(this.look) === "evaporate";
+    return !!this.look.popEffects && letterChoiceOf(this.look) === "evaporate";
   },
 
   // The letters of one deletion, nearest the caret first, rising away. A

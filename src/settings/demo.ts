@@ -58,7 +58,8 @@ import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backMan
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
-import { deleteEffectOf } from "./settings";
+import { eaterChoiceOf, letterChoiceOf } from "./settings";
+import type { CaretRecord } from "../types";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
 import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeSpring } from "../effects/effects-rabbithole";
 
@@ -196,7 +197,7 @@ export const SCRIPT_LINES = [
   "Dear diary, today I typed a lot.",
   "Ten minutes of writing, two hours of cursor.",
   "The cursor blinked first.",
-  "Deleting Vault in 3...2...1...0.4999999 XD",
+  ">deleting Vault in 3-------2-------1------XD",
   "You can never have too many cursors...",
   "The cake is a lie.",
   "CURSOR GOES BRRRRRRRRRRRR",
@@ -496,6 +497,10 @@ interface Particle {
   // Rabbit hole.
   kind?: "letter" | "rise" | "evap" | "xout" | "fire" | "spark" | "shell" | "burst" | "meal" | "shred" | "hole";
   band?: number;
+  // A letter particle's letter; whether the letters' effect has played for
+  // it (an eater's combo).
+  ch?: string;
+  fired?: boolean;
   // A Rabbit hole letter that has landed on the floor (kicked it once).
   landed?: boolean;
   rot?: number;
@@ -818,7 +823,7 @@ export class DemoStrip {
     el.setCssStyles(char
       ? { width: "auto", height: "auto", backgroundColor: "transparent", color, opacity: "1", fontSize: "", filter: "", zIndex: kind === "meal" ? "0" : "" }
       : { width: `${size}px`, height: `${size}px`, backgroundColor: color, opacity: "1", fontSize: "", filter: "", zIndex: "" });
-    const part: Particle = { el, x, y, vx, vy, t0: now, life, size, color, g, kind };
+    const part: Particle = { el, x, y, vx, vy, t0: now, life, size, color, g, kind, ch: char };
     d.particles.push(part);
     return part;
   }
@@ -936,7 +941,7 @@ export class DemoStrip {
     // Back-man's bite: chewed at its own pace, kicking its bend leftward,
     // where it eats.
     // The eater chosen in "When you delete", whatever the caret's style.
-    const eatKind = d.look.popEffects ? eaterOf(deleteEffectOf(d.look)) : null;
+    const eatKind = d.look.popEffects ? eaterOf(eaterChoiceOf(d.look)) : null;
     if (eatKind === "backman") {
       if (now > d.bm.at) { backManSpring(d.bm, (now - d.bm.at) / 1000); d.bm.at = now; }
       d.bm.v -= BACKMAN_BEND_KICK;
@@ -967,7 +972,7 @@ export class DemoStrip {
     const cw = d.stepPx || 7;
     // A Backspace with Back-man on: it eats the letter, the others stand
     // aside (a line cleared is not its bite).
-    const eatKind = look.popEffects ? eaterOf(deleteEffectOf(look)) : null;
+    const eatKind = look.popEffects ? eaterOf(eaterChoiceOf(look)) : null;
     const backMan = bite && d.bmChew && eatKind === "backman";
     // Down when the chomp it fell in shuts.
     const down = d.bmChew ? backManDown(d.bmChew, now) - now : 0;
@@ -998,12 +1003,12 @@ export class DemoStrip {
         if (ghost) ghost.el.setCssStyles({ opacity: "0.45" });
         this.spawn(d, x, 11, 0, 0, 500, 0, d.color, now, "x", 0, "xout");
       }
-      if (look.popEffects && deleteEffectOf(look) === "evaporate") {
+      if (look.popEffects && letterChoiceOf(look) === "evaporate") {
         const color = look.popRainbow ? this.popColor(d) : "var(--text-normal)";
         const e = this.spawn(d, x, 11, 0, 0, 1100, 0, color, now, ch, 0, "evap");
         if (e) { e.delay = k * 16; e.phase = Math.random() * Math.PI * 2; }
       }
-      if (look.popEffects && deleteEffectOf(look) === "burst") {
+      if (look.popEffects && letterChoiceOf(look) === "burst") {
         for (let j = 0; j < 5; j++) {
           const a = Math.random() * Math.PI * 2, v = 30 + Math.random() * 50;
           const b = this.spawn(d, x + Math.random() * cw, 6 + Math.random() * 10, Math.cos(a) * v, Math.sin(a) * v, 500, 2, "var(--text-normal)", now);
@@ -1011,6 +1016,26 @@ export class DemoStrip {
         }
       }
     });
+  }
+
+  // The letters' own effect for a letter an eater is done with (Burst,
+  // Evaporate), at (x, y) - as the engine's _eatenLetterFx.
+  private afterEaten(d: Demo, ch: string, x: number, y: number, now: number) {
+    const look = d.look;
+    const fx = look.popEffects ? letterChoiceOf(look) : "vanish";
+    if (fx === "vanish" || !ch.trim()) return;
+    const cw = d.stepPx || 7;
+    if (fx === "evaporate") {
+      const color = look.popRainbow ? this.popColor(d) : "var(--text-normal)";
+      const e = this.spawn(d, x, y, 0, 0, 1100, 0, color, now, ch, 0, "evap");
+      if (e) { e.delay = 0; e.phase = Math.random() * Math.PI * 2; }
+      return;
+    }
+    for (let j = 0; j < 5; j++) {
+      const a = Math.random() * Math.PI * 2, v = 30 + Math.random() * 50;
+      const b = this.spawn(d, x + Math.random() * cw, y - 5 + Math.random() * 10, Math.cos(a) * v, Math.sin(a) * v, 500, 2, "var(--text-normal)", now);
+      if (b) b.el.setCssStyles({ filter: "invert(1)" });
+    }
   }
 
   // The preview, the line cleared: what was deleted evaporates (rises and
@@ -1070,6 +1095,14 @@ export class DemoStrip {
       if (age >= 1) {
         p.el.setCssStyles({ opacity: "0", transform: "", width: "", height: "", clipPath: "", transformOrigin: "" });
         if (p.kind === "shell") born.push(() => this.burst(d, p.x, p.y - 22 * 1.1, p.colors ?? [p.color], p.delay ?? 1, now));
+        if (p.kind === "meal" && !p.fired) {
+          const cw = d.stepPx || 7, up = letterChoiceOf(d.look) === "evaporate";
+          born.push(() => this.afterEaten(d, p.ch ?? "", d.bmMouth - cw / 2, up ? 1 : 11, now));
+        }
+        if (p.kind === "hole" && !p.fired && letterChoiceOf(d.look) === "evaporate") {
+          const cw = d.stepPx || 7;
+          born.push(() => this.afterEaten(d, p.ch ?? "", d.holeAt[0] - cw / 2, 11, now));
+        }
         d.pool.push(p.el);
         continue;
       }
@@ -1096,8 +1129,13 @@ export class DemoStrip {
         // a band of the letter, sheared about the cut so they fan out,
         // falling and fading as the engine's (shredFeed).
         const cw = d.stepPx || 7;
-        const f = shredFeed({ char: "", x: p.x, w: cw, top: 0, h: PREVIEW_LINE, font: "", color: "", t0: p.t0 }, d.cut, now);
+        const fx = d.look.popEffects ? letterChoiceOf(d.look) : "vanish";
+        const f = shredFeed({ char: "", x: p.x, w: cw, top: 0, h: PREVIEW_LINE, old: {} as CaretRecord, font: "", color: "", t0: p.t0 }, d.cut, now, fx === "evaporate");
         const left = p.x + f.dx, rel = d.cut - left, b = p.band ?? -1;
+        // Burst: once all through, the letter breaks into pixels (the part
+        // not through plays it; its ribbons go).
+        const popped = fx === "burst" && rel >= cw;
+        if (popped && b < 0 && !p.fired) { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", d.cut - cw - 1, 11, now)); }
         if (b < 0) {
           p.el.setCssStyles({ transform: `translate(${left.toFixed(1)}px, ${p.y.toFixed(1)}px)`, clipPath: `inset(0 0 0 ${Math.max(0, rel).toFixed(1)}px)`, opacity: rel >= cw ? "0" : "1" });
         } else {
@@ -1106,7 +1144,7 @@ export class DemoStrip {
             transformOrigin: `${rel.toFixed(1)}px 50%`,
             transform: `translate(${left.toFixed(1)}px, ${(p.y + f.dy).toFixed(1)}px) skewY(${Math.atan(a).toFixed(3)}rad)`,
             clipPath: `inset(${((b / n) * 100 + 2).toFixed(1)}% ${Math.max(0, cw - rel).toFixed(1)}px ${(((n - 1 - b) / n) * 100 + 2).toFixed(1)}% 0)`,
-            opacity: rel <= 0 ? "0" : f.alpha.toFixed(2),
+            opacity: rel <= 0 || popped ? "0" : f.alpha.toFixed(2),
           });
         }
       } else if (p.kind === "hole") {
@@ -1115,7 +1153,8 @@ export class DemoStrip {
         // it is on it - then through, as the engine's (holeFall). The
         // span's foot (its baseline) is 9.6 px down, its middle 6.
         const cw = d.stepPx || 7;
-        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, font: "", color: "", t0: p.t0, landed: !!p.landed }, d.holeAt[0], d.holeAt[1], now);
+        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, w: cw, old: {} as CaretRecord, font: "", color: "", t0: p.t0, landed: !!p.landed }, d.holeAt[0], d.holeAt[1], now);
+        if (f.phase === 2 && !p.fired && letterChoiceOf(d.look) === "burst") { p.fired = true; born.push(() => this.afterEaten(d, p.ch ?? "", d.holeAt[0] - cw / 2, 15, now)); }
         if (f.phase >= 1) {
           d.holeWeighed = true;
           if (!p.landed && d.holeSp) { p.landed = true; d.holeSp.v += HOLE_KICK; }
@@ -1313,7 +1352,7 @@ export class DemoStrip {
     // eater's (Back-man a box, Shredder a line, Rabbit hole a floor), the
     // effect plays in that, and it morphs back. ex, ew: the shape's left
     // and width for the eaters below.
-    const eatKind = look.popEffects ? eaterOf(deleteEffectOf(look)) : null;
+    const eatKind = look.popEffects ? eaterOf(eaterChoiceOf(look)) : null;
     let ex = from, ew = width, eatShape = false;
     if (d.geo) {
       const c0 = d.bmChew;

@@ -1,8 +1,8 @@
 import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
-import { DELETE_EFFECTS, deleteEffectOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
-import type { DeleteEffect } from "./settings";
+import { EATER_KEYS, LETTER_KEYS, eaterChoiceOf, letterChoiceOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
+import type { EaterChoice, LetterChoice } from "./settings";
 import { SOUND_MACHINES } from "../sound/samples";
 import type { SoundKind } from "../sound/samples";
 import { soundMachine } from "../sound/sound";
@@ -1572,29 +1572,34 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Popping letters", "Each letter you type springs out of the cursor and tumbles away.", "popLetters", { depth: 1, gate: true, when: pop }));
     effects.push(toggle("Rise straight up", "The letter floats up from the top of the cursor and fades, like a phone keyboard.",
       "popLettersRise", { depth: 2, when: all(pop, on("popLetters")) }));
-    // When you delete (1.7.7): what Backspace and Delete do to the letters
-    // they take - one thing at a time (the user: "how should we organize all
-    // these backspace effects?"). Burst, Evaporate, or the cursor eating
-    // them - Back-man, Shredder, Rabbit hole, on any cursor (effects-
-    // eaters.ts morphs it into the eater's shape). Kept in the five switches
-    // it replaced, one on (deleteEffectOf), so saved looks, presets and share
-    // codes read as they did. Sits next to Popping letters: the pair that
-    // fires per character, one for adding and one for removing.
-    const DELETE_NAMES: Record<DeleteEffect, string> = {
-      none: "Nothing", burst: "Burst", evaporate: "Evaporate", backman: "Back-man", shredder: "Shredder", rabbithole: "Rabbit hole",
+    // What Backspace and Delete do (1.7.7): two choices, one of each, every
+    // pair working together ("combine backman with desintegrator and such
+    // combos") - the cursor's (an eater: Back-man, Shredder, Rabbit hole, on
+    // any cursor; effects-eaters.ts morphs it into the eater's shape) and the
+    // letters' (burst, evaporate, or just gone; with an eater, played where
+    // it is done with them). Kept in the five switches they replaced, one of
+    // each set on (eaterChoiceOf, letterChoiceOf), so saved looks, presets
+    // and share codes read as they did. Next to Popping letters: the pair
+    // that fires per character, one for adding and one for removing.
+    const EATER_NAMES: Record<EaterChoice, string> = { none: "Nothing", backman: "Back-man", shredder: "Shredder", rabbithole: "Rabbit hole" };
+    const LETTER_NAMES: Record<LetterChoice, string> = { vanish: "Just vanish", burst: "Burst", evaporate: "Evaporate" };
+    for (const [, key] of [...EATER_KEYS, ...LETTER_KEYS]) { owns(key); gates.add(key); }
+    const lookNow = () => ({ backMan: !!get("backMan"), shredder: !!get("shredder"), rabbitHole: !!get("rabbitHole"), backspaceEvaporate: !!get("backspaceEvaporate"), backspaceDisintegrate: !!get("backspaceDisintegrate") });
+    const eater = () => eaterChoiceOf(lookNow());
+    // One switch of the set on, the rest off; the rows under it follow.
+    const choose = (keys: [string, keyof Look][], v: string) => {
+      const writes = keys.map(([c, key]) => set(key)(c === v));
+      refresh();
+      return Promise.all(writes.map((w) => Promise.resolve(w)));
     };
-    for (const [, key] of DELETE_EFFECTS) { owns(key); gates.add(key); }
-    const deleting = () => deleteEffectOf({ backMan: !!get("backMan"), shredder: !!get("shredder"), rabbitHole: !!get("rabbitHole"), backspaceEvaporate: !!get("backspaceEvaporate"), backspaceDisintegrate: !!get("backspaceDisintegrate") });
-    effects.push(row("When you delete", "What Backspace and Delete do to the letters: burst, evaporate, or your cursor eats them.", (st) => {
-      st.addDropdown((d) => d.addOptions(DELETE_NAMES).setValue(deleting()).onChange(async (v) => {
-        // One switch on, the rest off; the rows under it follow.
-        const writes = DELETE_EFFECTS.map(([effect, key]) => set(key)(effect === v));
-        refresh();
-        await Promise.all(writes.map((w) => Promise.resolve(w)));
-      }));
+    effects.push(row("Cursor on delete", "What your cursor does as Backspace and Delete take the letters: it can eat them.", (st) => {
+      st.addDropdown((d) => d.addOptions(EATER_NAMES).setValue(eater()).onChange(async (v) => { await choose(EATER_KEYS, v); }));
     }, { depth: 1, when: pop }));
     effects.push(toggle("Shredded letters", "Show the letters going through the blades and falling as ribbons. Off, they simply vanish.", "shredderLetters",
-      { depth: 2, when: () => pop() && deleting() === "shredder" }));
+      { depth: 2, when: () => pop() && eater() === "shredder" }));
+    effects.push(row("Letters on delete", "What happens to the letters you delete: they burst, evaporate, or just go.", (st) => {
+      st.addDropdown((d) => d.addOptions(LETTER_NAMES).setValue(letterChoiceOf(lookNow())).onChange(async (v) => { await choose(LETTER_KEYS, v); }));
+    }, { depth: 1, when: pop }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],

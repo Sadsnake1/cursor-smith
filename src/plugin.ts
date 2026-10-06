@@ -168,6 +168,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _eaterNow: EffectsMethods["_eaterNow"];
   declare eaterMoving: EffectsMethods["eaterMoving"];
   declare drawEater: EffectsMethods["drawEater"];
+  declare _eatenLetterFx: EffectsMethods["_eatenLetterFx"];
   declare _backManSelected: EffectsMethods["_backManSelected"];
   declare spawnBackManMeal: EffectsMethods["spawnBackManMeal"];
   declare backManPose: EffectsMethods["backManPose"];

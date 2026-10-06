@@ -17,7 +17,7 @@
 // over a selection, an undo, a change elsewhere) reads as nothing, and the
 // burst falls back to the one it always made where the caret stood.
 import type { CaretRecord, DeletedLetters } from "../types";
-import { deleteEffectOf } from "../settings/settings";
+import { eaterChoiceOf, letterChoiceOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
 
 // A deletion longer than this is a selection wiped, not writing undone: its
@@ -28,7 +28,7 @@ export const effectsDeleteMethods = {
   // Whether anything wants a deletion's letters: the Pop effects' three,
   // and Typewriter's X-out.
   _deletionFxOn(this: CursorSmithPlugin): boolean {
-    return (!!this.look.popEffects && deleteEffectOf(this.look) !== "none") || this._xoutOn();
+    return (!!this.look.popEffects && (eaterChoiceOf(this.look) !== "none" || letterChoiceOf(this.look) !== "vanish")) || this._xoutOn();
   },
 
   // The note as it is now, for the next deletion to read from; kept only
@@ -50,7 +50,7 @@ export const effectsDeleteMethods = {
     if (this._deletePending && performance.now() - this._deletePending < 250) {
       const along = this._deletionFx(old, now);
       // Letters that could not be read still get the burst, where the caret is.
-      if (!along && this.look.popEffects && deleteEffectOf(this.look) === "burst" && typeof old.docLen === "number" && typeof now.docLen === "number" && now.docLen < old.docLen) {
+      if (!along && this.look.popEffects && letterChoiceOf(this.look) === "burst" && typeof old.docLen === "number" && typeof now.docLen === "number" && now.docLen < old.docLen) {
         this.spawnFlamePixels(old, true);
       }
     }
@@ -64,8 +64,9 @@ export const effectsDeleteMethods = {
     if (!this._deletionFxOn()) return false;
     const letters = this.deletedLetters(old, now);
     if (letters && this._xoutOn()) this.spawnXout(letters);
-    // Back-man eats the letters it can read (a text field's it cannot: the
-    // burst goes on there, as before it).
+    // An eater has the letters it can read (a text field's it cannot: the
+    // letters' own effect plays there, where they stood); the letters'
+    // effect then plays where it is done with them (_eatenLetterFx).
     if (this._backManOn() && letters) {
       this.spawnBackManMeal(letters);
       return true;
@@ -80,7 +81,7 @@ export const effectsDeleteMethods = {
       return true;
     }
     if (letters && this._evaporateOn()) this.spawnEvaporate(letters);
-    if (!this.look.popEffects || deleteEffectOf(this.look) !== "burst") return false;
+    if (!this.look.popEffects || letterChoiceOf(this.look) !== "burst") return false;
     return this.spawnDisintegration(letters);
   },
 

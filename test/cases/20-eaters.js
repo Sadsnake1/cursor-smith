@@ -1,17 +1,19 @@
-// "When you delete" (1.7.7): one choice - Nothing, Burst, Evaporate,
-// Back-man, Shredder, Rabbit hole - kept in the five switches it replaced
-// (deleteEffectOf), and the eaters on any cursor: the cursor morphs from
-// its own shape into its eater's and back (effects-eaters.ts).
+// On delete (1.7.7): two choices - the cursor's (Nothing, Back-man,
+// Shredder, Rabbit hole) and the letters' (Just vanish, Burst, Evaporate),
+// every pair working together - kept in the five switches they replaced
+// (eaterChoiceOf, letterChoiceOf); the eaters on any cursor (the cursor
+// morphs from its own shape into its eater's and back); and the combos (the
+// letters' effect played where the eater is done with a letter).
 // One of the files test/test.js runs in order; see test/lib.js.
 const { T, ok, section, makeEngine } = require("../lib");
 
-section("When you delete: one choice, in the switches it replaced");
+section("On delete: two choices, in the switches they replaced");
 {
-  ok("nothing on: Nothing", T.deleteEffectOf({}) === "none");
-  ok("each switch its choice", T.DELETE_EFFECTS.every(([effect, key]) => T.deleteEffectOf({ [key]: true }) === effect));
-  ok("a look saved with several on is the first of them: an eater before Evaporate before Burst",
-     T.deleteEffectOf({ backspaceDisintegrate: true, backspaceEvaporate: true }) === "evaporate" && T.deleteEffectOf({ backspaceDisintegrate: true, rabbitHole: true }) === "rabbithole" && T.deleteEffectOf({ shredder: true, backMan: true }) === "backman");
-  ok("the eaters, and the rest not", T.eaterOf("backman") === "backman" && T.eaterOf("shredder") === "shredder" && T.eaterOf("rabbithole") === "rabbithole" && T.eaterOf("burst") === null && T.eaterOf("none") === null);
+  ok("nothing on: Nothing, and the letters just go", T.eaterChoiceOf({}) === "none" && T.letterChoiceOf({}) === "vanish");
+  ok("each switch its choice", T.EATER_KEYS.every(([c, key]) => T.eaterChoiceOf({ [key]: true }) === c) && T.LETTER_KEYS.every(([c, key]) => T.letterChoiceOf({ [key]: true }) === c));
+  ok("one of each set, together: Back-man and Burst", T.eaterChoiceOf({ backMan: true, backspaceDisintegrate: true }) === "backman" && T.letterChoiceOf({ backMan: true, backspaceDisintegrate: true }) === "burst");
+  ok("a set saved with two on is its first: Evaporate before Burst, Back-man before Shredder", T.letterChoiceOf({ backspaceDisintegrate: true, backspaceEvaporate: true }) === "evaporate" && T.eaterChoiceOf({ shredder: true, backMan: true }) === "backman");
+  ok("the eaters, and nothing", T.eaterOf("backman") === "backman" && T.eaterOf("rabbithole") === "rabbithole" && T.eaterOf("none") === null);
 }
 
 section("The eaters' shapes and the morph");
@@ -81,6 +83,81 @@ section("The eaters on any cursor");
     ok("Evaporate chosen: no eater, the cursor its own", !off.drawEater({}, { x: 100, y: 10, w: 9, h: 24 }, 100, "#f80", 0, 0, now) && off._eaterOn() === null);
     const nopop = mk("Box", { popEffects: false, backMan: true });
     ok("...nor with Pop effects off", nopop._eaterOn() === null);
+  } finally {
+    performance.now = realNow;
+  }
+}
+
+section("The combos: the letters' effect where the eater is done with them");
+{
+  const realNow = performance.now;
+  let now = 1000;
+  performance.now = () => now;
+  try {
+    const old = { top: 0, h: 24, fontSize: 16, fontFamily: "x", fontWeight: "400", fontStyle: "normal", textColor: "#ddd", x: 0, w: 9, actualCharWidth: 9 };
+    const deleted = { letters: [{ char: "a", x: 91, w: 9 }], forward: false, old };
+    const mk = (keys) => {
+      const e = makeEngine({ cursorStyle: "Box", popEffects: true, ...keys });
+      e.styleFor = (k) => e.look[k];
+      e.fontString = () => "16px x";
+      e.getActiveColor = () => "#ccc";
+      e._markDirty = () => {};
+      e.fired = [];
+      e.spawnDisintegration = (d) => { e.fired.push(["burst", d.letters[0].x, d.old.top]); return true; };
+      e.spawnEvaporate = (d) => { e.fired.push(["evaporate", d.letters[0].x, d.old.top]); };
+      return e;
+    };
+    const bm = mk({ backMan: true, backspaceDisintegrate: true });
+    bm._backManBite(-1);
+    bm.spawnBackManMeal(deleted);
+    bm._backMan.mouth = { x: 102, y: 12 };
+    bm.backManPose(now + 10);
+    ok("Back-man and Burst: nothing yet while the letter is going in", bm.fired.length === 0);
+    bm.backManPose(now + 400);
+    ok("...the jaws shut on it: a burst at the mouth", bm.fired.length === 1 && bm.fired[0][0] === "burst" && bm.fired[0][1] === 102 - 4.5 && bm.fired[0][2] === 0, bm.fired);
+    const bmEv = mk({ backMan: true, backspaceEvaporate: true });
+    bmEv._backManBite(-1);
+    bmEv.spawnBackManMeal(deleted);
+    bmEv._backMan.head = { x: 104, y: 0 };
+    bmEv.backManPose(now + 400);
+    ok("Back-man and Evaporate: its ghost rising from the head", bmEv.fired.length === 1 && bmEv.fired[0][0] === "evaporate" && bmEv.fired[0][1] === 104 - 4.5 && bmEv.fired[0][2] < 0, bmEv.fired);
+    const bmNone = mk({ backMan: true });
+    bmNone._backManBite(-1);
+    bmNone.spawnBackManMeal(deleted);
+    bmNone.backManPose(now + 400);
+    ok("Back-man, the letters just going: nothing more", bmNone.fired.length === 0);
+
+    const hole = mk({ rabbitHole: true, backspaceDisintegrate: true });
+    hole._holeBite();
+    hole.spawnHoleMeal(deleted);
+    hole._hole.floor = { x: 95, y: 24 };
+    hole.holePose(now + 0.3 * T.HOLE_FALL_MS);
+    ok("Rabbit hole and Burst: nothing while it drops", hole.fired.length === 0);
+    hole.holePose(now + 0.7 * T.HOLE_FALL_MS);
+    hole.holePose(now + 0.8 * T.HOLE_FALL_MS);
+    ok("...a splash out of the dip as it goes through, once", hole.fired.length === 1 && hole.fired[0][0] === "burst" && hole.fired[0][1] === 95 - 4.5, hole.fired);
+    const holeEv = mk({ rabbitHole: true, backspaceEvaporate: true });
+    holeEv._holeBite();
+    holeEv.spawnHoleMeal(deleted);
+    holeEv.holePose(now + 0.7 * T.HOLE_FALL_MS);
+    ok("Rabbit hole and Evaporate: not as it goes through...", holeEv.fired.length === 0);
+    holeEv.holePose(now + T.HOLE_FALL_MS + 5);
+    ok("...but once gone, its ghost floating back up out of the hole", holeEv.fired.length === 1 && holeEv.fired[0][0] === "evaporate");
+
+    const l = { char: "a", x: 100, w: 9, top: 0, h: 24, font: "16px x", color: "#ddd", t0: 0 };
+    ok("Shredder and Evaporate: the ribbons rise instead of falling", T.shredFeed(l, 100, T.SHRED_FEED_MS, true).dy < 0 && T.shredFeed(l, 100, T.SHRED_FEED_MS).dy > 0);
+    const sh = mk({ cursorStyle: "Line", shredder: true, backspaceDisintegrate: true });
+    sh._shredBite();
+    sh.spawnShreds(deleted);
+    const calls = [];
+    const ctx = new Proxy({}, { get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }), set: (o, k, v) => { o[k] = v; return true; } });
+    const pose = sh.shredPose(now);
+    sh.drawShreds(ctx, 91, pose, now + T.SHRED_FEED_MS / 2);
+    ok("Shredder and Burst: half through, cut as ever", sh.fired.length === 0 && calls.some((c) => c[0] === "fillText"));
+    calls.length = 0;
+    sh.drawShreds(ctx, 91, pose, now + T.SHRED_FEED_MS + 20);
+    sh.drawShreds(ctx, 91, pose, now + T.SHRED_FEED_MS + 60);
+    ok("...all through: it breaks into pixels past the cut, once, its ribbons gone", sh.fired.length === 1 && sh.fired[0][0] === "burst" && sh.fired[0][1] === 91 - 9 - 1 && !calls.some((c) => c[0] === "fillText"), sh.fired);
   } finally {
     performance.now = realNow;
   }

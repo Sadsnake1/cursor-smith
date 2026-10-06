@@ -15,8 +15,8 @@
 // line under brackets a random cursor would rarely show. Values come from the settings' own ranges, so
 // a rolled cursor is one the panel could have made. Pure and seedable (the
 // tests roll with a seed); the plugin applies it (library.ts, rollCursor).
-import { DELETE_EFFECTS, DEFAULT_SETTINGS, LOOK_KEYS } from "./settings";
-import type { DeleteEffect } from "./settings";
+import { EATER_KEYS, LETTER_KEYS, DEFAULT_SETTINGS, LOOK_KEYS } from "./settings";
+import type { EaterChoice, LetterChoice } from "./settings";
 import { hslToRgbTuple, rgbTupleToHex } from "../util/color";
 import type { Look } from "../types";
 
@@ -148,21 +148,20 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   if (on.has("popEffects")) {
     look.popLetters = chance(0.75);
     look.popLettersRise = !full && rand() < 0.3;
-    // "When you delete": one of them, its switch on and the rest off - the
-    // cursor eating them (Back-man, Shredder, Rabbit hole, on any cursor)
-    // as likely as the burst, more so with Chaos.
-    const del = pick([
-      ...Array<DeleteEffect>(3).fill("burst"), "evaporate", "evaporate", ...(full ? [] : ["none" as DeleteEffect]),
-      ...(chance(0.5 + 0.4 * chaos) ? (["backman", "shredder", "rabbithole"] as DeleteEffect[]) : []),
-    ]);
-    for (const [effect, key] of DELETE_EFFECTS) (look as Record<string, unknown>)[key] = effect === del;
+    // On delete: one of each choice, its switch on and the rest of its set
+    // off - the cursor eating them now and then (any eater, any cursor),
+    // more often with Chaos; the letters bursting, evaporating or just going.
+    const eats: EaterChoice = chance(0.3 + 0.4 * chaos) ? pick<EaterChoice>(["backman", "shredder", "rabbithole"]) : "none";
+    const lets: LetterChoice = pick<LetterChoice>(["burst", "burst", "evaporate", ...(full && eats === "none" ? [] : ["vanish" as LetterChoice])]);
+    for (const [choice, key] of EATER_KEYS) (look as Record<string, unknown>)[key] = choice === eats;
+    for (const [choice, key] of LETTER_KEYS) (look as Record<string, unknown>)[key] = choice === lets;
     look.shredderLetters = rand() < 0.8;
     look.thunderstrike = chance(0.2 + 0.6 * chaos);
     look.thunderstrikeSize = any(1, 5, 1);
     look.thunderstrikeStrength = level(0.3, 1, 0.05);
     look.fireworks = chance(0.2 + 0.6 * chaos);
     look.fireworksQuantity = level(0.6, 3, 0.1);
-    if (!look.popLetters && del === "none" && !look.thunderstrike && !look.fireworks) look.popLetters = true;
+    if (!look.popLetters && eats === "none" && lets === "vanish" && !look.thunderstrike && !look.fireworks) look.popLetters = true;
     look.popRainbow = chance(color * 0.8);
   }
   if (on.has("typewriter")) {

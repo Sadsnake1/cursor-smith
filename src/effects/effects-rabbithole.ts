@@ -12,7 +12,8 @@
 // through, out of sight; then the floor springs back up past straight and
 // wobbles to rest. A floor: on a Box or a Line the cursor morphs into one
 // first (effects-eaters.ts).
-import type { DeletedLetters } from "../types";
+import type { CaretRecord, DeletedLetters } from "../types";
+import { letterChoiceOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
 
 // A letter's way down: the drop onto the floor (to LAND of the way), the
@@ -34,9 +35,12 @@ const MEAL_MAX = 12;
 // A letter going down: where its middle stood, half its height (from its
 // middle to its foot), its font and color, when it set off, whether it has
 // landed.
-export interface HoleLetter { char: string; cx: number; cy: number; half: number; font: string; color: string; t0: number; landed: boolean }
+// fx: the letters' effect played for it.
+export interface HoleLetter { char: string; cx: number; cy: number; half: number; w: number; old: CaretRecord; font: string; color: string; t0: number; landed: boolean; fx?: boolean }
 // The floor's spring (sag in letter widths, down positive) and the letters.
-export interface HoleState { sag: number; v: number; at: number; letters: HoleLetter[] }
+// floor: where the floor's middle was last drawn (the letters' effect plays
+// there).
+export interface HoleState { sag: number; v: number; at: number; letters: HoleLetter[]; floor?: { x: number; y: number } }
 export interface HolePose { sag: number; letters: HoleLetter[] }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
@@ -109,7 +113,7 @@ export const effectsRabbitHoleMethods = {
     const now = performance.now();
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
-      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, font, color, t0: now, landed: false });
+      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, w: l.w, old, font, color, t0: now, landed: false });
     }
   },
 
@@ -120,6 +124,17 @@ export const effectsRabbitHoleMethods = {
   holePose(this: CursorSmithPlugin, now: number): HolePose | null {
     const s = this._hole;
     if (!s || !this._holeOn()) return null;
+    // The letters' effect: Burst as a splash of pixels out of the dip as a
+    // letter goes through, Evaporate as its ghost floating back up out of it.
+    const fx = this.look.popEffects ? letterChoiceOf(this.look) : "vanish";
+    for (const l of s.letters) {
+      const u = (now - l.t0) / HOLE_FALL_MS;
+      if (l.fx || fx === "vanish" || u < (fx === "burst" ? SINK : 0.9)) continue;
+      l.fx = true;
+      const at = s.floor || { x: l.cx, y: l.cy + l.half };
+      const h = l.old.h || 20;
+      this._eatenLetterFx(l.char, l.w, l.old, at.x - l.w / 2, at.y - (fx === "burst" ? 0.6 : 0.5) * h);
+    }
     s.letters = s.letters.filter((l) => now - l.t0 < HOLE_FALL_MS);
     let weighed = false;
     for (const l of s.letters) {
@@ -145,6 +160,7 @@ export const effectsRabbitHoleMethods = {
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
     const sag = pose.sag * w;
     const cx = x + w / 2, mid = y + h / 2, top = y;
+    if (this._hole) this._hole.floor = { x: cx, y: top + sag };
     for (const l of pose.letters) {
       const f = holeFall(l, cx, top + sag, now);
       if (f.done) continue;

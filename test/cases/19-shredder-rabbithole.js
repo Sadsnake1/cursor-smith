@@ -121,15 +121,15 @@ section("Shredder and Rabbit hole: they have the letters");
 section("Shredder and Rabbit hole: the settings");
 {
   ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-3).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
-  const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "When you delete").dropdowns[0];
-  ok("choices of \"When you delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Rabbit hole");
+  const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "Cursor on delete").dropdowns[0];
+  ok("choices of \"Cursor on delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Rabbit hole");
   const on = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });
   const sub = on.find((r) => r.name === "Shredded letters");
-  ok("Shredded letters: under the choice, shown with Shredder chosen, on any cursor", !!sub && on.findIndex((r) => r.name === "Shredded letters") === on.findIndex((r) => r.name === "When you delete") + 1 && sub.def.visible() && on.cardKeys.Effects.includes("shredderLetters"));
+  ok("Shredded letters: under the choice, shown with Shredder chosen, on any cursor", !!sub && on.findIndex((r) => r.name === "Shredded letters") === on.findIndex((r) => r.name === "Cursor on delete") + 1 && sub.def.visible() && on.cardKeys.Effects.includes("shredderLetters"));
   const other = renderPanel({ popEffects: true, cursorStyle: "Line", rabbitHole: true });
   ok("...hidden with another choice", !other.find((r) => r.name === "Shredded letters").def.visible());
   const rolls = Array.from({ length: 400 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(900 + k)));
-  ok("the Randomizer rolls each sometimes, on any cursor, one choice at a time", rolls.some((l) => l.shredder && l.cursorStyle !== "Line") && rolls.some((l) => l.rabbitHole && l.cursorStyle !== "Underline") && rolls.every((l) => ["backMan", "shredder", "rabbitHole", "backspaceEvaporate", "backspaceDisintegrate"].filter((k) => l[k]).length <= 1));
+  ok("the Randomizer rolls each sometimes, on any cursor, one choice at a time", rolls.some((l) => l.shredder && l.cursorStyle !== "Line") && rolls.some((l) => l.rabbitHole && l.cursorStyle !== "Underline") && rolls.every((l) => ["backMan", "shredder", "rabbitHole"].filter((k) => l[k]).length <= 1 && ["backspaceEvaporate", "backspaceDisintegrate"].filter((k) => l[k]).length <= 1) && rolls.some((l) => l.backMan && l.backspaceDisintegrate));
 }
 
 section("Shredder and Rabbit hole: drawn");
@@ -139,7 +139,7 @@ section("Shredder and Rabbit hole: drawn");
     get: (o, k) => (k in o ? o[k] : (...a) => { calls.push([k, ...a]); }),
     set: (o, k, v) => { o[k] = v; calls.push(["set " + String(k), v]); return true; },
   });
-  const plugin = { _markDirty() {} };
+  const plugin = { _markDirty() {}, look: {} };
   T.EngineProto.drawShredLine.call(plugin, ctx, 100, 0, 2, 24, "#f80", { dash: 1, letters: [] }, 0);
   ok("the Line as blades: six rects in one fill, in the line's paint", calls.filter((c) => c[0] === "rect").length === 6 && calls.filter((c) => c[0] === "fill").length === 1);
   calls.length = 0;

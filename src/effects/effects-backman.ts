@@ -18,7 +18,8 @@
 // bite kicks it, and it eases back when the bites stop. Smooth, not pixels.
 // A box: on a Line or an Underline the cursor morphs into one first
 // (effects-eaters.ts; a Line chomped like a beak for a day before that).
-import type { DeletedLetters } from "../types";
+import type { CaretRecord, DeletedLetters } from "../types";
+import { letterChoiceOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
 
 // One bite (the mouth open and shut; a held key's pace, about seven a
@@ -47,9 +48,10 @@ const MEAL_MAX = 12;
 
 // A letter going down: where its middle stood, its font and color, when it
 // set off and when it is down (the jaws shut on it).
-export interface BackManMorsel { char: string; cx: number; cy: number; font: string; color: string; t0: number; t1: number }
+export interface BackManMorsel { char: string; cx: number; cy: number; w: number; old: CaretRecord; font: string; color: string; t0: number; t1: number }
 // c0: when this run of chewing began; t: the last key; big: a big bite.
-export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[] }
+// mouth, head: where they were last drawn (the letters' effect plays there).
+export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[]; mouth?: { x: number; y: number }; head?: { x: number; y: number } }
 // open: the mouth; front, back: the gulp's swell of each side; squint: the
 // eye's happy squint (1 shut); g: how far the gulp has gone (0 to 1 while
 // it goes); meal: the letters going in, each with how far it has gone (e,
@@ -248,7 +250,7 @@ export const effectsBackManMethods = {
     const t1 = backManDown(s, now);
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
-      s.meal.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, font, color, t0: now, t1 });
+      s.meal.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, w: l.w, old, font, color, t0: now, t1 });
     }
   },
 
@@ -262,9 +264,19 @@ export const effectsBackManMethods = {
     // A frame stamped a hair before the key still shows the bite's start.
     const b = backManBite(Math.max(0, now - s.c0), s.t - s.c0, s.big);
     if (now > s.at) { backManSpring(s, (now - s.at) / 1000); s.at = now; }
+    // A letter down: the letters' effect - Burst as crumbs from the mouth as
+    // the jaws shut on it, Evaporate as its ghost rising from the head. Before
+    // all else: a frame late (a pause) still plays it.
+    const fx = this.look.popEffects ? letterChoiceOf(this.look) : "vanish";
+    for (const m of s.meal) {
+      if (now < m.t1 || fx === "vanish") continue;
+      const h = m.old.h || 20;
+      if (fx === "burst") { const at = s.mouth || { x: m.cx, y: m.cy }; this._eatenLetterFx(m.char, m.w, m.old, at.x - m.w / 2, at.y - h / 2); }
+      else { const at = s.head || { x: m.cx, y: m.cy - h / 2 }; this._eatenLetterFx(m.char, m.w, m.old, at.x - m.w / 2, at.y - 0.85 * h); }
+    }
+    s.meal = s.meal.filter((m) => now < m.t1);
     const settled = Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05;
     if (b.done && settled) { this._backMan = null; return null; }
-    s.meal = s.meal.filter((m) => now < m.t1);
     const meal = s.meal.map((m) => {
       const u = Math.max(0, Math.min(1, (now - m.t0) / Math.max(1, m.t1 - m.t0)));
       return { m, e: 1 - (1 - u) * (1 - u) };
@@ -286,8 +298,10 @@ export const effectsBackManMethods = {
   // paint with the glint cut out. `corner`: the box's corner radius.
   drawBackMan(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: BackManPose, stroke = 0, corner = 0) {
     const body = backManShape(pose.open, pose.dir, pose.bend, pose.front, pose.back);
-    // The letters going in, to the mouth's corner.
+    // The letters going in, to the mouth's corner (kept: the letters' effect
+    // plays there, and the ghost rises from the head).
     this._drawBackManMeal(ctx, pose, x + body[3][0] * w, y + body[3][1] * h, h);
+    if (this._backMan) { this._backMan.mouth = { x: x + body[3][0] * w, y: y + body[3][1] * h }; this._backMan.head = { x: x + w / 2, y }; }
     ctx.beginPath();
     for (const c of backManOutline(body, pose.open, w, h, corner)) {
       if (c[0] === "M") ctx.moveTo(x + c[1], y + c[2]);

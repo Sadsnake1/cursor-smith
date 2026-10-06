@@ -9,7 +9,7 @@
 // the active point, the glide (updateSmoothCursor) and the commit of a
 // move.
 
-import { deleteEffectOf } from "../settings/settings";
+import { letterChoiceOf } from "../settings/settings";
 import {
   CATCHUP_BOOST_RATE,
   JUMP_TRAIL_MIN_DIST,
@@ -836,7 +836,7 @@ export const caretsMethods = {
       // the ambient trail to be switched on.
       const disintegrate = !!(
         this.look.popEffects &&
-        deleteEffectOf(this.look) === "burst" &&
+        letterChoiceOf(this.look) === "burst" &&
         this._deletePending &&
         now - this._deletePending < 250);
       // Along the deleted letters when they could be read; where the caret

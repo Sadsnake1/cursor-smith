@@ -12,10 +12,11 @@
 // key at once), the effect plays in it, and when it is done the cursor
 // morphs back into its own (EATER_OUT_MS, with a little overshoot). A
 // cursor already of that shape just plays it. Which one, if any, is the
-// "When you delete" choice (deleteEffectOf, settings.ts).
+// cursor's choice on delete (eaterChoiceOf, settings.ts).
 import type CursorSmithPlugin from "../plugin";
-import { deleteEffectOf } from "../settings/settings";
-import type { DeleteEffect } from "../settings/settings";
+import { eaterChoiceOf, letterChoiceOf } from "../settings/settings";
+import type { CaretRecord, DeletedLetters } from "../types";
+import type { EaterChoice } from "../settings/settings";
 
 export const EATER_IN_MS = 90;
 export const EATER_OUT_MS = 160;
@@ -30,9 +31,9 @@ const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
 // Out with a little overshoot, back to rest.
 const easeOutBack = (t: number) => { const c = 1.6; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
 
-// The eater a choice is, or null (Burst, Evaporate, nothing). Pure.
-export function eaterOf(e: DeleteEffect): Eater | null {
-  return e === "backman" || e === "shredder" || e === "rabbithole" ? e : null;
+// The eater a choice is, or null (nothing). Pure.
+export function eaterOf(e: EaterChoice): Eater | null {
+  return e === "none" ? null : e;
 }
 
 // Each eater's shape for a caret at the gap `gx` on the row (top, h), a
@@ -61,7 +62,7 @@ export function eaterMorph(sinceIn: number, sinceOut: number): number {
 export const effectsEatersMethods = {
   // The eater chosen, with Pop effects on, or null.
   _eaterOn(this: CursorSmithPlugin): Eater | null {
-    return this.look.popEffects ? eaterOf(deleteEffectOf(this.look)) : null;
+    return this.look.popEffects ? eaterOf(eaterChoiceOf(this.look)) : null;
   },
 
   // The cursor at `now` as an eater draws it: which one, whether it is
@@ -81,6 +82,19 @@ export const effectsEatersMethods = {
     } else return null;
     const m = eaterMorph(now - s.t0, s.exit ? now - s.exit : -1);
     return { kind: s.kind, back: !!s.exit, m };
+  },
+
+  // The letters' own effect (Burst, Evaporate) for a letter an eater is
+  // done with - Back-man's bite, the Shredder's cut, the Rabbit hole's drop -
+  // played there: the letter `w` wide, its cell's left at x, its row's top
+  // at `top`, in the caret's font (`old`, the caret it was deleted from).
+  _eatenLetterFx(this: CursorSmithPlugin, char: string, w: number, old: CaretRecord, x: number, top: number) {
+    if (!this.look.popEffects) return;
+    const fx = letterChoiceOf(this.look);
+    if (fx === "vanish") return;
+    const deleted: DeletedLetters = { letters: [{ char, x, w }], forward: false, old: { ...old, top } };
+    if (fx === "evaporate") this.spawnEvaporate(deleted);
+    else this.spawnDisintegration(deleted);
   },
 
   // Whether an eater has the cursor (the frame governor keeps the frames

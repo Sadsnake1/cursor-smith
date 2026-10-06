@@ -44,7 +44,7 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 
 | Effect | What it does |
 |---|---|
-| **Pop effects** | Letters pop out as you type, or rise straight up and fade. Pick what happens **when you delete**: the letters burst apart or evaporate, or your cursor eats them, whatever its shape. It turns into Back-man, a hungry little creature with a big square eye that gulps each letter down, a Shredder that cuts them into falling ribbons, or a Rabbit hole, a little trampoline they drop into. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
+| **Pop effects** | Letters pop out as you type, or rise straight up and fade. When you delete, your cursor can eat the letters, whatever its shape: it turns into Back-man, a hungry little creature with a big square eye that gulps each letter down, a Shredder that cuts them into ribbons, or a Rabbit hole, a little trampoline they drop into. The letters can burst apart or evaporate, on their own or together with the eater: crumbs fly from Back-man's mouth, a ghost floats up out of the hole. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Sounds** | Real typewriters, mechanical keyboards, a kalimba and an actual horse as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |

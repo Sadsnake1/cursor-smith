@@ -418,6 +418,8 @@ export const engineMethods = {
 
         const view = this.app.workspace.activeEditor?.editor?.cm;
         this.ensureCanvasForView(view);
+        // What is on the text moves with it through a scroll.
+        this._scrollCarry(view);
         if (view) this.registerWindowEvents(view.dom.ownerDocument);
         this._observeEditorLayout(view);
         // The canvas may have just migrated to a document that hosts no view
@@ -1139,6 +1141,65 @@ export const engineMethods = {
            Math.round(la.w * 2) + "," + Math.round(la.h * 2) + "," + (la.char || "") : "none",
       sec, bt, this._secondariesSig(), this._smearSig(), this._capsSig(),
     ].join("|");
+  },
+
+  // Effects stay on the text through a scroll ("the pixels trails and fire
+  // scroll on the phone they don't remain there", "including stardust").
+  // They live in window coordinates while the text under them moves: the
+  // caret is measured from the text every frame and follows it, the effects
+  // stayed where they were on the screen - and on a phone, where the canvas
+  // is inside the note and a flick carries it, they rode the flick and
+  // jumped back each frame. The note's scroll since the last frame now moves
+  // them with it. Only within one note: another view starts afresh.
+  _scrollCarry(this: CursorSmithPlugin, view: EditorView | null | undefined) {
+    const el = view ? view.scrollDOM : null;
+    if (!el) { this._scrollRef = null; return; }
+    const top = el.scrollTop, left = el.scrollLeft;
+    const ref = this._scrollRef;
+    this._scrollRef = { el, top, left };
+    if (!ref || ref.el !== el) return;
+    const dx = ref.left - left, dy = ref.top - top;
+    if (dx || dy) this._shiftEffects(dx, dy);
+  },
+
+  // Every effect laid on the text, moved by (dx, dy): the pixels, the fire
+  // and its burn marks, the CRT ghosts, stardust, the letters thrown off,
+  // fireworks and bolts, the carriage return, the evaporating letters - each
+  // caret's own too (a secondary's in its bundle), and where the fire last
+  // saw its caret, so a scroll is not taken for a move. What is pinned to the
+  // document (the ink, the X-out, the tether) is measured from it anyway.
+  _shiftEffects(this: CursorSmithPlugin, dx: number, dy: number) {
+    const pt = (p: { x: number; y: number; row?: number } | null | undefined) => {
+      if (!p) return;
+      p.x += dx; p.y += dy;
+      if (typeof p.row === "number") p.row += dy;
+    };
+    for (const p of this.flamePixels || []) pt(p);
+    for (const p of this.flameEmbers || []) pt(p);
+    for (const p of this.particles || []) pt(p);
+    for (const m of this.stardust || []) { pt(m); m.ax += dx; m.ay += dy; }
+    for (const f of this.fireworks || []) {
+      f.x0 += dx; f.y0 += dy; f.bx += dx; f.by += dy;
+      f.minX += dx; f.maxX += dx; f.minY += dy; f.maxY += dy;
+    }
+    for (const b of this.thunderbolts || []) {
+      b.tx += dx; b.ty += dy; b.minX += dx; b.maxX += dx; b.minY += dy; b.maxY += dy;
+      for (const band of b.bands) for (const c of band.cells) { c.x += dx; c.y += dy; }
+    }
+    for (const r of this.typeReturns || []) { r.x0 += dx; r.xs += dx; r.y += dy; }
+    for (const g of this.evaporateGlyphs || []) { g.x += dx; g.top += dy; }
+    const own = (s: Pick<CursorSmithPlugin, "trail" | "hotBurns" | "_hotPrev" | "_hotEmitFrom">) => {
+      for (const p of s.trail || []) pt(p);
+      for (const b of s.hotBurns || []) {
+        pt(b);
+        if (b.rowLeft != null) b.rowLeft += dx;
+        if (b.rowRight != null) b.rowRight += dx;
+      }
+      pt(s._hotPrev);
+      pt(s._hotEmitFrom);
+    };
+    own(this);
+    for (const s of this._secondaries || []) own(s);
   },
 
   _markDirty(this: CursorSmithPlugin, x: number, y: number, w: number, h: number) {

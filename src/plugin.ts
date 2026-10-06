@@ -370,6 +370,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare _frameCaps: EngineMethods["_frameCaps"];
   declare _isAnimating: EngineMethods["_isAnimating"];
   declare _markDirty: EngineMethods["_markDirty"];
+  declare _scrollCarry: EngineMethods["_scrollCarry"];
+  declare _shiftEffects: EngineMethods["_shiftEffects"];
+  // The note's scroller and its scroll at the last frame (_scrollCarry).
+  _scrollRef!: { el: Element; top: number; left: number } | null;
   declare forEachTrailPoint: EngineMethods["forEachTrailPoint"];
   declare _invalidateLayout: EngineMethods["_invalidateLayout"];
   declare _invalidateStyle: EngineMethods["_invalidateStyle"];

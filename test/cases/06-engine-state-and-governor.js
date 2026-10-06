@@ -1033,3 +1033,46 @@ section("The render loops run on a visible window (issue #39)");
   ok("the loops ask frames and timers of that window, never of the main one alone",
      ["engine.ts", "torch.ts"].every((f) => !/window\.requestAnimationFrame\(/.test(require("fs").readFileSync(srcPath(f), "utf8"))));
 }
+
+section("Effects stay on the text through a scroll");
+{
+  // "the pixels trails and fire scroll on the phone they don't remain
+  // there", "including stardust": what is laid on the text moves with it.
+  const e = makeEngine({ crtEffect: true, hotHead: true, stardustEnabled: true });
+  const fill = (s) => {
+    s.trail = [{ x: 10, y: 100, w: 2, h: 24, t: 0 }];
+    s.hotBurns = [{ x: 20, y: 100, t: 0, rowLeft: 0, rowRight: 300, lh: 24, fs: 16 }];
+    s._hotPrev = { x: 30, y: 112, t: 0, row: 100 };
+    s._hotEmitFrom = { x: 30, y: 112 };
+  };
+  fill(e);
+  e.flamePixels = [{ x: 1, y: 100 }]; e.flameEmbers = [{ x: 2, y: 100 }]; e.particles = [{ x: 3, y: 100 }];
+  e.stardust = [{ x: 4, y: 100, ax: 4, ay: 100 }];
+  e.fireworks = [{ x0: 5, y0: 100, bx: 5, by: 80, minX: 0, maxX: 10, minY: 70, maxY: 110 }];
+  e.thunderbolts = [{ tx: 6, ty: 100, minX: 0, maxX: 10, minY: 90, maxY: 110, bands: [{ cells: [{ x: 6, y: 100, t: 0 }] }] }];
+  e.typeReturns = [{ x0: 7, xs: 7, y: 100, h: 24 }];
+  e.evaporateGlyphs = [{ x: 8, top: 100 }];
+  const sec = {}; fill(sec);
+  e._secondaries = [sec];
+  const el = { scrollTop: 200, scrollLeft: 0 };
+  const view = { scrollDOM: el };
+  e._scrollRef = null;
+  e._scrollCarry(view);
+  ok("the first frame only notes the scroll", e.flamePixels[0].y === 100);
+  el.scrollTop = 250;
+  e._scrollCarry(view);
+  const ys = [e.flamePixels[0].y, e.flameEmbers[0].y, e.particles[0].y, e.stardust[0].y, e.stardust[0].ay, e.fireworks[0].by, e.fireworks[0].minY,
+    e.thunderbolts[0].ty, e.thunderbolts[0].bands[0].cells[0].y, e.typeReturns[0].y, e.evaporateGlyphs[0].top, e.trail[0].y, e.hotBurns[0].y, e._hotPrev.row, sec.trail[0].y, sec.hotBurns[0].y];
+  ok("scrolled 50 down: every effect laid on the text 50 up with it - the pixels, the fire and its marks, the ghosts, stardust, letters, fireworks, bolts, returns, evaporating letters, a secondary's own",
+     ys.every((y, i) => y === [50, 50, 50, 50, 50, 30, 20, 50, 50, 50, 50, 50, 50, 50, 50, 50][i]), ys);
+  ok("...and where the fire last saw its caret, so the scroll is not taken for a move", e._hotPrev.y === 62 && e._hotEmitFrom.y === 62 && sec._hotPrev.y === 62);
+  el.scrollLeft = 30;
+  e._scrollCarry(view);
+  ok("sideways too (a wide table): the row's ends with them", e.flamePixels[0].x === -29 && e.hotBurns[0].rowLeft === -30 && e.hotBurns[0].rowRight === 270, [e.flamePixels[0].x, e.hotBurns[0].rowLeft]);
+  const other = { scrollDOM: { scrollTop: 900, scrollLeft: 0 } };
+  e._scrollCarry(other);
+  ok("another note's scroller: nothing moved (it starts afresh)", e.flamePixels[0].y === 50 && e.flamePixels[0].x === -29);
+  e._scrollCarry(null);
+  ok("no note: forgotten", e._scrollRef === null);
+  ok("the tick carries them, right after the canvas is placed", /this\.ensureCanvasForView\(view\);\n\s*\/\/ What is on the text moves with it through a scroll\.\n\s*this\._scrollCarry\(view\);/.test(require("fs").readFileSync(srcPath("engine.ts"), "utf8")));
+}

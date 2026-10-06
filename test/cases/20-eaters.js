@@ -187,24 +187,28 @@ section("The eaters smeared with Motion smear");
   };
   const on = run({}), off = run({ eaterSmear: false });
   ok("with Motion smear on: the eater its own size, never stretched ('too big with smear on, just make it have the trail')", on.w === off.w && on.x === off.x && on.w === r.w, [on, off]);
-  const trailFill = on.ops.find((o) => o.op === "fill");
-  const trailRect = on.ops.find((o) => o.op === "rect");
-  ok("...and its trail behind it: its own shape stretched along the row as far as the smear reaches past the cursor, at EATER_TRAIL_ALPHA",
-     !!trailFill && trailFill.alpha === T.EATER_TRAIL_ALPHA && !!trailRect && trailRect.x === 100 && trailRect.w === 9 + 9 && trailRect.y === 10 && trailRect.h === 24 && !off.ops.some((o) => o.op === "fill"), on.ops);
-  // The trail's own rules (eaterTrail), on a Vacuum's floor (3 px high).
-  const floor = { x: 100, y: 31, w: 9, h: 3 };
-  ok("a trail has the eater's own height: the Vacuum's a floor, not the box's (the 'ghost like a box on top of it')", JSON.stringify(T.eaterTrail(floor, own, q, 27)) === JSON.stringify({ x: 100, y: 31, w: 18, h: 3 }));
-  const still = { tl: { x: 100, y: 10 }, tr: { x: 102, y: 10 }, br: { x: 102, y: 34 }, bl: { x: 100, y: 34 } };
-  ok("...none at rest (the smear reaches nowhere past the cursor)", T.eaterTrail(floor, own, still, 27) === null && T.eaterTrail(floor, own, null, 27) === null);
+  // The trail: fillRect slices from the eater's right edge (109) out to the
+  // quad's far end (111), fainter and fainter.
+  const slices = on.ops.filter((o) => o.op === "fillRect");
+  ok("...and its trail: a streak in its own height from its edge out to where the smear reaches, fading (\"a smear trail\")",
+     slices.length >= 3 && Math.abs(slices[0].x - 109) < 1e-9 && slices.every((s) => s.y === 10 && s.h === 24) && Math.abs(slices[slices.length - 1].x + slices[slices.length - 1].w - 111.25) < 1e-6 && !off.ops.some((o) => o.op === "fillRect"), slices);
+  ok("...fading from EATER_TRAIL_ALPHA at the eater to nothing at the tail", Math.abs(T.eaterTrailAlpha(0) - T.EATER_TRAIL_ALPHA) < 1e-9 && T.eaterTrailAlpha(1) === 0 && T.eaterTrailAlpha(0.5) < T.eaterTrailAlpha(0.2));
+  // The trail's own rules (eaterTrail), on a Vacuum's floor (3 px high), the
+  // cursor's own box 17 wide where the eater is 9.
+  const floor = { x: 100, y: 31, w: 9, h: 3 }, wide = { x: 100, y: 10, w: 17, h: 24 };
+  const mov = { tl: { x: 100, y: 10 }, tr: { x: 140, y: 10 }, br: { x: 140, y: 34 }, bl: { x: 100, y: 34 } };
+  ok("a trail has the eater's own height and runs from the eater's edge to the smear's far end (the Vacuum's a floor, not a box)", JSON.stringify(T.eaterTrail(floor, wide, mov, 54)) === JSON.stringify({ y: 31, h: 3, runs: [[109, 140, 1]] }), T.eaterTrail(floor, wide, mov, 54));
+  const still = { tl: { x: 100, y: 10 }, tr: { x: 117, y: 10 }, br: { x: 117, y: 34 }, bl: { x: 100, y: 34 } };
+  ok("...none at rest (the smear no further than the cursor's own box: no ghost)", T.eaterTrail(floor, wide, still, 54) === null && T.eaterTrail(floor, wide, null, 54) === null);
   const join = { tl: { x: 100, y: 10 }, tr: { x: 400, y: 10 }, br: { x: 400, y: 58 }, bl: { x: 100, y: 58 } };
-  ok("...none across rows (a Backspace joining two lines)", T.eaterTrail(floor, own, join, 27) === null);
-  const far = { tl: { x: 100, y: 10 }, tr: { x: 300, y: 10 }, br: { x: 300, y: 34 }, bl: { x: 100, y: 34 } };
-  ok("...EATER_TRAIL_CW letters at most", T.eaterTrail(floor, own, far, 27).w === 9 + 27 && T.EATER_TRAIL_CW === 3);
-  ok("...none with the switch off, nor without Motion smear", !run({ smear: false }).ops.some((o) => o.op === "fill"));
+  ok("...none across rows (a Backspace joining two lines)", T.eaterTrail(floor, wide, join, 54) === null);
+  const far = { tl: { x: 100, y: 10 }, tr: { x: 400, y: 10 }, br: { x: 400, y: 34 }, bl: { x: 100, y: 34 } };
+  ok("...EATER_TRAIL_CW letters at most", JSON.stringify(T.eaterTrail(floor, wide, far, 54).runs) === JSON.stringify([[109, 163, 1]]) && T.EATER_TRAIL_CW === 6);
+  ok("...none with the switch off, nor without Motion smear", !run({ smear: false }).ops.some((o) => o.op === "fillRect"));
   const d = on.dirty.find((m) => m.x < 100 && m.x + m.w > 109);
   ok("all it may paint marked for the next frame's clear: its rect, grown and bent past it", !!d && d.x < 100 - 9 && d.x + d.w > 109 + 9 && d.y < 10 - 9 && d.y + d.h > 34 + 9, on.dirty);
   const rows = renderPanel({ popEffects: true, backMan: true });
   const row = rows.find((x) => x.name === "Smear");
   ok("a setting under the eater's choice, needing Motion smear", !!row && rows.findIndex((x) => x.name === "Smear") > rows.findIndex((x) => x.name === "Cursor on delete") && rows.findIndex((x) => x.name === "Smear") < rows.findIndex((x) => x.name === "Letters on delete"));
-  ok("the preview leaves the trail too, its eater its own size, the trail its shape", /const r = r0;\n\s*if \(look\.smear && look\.eaterSmear !== false && !d\.eatM\.exit && stretch > 0\.5\) trail = \{ x: r0\.x, y: r0\.y, w: r0\.w \+ Math\.min\(stretch, EATER_TRAIL_CW \* px\), h: r0\.h \};/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
+  ok("the preview leaves the trail too, its eater its own size, the trail its shape", /const r = r0;\n\s*if \(look\.smear && look\.eaterSmear !== false && !d\.eatM\.exit && stretch > 0\.5\) trail = \{ x: r0\.x \+ r0\.w, y: r0\.y, w: Math\.min\(stretch, EATER_TRAIL_CW \* px\), h: r0\.h \};/.test(require("fs").readFileSync(srcPath("demo.ts"), "utf8")));
 }

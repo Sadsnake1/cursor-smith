@@ -48,27 +48,43 @@ export function eaterForm(kind: Eater, gx: number, top: number, h: number, cw: n
   return { x: gx, y: top + h - uh, w: cw, h: uh };
 }
 
-// The trail an eater leaves with Motion smear on (eaterSmear): its own
-// shape stretched along the row as far as the smear reaches past the
-// cursor, EATER_TRAIL_CW letters at most, behind it at EATER_TRAIL_ALPHA of
-// its paint.
-export const EATER_TRAIL_ALPHA = 0.5;
-export const EATER_TRAIL_CW = 3;
+// The trail an eater leaves with Motion smear on (eaterSmear): a streak in
+// its own height, from its edge out to where the smear reaches, at most
+// EATER_TRAIL_CW letters, fading from EATER_TRAIL_ALPHA of its paint at the
+// eater to nothing at the tail - "a smear trail", not a faint box beside it
+// ("The shredder doesn't leave a smear trail": a flat translucent block a
+// letter long read as one).
+export const EATER_TRAIL_ALPHA = 0.6;
+export const EATER_TRAIL_CW = 6;
 
-// An eater's trail: its rect `r` stretched along its row as far as the
-// smear's quad `q` reaches past the cursor's own rect `own` each way,
-// `maxReach` px at most - or none: no smear, a smear that reaches nowhere
-// (the cursor at rest: a trail there was a ghost of the cursor over the
-// Vacuum's floor), or one across rows (a Backspace joining two lines). Pure.
-export function eaterTrail(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null, maxReach: number): Rect | null {
+// An eater's trail: the row band of its rect `r` (y, h), and a run each
+// side the smear's quad `q` reaches past the cursor's own rect `own` -
+// [from x, to x, dir] from the eater's edge out to the quad's far end
+// (`maxReach` px at most), dir +1 going right. None without a smear, with
+// one that reaches nowhere past the cursor (at rest: a trail there was a
+// ghost of the cursor over the Vacuum's floor), or one across rows (a
+// Backspace joining two lines). Pure.
+export function eaterTrail(r: Rect, own: Rect, q: { tl: { x: number; y: number }; tr: { x: number; y: number }; br: { x: number; y: number }; bl: { x: number; y: number } } | null, maxReach: number): { y: number; h: number; runs: [number, number, number][] } | null {
   if (!q) return null;
   const xs = [q.tl.x, q.tr.x, q.br.x, q.bl.x], ys = [q.tl.y, q.tr.y, q.br.y, q.bl.y];
   const up = Math.max(0, own.y - Math.min(...ys)), down = Math.max(0, Math.max(...ys) - (own.y + own.h));
   if (up > own.h * 0.5 || down > own.h * 0.5) return null;
-  const left = Math.min(maxReach, Math.max(0, own.x - Math.min(...xs)));
-  const right = Math.min(maxReach, Math.max(0, Math.max(...xs) - (own.x + own.w)));
-  if (left < 0.5 && right < 0.5) return null;
-  return { x: r.x - left, y: r.y, w: r.w + left + right, h: r.h };
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const runs: [number, number, number][] = [];
+  if (maxX - (own.x + own.w) >= 0.5) {
+    const from = r.x + r.w, to = Math.min(maxX, from + maxReach);
+    if (to - from >= 0.5) runs.push([from, to, 1]);
+  }
+  if (own.x - minX >= 0.5) {
+    const to = r.x, from = Math.max(minX, to - maxReach);
+    if (to - from >= 0.5) runs.push([from, to, -1]);
+  }
+  return runs.length ? { y: r.y, h: r.h, runs } : null;
+}
+
+// How strong a trail is `f` of the way from the eater (0) to its tail (1).
+export function eaterTrailAlpha(f: number): number {
+  return EATER_TRAIL_ALPHA * Math.pow(1 - Math.max(0, Math.min(1, f)), 1.6);
 }
 
 // A rect between `a` (k 0) and `b` (k 1). Pure.
@@ -153,17 +169,19 @@ export const effectsEatersMethods = {
     // of it").
     const trail = !e.back && this.look.smear && this.look.eaterSmear !== false ? eaterTrail(r, own, this.smearCorners(), EATER_TRAIL_CW * cw) : null;
     if (trail) {
+      // In slices, each fainter than the one before (eaterTrailAlpha), the
+      // first against the eater. A hollow box's is fainter again: its own
+      // body is an outline.
       ctx.save();
-      ctx.globalAlpha *= EATER_TRAIL_ALPHA;
-      ctx.beginPath();
-      this.traceRoundedRect(ctx, trail.x, trail.y, trail.w, trail.h, this.cornerRadius(Math.min(trail.w, trail.h)));
-      if (stroke > 0) {
-        ctx.strokeStyle = paint;
-        ctx.lineWidth = stroke;
-        ctx.stroke();
-      } else {
-        ctx.fillStyle = paint;
-        ctx.fill();
+      const base = ctx.globalAlpha * (stroke > 0 ? 0.5 : 1);
+      ctx.fillStyle = paint;
+      for (const [from, to, dir] of trail.runs) {
+        const len = to - from, n = Math.max(3, Math.min(12, Math.round(len / 3)));
+        for (let i = 0; i < n; i++) {
+          ctx.globalAlpha = base * eaterTrailAlpha((i + 0.5) / n);
+          const sx = dir > 0 ? from + (len * i) / n : to - (len * (i + 1)) / n;
+          ctx.fillRect(sx, trail.y, len / n + 0.25, trail.h);
+        }
       }
       ctx.restore();
     }
@@ -173,7 +191,7 @@ export const effectsEatersMethods = {
     // stayed on the page.
     const m = Math.max(r.w, r.h) * 0.6 + 12;
     this._markDirty(r.x - m, r.y - m, r.w + 2 * m, r.h + 2 * m);
-    if (trail) this._markDirty(trail.x - 12, trail.y - 12, trail.w + 24, trail.h + 24);
+    if (trail) for (const [from, to] of trail.runs) this._markDirty(from - 12, trail.y - 12, to - from + 24, trail.h + 24);
     // Each effect's pose at `now` (asked again: the same for the same
     // `now`).
     const bm = !e.back && e.kind === "backman" ? this.backManPose(now) : null;

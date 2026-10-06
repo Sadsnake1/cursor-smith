@@ -156,6 +156,12 @@ export interface VimLook { look: Partial<Look>; color: string; ramp: string[]; g
 export interface Geometry { top: number; h: number; lineW: number; lineTop: number; lineH: number; ulH: number; outline: number }
 export const PREVIEW_SCALE = 0.75;
 export const PREVIEW_LINE = 18;
+// Where a letter particle stands to sit on the row's letter: its 12 px line
+// box (line-height 1) over the row's 22 px one puts the same baseline 5 px
+// down. Pixels go about the letter's middle, 11; letters spawned there (a
+// deleted letter for X-out, Back-man, Shredder, Portal, Evaporate) stood
+// 6 px below the letter they were.
+const LETTER_Y = 5;
 export const PREVIEW_TOP = 2;
 export function geometryOf(look: Partial<Look>): Geometry {
   const k = PREVIEW_SCALE, LH = PREVIEW_LINE, TOP = PREVIEW_TOP;
@@ -1313,31 +1319,29 @@ export class DemoStrip {
       if (!ch.trim()) return;
       const x = at * cw;
       if (backMan) {
-        if (k < 12) this.spawn(d, x, 11, 0, 0, down, 0, "var(--text-normal)", now, ch, 0, "meal");
+        if (k < 12) this.spawn(d, x, LETTER_Y, 0, 0, down, 0, "var(--text-normal)", now, ch, 0, "meal");
         return;
       }
       if (shred) {
         for (let b = -1; shredShown && k < 12 && b < SHRED_RIBBONS; b++) {
-          const part = this.spawn(d, x, 11, 0, 0, SHRED_FEED_MS + SHRED_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "shred");
+          const part = this.spawn(d, x, LETTER_Y, 0, 0, SHRED_FEED_MS + SHRED_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "shred");
           if (part) part.band = b;
         }
         return;
       }
       if (hole) {
-        // At 5: a letter span's 12 px line box over the row's 22 px one,
-        // its letter on the row's (at 11, where the other letters start,
-        // it stood 6 px low and was through the floor before it fell).
-        if (k < 12 && this.spawn(d, x, 5, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") && d.holeRun) d.holeRun.at = Math.max(d.holeRun.at, now + HOLE_FALL_MS);
+        // (At 11 it was through the floor before it fell.)
+        if (k < 12 && this.spawn(d, x, LETTER_Y, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole") && d.holeRun) d.holeRun.at = Math.max(d.holeRun.at, now + HOLE_FALL_MS);
         return;
       }
       if (look.typewriter && look.typewriterTape) {
-        const ghost = this.spawn(d, x, 11, 0, 0, 500, 0, "var(--text-normal)", now, ch, 0, "xout");
+        const ghost = this.spawn(d, x, LETTER_Y, 0, 0, 500, 0, "var(--text-normal)", now, ch, 0, "xout");
         if (ghost) ghost.el.setCssStyles({ opacity: "0.45" });
-        this.spawn(d, x, 11, 0, 0, 500, 0, d.color, now, "x", 0, "xout");
+        this.spawn(d, x, LETTER_Y, 0, 0, 500, 0, d.color, now, "x", 0, "xout");
       }
       if (look.popEffects && letterChoiceOf(look) === "evaporate") {
         const color = look.popRainbow ? this.popColor(d) : "var(--text-normal)";
-        const e = this.spawn(d, x, 11, 0, 0, 1100, 0, color, now, ch, 0, "evap");
+        const e = this.spawn(d, x, LETTER_Y, 0, 0, 1100, 0, color, now, ch, 0, "evap");
         if (e) { e.delay = k * 16; e.phase = Math.random() * Math.PI * 2; }
       }
       if (look.popEffects && letterChoiceOf(look) === "burst") {

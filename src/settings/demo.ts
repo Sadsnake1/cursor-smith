@@ -278,7 +278,7 @@ export const VIM_LINES = [
   "i for insert, Esc for regret.",
   "dd: delete the evidence.",
   ":wq and pretend nothing happened.",
-  "I've been in Vim since 2019. Send help.",
+  "I've been in Vim since '91. Send help.",
   "Normal mode? Never heard of her.",
   "Esc Esc Esc Esc Esc. Just in case.",
   "Yank it, put it, love it.",

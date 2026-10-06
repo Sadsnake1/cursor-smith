@@ -209,7 +209,7 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
 // Pop effects' five sub-options, and the rows that hang off them.
 {
   const rows = panelRows({ popEffects: true });
-  for (const name of ["Rainbow", "Popping letters", "Backspace disintegration",
+  for (const name of ["Rainbow", "Popping letters", "When you delete",
                       "Thunderstrike", "Fireworks"]) {
     ok(`Pop effects shows "${name}"`, named(rows, name), name);
   }
@@ -346,7 +346,7 @@ const named = (rows, name) => rows.some(r => r.name === name && r.visible);
   });
   const at = (n) => on.findIndex((r) => r.name === n);
   ok("Rainbow sits below all four effects",
-     at("Rainbow") > at("Popping letters") && at("Rainbow") > at("Backspace disintegration") &&
+     at("Rainbow") > at("Popping letters") && at("Rainbow") > at("When you delete") &&
      at("Rainbow") > at("Thunderstrike") && at("Rainbow") > at("Fireworks"),
      { rainbow: at("Rainbow"), fireworks: at("Fireworks") });
   // Its sub-options belong to their own effects, so it must not have swallowed

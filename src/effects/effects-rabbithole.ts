@@ -10,8 +10,8 @@
 // under it into a shallow dip ("dont make the cursor a circle, make it
 // curved concave just a bit"; it was a dark ellipse for a day) and pulls it
 // through, out of sight; then the floor springs back up past straight and
-// wobbles to rest. An Underline's only: Back-man is the Box's, Shredder the
-// Line's.
+// wobbles to rest. A floor: on a Box or a Line the cursor morphs into one
+// first (effects-eaters.ts).
 import type { DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -76,9 +76,10 @@ export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
 }
 
 export const effectsRabbitHoleMethods = {
-  // On for the look showing: Pop effects and Rabbit hole, an Underline.
+  // On for the look showing: Pop effects and Rabbit hole the "When you
+  // delete" choice - on any cursor (effects-eaters.ts morphs it into a floor).
   _holeOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && this.look.rabbitHole && this.styleFor("cursorStyle") === "Underline");
+    return this._eaterOn() === "rabbithole";
   },
 
   // A key that deletes (Backspace or Delete): a light tap on the floor.

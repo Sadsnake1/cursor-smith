@@ -340,11 +340,14 @@ section("Backspace evaporation: in the panel");
   rows.tab.refreshDomState();
   const names = rows.filter((r) => r.visible).map((r) => r.name);
   const at = (n) => names.indexOf(n);
-  ok("a Pop effect of its own, right after Backspace disintegration",
-     at("Backspace disintegration") >= 0 && at("Backspace evaporation") === at("Backspace disintegration") + 1 && at("Popping letters") < at("Backspace disintegration"), names);
+  const pickRow = rows.find((r) => r.name === "When you delete"), dd = pickRow && pickRow.dropdowns[0];
+  ok("a choice of \"When you delete\", right after Popping letters, chosen here",
+     at("When you delete") > at("Popping letters") && !!dd && dd._value === "evaporate" && Object.keys(dd._options).join() === "none,burst,evaporate,backman,shredder,rabbithole", names);
   ok("...with no sliders of its own: its time and height are baked in", !names.includes("Evaporation time") && !names.includes("Evaporation height"), names);
   const row = (n) => rows.find((r) => r.name === n);
-  ok("...at the burst's level", row("Backspace evaporation").settingEl.classes.includes("cursor-smith-sub-1"));
+  ok("...at Popping letters' level", row("When you delete").settingEl.classes.includes("cursor-smith-sub-1"));
+  dd._change("burst");
+  ok("...one at a time: Burst picked, evaporation off and the burst on", rows.settings.backspaceEvaporate === false && rows.settings.backspaceDisintegrate === true && rows.settings.backMan === false);
   const rainbowOnly = renderPanel({ popEffects: true, popLetters: false, backspaceDisintegrate: false, thunderstrike: false, fireworks: false, backspaceEvaporate: true });
   rainbowOnly.tab._effectsPick = "popEffects";
   rainbowOnly.tab.refreshDomState();
@@ -352,11 +355,11 @@ section("Backspace evaporation: in the panel");
   const noLetters = renderPanel({ popEffects: true, popLetters: false, backspaceEvaporate: true });
   noLetters.tab._effectsPick = "popEffects";
   noLetters.tab.refreshDomState();
-  ok("shown with Popping letters off", noLetters.some((r) => r.visible && r.name === "Backspace evaporation"));
+  ok("shown with Popping letters off", noLetters.some((r) => r.visible && r.name === "When you delete"));
   const noPop = renderPanel({ popEffects: false, backspaceEvaporate: true });
   noPop.tab._effectsPick = "popEffects";
   noPop.tab.refreshDomState();
-  ok("hidden with Pop effects off", !noPop.some((r) => r.visible && r.name === "Backspace evaporation"));
+  ok("hidden with Pop effects off", !noPop.some((r) => r.visible && r.name === "When you delete"));
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +411,7 @@ section("Backspace disintegration: along the letters, both ways");
   ok("...nor with Pop effects off", noPop._deletionFx(rec(9, 9, 190), rec(8, 8, 180)) === false && noPop.flamePixels.length === 0);
   const both = mk("say hello", "say ", { backspaceEvaporate: true });
   both._deletionFx(rec(9, 9, 190), rec(4, 4, 140));
-  ok("with Backspace evaporation on too, the letters burst and rise", both.flamePixels.length > 0 && both.evaporateGlyphs.map((g) => g.char).join("") === "olleh");
+  ok("with evaporation on too (a look saved before \"When you delete\"): one at a time - they rise, no burst", both.flamePixels.length === 0 && both.evaporateGlyphs.map((g) => g.char).join("") === "olleh");
   const keep = mk("a", "b", { backspaceEvaporate: false });
   keep._deletionRemember();
   ok("the note is kept for the burst alone", keep._deletionDoc === keep.app.workspace.activeEditor.editor.cm.state.doc);

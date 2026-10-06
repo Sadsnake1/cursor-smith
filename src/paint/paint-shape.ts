@@ -416,11 +416,10 @@ export const paintShapeMethods = {
     // Line + serifs = classic I-beam. Only for the Line style: an underline
     // is already a horizontal bar, so capping it with two more reads as a
     // stack of lines rather than a glyph.
-    // Shredder's blades (a Line's) and Rabbit hole's hole (an Underline's):
-    // effects-shredder.ts, effects-rabbithole.ts. Blades have no serifs.
-    const shred = isUnderline ? null : this.shredPose(now);
-    const hole = isUnderline ? this.holePose(now) : null;
-    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen && !shred;
+    // An eater (effects-eaters.ts) has the cursor while it eats what
+    // Backspace and Delete take: no serifs then.
+    const eating = this.eaterMoving(now);
+    const wantSerifs = !isUnderline && settings.lineSerifs && !gsGen && !eating;
     const serifs = wantSerifs ? this.serifQuads(active, rx, rw, ry, rh) : null;
 
     if (gsGen) {
@@ -438,17 +437,9 @@ export const paintShapeMethods = {
         pw = Math.max(rx + rw, serifs.right) - px;
       }
       ctx.fillStyle = this._bodyPaint(px, ry, pw, rh, color, 0.9 * blinkAlpha * bodyOpacity);
-      if (shred) {
-        // The letters cut where the line is going (the caret's own place),
-        // then the blades over them.
-        const cut = (this.lastActive ? this.lastActive.x : rx) + rw / 2;
-        this.drawShreds(ctx, cut, shred, now);
-        this.drawShredLine(ctx, rx, ry, rw, rh, ctx.fillStyle, shred, now);
-        ctx.restore();
-        return;
-      }
-      if (hole) {
-        this.drawHole(ctx, rx, ry, rw, rh, ctx.fillStyle, hole, now);
+      // The gap the caret stands at: a Line is drawn centered on it.
+      const gx = isUnderline ? rx : rx + rw / 2;
+      if (this.drawEater(ctx, { x: rx, y: ry, w: rw, h: rh }, gx, ctx.fillStyle, 0, 0, now)) {
         ctx.restore();
         return;
       }
@@ -529,12 +520,10 @@ export const paintShapeMethods = {
         );
       } else {
       const paintStyle = this._bodyPaint(active.x, active.top, renderW, active.h, color, 0.9 * blinkAlpha * bodyOpacity);
-      // Back-man (effects-backman.ts): while Backspace or Delete eats, the
-      // box is the creature - filled with its eye cut out, or as a hollow
-      // Box its outline.
-      const bm = this.backManPose(now);
-      if (bm) {
-        this.drawBackMan(ctx, active.x, active.top, renderW, active.h, paintStyle, bm, hollow ? strokeW : 0, this.cornerRadius(Math.min(renderW, active.h)));
+      // An eater (effects-eaters.ts) has the box while it eats: Back-man, or
+      // the box morphed into Shredder's line or Rabbit hole's floor.
+      if (this.drawEater(ctx, { x: active.x, y: active.top, w: renderW, h: active.h }, active.x, paintStyle, hollow ? strokeW : 0, this.cornerRadius(Math.min(renderW, active.h)), now)) {
+        // drawn
       } else if (hollow) {
         // Stroke exactly the path the solid style fills, so the outline
         // deforms with a smear and rounds with Rounded Corners rather than
@@ -597,7 +586,7 @@ export const paintShapeMethods = {
       // of the first fix.
       const glyphAlpha = Math.min(1, bodyOpacity * blinkAlpha);
       // Not on Back-man: it has a face, not a letter.
-      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar && !this.backManPose(now)
+      if (!hollow && !translucent && !gsBox && settings.showChar && displayChar && !this.eaterMoving(now)
           && glyphAlpha >= 0.01) {
         ctx.save();
         ctx.globalAlpha = glyphAlpha;

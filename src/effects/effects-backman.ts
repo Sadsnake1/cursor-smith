@@ -16,8 +16,8 @@
 // its sides
 // bend in a V from the middle toward where it is going, on a spring - each
 // bite kicks it, and it eases back when the bites stop. Smooth, not pixels.
-// A Box's only: a Line chomped like a beak for a day ("remove the backman
-// effect on cursor style line"), and an Underline has no room for a mouth.
+// A box: on a Line or an Underline the cursor morphs into one first
+// (effects-eaters.ts; a Line chomped like a beak for a day before that).
 import type { DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -206,9 +206,10 @@ function tracePoly(ctx: CanvasRenderingContext2D, pts: [number, number][], x: nu
 }
 
 export const effectsBackManMethods = {
-  // On for the look showing: Pop effects and Back-man, a Box cursor.
+  // On for the look showing: Pop effects and Back-man the "When you delete"
+  // choice - on any cursor (effects-eaters.ts morphs it into a box).
   _backManOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && this.look.backMan && this.styleFor("cursorStyle") === "Box");
+    return this._eaterOn() === "backman";
   },
 
   // A bite: Backspace (dir -1, it eats leftward) or Delete (dir 1); `big`

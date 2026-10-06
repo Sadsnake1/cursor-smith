@@ -169,11 +169,11 @@ section("Back-man: the bites");
     const line = makeEngine({ cursorStyle: "Line", popEffects: true, backMan: true });
     line.styleFor = (k) => line.look[k];
     line._backManBite(-1);
-    ok("a Line cursor stays a Line", line.backManPose(now) === null);
+    ok("on a Line too (the cursor morphs into its box: effects-eaters.ts)", !!line.backManPose(now));
     const under = makeEngine({ cursorStyle: "Underline", popEffects: true, backMan: true });
     under.styleFor = (k) => under.look[k];
     under._backManBite(-1);
-    ok("an Underline stays an Underline (no room for a mouth)", under.backManPose(now) === null);
+    ok("...and on an Underline", !!under.backManPose(now));
     const held = makeEngine({ cursorStyle: "Box", popEffects: true, backMan: true });
     held.styleFor = (k) => held.look[k];
     const start = now + 5000;
@@ -197,17 +197,11 @@ section("Back-man: the bites");
 section("Back-man: the setting");
 {
   ok("a look key, appended (Shredder and Rabbit hole after it), off by default", T.LOOK_KEYS.slice(-4, -1).join() === "backMan,shredder,rabbitHole" && T.DEFAULT_SETTINGS.backMan === false);
-  const rows = renderPanel({ popEffects: true, cursorStyle: "Box" });
-  const i = rows.findIndex((r) => r.name === "Back-man");
-  const row = rows[i];
-  ok("a switch under Pop effects, after the Backspace ones", !!row && row.toggles.length === 1 && i > rows.findIndex((r) => r.name === "Backspace evaporation") && i < rows.findIndex((r) => r.name === "Thunderstrike") && rows.cardKeys.Effects.includes("backMan"));
-  const lineRows = renderPanel({ popEffects: true, cursorStyle: "Line" });
-  const lr = lineRows.find((r) => r.name === "Back-man");
-  const hint = lr && lr.descEl.querySelector(".cursor-smith-needs-hint");
-  ok("...shown but disabled on a Line, with the hint that it needs the Box cursor", !!lr && lr.settingEl.classes.includes("cursor-smith-needs") && !!hint && /Box cursor/.test(hint.text || ""), hint && hint.text);
-  ok("...and not on a Box", !row.settingEl.classes.includes("cursor-smith-needs"));
-  const rolls = Array.from({ length: 300 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50, sounds: false }, T.seededRandom(500 + k)));
-  ok("the Randomizer rolls it sometimes, on a Box only", rolls.some((l) => l.backMan) && rolls.every((l) => !l.backMan || l.cursorStyle === "Box"));
+  const rows = renderPanel({ popEffects: true, cursorStyle: "Line", backMan: true });
+  const dd = rows.find((r) => r.name === "When you delete").dropdowns[0];
+  ok("a choice of \"When you delete\" - on a Line as on a Box, no switch of its own, no hint", dd._value === "backman" && dd._options.backman === "Back-man" && !rows.some((r) => r.name === "Back-man") && rows.cardKeys.Effects.includes("backMan"));
+  const rolls = Array.from({ length: 300 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(500 + k)));
+  ok("the Randomizer rolls it sometimes, on any cursor", rolls.some((l) => l.backMan && l.cursorStyle === "Box") && rolls.some((l) => l.backMan && l.cursorStyle !== "Box"));
 }
 
 section("Back-man: the meal");

@@ -9,8 +9,8 @@
 // a shredder's blades, buzzing - and the letters it takes are fed through
 // them, coming out the other side cut into ribbons that fan apart, then
 // flutter down and fade; when the last is through, the line is whole
-// again. A Line's only: Back-man is the Box's, Rabbit hole the
-// Underline's.
+// again. A standing line: on a Box or an Underline the cursor morphs into
+// one first (effects-eaters.ts).
 import type { DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -69,9 +69,10 @@ export function shredFeed(l: ShredLetter, cut: number, now: number) {
 }
 
 export const effectsShredderMethods = {
-  // On for the look showing: Pop effects and Shredder, a Line cursor.
+  // On for the look showing: Pop effects and Shredder the "When you delete"
+  // choice - on any cursor (effects-eaters.ts morphs it into a line).
   _shredderOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && this.look.shredder && this.styleFor("cursorStyle") === "Line");
+    return this._eaterOn() === "shredder";
   },
 
   // A key that deletes (Backspace or Delete): the blades out, or kept out.

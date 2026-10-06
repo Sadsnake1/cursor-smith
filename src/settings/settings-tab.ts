@@ -1,7 +1,8 @@
 import { PluginSettingTab, Setting, App, Modal, setIcon } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
-import { DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
+import { DELETE_EFFECTS, deleteEffectOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
+import type { DeleteEffect } from "./settings";
 import { SOUND_MACHINES } from "../sound/samples";
 import type { SoundKind } from "../sound/samples";
 import { soundMachine } from "../sound/sound";
@@ -1007,9 +1008,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     items.push(dial("Chaos", "How many effects, and how strong. At 100, all of them at once.", "rollChaos"));
     items.push(dial("Color", "From one calm color to gradients and rainbows.", "rollColor"));
     items.push(dial("Motion", "How likely gliding, smear and trails are, and how far they go.", "rollMotion"));
-    items.push(this.row("Include sounds", "A roll picks a sound too: a typewriter, a keyboard, or a horse. Off rolls a silent cursor.", (s) => {
-      s.addToggle((t) => t.setValue(!!plugin.settings.rollSounds).onChange(async (v) => { plugin.settings.rollSounds = v; await plugin.saveSettings(); }));
-    }));
     // A switch per effect a roll may pick (not the torch or the bracket
     // tether: never rolled). Each with the Effects page's name and icon; out
     // of settings search (the Effects page's rows carry the same names).
@@ -1027,7 +1025,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     return this.page("Randomizer", "dices", "Roll a whole new cursor, calm or full chaos.", [this.section("Randomizer", items)],
       () => {
         const out = ROLL_TOGGLES.filter((k) => !rollAllowed(plugin.settings.rollEffects, k)).length;
-        return `Chaos ${plugin.settings.rollChaos}` + (plugin.settings.rollSounds ? " · sounds" : "") + (out ? ` · ${ROLL_TOGGLES.length - out} effects` : "");
+        return `Chaos ${plugin.settings.rollChaos}` + (out ? ` · ${ROLL_TOGGLES.length - out} effects` : "");
       });
   }
 
@@ -1574,28 +1572,29 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     effects.push(toggle("Popping letters", "Each letter you type springs out of the cursor and tumbles away.", "popLetters", { depth: 1, gate: true, when: pop }));
     effects.push(toggle("Rise straight up", "The letter floats up from the top of the cursor and fades, like a phone keyboard.",
       "popLettersRise", { depth: 2, when: all(pop, on("popLetters")) }));
-    // Sits next to Popping letters on purpose: they're the pair that fires
-    // per character, one for adding and one for removing. The two below
-    // are the bigger, rarer events.
-    effects.push(toggle("Backspace disintegration", "Deleting throws a burst outward in flipped colors.",
-      "backspaceDisintegrate", { depth: 1, gate: true, when: pop }));
-    // Backspace evaporation (1.7.0; Smoke on delete, then
-    // Evaporate on delete under Popping letters, before the user settled
-    // it here): the calm counterpart of the burst above it, with Backspace
-    // or Delete - the letters rise and fade.
-    effects.push(toggle("Backspace evaporation", "Letters you delete, with Backspace or Delete, rise and fade away.", "backspaceEvaporate", { depth: 1, gate: true, when: pop }));
-    // Back-man (1.7.7): the Box cursor turns into a little creature
-    // that eats what Backspace and Delete take. A Box's only.
-    effects.push(toggle("Back-man", "Backspace and Delete turn the Box cursor into a hungry little creature that gulps down the letters.", "backMan",
-      { depth: 1, gate: true, when: pop, needs: { when: isStyle("Box"), hint: "Needs the Box cursor, in Appearance." } }));
-    // Shredder and Rabbit hole (1.7.7): the Line's and the Underline's ways
-    // of eating the same.
-    effects.push(toggle("Shredder", "Backspace and Delete break the Line cursor into blades that cut the letters into falling ribbons.", "shredder",
-      { depth: 1, gate: true, when: pop, needs: { when: isStyle("Line"), hint: "Needs the Line cursor, in Appearance." } }));
+    // When you delete (1.7.7): what Backspace and Delete do to the letters
+    // they take - one thing at a time (the user: "how should we organize all
+    // these backspace effects?"). Burst, Evaporate, or the cursor eating
+    // them - Back-man, Shredder, Rabbit hole, on any cursor (effects-
+    // eaters.ts morphs it into the eater's shape). Kept in the five switches
+    // it replaced, one on (deleteEffectOf), so saved looks, presets and share
+    // codes read as they did. Sits next to Popping letters: the pair that
+    // fires per character, one for adding and one for removing.
+    const DELETE_NAMES: Record<DeleteEffect, string> = {
+      none: "Nothing", burst: "Burst", evaporate: "Evaporate", backman: "Back-man", shredder: "Shredder", rabbithole: "Rabbit hole",
+    };
+    for (const [, key] of DELETE_EFFECTS) { owns(key); gates.add(key); }
+    const deleting = () => deleteEffectOf({ backMan: !!get("backMan"), shredder: !!get("shredder"), rabbitHole: !!get("rabbitHole"), backspaceEvaporate: !!get("backspaceEvaporate"), backspaceDisintegrate: !!get("backspaceDisintegrate") });
+    effects.push(row("When you delete", "What Backspace and Delete do to the letters: burst, evaporate, or your cursor eats them.", (st) => {
+      st.addDropdown((d) => d.addOptions(DELETE_NAMES).setValue(deleting()).onChange(async (v) => {
+        // One switch on, the rest off; the rows under it follow.
+        const writes = DELETE_EFFECTS.map(([effect, key]) => set(key)(effect === v));
+        refresh();
+        await Promise.all(writes.map((w) => Promise.resolve(w)));
+      }));
+    }, { depth: 1, when: pop }));
     effects.push(toggle("Shredded letters", "Show the letters going through the blades and falling as ribbons. Off, they simply vanish.", "shredderLetters",
-      { depth: 2, when: all(pop, on("shredder"), isStyle("Line")) }));
-    effects.push(toggle("Rabbit hole", "Backspace and Delete open the Underline cursor into a hole that swallows the letters.", "rabbitHole",
-      { depth: 1, gate: true, when: pop, needs: { when: isStyle("Underline"), hint: "Needs the Underline cursor, in Appearance." } }));
+      { depth: 2, when: () => pop() && deleting() === "shredder" }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Bolt size", "How fine the lightning is, in pixels per block.", "thunderstrikeSize", [1, 5, 1], { depth: 2, fallback: 2, when: all(pop, on("thunderstrike")) }));
     effects.push(slider("Bolt strength", "How bright the strike is.", "thunderstrikeStrength", [0.1, 1, 0.05],

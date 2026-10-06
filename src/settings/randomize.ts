@@ -7,7 +7,6 @@
 //   - Color: from one calm color to gradients, rainbows and colored heat.
 //   - Motion: how likely gliding, the smear and the trails are, and how far
 //     they move.
-//   - Sounds: whether the roll picks a sound too; off, the roll is silent.
 //   - A switch per effect: which ones a roll may pick (all on by default).
 //
 // A roll is every look key but the torch's settings. Two effects are never
@@ -16,8 +15,8 @@
 // line under brackets a random cursor would rarely show. Values come from the settings' own ranges, so
 // a rolled cursor is one the panel could have made. Pure and seedable (the
 // tests roll with a seed); the plugin applies it (library.ts, rollCursor).
-import { DEFAULT_SETTINGS, LOOK_KEYS } from "./settings";
-import { SOUND_MACHINES } from "../sound/samples";
+import { DELETE_EFFECTS, DEFAULT_SETTINGS, LOOK_KEYS } from "./settings";
+import type { DeleteEffect } from "./settings";
 import { hslToRgbTuple, rgbTupleToHex } from "../util/color";
 import type { Look } from "../types";
 
@@ -25,7 +24,6 @@ export interface RollOptions {
   chaos: number;   // 0 - 100
   color: number;   // 0 - 100
   motion: number;  // 0 - 100
-  sounds: boolean;
   // Per effect (ROLL_TOGGLES' keys): false keeps it out of the roll. A key
   // not there is allowed, but the torch's.
   allow?: Partial<Record<string, boolean>>;
@@ -82,8 +80,9 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   const level = (min: number, max: number, step: number) => snap(min + rand() * (max - min) * (0.35 + 0.65 * chaos), min, max, step);
 
   // Every look key back to its default first, so nothing of the last look
-  // leaks into the new one; the torch's and (Sounds off: the sound is
-  // switched off) are kept out.
+  // leaks into the new one; the torch's and the sound's are kept out - a
+  // roll never touches the sound ("no sounds there", the user: the Include
+  // sounds switch was taken out).
   const out: Record<string, unknown> = {};
   const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
   for (const k of LOOK_KEYS) if (!TORCH_KEYS.has(k) && !SOUND_KEYS.has(k)) out[k] = defaults[k];
@@ -149,20 +148,21 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
   if (on.has("popEffects")) {
     look.popLetters = chance(0.75);
     look.popLettersRise = !full && rand() < 0.3;
-    look.backspaceDisintegrate = chance(0.3 + 0.5 * chaos);
-    look.backspaceEvaporate = !look.backspaceDisintegrate && rand() < 0.5;
-    // The cursor's own way of eating: Back-man a Box's, Shredder a Line's,
-    // Rabbit hole an Underline's.
-    look.backMan = style === "Box" && chance(0.35);
-    look.shredder = style === "Line" && chance(0.35);
+    // "When you delete": one of them, its switch on and the rest off - the
+    // cursor eating them (Back-man, Shredder, Rabbit hole, on any cursor)
+    // as likely as the burst, more so with Chaos.
+    const del = pick([
+      ...Array<DeleteEffect>(3).fill("burst"), "evaporate", "evaporate", ...(full ? [] : ["none" as DeleteEffect]),
+      ...(chance(0.5 + 0.4 * chaos) ? (["backman", "shredder", "rabbithole"] as DeleteEffect[]) : []),
+    ]);
+    for (const [effect, key] of DELETE_EFFECTS) (look as Record<string, unknown>)[key] = effect === del;
     look.shredderLetters = rand() < 0.8;
-    look.rabbitHole = style === "Underline" && chance(0.35);
     look.thunderstrike = chance(0.2 + 0.6 * chaos);
     look.thunderstrikeSize = any(1, 5, 1);
     look.thunderstrikeStrength = level(0.3, 1, 0.05);
     look.fireworks = chance(0.2 + 0.6 * chaos);
     look.fireworksQuantity = level(0.6, 3, 0.1);
-    if (!look.popLetters && !look.backspaceDisintegrate && !look.backspaceEvaporate && !look.thunderstrike && !look.fireworks) look.popLetters = true;
+    if (!look.popLetters && del === "none" && !look.thunderstrike && !look.fireworks) look.popLetters = true;
     look.popRainbow = chance(color * 0.8);
   }
   if (on.has("typewriter")) {
@@ -226,16 +226,6 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
     look.hotHeadTrail = Math.round(any(0, 20, 1));
     look.hotHeadHeight = level(0.4, 1.2, 0.05);
     look.hotHeadSpeedHeat = rand() < 0.3;
-  }
-
-  // Sounds: one of all of them, near the default level.
-  if (opts.sounds) {
-    look.typewriterSound = true;
-    look.typewriterSoundVoice = pick(SOUND_MACHINES).id;
-    look.typewriterSoundVolume = any(40, 60, 5);
-    look.typewriterSoundBell = true;
-  } else {
-    look.typewriterSound = false;
   }
   return look;
 }

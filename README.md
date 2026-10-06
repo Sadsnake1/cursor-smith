@@ -44,7 +44,7 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 
 | Effect | What it does |
 |---|---|
-| **Pop effects** | Letters pop out as you type, or rise straight up and fade. What you delete bursts apart or evaporates, with Backspace or Delete, or your cursor eats it: a Box becomes Back-man, a hungry little creature with a big square eye that gulps each letter down; a Line turns into a Shredder that cuts it into falling ribbons; an Underline opens into a Rabbit hole that swallows it. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
+| **Pop effects** | Letters pop out as you type, or rise straight up and fade. Pick what happens **when you delete**: the letters burst apart or evaporate, or your cursor eats them, whatever its shape. It turns into Back-man, a hungry little creature with a big square eye that gulps each letter down, a Shredder that cuts them into falling ribbons, or a Rabbit hole, a little trampoline they drop into. Enter strikes lightning, Space sends fireworks. Rainbow sweeps them all through the color wheel. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Sounds** | Real typewriters, mechanical keyboards, a kalimba and an actual horse as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been. |
@@ -127,7 +127,7 @@ Enable the plugin, Vim mode on or off, your presets, and the mode you're editing
 
 Can't decide? Let the dice do it. **Randomize** rolls a whole new cursor: its shape, colors, blink, glide and a handful of effects, all at once. The big preview on top shows it off: it types silly lines, fixes its own typos and plays with the cursor. Roll again until you like one, then save it as a preset.
 
-Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Turn on **Include sounds** and every roll picks a sound too. A horse, maybe.
+Three sliders steer the dice. **Chaos** sets how many effects and how strong: at 0 you get one, at 100 you get ALL of them. **Color** goes from one calm color to rainbows, **Motion** from a still cursor to one that never sits still. Your sound stays as you set it.
 
 Below them, a switch for every effect: turn one off and the dice never pick it. The Torch is off until you let it in.
 

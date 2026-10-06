@@ -17,6 +17,7 @@
 // over a selection, an undo, a change elsewhere) reads as nothing, and the
 // burst falls back to the one it always made where the caret stood.
 import type { CaretRecord, DeletedLetters } from "../types";
+import { deleteEffectOf } from "../settings/settings";
 import type CursorSmithPlugin from "../plugin";
 
 // A deletion longer than this is a selection wiped, not writing undone: its
@@ -27,7 +28,7 @@ export const effectsDeleteMethods = {
   // Whether anything wants a deletion's letters: the Pop effects' three,
   // and Typewriter's X-out.
   _deletionFxOn(this: CursorSmithPlugin): boolean {
-    return !!(this.look.popEffects && (this.look.backspaceEvaporate || this.look.backspaceDisintegrate)) || this._xoutOn() || this._backManOn() || this._shredderOn() || this._holeOn();
+    return (!!this.look.popEffects && deleteEffectOf(this.look) !== "none") || this._xoutOn();
   },
 
   // The note as it is now, for the next deletion to read from; kept only
@@ -49,7 +50,7 @@ export const effectsDeleteMethods = {
     if (this._deletePending && performance.now() - this._deletePending < 250) {
       const along = this._deletionFx(old, now);
       // Letters that could not be read still get the burst, where the caret is.
-      if (!along && this.look.popEffects && this.look.backspaceDisintegrate && typeof old.docLen === "number" && typeof now.docLen === "number" && now.docLen < old.docLen) {
+      if (!along && this.look.popEffects && deleteEffectOf(this.look) === "burst" && typeof old.docLen === "number" && typeof now.docLen === "number" && now.docLen < old.docLen) {
         this.spawnFlamePixels(old, true);
       }
     }
@@ -79,7 +80,7 @@ export const effectsDeleteMethods = {
       return true;
     }
     if (letters && this._evaporateOn()) this.spawnEvaporate(letters);
-    if (!this.look.popEffects || !this.look.backspaceDisintegrate) return false;
+    if (!this.look.popEffects || deleteEffectOf(this.look) !== "burst") return false;
     return this.spawnDisintegration(letters);
   },
 

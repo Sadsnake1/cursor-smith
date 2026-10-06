@@ -51,6 +51,7 @@ import { effectsMethods } from "./effects/effects";
 import type { BackManState } from "./effects/effects-backman";
 import type { ShredState } from "./effects/effects-shredder";
 import type { HoleState } from "./effects/effects-rabbithole";
+import type { EaterState } from "./effects/effects-eaters";
 import { paintMethods } from "./paint/paint";
 import { torchMethods } from "./torch/torch";
 import type { MeasureMethods } from "./engine/measure";
@@ -163,6 +164,10 @@ export default class CursorSmithPlugin extends Plugin {
   declare holePose: EffectsMethods["holePose"];
   declare holeMoving: EffectsMethods["holeMoving"];
   declare drawHole: EffectsMethods["drawHole"];
+  declare _eaterOn: EffectsMethods["_eaterOn"];
+  declare _eaterNow: EffectsMethods["_eaterNow"];
+  declare eaterMoving: EffectsMethods["eaterMoving"];
+  declare drawEater: EffectsMethods["drawEater"];
   declare _backManSelected: EffectsMethods["_backManSelected"];
   declare spawnBackManMeal: EffectsMethods["spawnBackManMeal"];
   declare backManPose: EffectsMethods["backManPose"];
@@ -653,6 +658,8 @@ export default class CursorSmithPlugin extends Plugin {
   // eating (effects-rabbithole.ts), or null.
   _shred: ShredState | null = null;
   _hole: HoleState | null = null;
+  // The cursor's morph into an eater's shape and back (effects-eaters.ts).
+  _eat: EaterState | null = null;
   _deletionDoc!: DocText | null;
   torchEngineActive!: boolean;
   torchRaf!: number;

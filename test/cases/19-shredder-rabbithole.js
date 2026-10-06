@@ -61,10 +61,10 @@ section("Shredder and Rabbit hole: the runs");
     ok("...after the hold the line is whole again, the ribbons still falling", !!p && p.dash === 0 && p.letters.length === 1);
     now += T.SHRED_FALL_MS;
     ok("...and then it is all over", line.shredPose(now) === null && !line.shredMoving(now));
-    const box = makeEngine({ cursorStyle: "Box", popEffects: true, shredder: true, rabbitHole: true });
+    const box = makeEngine({ cursorStyle: "Box", popEffects: true, shredder: true });
     box.styleFor = (k) => box.look[k];
-    box._shredBite(); box._holeBite();
-    ok("a Box neither shreds nor opens a hole", box.shredPose(now) === null && box.holePose(now) === null);
+    box._shredBite();
+    ok("a Box shreds too (it morphs into the line: effects-eaters.ts)", !!box.shredPose(now));
 
     const ul = makeEngine({ cursorStyle: "Underline", popEffects: true, rabbitHole: true });
     ul.styleFor = (k) => ul.look[k];
@@ -112,28 +112,24 @@ section("Shredder and Rabbit hole: they have the letters");
   const ul = mk("Underline", { rabbitHole: true });
   ul._holeBite();
   ok("...and Rabbit hole", ul._deletionFx({}, {}) === true && ul._hole.letters.length === 1 && ul.evaporateGlyphs.length === 0);
-  const plain = mk("Underline", { shredder: true });
-  plain._deletionFx({}, {});
-  ok("...but only on their own cursor: Shredder on an Underline leaves them to evaporation", plain.evaporateGlyphs.length === 1);
+  const both = mk("Underline", { shredder: true, rabbitHole: true });
+  both._shredBite(); both._holeBite();
+  both._deletionFx({}, {});
+  ok("...one at a time: a look with two on (saved before) is the first of them - Shredder, on an Underline too", both._shred.letters.length === 1 && !both._hole && both.evaporateGlyphs.length === 0);
 }
 
 section("Shredder and Rabbit hole: the settings");
 {
   ok("two look keys, appended, off by default; Shredder's letters after them, on", T.LOOK_KEYS.slice(-3).join() === "shredder,rabbitHole,shredderLetters" && T.DEFAULT_SETTINGS.shredder === false && T.DEFAULT_SETTINGS.rabbitHole === false && T.DEFAULT_SETTINGS.shredderLetters === true);
-  const rows = (style) => renderPanel({ popEffects: true, cursorStyle: style });
-  const needs = (style, name) => { const r = rows(style).find((x) => x.name === name); return r && r.settingEl.classes.includes("cursor-smith-needs"); };
-  const all = rows("Line");
-  const i = all.findIndex((r) => r.name === "Shredder"), j = all.findIndex((r) => r.name === "Rabbit hole");
-  ok("two switches under Pop effects, right after Back-man (Shredder's own between them)", i === all.findIndex((r) => r.name === "Back-man") + 1 && j === i + 2 && all[i + 1].name === "Shredded letters" && all.cardKeys.Effects.includes("shredder") && all.cardKeys.Effects.includes("rabbitHole"));
-  ok("...each live on its own cursor, shown but disabled with its hint on the others", !needs("Line", "Shredder") && needs("Box", "Shredder") && needs("Underline", "Shredder") && !needs("Underline", "Rabbit hole") && needs("Line", "Rabbit hole") && needs("Box", "Rabbit hole"));
-  const on = renderPanel({ popEffects: true, cursorStyle: "Line", shredder: true });
-  const sub = on.find((r) => r.name === "Shredded letters"), si = on.findIndex((r) => r.name === "Shredded letters");
-  ok("Shredded letters: a switch under Shredder, shown with it on a Line", !!sub && si === on.findIndex((r) => r.name === "Shredder") + 1 && sub.def.visible() && on.cardKeys.Effects.includes("shredderLetters"));
-  const offRows = renderPanel({ popEffects: true, cursorStyle: "Line", shredder: false });
-  const boxRows = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });
-  ok("...hidden with Shredder off, or on another cursor", !offRows.find((r) => r.name === "Shredded letters").def.visible() && !boxRows.find((r) => r.name === "Shredded letters").def.visible());
-  const rolls = Array.from({ length: 400 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50, sounds: false }, T.seededRandom(900 + k)));
-  ok("the Randomizer rolls each sometimes, on its own cursor only", rolls.some((l) => l.shredder) && rolls.some((l) => l.rabbitHole) && rolls.every((l) => (!l.shredder || l.cursorStyle === "Line") && (!l.rabbitHole || l.cursorStyle === "Underline")));
+  const dd = (look) => renderPanel({ popEffects: true, ...look }).find((r) => r.name === "When you delete").dropdowns[0];
+  ok("choices of \"When you delete\", on any cursor", dd({ cursorStyle: "Box", shredder: true })._value === "shredder" && dd({ cursorStyle: "Line", rabbitHole: true })._value === "rabbithole" && dd({ cursorStyle: "Box" })._options.rabbithole === "Rabbit hole");
+  const on = renderPanel({ popEffects: true, cursorStyle: "Box", shredder: true });
+  const sub = on.find((r) => r.name === "Shredded letters");
+  ok("Shredded letters: under the choice, shown with Shredder chosen, on any cursor", !!sub && on.findIndex((r) => r.name === "Shredded letters") === on.findIndex((r) => r.name === "When you delete") + 1 && sub.def.visible() && on.cardKeys.Effects.includes("shredderLetters"));
+  const other = renderPanel({ popEffects: true, cursorStyle: "Line", rabbitHole: true });
+  ok("...hidden with another choice", !other.find((r) => r.name === "Shredded letters").def.visible());
+  const rolls = Array.from({ length: 400 }, (_, k) => T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(900 + k)));
+  ok("the Randomizer rolls each sometimes, on any cursor, one choice at a time", rolls.some((l) => l.shredder && l.cursorStyle !== "Line") && rolls.some((l) => l.rabbitHole && l.cursorStyle !== "Underline") && rolls.every((l) => ["backMan", "shredder", "rabbitHole", "backspaceEvaporate", "backspaceDisintegrate"].filter((k) => l[k]).length <= 1));
 }
 
 section("Shredder and Rabbit hole: drawn");

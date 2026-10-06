@@ -79,7 +79,7 @@ export const libraryMethods = {
   // it, and Save keeps one you like.
   async rollCursor(this: CursorSmithPlugin): Promise<{ vim: boolean; look: Partial<Look> }> {
     const s = this.settings;
-    const opts: RollOptions = { chaos: s.rollChaos, color: s.rollColor, motion: s.rollMotion, sounds: !!s.rollSounds, allow: s.rollEffects };
+    const opts: RollOptions = { chaos: s.rollChaos, color: s.rollColor, motion: s.rollMotion, allow: s.rollEffects };
     let shown: Partial<Look>;
     const vim = this.isVimUiMode();
     if (vim) {

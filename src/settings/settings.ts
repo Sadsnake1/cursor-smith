@@ -354,7 +354,6 @@ export const DEFAULT_SETTINGS = {
   rollChaos: 35,
   rollColor: 60,
   rollMotion: 50,
-  rollSounds: false,
   // Which effects a roll may pick, by key (ROLL_TOGGLES); a key not here is
   // let in, but the torch's. Replaced whole on a write, never changed in
   // place (this object is the defaults' own).
@@ -430,6 +429,21 @@ export const VIM_MODE_LABELS: Record<string, string> = {
 // affects how the cursor looks or behaves. Structural/housekeeping keys
 // (enabled, hideNativeCaret, presets, the vim-control keys) are intentionally
 // excluded. A per-mode config is a snapshot containing exactly these keys.
+// "When you delete" (1.7.7): what Backspace and Delete do to the letters
+// they take - one thing at a time. Kept in the five switches it replaced
+// (one on, the rest off), so every saved look, preset and share code reads
+// as it did; a look with more than one on (saved before) is the first of
+// them in DELETE_EFFECTS' order. Each value and its switch.
+export type DeleteEffect = "none" | "burst" | "evaporate" | "backman" | "shredder" | "rabbithole";
+export const DELETE_EFFECTS: [Exclude<DeleteEffect, "none">, keyof Look][] = [
+  ["backman", "backMan"], ["shredder", "shredder"], ["rabbithole", "rabbitHole"],
+  ["evaporate", "backspaceEvaporate"], ["burst", "backspaceDisintegrate"],
+];
+export function deleteEffectOf(look: Partial<Look>): DeleteEffect {
+  for (const [effect, key] of DELETE_EFFECTS) if (look[key]) return effect;
+  return "none";
+}
+
 export const LOOK_KEYS: (keyof Look)[] = [
   "cursorStyle", "colorDark", "colorLight",
   "gradientEnabled", "gradientCount",

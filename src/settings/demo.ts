@@ -56,6 +56,9 @@ import { GLIDE_LINEAR_SPAN, GLIDE_SPRING_FREQ, GLIDE_SPRINGY_DAMPING, TW_CAPITAL
 import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
+import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
+import type { Eater } from "../effects/effects-eaters";
+import { deleteEffectOf } from "./settings";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
 import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeSpring } from "../effects/effects-rabbithole";
 
@@ -566,6 +569,8 @@ interface Demo {
   holeSp: { sag: number; v: number; at: number } | null;
   holeAt: [number, number];
   holeWeighed: boolean;
+  // The caret's morph into its eater's shape and back (effects-eaters.ts).
+  eatM: { kind: Eater; t0: number; exit: number } | null;
   eatOn: "" | "shred" | "hole";
   bm: { bend: number; v: number; at: number };
   bmOn: boolean;
@@ -677,7 +682,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatM: null, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -923,14 +928,16 @@ export class DemoStrip {
   private onBack(d: Demo, at: number, ch: string, now: number) {
     // Back-man's bite: chewed at its own pace, kicking its bend leftward,
     // where it eats.
-    if (d.look.popEffects && d.look.backMan && d.style === "box") {
+    // The eater chosen in "When you delete", whatever the caret's style.
+    const eatKind = d.look.popEffects ? eaterOf(deleteEffectOf(d.look)) : null;
+    if (eatKind === "backman") {
       if (now > d.bm.at) { backManSpring(d.bm, (now - d.bm.at) / 1000); d.bm.at = now; }
       d.bm.v -= BACKMAN_BEND_KICK;
       d.bmChew = backManChew(d.bmChew, now, false);
     }
     // Shredder's blades out (a Line's), Rabbit hole open (an Underline's).
-    if (d.look.popEffects && d.look.shredder && d.style === "line") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
-    if (d.look.popEffects && d.look.rabbitHole && d.style === "underline") {
+    if (eatKind === "shredder") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
+    if (eatKind === "rabbithole") {
       // A light tap on the floor.
       const sp = d.holeSp || (d.holeSp = { sag: 0, v: 0, at: now });
       if (now > sp.at) { holeSpring(sp, (now - sp.at) / 1000, 0); sp.at = now; }
@@ -953,13 +960,14 @@ export class DemoStrip {
     const cw = d.stepPx || 7;
     // A Backspace with Back-man on: it eats the letter, the others stand
     // aside (a line cleared is not its bite).
-    const backMan = bite && d.bmChew && !!(look.popEffects && look.backMan && d.style === "box");
+    const eatKind = look.popEffects ? eaterOf(deleteEffectOf(look)) : null;
+    const backMan = bite && d.bmChew && eatKind === "backman";
     // Down when the chomp it fell in shuts.
     const down = d.bmChew ? backManDown(d.bmChew, now) - now : 0;
     // ...Shredder and Rabbit hole the same, on their own cursors.
-    const shred = bite && !!d.shredRun && !!(look.popEffects && look.shredder && d.style === "line");
+    const shred = bite && !!d.shredRun && eatKind === "shredder";
     const shredShown = look.shredderLetters !== false;
-    const hole = bite && !!d.holeSp && !!(look.popEffects && look.rabbitHole && d.style === "underline");
+    const hole = bite && !!d.holeSp && eatKind === "rabbithole";
     letters.forEach(({ ch, at }, k) => {
       if (!ch.trim()) return;
       const x = at * cw;
@@ -983,12 +991,12 @@ export class DemoStrip {
         if (ghost) ghost.el.setCssStyles({ opacity: "0.45" });
         this.spawn(d, x, 11, 0, 0, 500, 0, d.color, now, "x", 0, "xout");
       }
-      if (look.popEffects && look.backspaceEvaporate) {
+      if (look.popEffects && deleteEffectOf(look) === "evaporate") {
         const color = look.popRainbow ? this.popColor(d) : "var(--text-normal)";
         const e = this.spawn(d, x, 11, 0, 0, 1100, 0, color, now, ch, 0, "evap");
         if (e) { e.delay = k * 16; e.phase = Math.random() * Math.PI * 2; }
       }
-      if (look.popEffects && look.backspaceDisintegrate) {
+      if (look.popEffects && deleteEffectOf(look) === "burst") {
         for (let j = 0; j < 5; j++) {
           const a = Math.random() * Math.PI * 2, v = 30 + Math.random() * 50;
           const b = this.spawn(d, x + Math.random() * cw, 6 + Math.random() * 10, Math.cos(a) * v, Math.sin(a) * v, 500, 2, "var(--text-normal)", now);
@@ -1293,8 +1301,36 @@ export class DemoStrip {
     // for it to show; filled, it is cut to the creature's outline (the eye
     // a hole); hollow, the outline and the eye are drawn instead of the
     // box's border.
+    // Whatever the caret's style, the eater chosen has it while it eats
+    // (effects-eaters.ts): the caret morphs from its own shape into the
+    // eater's (Back-man a box, Shredder a line, Rabbit hole a floor), the
+    // effect plays in that, and it morphs back. ex, ew: the shape's left
+    // and width for the eaters below.
+    const eatKind = look.popEffects ? eaterOf(deleteEffectOf(look)) : null;
+    let ex = from, ew = width, eatShape = false;
+    if (d.geo) {
+      const c0 = d.bmChew;
+      const live = eatKind === "backman" ? (!!c0 && !backManBite(Math.max(0, this.last - c0.c0), c0.t - c0.c0, c0.big).done) || Math.abs(d.bm.bend) >= 0.004 || Math.abs(d.bm.v) >= 0.05
+        : eatKind === "shredder" ? !!d.shredRun : eatKind === "rabbithole" ? !!d.holeSp : false;
+      const st = d.eatM;
+      if (live && eatKind) {
+        if (!st || st.kind !== eatKind) d.eatM = { kind: eatKind, t0: this.last, exit: 0 };
+        else if (st.exit) { st.t0 = this.last - 90 * (1 - eaterMorph(0, this.last - st.exit)); st.exit = 0; }
+      } else if (st && !st.exit) st.exit = this.last;
+      if (d.eatM && d.eatM.exit && this.last - d.eatM.exit >= EATER_OUT_MS) d.eatM = null;
+      if (d.eatM) {
+        const g = d.geo;
+        const gx = d.style === "line" ? from + lineShift : from;
+        const own = { x: from, y: parseFloat(styles.top) || 0, w: width, h: parseFloat(styles.height) || 0 };
+        const r = lerpRect(own, eaterForm(d.eatM.kind, gx, g.top, g.h, px, g.lineW, g.lineTop, g.lineH, g.ulH), eaterMorph(this.last - d.eatM.t0, d.eatM.exit ? this.last - d.eatM.exit : -1));
+        ex = r.x; ew = r.w; eatShape = true;
+        Object.assign(styles, { transform: `translateX(${r.x.toFixed(2)}px)`, width: `${r.w.toFixed(2)}px`, height: `${r.h.toFixed(2)}px`, top: `${r.y.toFixed(2)}px` });
+        // A hollow box's border gives way to the line and the floor.
+        if (d.shape.hollowWidth && d.eatM.kind !== "backman") styles.borderColor = "transparent";
+      }
+    }
     let bm: (ReturnType<typeof backManBite> & { bend: number }) | null = null;
-    if (look.popEffects && look.backMan && d.style === "box" && d.geo) {
+    if (eatKind === "backman" && d.eatM && !d.eatM.exit && d.geo) {
       const b = d.bm;
       if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.at = this.last; }
       const c = d.bmChew;
@@ -1304,15 +1340,15 @@ export class DemoStrip {
     const n = (v: number) => v.toFixed(2);
     if (bm && d.geo) {
       const body = backManShape(bm.open, -1, bm.bend, bm.front, bm.back);
-      const m = Math.ceil((BACKMAN_BEND_MAX + BACKMAN_GROW * BACKMAN_BIG.grow) * width) + 1;
-      const wide = width + 2 * m, high = parseFloat(styles.height) || d.geo.h;
-      d.bmMouth = from + body[3][0] * width;
+      const m = Math.ceil((BACKMAN_BEND_MAX + BACKMAN_GROW * BACKMAN_BIG.grow) * ew) + 1;
+      const wide = ew + 2 * m, high = parseFloat(styles.height) || d.geo.h;
+      d.bmMouth = ex + body[3][0] * ew;
       Object.assign(styles, { width: `${n(wide)}px`, transform: `${styles.transform} translateX(${-m}px)`, borderRadius: "0" });
       const sw = d.shape.hollowWidth ? d.geo.outline : 0;
       const trace = (cmds: BackManCmd[], ox: number, oy: number) => cmds.map((c) =>
         c[0] === "Z" ? "Z" : c[0] === "Q" ? `Q${n(ox + c[1])} ${n(oy + c[2])} ${n(ox + c[3])} ${n(oy + c[4])}` : `${c[0]}${n(ox + c[1])} ${n(oy + c[2])}`).join(" ");
-      const outline = trace(backManOutline(body, bm.open, width - sw, high - sw, d.shape.radius), m + sw / 2, sw / 2);
-      const eye = backManEye(-1, bm.bend, bm.squint, width, high);
+      const outline = trace(backManOutline(body, bm.open, ew - sw, high - sw, d.shape.radius), m + sw / 2, sw / 2);
+      const eye = backManEye(-1, bm.bend, bm.squint, ew, high);
       const poly = (pts: [number, number][]) => pts.map(([x, y], k) => `${k ? "L" : "M"}${n(m + x)} ${n(y)}`).join(" ") + " Z";
       const eyePath = poly(eye.shape);
       const glintPath = eye.glint ? " " + poly(eye.glint) : "";
@@ -1338,7 +1374,7 @@ export class DemoStrip {
     // drawn in its background).
     const n2 = (v: number) => v.toFixed(2);
     let eat: "" | "shred" | "hole" = "";
-    if (d.style === "line" && d.shredRun && look.popEffects && look.shredder && d.geo) {
+    if (eatKind === "shredder" && d.shredRun && d.geo) {
       const r = d.shredRun, last = this.last - r.t;
       const dash = last >= SHRED_HOLD_MS ? 0 : shredDash(Math.max(0, this.last - r.t0), last);
       d.cut = s.lead * px;
@@ -1354,20 +1390,20 @@ export class DemoStrip {
       }
       if (last >= SHRED_HOLD_MS + SHRED_FEED_MS + SHRED_FALL_MS) d.shredRun = null;
     }
-    if (d.style === "underline" && d.holeSp && look.popEffects && look.rabbitHole && d.geo) {
+    if (eatKind === "rabbithole" && d.holeSp && d.geo) {
       // The floor's spring: down while a letter weighs on it, back up past
       // straight after, settling (holeSpring).
       const sp = d.holeSp;
       if (this.last > sp.at) { holeSpring(sp, (this.last - sp.at) / 1000, d.holeWeighed ? HOLE_SAG : 0); sp.at = this.last; }
       const bh = parseFloat(styles.height) || d.geo.ulH, top = parseFloat(styles.top) || 0;
-      const sag = sp.sag * width;
-      d.holeAt = [from + width / 2, top + sag];
+      const sag = sp.sag * ew;
+      d.holeAt = [ex + ew / 2, top + sag];
       const resting = !d.holeWeighed && Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && !d.particles.some((q) => q.kind === "hole");
       if (resting) d.holeSp = null;
       else {
         // The curve drawn in a caret as tall as it reaches, up or down.
         const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(width)} ${n2(H)}'><path d='M0 ${n2(up + bh / 2)} Q${n2(width / 2)} ${n2(up + bh / 2 + 2 * sag)} ${n2(width)} ${n2(up + bh / 2)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(ew)} ${n2(H)}'><path d='M0 ${n2(up + bh / 2)} Q${n2(ew / 2)} ${n2(up + bh / 2 + 2 * sag)} ${n2(ew)} ${n2(up + bh / 2)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
         Object.assign(styles, {
           height: `${n2(H)}px`, top: `${n2(top - up)}px`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
@@ -1380,12 +1416,13 @@ export class DemoStrip {
     if (!eat && d.eatOn) {
       Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "" });
     }
-    if (d.style === "line" && (eat === "shred") !== (d.eatOn === "shred")) d.caret.toggleClass("is-shred", eat === "shred");
+    // A Line's serifs give way while an eater has it.
+    if (d.style === "line") d.caret.toggleClass("is-shred", eatShape);
     d.eatOn = eat;
     d.caret.setCssStyles(styles);
     // The letter copy inside a Box stays over the real letters: it is
     // moved back by the caret's own offset; hidden while Back-man eats.
-    if (d.inner) d.inner.setCssStyles({ transform: `translateX(${(-from).toFixed(2)}px)`, visibility: bm ? "hidden" : "" });
+    if (d.inner) d.inner.setCssStyles({ transform: `translateX(${(-from).toFixed(2)}px)`, visibility: eatShape ? "hidden" : "" });
     // Ghosts: newest brightest.
     const fade = d.look.trailFadeMs ?? 300;
     const now = this.last;

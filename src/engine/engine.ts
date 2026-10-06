@@ -1000,6 +1000,8 @@ export const engineMethods = {
       // ...and Shredder's blades and ribbons, Rabbit hole's hole.
       this.shredMoving(nowT) ||
       this.holeMoving(nowT) ||
+      // ...and the morph into an eater's shape and back.
+      this.eaterMoving(nowT) ||
       // And again for a firework. Note this covers a shell still sitting
       // out its stagger delay, which paints nothing yet but must not be
       // allowed to drop the loop into the idle heartbeat - the volley

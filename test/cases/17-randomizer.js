@@ -1,12 +1,12 @@
 // The Randomizer (1.7.7): a whole cursor rolled at once from three dials
-// (Chaos, Color, Motion) and a switch (Include sounds) - the roll itself
+// (Chaos, Color, Motion) - the sound never touched - the roll itself
 // (randomize.ts, rolled with a seed here), what applying one does and
 // takes back (library.ts), and its page.
 // One of the files test/test.js runs in order; see test/lib.js.
 const { T, Plugin, ok, section, later, renderPanel } = require("../lib");
 const { renderWholePanel } = require("../panel_harness");
 
-const roll = (o, seed) => T.rollLook(Object.assign({ chaos: 35, color: 60, motion: 50, sounds: false }, o), T.seededRandom(seed));
+const roll = (o, seed) => T.rollLook(Object.assign({ chaos: 35, color: 60, motion: 50 }, o), T.seededRandom(seed));
 const many = (o, n = 300) => Array.from({ length: n }, (_, i) => roll(o, 1000 + i));
 const share = (looks, f) => looks.filter(f).length / looks.length;
 const effectsOn = (l) => T.ROLL_EFFECTS.filter((k) => l[k]).length;
@@ -49,7 +49,7 @@ section("Randomizer: the dials");
   ok("Chaos 0: one effect", calm.every((l) => effectsOn(l) === 1), mean(calm));
   ok("...more as it rises", mean(calm) < mean(mid) && mean(mid) < mean(wild), [mean(calm), mean(mid), mean(wild)]);
   const chaos = many({ chaos: 100, color: 100, motion: 100 }, 20);
-  ok("Chaos 100: every effect, all at once, with their extras", chaos.every((l) => effectsOn(l) === T.ROLL_EFFECTS.length && l.fireworks && l.thunderstrike && l.backspaceDisintegrate && l.crtNeon && l.crtGlitch && l.glow && l.smoothEnabled && l.smear));
+  ok("Chaos 100: every effect, all at once, with their extras", chaos.every((l) => effectsOn(l) === T.ROLL_EFFECTS.length && l.fireworks && l.thunderstrike && ["backMan", "shredder", "rabbitHole", "backspaceEvaporate", "backspaceDisintegrate"].some((k) => l[k]) && l.crtNeon && l.crtGlitch && l.glow && l.smoothEnabled && l.smear));
   const fireworks = (ls) => ls.filter((l) => l.popEffects).reduce((n, l) => n + l.fireworksQuantity, 0) / Math.max(1, ls.filter((l) => l.popEffects).length);
   ok("...and stronger: the higher, the more fireworks per key", fireworks(calm) < fireworks(wild), [fireworks(calm), fireworks(wild)]);
   const grey = many({ color: 0 }), rainbow = many({ color: 100 });
@@ -58,17 +58,14 @@ section("Randomizer: the dials");
   const still = many({ motion: 0 }), moving = many({ motion: 100 });
   ok("Motion 0: rarely gliding or smeared; 100: mostly", share(still, (l) => l.smoothEnabled) < 0.3 && share(moving, (l) => l.smoothEnabled) > 0.9 && share(still, (l) => l.smear) < 0.2 && share(moving, (l) => l.smear) > 0.7,
      [share(still, (l) => l.smoothEnabled), share(moving, (l) => l.smoothEnabled)]);
-  const loud = many({ sounds: true }, 100);
-  ok("Include sounds: a sound every roll, any of them, near the default level", loud.every((l) => l.typewriterSound && T.SOUND_MACHINES.some((m) => m.id === l.typewriterSoundVoice) && l.typewriterSoundVolume >= 40 && l.typewriterSoundVolume <= 60) &&
-     new Set(loud.map((l) => T.soundMachine(l.typewriterSoundVoice).kind)).size === new Set(T.SOUND_MACHINES.map((m) => m.kind)).size);
-  ok("...off: a silent cursor, the chosen sound left as it was", many({ sounds: false }, 50).every((l) => l.typewriterSound === false && !("typewriterSoundVoice" in l)));
+  ok("a roll never touches the sound: no sound key in it, so the sound stays as it was", many({ chaos: 100 }, 100).every((l) => ["typewriterSound", "typewriterSoundVoice", "typewriterSoundVolume", "typewriterSoundBell"].every((k) => !(k in l))));
   ok("a pop group or a typewriter rolled always has something of its own on",
-     many({ chaos: 20 }, 400).every((l) => (!l.popEffects || l.popLetters || l.backspaceDisintegrate || l.backspaceEvaporate || l.thunderstrike || l.fireworks) &&
+     many({ chaos: 20 }, 400).every((l) => (!l.popEffects || l.popLetters || ["backMan", "shredder", "rabbitHole", "backspaceEvaporate", "backspaceDisintegrate"].some((k) => l[k]) || l.thunderstrike || l.fireworks) &&
        (!l.typewriter || l.typewriterSpring || l.typewriterInk || l.typewriterFreshInk || l.typewriterReturn || l.typewriterAdvance || l.typewriterTape)));
   ok("the dials are settings, not looks: in no preset or share code",
-     ["rollChaos", "rollColor", "rollMotion", "rollSounds", "rollEffects"].every((k) => k in T.DEFAULT_SETTINGS && !T.LOOK_KEYS.includes(k)) &&
+     ["rollChaos", "rollColor", "rollMotion", "rollEffects"].every((k) => k in T.DEFAULT_SETTINGS && !T.LOOK_KEYS.includes(k)) && !("rollSounds" in T.DEFAULT_SETTINGS) &&
      JSON.stringify(T.DEFAULT_SETTINGS.rollEffects) === "{}" &&
-     T.DEFAULT_SETTINGS.rollChaos === 35 && T.DEFAULT_SETTINGS.rollColor === 60 && T.DEFAULT_SETTINGS.rollMotion === 50 && T.DEFAULT_SETTINGS.rollSounds === false);
+     T.DEFAULT_SETTINGS.rollChaos === 35 && T.DEFAULT_SETTINGS.rollColor === 60 && T.DEFAULT_SETTINGS.rollMotion === 50);
 }
 
 // A plugin enough for rollCursor: settings, a Vim panel or not, the engine
@@ -146,8 +143,8 @@ section("Randomizer: its page");
 {
   const rows = renderWholePanel({});
   const named = (n) => rows.find((r) => r.name === n);
-  ok("a page of its own, last, with the pill, the buttons, three dials and the sounds switch",
-     ["Preview", "Roll", "Chaos", "Color", "Motion", "Include sounds"].every((n) => named(n)));
+  ok("a page of its own, last, with the pill, the buttons and three dials - no sounds switch",
+     ["Preview", "Roll", "Chaos", "Color", "Motion"].every((n) => named(n)) && !named("Include sounds"));
   const pill = named("Preview");
   const stage = pill.controlEl.children.find((c) => c.classes.includes("cursor-smith-roll-stage"));
   const demo = stage && stage.children.find((c) => c.classes.includes("cursor-smith-roll-demo"));
@@ -157,11 +154,10 @@ section("Randomizer: its page");
   ok("Randomize alone: no Undo", roll.buttons.length === 1 && roll.buttons[0]._text === "Randomize");
   const chaos = named("Chaos");
   ok("the dials are 0 - 100 sliders on their settings, each with its reset", chaos.sliders[0]._limits.min === 0 && chaos.sliders[0]._limits.max === 100 && chaos.sliders[0]._value === 35 && chaos.extras.length === 1);
-  ok("the switch reads its setting", named("Include sounds").toggles[0]._value === false);
   const head = rows.findIndex((r) => r.name === "Effects it can roll");
   const switches = rows.slice(head + 1, head + 10);
   ok("then a switch per effect a roll may pick, under its own subheading, the Effects page's names, out of settings search - no torch, no bracket tether",
-     head > rows.indexOf(named("Include sounds")) && switches.map((r) => r.name).join() === "Pop effects,Typewriter,Pixel trail,Stardust,Motion smear,Energy beam,CRT effects,Speed demon,Hot-head" &&
+     head > rows.indexOf(named("Motion")) && switches.map((r) => r.name).join() === "Pop effects,Typewriter,Pixel trail,Stardust,Motion smear,Energy beam,CRT effects,Speed demon,Hot-head" &&
      switches.every((r) => r.def.searchable === false && r.toggles.length === 1) && !rows.slice(head).some((r) => r.name === "Torch spotlight" || r.name === "Bracket tether"), switches.map((r) => r.name));
   ok("...all on", switches.every((r) => r.toggles[0]._value === true));
   const before = T.DEFAULT_SETTINGS.rollEffects;

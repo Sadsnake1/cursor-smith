@@ -58,7 +58,7 @@ import { Platform } from "obsidian";
 import { FLAME_PER_SECOND, HOT_FIRE_ALPHA, HOT_HEIGHT_SCALE, HOT_HSV, HOT_STOP_POS, hotTypeAt, hotTypeKicked, hotTypeShare } from "../effects/fire";
 import { hsvToRgb, capsColor, hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color";
 import { DELETE_INVERT_MS, capsEase, capsScale } from "../effects/effects-caps";
-import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
+import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, BACKMAN_SLIDE_MS, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { EATER_OUT_MS, eaterForm, eaterMorph, eaterOf, lerpRect } from "../effects/effects-eaters";
 import type { Eater } from "../effects/effects-eaters";
@@ -1286,6 +1286,8 @@ export class DemoStrip {
       if (now > d.bm.at) { backManSpring(d.bm, (now - d.bm.at) / 1000); d.bm.at = now; }
       d.bm.v -= BACKMAN_BEND_KICK;
       d.bmChew = backManChew(d.bmChew, now, false);
+      // The letters still going in are down at once (the engine's).
+      for (const p of d.particles) if (p.kind === "meal") p.life = Math.min(p.life, Math.max(1, now - p.t0));
     }
     // Shredder's blades out (a Line's), Rabbit hole open (an Underline's).
     if (eatKind === "shredder") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
@@ -1457,7 +1459,9 @@ export class DemoStrip {
         const x = p.x + Math.sin((p.phase ?? 0) + t * 5) * 22 * 0.16 * t;
         p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${(1 + 0.35 * t).toFixed(2)})`, opacity: (0.85 * (1 - t)).toFixed(2) });
       } else if (p.kind === "meal") {
-        const e = 1 - (1 - t) * (1 - t);
+        // Into the mouth within BACKMAN_SLIDE_MS, waiting there (the engine's).
+        const ts = Math.min(1, elapsed / Math.max(1, Math.min(p.life, BACKMAN_SLIDE_MS)));
+        const e = 1 - (1 - ts) * (1 - ts);
         const x = p.x + (d.bmMouth - (d.stepPx || 7) / 2 - p.x) * e;
         p.el.setCssStyles({ transform: `translate(${x.toFixed(1)}px, ${p.y.toFixed(1)}px) scale(${Math.max(0.05, 1 - 0.8 * e).toFixed(2)})`, opacity: "1" });
       } else if (p.kind === "shred") {

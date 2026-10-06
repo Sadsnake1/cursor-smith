@@ -52,6 +52,12 @@ export const BACKMAN_BEND_KICK = 26;
 export const BACKMAN_BEND_MAX = 0.6;
 // The most letters one deletion feeds it (a word, at Ctrl+Backspace).
 const MEAL_MAX = 12;
+// How long a letter takes to slide into the mouth, at most (it waits there,
+// small, for the jaws to shut). Its whole way to the shut was up to a chomp
+// and a half: on a held key it moves on a letter every ~33 ms, and the
+// letters it had bitten lagged out of its back ("a bit of a letter is
+// shown at the end of it while eating ... remove the letters faster").
+export const BACKMAN_SLIDE_MS = 70;
 
 // A letter going down: where its middle stood, its font and color, when it
 // set off and when it is down (the jaws shut on it).
@@ -243,7 +249,8 @@ export const effectsBackManMethods = {
 
   // A bite: Backspace (dir -1, it eats leftward) or Delete (dir 1); `big`
   // for a word, a line or a selection. Chewed at its own pace
-  // (backManChew), each kicking the bend toward where it eats.
+  // (backManChew), each kicking the bend toward where it eats. The letters
+  // still going in are down at once: it has moved on from them.
   _backManBite(this: CursorSmithPlugin, dir: number, big = false) {
     if (!this._backManOn()) return;
     const now = performance.now();
@@ -251,6 +258,7 @@ export const effectsBackManMethods = {
     const s = this._backMan;
     if (s) {
       if (now > s.at) backManSpring(s, (now - s.at) / 1000);
+      for (const m of s.meal) m.t1 = Math.min(m.t1, now);
       Object.assign(s, backManChew(s, now, big));
       s.dir = dir; s.at = Math.max(s.at, now);
       s.v += kick;
@@ -311,7 +319,7 @@ export const effectsBackManMethods = {
     const settled = Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05;
     if (b.done && settled) { this._backMan = null; return null; }
     const meal = s.meal.map((m) => {
-      const u = Math.max(0, Math.min(1, (now - m.t0) / Math.max(1, m.t1 - m.t0)));
+      const u = Math.max(0, Math.min(1, (now - m.t0) / Math.max(1, Math.min(m.t1 - m.t0, BACKMAN_SLIDE_MS))));
       return { m, e: 1 - (1 - u) * (1 - u) };
     });
     return { open: b.open, front: b.front, back: b.back, squint: eye, g: b.g, dir: s.dir, bend: s.bend, meal };

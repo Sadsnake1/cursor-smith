@@ -239,11 +239,25 @@ section("Back-man: the meal");
     ok("...and it has them: no evaporation, no burst where the caret stood", along === true && e.evaporateGlyphs.length === 0);
     let p = e.backManPose(now);
     ok("the letters start where they stood", p.meal.length === 2 && p.meal[0].e === 0);
-    now += T.BACKMAN_CHOMP_MS / 2;
+    now += T.BACKMAN_SLIDE_MS / 2;
     p = e.backManPose(now);
-    ok("...most of the way in by the mouth's widest", p.meal[0].e > 0.7 && p.meal[0].e < 1);
-    now += T.BACKMAN_CHOMP_MS / 2 + 1;
+    ok("...most of the way in halfway through the slide", p.meal[0].e > 0.7 && p.meal[0].e < 1);
+    now += T.BACKMAN_SLIDE_MS / 2;
+    p = e.backManPose(now);
+    ok("...in the mouth by BACKMAN_SLIDE_MS (no later than the mouth's widest), waiting there", T.BACKMAN_SLIDE_MS <= T.BACKMAN_CHOMP_MS / 2 && p.meal.length === 2 && p.meal[0].e === 1);
+    now = 5000 + T.BACKMAN_CHOMP_MS + 1;
     ok("...and gone as the jaws shut", e.backManPose(now).meal.length === 0);
+    // A held key: it moves on a letter every ~33 ms, and the letters still
+    // going in lagged out of its back ("a bit of a letter is shown at the
+    // end of it while eating ... remove the letters faster").
+    e._backManBite(-1);
+    e._deletionFx({}, {});
+    now += 20;
+    e.backManPose(now);
+    const before = e.evaporateGlyphs.length;
+    e._backManBite(-1);
+    p = e.backManPose(now);
+    ok("a new bite: the letters still going in are down at once, their effect played", p.meal.length === 0 && e.evaporateGlyphs.length > before);
   } finally {
     performance.now = realNow;
   }

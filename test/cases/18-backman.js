@@ -167,8 +167,17 @@ section("Back-man: the bites");
     now = last + T.BACKMAN_HOLD_MS - 1;
     p = e.backManPose(now);
     ok("after the last bite: the mouth shut, the bend easing back", !!p && p.open === 0 && Math.abs(p.bend) < atBite / 2, [atBite, p]);
+    // From when its eye shuts to when it is the cursor again: shut throughout.
+    let shutAt = 0, reopened = false;
+    for (let t = last + 2; t < last + 750; t += 4) {
+      const q = e.backManPose(t);
+      if (!q) break;
+      if (q.squint >= 0.55 && !shutAt) shutAt = t;
+      if (shutAt && q.squint < 0.55) reopened = true;
+    }
+    ok("...its eye, once shut, stays shut until it is the cursor again (no opening blink)", shutAt > 0 && !reopened, [shutAt - last, reopened]);
     now = last + 750;
-    ok("...and a Box again within three quarters of a second (its eye open again first)", e.backManPose(now) === null && !e.backManMoving(now));
+    ok("...and a Box again within three quarters of a second", e.backManPose(now) === null && !e.backManMoving(now));
     now += 1500;
     e._backManBite(1);
     now += T.BACKMAN_CHOMP_MS / 2;

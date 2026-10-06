@@ -58,8 +58,9 @@ const MEAL_MAX = 12;
 export interface BackManMorsel { char: string; cx: number; cy: number; w: number; old: CaretRecord; font: string; color: string; t0: number; t1: number }
 // c0: when this run of chewing began; t: the last key; big: a big bite.
 // mouth, head: where they were last drawn (the letters' effect plays there).
-// eye: the squint as shown (backManEyeEase).
-export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[]; mouth?: { x: number; y: number }; head?: { x: number; y: number }; eye?: number }
+// eye: the squint as shown (backManEyeEase); shut: the eye has shut this
+// spell (it stays shut until the creature is the cursor again).
+export interface BackManState { c0: number; t: number; big: boolean; dir: number; bend: number; v: number; at: number; meal: BackManMorsel[]; mouth?: { x: number; y: number }; head?: { x: number; y: number }; eye?: number; shut?: boolean }
 // open: the mouth; front, back: the gulp's swell of each side; squint: the
 // eye's happy squint (1 shut); g: how far the gulp has gone (0 to 1 while
 // it goes); meal: the letters going in, each with how far it has gone (e,
@@ -289,8 +290,12 @@ export const effectsBackManMethods = {
     if (!s || !this._backManOn()) return null;
     // A frame stamped a hair before the key still shows the bite's start.
     const b = backManBite(Math.max(0, now - s.c0), s.t - s.c0, s.big);
-    // The eye, eased toward the squint (over the same step as the bend).
-    const eye = backManEyeEase(s.eye ?? 0, b.squint, now - s.at);
+    // The eye, eased toward the squint (over the same step as the bend) -
+    // and once shut, shut for the rest of the spell: it leaves with its eyes
+    // closed ("when the eye closes it opens again" - it opened again just
+    // before turning back into the cursor, a blink too many).
+    if (b.squint >= 0.55) s.shut = true;
+    const eye = backManEyeEase(s.eye ?? 0, s.shut ? 1 : b.squint, now - s.at);
     if (now > s.at) { backManSpring(s, (now - s.at) / 1000); s.eye = eye; s.at = now; }
     // A letter down: the letters' effect - Burst as crumbs from the mouth as
     // the jaws shut on it, Evaporate as its ghost rising from the head. Before
@@ -303,7 +308,7 @@ export const effectsBackManMethods = {
       else { const at = s.head || { x: m.cx, y: m.cy - h / 2 }; this._eatenLetterFx(m.char, m.w, m.old, at.x - m.w / 2, at.y - 0.85 * h); }
     }
     s.meal = s.meal.filter((m) => now < m.t1);
-    const settled = Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05 && eye < 0.05;
+    const settled = Math.abs(s.bend) < 0.004 && Math.abs(s.v) < 0.05;
     if (b.done && settled) { this._backMan = null; return null; }
     const meal = s.meal.map((m) => {
       const u = Math.max(0, Math.min(1, (now - m.t0) / Math.max(1, m.t1 - m.t0)));

@@ -605,7 +605,7 @@ interface Demo {
   // The caret's morph into its eater's shape and back (effects-eaters.ts).
   eatM: { kind: Eater; t0: number; exit: number } | null;
   eatOn: "" | "shred" | "hole";
-  bm: { bend: number; v: number; at: number; eye?: number };
+  bm: { bend: number; v: number; at: number; eye?: number; shut?: boolean };
   bmOn: boolean;
   burns: { x: number; t: number }[];
   fireAcc: number;
@@ -1455,9 +1455,12 @@ export class DemoStrip {
       const c = d.bmChew;
       const bite = c ? backManBite(Math.max(0, this.last - c.c0), c.t - c.c0, c.big) : null;
       // The eye eased as the engine's: quick to shut, slow to open.
-      const eye = backManEyeEase(b.eye ?? 0, bite && !bite.done ? bite.squint : 0, this.last - b.at);
+      // ...once shut, shut for the rest of the spell (the engine's).
+      if (bite && !bite.done && bite.squint >= 0.55) b.shut = true;
+      const eye = backManEyeEase(b.eye ?? 0, b.shut ? 1 : bite && !bite.done ? bite.squint : 0, this.last - b.at);
       if (this.last > b.at) { backManSpring(b, (this.last - b.at) / 1000); b.eye = eye; b.at = this.last; }
       if ((bite && !bite.done) || Math.abs(b.bend) >= 0.004 || Math.abs(b.v) >= 0.05) bm = { ...(bite && !bite.done ? bite : backManBite(1e9)), bend: b.bend, squint: eye };
+      else { b.shut = false; b.eye = 0; }
     }
     const n = (v: number) => v.toFixed(2);
     if (bm && d.geo) {

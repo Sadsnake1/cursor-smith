@@ -148,6 +148,7 @@ export interface Look {
   backMan: boolean;
   shredder: boolean;
   rabbitHole: boolean;
+  shredderLetters: boolean;
   backspaceEvaporate: boolean;
   popLetters: boolean;
   popRainbow: boolean;

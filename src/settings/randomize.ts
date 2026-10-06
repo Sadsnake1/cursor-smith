@@ -155,6 +155,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
     // Rabbit hole an Underline's.
     look.backMan = style === "Box" && chance(0.35);
     look.shredder = style === "Line" && chance(0.35);
+    look.shredderLetters = rand() < 0.8;
     look.rabbitHole = style === "Underline" && chance(0.35);
     look.thunderstrike = chance(0.2 + 0.6 * chaos);
     look.thunderstrikeSize = any(1, 5, 1);

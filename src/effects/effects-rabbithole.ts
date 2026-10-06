@@ -4,53 +4,75 @@
 // them exactly as before. `this` is the plugin.
 //
 // Pop effects' Rabbit hole (1.7.7, asked as "Portal. It sucks the letters
-// in or something like that. Find a better name"): while Backspace or
-// Delete eats the text, the Underline cursor - the floor under the letter -
-// sags into a shallow dip ("dont make the cursor a circle, make it curved
-// concave just a bit"; it was a dark ellipse for a day), and the letters it
-// takes are pulled down into it, swirling and shrinking, out of sight as
-// they pass through the bar; then it straightens. An Underline's only:
-// Back-man is the Box's, Shredder the Line's.
+// in or something like that. Find a better name"): the Underline cursor -
+// the floor under the letter - is a little trampoline. A letter Backspace
+// or Delete takes drops onto it and squashes as it lands; the floor sags
+// under it into a shallow dip ("dont make the cursor a circle, make it
+// curved concave just a bit"; it was a dark ellipse for a day) and pulls it
+// through, out of sight; then the floor springs back up past straight and
+// wobbles to rest. An Underline's only: Back-man is the Box's, Shredder the
+// Line's.
 import type { DeletedLetters } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
-// How long the dip takes to sag, a letter its fall, how long the dip stays
-// after the last key (its last 120 ms straightening), how deep it sags at
-// its deepest (a letter's width - "just a bit").
-export const HOLE_OPEN_MS = 90;
-export const HOLE_FALL_MS = 300;
-export const HOLE_HOLD_MS = 380;
+// A letter's way down: the drop onto the floor (to LAND of the way), the
+// squash as it lands (to SINK), the pull through (to the end).
+export const HOLE_FALL_MS = 420;
+const LAND = 0.4, SINK = 0.6;
+// How far the floor sags under a letter (a letter's width - "just a bit"),
+// how much a letter squashes as it lands.
 export const HOLE_SAG = 0.3;
+export const HOLE_SQUASH = 0.45;
+// The floor's spring: its frequency (Hz) and damping ratio (0.3: it springs
+// back past straight and wobbles), the kick a landing gives it and a key's
+// tap (letter widths a second).
+export const HOLE_HZ = 5;
+export const HOLE_DAMPING = 0.3;
+export const HOLE_KICK = 6;
 const MEAL_MAX = 12;
 
-// A letter going down: where its middle stood, its font and color, when it
-// set off.
-export interface HoleLetter { char: string; cx: number; cy: number; font: string; color: string; t0: number }
-// t0: when this run of eating began; t: its last key.
-export interface HoleState { t0: number; t: number; letters: HoleLetter[] }
-export interface HolePose { open: number; letters: HoleLetter[] }
+// A letter going down: where its middle stood, half its height (from its
+// middle to its foot), its font and color, when it set off, whether it has
+// landed.
+export interface HoleLetter { char: string; cx: number; cy: number; half: number; font: string; color: string; t0: number; landed: boolean }
+// The floor's spring (sag in letter widths, down positive) and the letters.
+export interface HoleState { sag: number; v: number; at: number; letters: HoleLetter[] }
+export interface HolePose { sag: number; letters: HoleLetter[] }
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-// How far the dip has sagged (0 the bar straight, 1 its deepest), `first`
-// ms into the run and `last` ms after its last key. Pure.
-export function holeOpen(first: number, last: number): number {
-  return Math.min(clamp01(first / HOLE_OPEN_MS), last < HOLE_HOLD_MS - 120 ? 1 : clamp01((HOLE_HOLD_MS - last) / 120));
+// The floor's spring toward `target` over dt seconds (up to two), in small
+// steps so any frame rate gives the same bounce. Pure.
+export function holeSpring(s: { sag: number; v: number }, dt: number, target: number) {
+  const w = 2 * Math.PI * HOLE_HZ;
+  dt = Math.max(0, Math.min(2, dt));
+  const steps = Math.max(1, Math.ceil(dt * 480));
+  const h = dt / steps;
+  for (let i = 0; i < steps; i++) {
+    s.v += (-w * w * (s.sag - target) - 2 * HOLE_DAMPING * w * s.v) * h;
+    s.sag += s.v * h;
+  }
 }
 
-// How far an Underline w wide sags at its middle, `open` sagged, px: its
-// ends stay where they are, its middle drops - a shallow curve. Pure.
-export function holeSag(open: number, w: number): number {
-  return HOLE_SAG * w * clamp01(open);
-}
-
-// A letter pulled from its place (cx, cy) into the hole at (hx, hy), at
-// `now`: where it is, how big, how turned (a swirl, faster as it goes),
-// and whether it is gone. Pure.
-export function holeFall(l: HoleLetter, hx: number, hy: number, now: number) {
+// A letter at `now`, the floor's middle at (fx, fy) (its top edge, where it
+// dips deepest): where its foot is (x, foot), how it is squashed (sx, sy),
+// shrunk (k) and turned, how seen (alpha), which part of its way it is on
+// (0 dropping, 1 landing, 2 going through) and whether it is gone. It drops
+// onto the floor, squashes flat and springs back as it lands, then sinks
+// through, turning a little. Pure.
+export function holeFall(l: HoleLetter, fx: number, fy: number, now: number) {
   const u = clamp01((now - l.t0) / HOLE_FALL_MS);
-  const e = u * u;
-  return { x: l.cx + (hx - l.cx) * e, y: l.cy + (hy - l.cy) * e, k: Math.max(0.05, 1 - 0.9 * e), rot: 1.6 * Math.PI * e, done: u >= 1 };
+  const foot0 = l.cy + l.half;
+  if (u < LAND) {
+    const e = (u / LAND) * (u / LAND);
+    return { x: l.cx + (fx - l.cx) * e, foot: foot0 + (fy - foot0) * e, sx: 1, sy: 1, k: 1, rot: 0, alpha: 1, phase: 0, done: false };
+  }
+  if (u < SINK) {
+    const s = Math.sin((Math.PI * (u - LAND)) / (SINK - LAND)) * HOLE_SQUASH;
+    return { x: fx, foot: fy, sx: 1 + 0.6 * s, sy: 1 - s, k: 1, rot: 0, alpha: 1, phase: 1, done: false };
+  }
+  const c = (u - SINK) / (1 - SINK);
+  return { x: fx, foot: fy + 2.4 * l.half * Math.pow(c, 1.5), sx: 1, sy: 1, k: 1 - 0.4 * c, rot: 0.6 * Math.PI * c * c, alpha: 1, phase: 2, done: u >= 1 };
 }
 
 export const effectsRabbitHoleMethods = {
@@ -59,16 +81,20 @@ export const effectsRabbitHoleMethods = {
     return !!(this.look.popEffects && this.look.rabbitHole && this.styleFor("cursorStyle") === "Underline");
   },
 
-  // A key that deletes (Backspace or Delete): the hole opens, or stays open.
+  // A key that deletes (Backspace or Delete): a light tap on the floor.
   _holeBite(this: CursorSmithPlugin) {
     if (!this._holeOn()) return;
     const now = performance.now();
     const s = this._hole;
-    if (s && now - s.t < HOLE_HOLD_MS) s.t = now;
-    else this._hole = { t0: now, t: now, letters: s ? s.letters : [] };
+    if (s) {
+      if (now > s.at) { holeSpring(s, (now - s.at) / 1000, 0); s.at = now; }
+      s.v += 0.25 * HOLE_KICK;
+    } else {
+      this._hole = { sag: 0, v: 0.25 * HOLE_KICK, at: now, letters: [] };
+    }
   },
 
-  // What the key took (effects-delete.ts): the letters, each pulled in from
+  // What the key took (effects-delete.ts): the letters, each dropping from
   // where it stood.
   spawnHoleMeal(this: CursorSmithPlugin, deleted: DeletedLetters) {
     const s = this._hole;
@@ -77,22 +103,32 @@ export const effectsRabbitHoleMethods = {
     const h = old.h || 20;
     const font = this.fontString(old.fontSize, old.fontFamily, old.fontWeight, old.fontStyle);
     const color = old.textColor || this.getActiveColor() || "#888888";
+    // From a glyph's middle to its foot (the baseline): about 0.3 of the font.
+    const half = 0.3 * (old.fontSize || 16);
     const now = performance.now();
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
-      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, font, color, t0: now });
+      s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, font, color, t0: now, landed: false });
     }
   },
 
-  // The hole at `now`: how open, the letters still going in - or null when
-  // it is the bar again and every letter gone.
+  // The floor at `now`: how far it sags (the spring run up to now - pulled
+  // down while a letter is on it or going through, kicked by each landing)
+  // and the letters still about - or null when every letter is gone and
+  // the floor has come to rest.
   holePose(this: CursorSmithPlugin, now: number): HolePose | null {
     const s = this._hole;
     if (!s || !this._holeOn()) return null;
     s.letters = s.letters.filter((l) => now - l.t0 < HOLE_FALL_MS);
-    const last = Math.max(0, now - s.t);
-    if (last >= HOLE_HOLD_MS && !s.letters.length) { this._hole = null; return null; }
-    return { open: last >= HOLE_HOLD_MS ? 0 : holeOpen(Math.max(0, now - s.t0), last), letters: s.letters };
+    let weighed = false;
+    for (const l of s.letters) {
+      const u = (now - l.t0) / HOLE_FALL_MS;
+      if (u >= LAND) weighed = true;
+      if (u >= LAND && !l.landed) { l.landed = true; s.v += HOLE_KICK; }
+    }
+    if (now > s.at) { holeSpring(s, (now - s.at) / 1000, weighed ? HOLE_SAG : 0); s.at = now; }
+    if (!s.letters.length && Math.abs(s.sag) < 0.003 && Math.abs(s.v) < 0.05) { this._hole = null; return null; }
+    return { sag: s.sag, letters: s.letters };
   },
 
   // Whether it is still about (the frame governor keeps the frames coming).
@@ -100,15 +136,16 @@ export const effectsRabbitHoleMethods = {
     return !!this.holePose(now);
   },
 
-  // The Underline sagging, in its bar (x, y, w, h) and its own paint: the
-  // letters going in first (seen above the bar's top edge, curved as the
-  // bar is; out of sight once through it), then the bar along the curve -
-  // its ends where they were, its middle down, its thickness the bar's.
+  // The Underline as the floor, in its bar (x, y, w, h) and its own paint:
+  // the letters first (seen above the bar's top edge, curved as the bar is;
+  // out of sight once through it), then the bar along the curve - its ends
+  // where they were, its middle down (or up, springing back), its thickness
+  // the bar's.
   drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
-    const sag = holeSag(pose.open, w);
+    const sag = pose.sag * w;
     const cx = x + w / 2, mid = y + h / 2, top = y;
     for (const l of pose.letters) {
-      const f = holeFall(l, cx, mid + sag + h, now);
+      const f = holeFall(l, cx, top + sag, now);
       if (f.done) continue;
       const far = 6 * Math.max(w, Math.abs(l.cx - cx) + w);
       ctx.save();
@@ -124,14 +161,16 @@ export const effectsRabbitHoleMethods = {
       ctx.lineTo(x - far, top);
       ctx.closePath();
       ctx.clip();
-      ctx.translate(f.x, f.y);
+      // About its foot: squashed onto the floor, shrunk and turned going
+      // through.
+      ctx.translate(f.x, f.foot);
       ctx.rotate(f.rot);
-      ctx.scale(f.k, f.k);
+      ctx.scale(f.sx * f.k, f.sy * f.k);
       ctx.font = l.font;
       ctx.fillStyle = l.color;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(l.char, 0, 0);
+      ctx.fillText(l.char, 0, -l.half);
       ctx.restore();
       this._markDirty(Math.min(l.cx, cx) - w * 2, Math.min(l.cy, mid) - w * 2, Math.abs(l.cx - cx) + w * 4, Math.abs(l.cy - mid) + w * 4);
     }

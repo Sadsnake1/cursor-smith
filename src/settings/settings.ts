@@ -140,6 +140,7 @@ export const DEFAULT_SETTINGS = {
   backMan: false,                 // Pop effects' Back-man (1.7.7): a Box cursor eats the letters Backspace and Delete take
   shredder: false,                // Pop effects' Shredder (1.7.7): a Line cursor shreds them into ribbons
   rabbitHole: false,              // Pop effects' Rabbit hole (1.7.7): an Underline opens into a hole that swallows them
+  shredderLetters: true,          // ...Shredder's letters shown going through and falling as ribbons (off: the blades alone)
   backspaceEvaporate: false, // Pop effects' Backspace evaporation: deleted letters rise and fade (Backspace and Delete)
   // Rainbow drives all three pop effects, not just the letters: one running
   // hue is advanced by whichever of them fires, so a burst of typing sweeps
@@ -533,6 +534,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "backMan",
   // Pop effects' Shredder and Rabbit hole (1.7.7). Appended, off by default.
   "shredder", "rabbitHole",
+  // Shredder's "Shredded letters" (1.7.7). Appended, on by default.
+  "shredderLetters",
 ];
 
 // ---------------------------------------------------------------------------

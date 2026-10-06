@@ -84,10 +84,11 @@ export const effectsShredderMethods = {
   },
 
   // What the key took (effects-delete.ts): the letters, nearest first, each
-  // fed through from where it stood.
+  // fed through from where it stood - unless "Shredded letters" is off:
+  // then the blades alone, the letters simply gone.
   spawnShreds(this: CursorSmithPlugin, deleted: DeletedLetters) {
     const s = this._shred;
-    if (!s) return;
+    if (!s || this.look.shredderLetters === false) return;
     const old = deleted.old;
     const h = old.h || 20;
     const font = this.fontString(old.fontSize, old.fontFamily, old.fontWeight, old.fontStyle);

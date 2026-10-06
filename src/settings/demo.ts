@@ -57,7 +57,7 @@ import { hexToRgbTuple, readableGlyphColor, rgbTupleToHex } from "../util/color"
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_BIG, BACKMAN_GROW, backManBite, backManChew, backManDown, backManEye, backManOutline, backManShape, backManSpring } from "../effects/effects-backman";
 import type { BackManCmd } from "../effects/effects-backman";
 import { SHRED_FAN, SHRED_FALL_MS, SHRED_FEED_MS, SHRED_HOLD_MS, SHRED_RIBBONS, shredDash, shredFeed } from "../effects/effects-shredder";
-import { HOLE_FALL_MS, HOLE_HOLD_MS, holeFall, holeOpen, holeSag } from "../effects/effects-rabbithole";
+import { HOLE_FALL_MS, HOLE_KICK, HOLE_SAG, holeFall, holeSpring } from "../effects/effects-rabbithole";
 
 // The engine's Appearance constants (constants.ts), for the demo's scale:
 // a translucent cursor's body alpha, a rounded corner's ratio on a block
@@ -486,6 +486,8 @@ interface Particle {
   // Rabbit hole.
   kind?: "letter" | "rise" | "evap" | "xout" | "fire" | "spark" | "shell" | "burst" | "meal" | "shred" | "hole";
   band?: number;
+  // A Rabbit hole letter that has landed on the floor (kicked it once).
+  landed?: boolean;
   rot?: number;
   shape0?: number;
   phase?: number;
@@ -561,8 +563,9 @@ interface Demo {
   // the caret wears now (to put it back once).
   shredRun: { t0: number; t: number } | null;
   cut: number;
-  holeRun: { t0: number; t: number } | null;
+  holeSp: { sag: number; v: number; at: number } | null;
   holeAt: [number, number];
+  holeWeighed: boolean;
   eatOn: "" | "shred" | "hole";
   bm: { bend: number; v: number; at: number };
   bmOn: boolean;
@@ -674,7 +677,7 @@ export class DemoStrip {
     }
     const d: Demo = {
       el: demo, shape, cycles: 0, done: false, particles: [], pool: [], spawnAcc: 0, lastTarget: 0, text, caret, inner, ghosts, look, color, heatStops, n: name.length, style, state: initialState(0), stepPx: 0,
-      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeRun: null, holeAt: [0, 0], eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
+      script, name, written, rest, innerWritten, innerRest, painted: "", line: name, chars: [], burns: [], fireAcc: 0, keyKind: "type", geo: geometryOf(look), keyHeavy: false, breath: 0, bmChew: null, bmMouth: 0, shredRun: null, cut: 0, holeSp: null, holeAt: [0, 0], holeWeighed: false, eatOn: "", bm: { bend: 0, v: 0, at: 0 }, bmOn: false, poolMax: script ? 160 : POOL, scaled: !script, keyT: -1e9, hue: Math.random() * 360,
     };
     const win = host.ownerDocument?.defaultView ?? null;
     if (!play || reduced) {
@@ -927,7 +930,12 @@ export class DemoStrip {
     }
     // Shredder's blades out (a Line's), Rabbit hole open (an Underline's).
     if (d.look.popEffects && d.look.shredder && d.style === "line") d.shredRun = d.shredRun && now - d.shredRun.t < SHRED_HOLD_MS ? { t0: d.shredRun.t0, t: now } : { t0: now, t: now };
-    if (d.look.popEffects && d.look.rabbitHole && d.style === "underline") d.holeRun = d.holeRun && now - d.holeRun.t < HOLE_HOLD_MS ? { t0: d.holeRun.t0, t: now } : { t0: now, t: now };
+    if (d.look.popEffects && d.look.rabbitHole && d.style === "underline") {
+      // A light tap on the floor.
+      const sp = d.holeSp || (d.holeSp = { sag: 0, v: 0, at: now });
+      if (now > sp.at) { holeSpring(sp, (now - sp.at) / 1000, 0); sp.at = now; }
+      sp.v += 0.25 * HOLE_KICK;
+    }
     d.keyT = now;
     d.keyKind = "back";
     d.keyHeavy = false;
@@ -950,7 +958,8 @@ export class DemoStrip {
     const down = d.bmChew ? backManDown(d.bmChew, now) - now : 0;
     // ...Shredder and Rabbit hole the same, on their own cursors.
     const shred = bite && !!d.shredRun && !!(look.popEffects && look.shredder && d.style === "line");
-    const hole = bite && !!d.holeRun && !!(look.popEffects && look.rabbitHole && d.style === "underline");
+    const shredShown = look.shredderLetters !== false;
+    const hole = bite && !!d.holeSp && !!(look.popEffects && look.rabbitHole && d.style === "underline");
     letters.forEach(({ ch, at }, k) => {
       if (!ch.trim()) return;
       const x = at * cw;
@@ -959,14 +968,14 @@ export class DemoStrip {
         return;
       }
       if (shred) {
-        for (let b = -1; k < 12 && b < SHRED_RIBBONS; b++) {
+        for (let b = -1; shredShown && k < 12 && b < SHRED_RIBBONS; b++) {
           const part = this.spawn(d, x, 11, 0, 0, SHRED_FEED_MS + SHRED_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "shred");
           if (part) part.band = b;
         }
         return;
       }
       if (hole) {
-        if (k < 12) this.spawn(d, x, 11, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole");
+        if (k < 12) { const l = this.spawn(d, x, 11, 0, 0, HOLE_FALL_MS, 0, "var(--text-normal)", now, ch, 0, "hole"); if (l) l.landed = false; }
         return;
       }
       if (look.typewriter && look.typewriterTape) {
@@ -1086,10 +1095,21 @@ export class DemoStrip {
           });
         }
       } else if (p.kind === "hole") {
-        // Pulled into the hole (d.holeAt), swirling and shrinking (holeFall).
+        // Dropped onto the floor (d.holeAt, its middle's top edge),
+        // squashed as it lands - the floor kicked, and weighed down while
+        // it is on it - then through, as the engine's (holeFall). The
+        // span's foot (its baseline) is 9.6 px down, its middle 6.
         const cw = d.stepPx || 7;
-        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, font: "", color: "", t0: p.t0 }, d.holeAt[0], d.holeAt[1], now);
-        p.el.setCssStyles({ transform: `translate(${(f.x - cw / 2).toFixed(1)}px, ${(f.y - 6).toFixed(1)}px) rotate(${f.rot.toFixed(2)}rad) scale(${f.k.toFixed(2)})`, opacity: f.done ? "0" : "1" });
+        const f = holeFall({ char: "", cx: p.x + cw / 2, cy: p.y + 6, half: 3.6, font: "", color: "", t0: p.t0, landed: !!p.landed }, d.holeAt[0], d.holeAt[1], now);
+        if (f.phase >= 1) {
+          d.holeWeighed = true;
+          if (!p.landed && d.holeSp) { p.landed = true; d.holeSp.v += HOLE_KICK; }
+        }
+        p.el.setCssStyles({
+          transformOrigin: "50% 80%",
+          transform: `translate(${(f.x - cw / 2).toFixed(1)}px, ${(f.foot - 9.6).toFixed(1)}px) rotate(${f.rot.toFixed(2)}rad) scale(${(f.sx * f.k).toFixed(2)}, ${(f.sy * f.k).toFixed(2)})`,
+          opacity: f.done ? "0" : f.phase === 2 ? Math.max(0, (f.k - 0.6) / 0.4).toFixed(2) : "1",
+        });
       } else if (p.kind === "xout") {
         p.el.setCssStyles({ transform: `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`, opacity: (t < 0.5 ? 1 : 1 - (t - 0.5) * 2).toFixed(2) });
       } else if (p.kind === "fire" || p.kind === "spark") {
@@ -1334,24 +1354,29 @@ export class DemoStrip {
       }
       if (last >= SHRED_HOLD_MS + SHRED_FEED_MS + SHRED_FALL_MS) d.shredRun = null;
     }
-    if (d.style === "underline" && d.holeRun && look.popEffects && look.rabbitHole && d.geo) {
-      const r = d.holeRun, last = this.last - r.t;
-      const open = last >= HOLE_HOLD_MS ? 0 : holeOpen(Math.max(0, this.last - r.t0), last);
+    if (d.style === "underline" && d.holeSp && look.popEffects && look.rabbitHole && d.geo) {
+      // The floor's spring: down while a letter weighs on it, back up past
+      // straight after, settling (holeSpring).
+      const sp = d.holeSp;
+      if (this.last > sp.at) { holeSpring(sp, (this.last - sp.at) / 1000, d.holeWeighed ? HOLE_SAG : 0); sp.at = this.last; }
       const bh = parseFloat(styles.height) || d.geo.ulH, top = parseFloat(styles.top) || 0;
-      const sag = holeSag(open, width);
-      d.holeAt = [from + width / 2, top + bh / 2 + sag + bh];
-      if (open > 0.01) {
-        const H = bh + Math.ceil(sag) + 1;
-        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(width)} ${n2(H)}'><path d='M0 ${n2(bh / 2)} Q${n2(width / 2)} ${n2(bh / 2 + 2 * sag)} ${n2(width)} ${n2(bh / 2)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
+      const sag = sp.sag * width;
+      d.holeAt = [from + width / 2, top + sag];
+      const resting = !d.holeWeighed && Math.abs(sp.sag) < 0.003 && Math.abs(sp.v) < 0.05 && !d.particles.some((q) => q.kind === "hole");
+      if (resting) d.holeSp = null;
+      else {
+        // The curve drawn in a caret as tall as it reaches, up or down.
+        const up = Math.max(0, -sag), H = bh + Math.abs(sag) + 1;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${n2(width)} ${n2(H)}'><path d='M0 ${n2(up + bh / 2)} Q${n2(width / 2)} ${n2(up + bh / 2 + 2 * sag)} ${n2(width)} ${n2(up + bh / 2)}' fill='none' stroke='${color}' stroke-width='${n2(bh)}'/></svg>`;
         Object.assign(styles, {
-          height: `${n2(H)}px`,
+          height: `${n2(H)}px`, top: `${n2(top - up)}px`,
           backgroundColor: "transparent", backgroundSize: "100% 100%", backgroundRepeat: "no-repeat",
           backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
         });
         eat = "hole";
       }
-      if (last >= HOLE_HOLD_MS + HOLE_FALL_MS) d.holeRun = null;
     }
+    d.holeWeighed = false;
     if (!eat && d.eatOn) {
       Object.assign(styles, { backgroundColor: color, backgroundImage: styles.backgroundImage ?? d.shape.gradient ?? "", backgroundSize: styles.backgroundSize ?? "", backgroundRepeat: "" });
     }

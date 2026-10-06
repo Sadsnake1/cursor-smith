@@ -1592,6 +1592,8 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // of eating the same.
     effects.push(toggle("Shredder", "Backspace and Delete break the Line cursor into blades that cut the letters into falling ribbons.", "shredder",
       { depth: 1, gate: true, when: pop, needs: { when: isStyle("Line"), hint: "Needs the Line cursor, in Appearance." } }));
+    effects.push(toggle("Shredded letters", "Show the letters going through the blades and falling as ribbons. Off, they simply vanish.", "shredderLetters",
+      { depth: 2, when: all(pop, on("shredder"), isStyle("Line")) }));
     effects.push(toggle("Rabbit hole", "Backspace and Delete open the Underline cursor into a hole that swallows the letters.", "rabbitHole",
       { depth: 1, gate: true, when: pop, needs: { when: isStyle("Underline"), hint: "Needs the Underline cursor, in Appearance." } }));
     effects.push(toggle("Thunderstrike", "Enter calls down a bolt of pixelated lightning onto the new line.", "thunderstrike", { depth: 1, gate: true, when: pop }));

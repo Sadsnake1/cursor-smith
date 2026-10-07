@@ -135,7 +135,7 @@ section("anvil sparks: the numbers of a burst");
 section("anvil sparks: the budget");
 {
   const e = anvilEngine();
-  const full = { y0: 0, g: 0, cell: 3, start: performance.now(), end: 1, minX: 0, maxX: 0, minY: 0, maxY: 0,
+  const full = { y0: 0, g: 0, cell: 3, palette: T.ANVIL_PALETTE, start: performance.now(), end: 1, minX: 0, maxX: 0, minY: 0, maxY: 0,
     sparks: Array.from({ length: T.ANVIL_SPARK_BUDGET - T.ANVIL_SPARK_MIN + 1 }, () => ({ x0: 0, vx: 0, vy: 1, life: 1, tint: 0 })) };
   e.anvils.push(full);
   const before = e._liveAnvilCount();
@@ -200,7 +200,7 @@ section("anvil sparks: what a frame paints");
     twice.ctx = makeCtx(); twice.drawAnvilSparks();
     ok("the shape at a moment does not depend on the frames before it", JSON.stringify(once.ctx.calls) === JSON.stringify(twice.ctx.calls) && once.ctx.calls.length > 0);
     // A young spark has its two trail cells; an old one has none.
-    const young = { y0: 300, g: 31 * 20, cell: 4, start: 1000, end: 1, minX: 0, maxX: 1000, minY: 0, maxY: 1000,
+    const young = { y0: 300, g: 31 * 20, cell: 4, palette: T.ANVIL_PALETTE, start: 1000, end: 1, minX: 0, maxX: 1000, minY: 0, maxY: 1000,
       sparks: [{ x0: 500, vx: 0, vy: 400, life: 1, tint: 0 }] };
     const e2 = anvilEngine(); e2.anvils = [young];
     clock = 1100; e2.ctx = makeCtx(); e2.drawAnvilSparks();
@@ -231,4 +231,50 @@ section("anvil sparks: settings, reduced motion, the panel");
   ok("...and the rows after it still render", named(on, "Rainbow"));
   const closed = renderPanel({ popEffects: false, anvilSparks: true });
   ok("the group gate hides it", !named(closed, "Anvil sparks") && !named(closed, "Spark count"));
+  // Rainbow shows when something it recolors is on: Anvil sparks alone is.
+  const alone = { popEffects: true, popLetters: false, backspaceDisintegrate: false, backspaceEvaporate: false, thunderstrike: false,
+    fireworks: false, backMan: false, shredder: false, rabbitHole: false };
+  ok("Rainbow hidden with no pop effect on", !named(renderPanel(alone), "Rainbow"));
+  ok("...shown with Anvil sparks alone (it recolors them)", named(renderPanel(Object.assign({}, alone, { anvilSparks: true })), "Rainbow"));
+}
+
+section("anvil sparks: Rainbow");
+{
+  const lum = (hex) => [1, 3, 5].reduce((a, i) => a + parseInt(hex.slice(i, i + 2), 16), 0);
+  const p = T.anvilRainbow(200);
+  ok("four shades in one hue, as hex", p.length === 4 && p.every((c) => /^#[0-9a-f]{6}$/.test(c)), p);
+  ok("...hot to cool: each darker than the last", lum(p[0]) > lum(p[1]) && lum(p[1]) > lum(p[2]) && lum(p[2]) > lum(p[3]), p.map(lum));
+  ok("...a different hue, different shades", JSON.stringify(T.anvilRainbow(0)) !== JSON.stringify(p));
+  const plain = anvilEngine();
+  ok("without Rainbow: the hot-metal palette", JSON.stringify(plain._bakeAnvil(500, 60, 300, 20).palette) === JSON.stringify(T.ANVIL_PALETTE));
+  const e = anvilEngine({ popRainbow: true });
+  e._popRainbowHue = 0;
+  const b1 = e._bakeAnvil(500, 60, 300, 20);
+  const b2 = e._bakeAnvil(500, 60, 300, 20);
+  ok("with Rainbow: the sweep's hue for the burst", JSON.stringify(b1.palette) === JSON.stringify(T.anvilRainbow(0)), b1.palette);
+  ok("...one step of the shared sweep a burst", JSON.stringify(b2.palette) === JSON.stringify(T.anvilRainbow(33)) && e._popRainbowHue === 66, { p: b2.palette, hue: e._popRainbowHue });
+  e.anvils = [b1];
+  b1.start = performance.now() - 120;
+  e.ctx = makeCtx();
+  e.drawAnvilSparks();
+  ok("...and it paints in them", e.ctx.calls.length > 0 && e.ctx.calls.every((c) => b1.palette.includes(c.fill)), [...new Set(e.ctx.calls.map((c) => c.fill))]);
+}
+
+section("anvil sparks: the Randomizer");
+{
+  const full = T.rollLook({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(3));
+  ok("at full Chaos with Pop effects: on, Spark count in range", full.popEffects === true && full.anvilSparks === true && full.anvilSparksQuantity >= 0.6 && full.anvilSparksQuantity <= 3, { a: full.anvilSparks, q: full.anvilSparksQuantity });
+  const none = T.rollLook({ chaos: 100, color: 50, motion: 50, allow: { popEffects: false } }, T.seededRandom(3));
+  ok("Pop effects left out: never", none.popEffects === false && none.anvilSparks === false);
+  let withPops = 0, on = 0;
+  for (let seed = 1; seed <= 300; seed++) {
+    const l = T.rollLook({ chaos: 50, color: 50, motion: 50 }, T.seededRandom(seed));
+    if (!l.popEffects) { if (l.anvilSparks) on = -1e9; continue; }
+    withPops++;
+    if (l.anvilSparks) on++;
+  }
+  ok("at middle Chaos: on in some rolls with Pop effects, off in others, never without them", on > 0 && on < withPops, { withPops, on });
+  const vim = T.rollVimLooks({ chaos: 100, color: 50, motion: 50 }, T.seededRandom(3));
+  ok("Vim's rolls: in Insert and Replace (a typing pop)", vim.insert.anvilSparks === true && vim.replace.anvilSparks === true);
+  ok("...not in Normal, Visual or Command", !vim.normal.anvilSparks && !vim.visual.anvilSparks && !vim.command.anvilSparks);
 }

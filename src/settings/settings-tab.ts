@@ -1704,15 +1704,15 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // Gradient, then the cursor colour - so it's described rather than
     // offered.
     effects.push(slider("Quantity", "How many shells go up per keypress, and how much each throws.", "fireworksQuantity", [0.2, 3, 0.1], { depth: 2, fallback: 1, when: all(pop, on("fireworks")) }));
-    // Anvil sparks: its own palette (hot metal, white to red), so Rainbow
-    // does not reach it and does not count it below.
+    // Anvil sparks: hot metal, white to red - or, with Rainbow, the sweep's
+    // hue (counted below).
     effects.push(toggle("Anvil sparks", "Space after a word knocks pixel sparks down from under it.", "anvilSparks", { depth: 1, gate: true, when: pop }));
     effects.push(slider("Spark count", "How many sparks each word throws.", "anvilSparksQuantity", [0.2, 3, 0.1], { depth: 2, fallback: 1, when: all(pop, on("anvilSparks")) }));
     // Rainbow last, and only when there is something for it to recolour: the
     // gate is on the four effects, NOT on popEffects. The group can be on
     // with every effect inside it off, and that is exactly the state where
     // a Rainbow toggle is a switch that visibly does nothing.
-    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("backspaceEvaporate") || !!get("thunderstrike") || !!get("fireworks") || !!get("backMan") || !!get("shredder") || !!get("rabbitHole"));
+    const anyPop = () => pop() && (!!get("popLetters") || !!get("backspaceDisintegrate") || !!get("backspaceEvaporate") || !!get("thunderstrike") || !!get("fireworks") || !!get("anvilSparks") || !!get("backMan") || !!get("shredder") || !!get("rabbitHole"));
     effects.push(toggle("Rainbow", "Sweeps every pop effect around the color wheel as you type.", "popRainbow", { depth: 1, when: anyPop }));
 
     // Typewriter: an effect of its own since the day it was made (1.6.7) -

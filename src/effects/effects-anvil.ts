@@ -10,13 +10,15 @@
 // (origin, every spark's angle, speed, life and tint) and the draw only
 // advances it along a closed-form path, so its shape never depends on the
 // frame rate the governor picked. Its own toggle; Fireworks may fire on the
-// same Space.
+// same Space. Hot metal, white to red - or, with Pop effects' Rainbow, the
+// sweep's next hue for each burst, white-hot to deep (anvilRainbow).
 import {
   ANVIL_ANGLE, ANVIL_CELL, ANVIL_CELL_MIN, ANVIL_DRAG, ANVIL_DROP, ANVIL_FADE_ALPHA, ANVIL_FADE_AT,
-  ANVIL_GRAVITY, ANVIL_LIFE, ANVIL_MIN_GAP_MS, ANVIL_PALETTE, ANVIL_SPARKS, ANVIL_SPARK_BUDGET,
+  ANVIL_GRAVITY, ANVIL_LIFE, ANVIL_MIN_GAP_MS, ANVIL_PALETTE, ANVIL_RAINBOW_SL, ANVIL_SPARKS, ANVIL_SPARK_BUDGET,
   ANVIL_SPARK_MIN, ANVIL_SPEED, ANVIL_SPREAD, ANVIL_TRAIL_ALPHA, ANVIL_TRAIL_DT, ANVIL_TRAIL_UNTIL,
   ANVIL_WORD_MAX,
 } from "../constants";
+import { hslToRgbTuple, rgbTupleToHex } from "../util/color";
 import type { AnvilBurst, AnvilSpark, CaretRecord } from "../types";
 import type CursorSmithPlugin from "../plugin";
 
@@ -60,6 +62,12 @@ export function anvilPoint(s: AnvilSpark, y0: number, g: number, t: number): { x
 // its life left: it cools as it goes, a cool-tinted one a little faster.
 export function anvilStep(remaining: number, tint: number): number {
   return Math.min(3, Math.floor((1 - remaining) * 4 * (0.85 + 0.15 * tint)));
+}
+
+// A burst's four shades in one hue (Rainbow), hot to cool as the hot-metal
+// palette goes: near white, then bright, then deep.
+export function anvilRainbow(hue: number): string[] {
+  return ANVIL_RAINBOW_SL.map(([s, l]) => rgbTupleToHex(hslToRgbTuple(hue, s, l)));
 }
 
 // The pixel cell for a font size: a fifth of the em, rounded, at least 2 px.
@@ -179,7 +187,10 @@ export const effectsAnvilMethods = {
       minX = Math.min(minX, s.x0, p.x); maxX = Math.max(maxX, s.x0, p.x); maxY = Math.max(maxY, p.y);
       end = Math.max(end, s.life);
     }
-    const burst: AnvilBurst = { y0, g, cell, sparks, start: now, end, minX, maxX: maxX + cell, minY: y0, maxY: maxY + cell };
+    // One hue a burst, a step of the sweep the letters, bolts and fireworks
+    // share (nextRainbowHue): a run of words reads as one sweep.
+    const palette = this.styleFor("popRainbow") ? anvilRainbow(this.nextRainbowHue()) : ANVIL_PALETTE;
+    const burst: AnvilBurst = { y0, g, cell, sparks, palette, start: now, end, minX, maxX: maxX + cell, minY: y0, maxY: maxY + cell };
     this.anvils.push(burst);
     return burst;
   },
@@ -194,16 +205,16 @@ export const effectsAnvilMethods = {
     const now = performance.now();
     const opacity = Math.max(0, Math.min(1, this.look.cursorOpacity ?? 1));
     ctx.save();
-    let fill = -1, alpha = -1;
-    const paint = (step: number, a: number, x: number, y: number, cell: number) => {
-      if (step !== fill) { fill = step; ctx.fillStyle = ANVIL_PALETTE[step]; }
+    let fill = "", alpha = -1;
+    const paint = (color: string, a: number, x: number, y: number, cell: number) => {
+      if (color !== fill) { fill = color; ctx.fillStyle = color; }
       if (a !== alpha) { alpha = a; ctx.globalAlpha = a; }
       ctx.fillRect(x, y, cell, cell);
     };
     this.anvils = this.anvils.filter((b) => {
       const t = (now - b.start) / 1000;
       if (t >= b.end) return false;
-      const cell = b.cell;
+      const cell = b.cell, pal = b.palette;
       const snap = (v: number) => Math.floor(v / cell) * cell;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const s of b.sparks) {
@@ -213,7 +224,7 @@ export const effectsAnvilMethods = {
         const a = (remaining > ANVIL_FADE_AT ? 1 : ANVIL_FADE_ALPHA) * opacity;
         const p = anvilPoint(s, b.y0, b.g, t);
         const hx = snap(p.x), hy = snap(p.y);
-        paint(step, a, hx, hy, cell);
+        paint(pal[step], a, hx, hy, cell);
         if (hx < x0) x0 = hx; if (hy < y0) y0 = hy; if (hx > x1) x1 = hx; if (hy > y1) y1 = hy;
         // The trail: where it was a moment and two moments ago, a step
         // cooler and fainter each, never on a cell this spark already lit.
@@ -225,7 +236,7 @@ export const effectsAnvilMethods = {
           const q = anvilPoint(s, b.y0, b.g, tt);
           const qx = snap(q.x), qy = snap(q.y);
           if ((qx === hx && qy === hy) || (qx === px && qy === py)) continue;
-          paint(Math.min(3, step + k + 1), a * ANVIL_TRAIL_ALPHA[k], qx, qy, cell);
+          paint(pal[Math.min(3, step + k + 1)], a * ANVIL_TRAIL_ALPHA[k], qx, qy, cell);
           px = qx; py = qy;
           if (qx < x0) x0 = qx; if (qy < y0) y0 = qy; if (qx > x1) x1 = qx; if (qy > y1) y1 = qy;
         }

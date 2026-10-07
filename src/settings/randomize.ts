@@ -237,6 +237,13 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
     look.hotHeadHeight = level(0.4, 1.2, 0.05);
     look.hotHeadSpeedHeat = rand() < 0.3;
   }
+  // Pop effects' Anvil sparks (1.7.9), as often as Fireworks. Rolled last,
+  // after every other draw, so a seed rolls the same cursor it did before
+  // the sparks came, these two keys aside.
+  if (on.has("popEffects")) {
+    look.anvilSparks = chance(0.2 + 0.6 * chaos);
+    look.anvilSparksQuantity = level(0.6, 3, 0.1);
+  }
   return look;
 }
 
@@ -252,6 +259,7 @@ export function rollLook(opts: RollOptions, rand: () => number = Math.random): P
 //   they keep the color, they don't switch colors randomly"); the looks
 //   come back without them (VIM_COLOR_KEYS);
 // - effects where they fit: the typing ones (Pop effects' letters and pops,
+//   Anvil sparks among them,
 //   Hot-head, Typewriter, Speed demon) in Insert and Replace; Normal keeps
 //   what deleting does (the eaters, the letters' end); Visual none of Pop
 //   effects; Command a plain, still caret.
@@ -266,7 +274,7 @@ export const VIM_SHAPES: Record<string, Partial<Look>> = {
 export const VIM_COLOR_KEYS: (keyof Look)[] = ["colorDark", "colorLight", "gradientEnabled", "gradientCount",
   "gradientDark1", "gradientDark2", "gradientDark3", "gradientDark4", "gradientLight1", "gradientLight2", "gradientLight3", "gradientLight4"];
 const VIM_TYPING: (keyof Look)[] = ["hotHead", "typewriter", "speedDemon"];
-const VIM_POPS: (keyof Look)[] = ["popLetters", "fireworks", "thunderstrike"];
+const VIM_POPS: (keyof Look)[] = ["popLetters", "fireworks", "thunderstrike", "anvilSparks"];
 const VIM_MOTION: (keyof Look)[] = ["smoothEnabled", "smear", "crtEffect", "flameTrail", "stardustEnabled", "energyEffect", "popEffects"];
 export function rollVimLooks(opts: RollOptions & { vimShape?: string }, rand: () => number = Math.random): Record<string, Partial<Look>> {
   const shape = opts.vimShape || "vim";

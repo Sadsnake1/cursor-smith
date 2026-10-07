@@ -281,6 +281,9 @@ export interface AnvilSpark { x0: number; vx: number; vy: number; life: number; 
 // cell, and the box the whole life covers (for the canvas region).
 export interface AnvilBurst {
   y0: number; g: number; cell: number; sparks: AnvilSpark[]; start: number; end: number;
+  // Its four shades, hot to cool: ANVIL_PALETTE, or with Rainbow the
+  // sweep's hue for this burst (anvilRainbow).
+  palette: readonly string[];
   minX: number; maxX: number; minY: number; maxY: number;
 }
 export type TrailPointCallback = (p: TrailPoint, alpha: number, age: number) => void;

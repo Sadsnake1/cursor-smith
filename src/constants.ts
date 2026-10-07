@@ -443,6 +443,10 @@ export const ANVIL_CELL = 0.2;
 export const ANVIL_CELL_MIN = 2;
 // Hot to cool. A spark steps down it with age, at a pace its tint sets.
 export const ANVIL_PALETTE = ["#FFFADC", "#FFD65A", "#FF8C28", "#D6401E"] as const;
+// With Pop effects' Rainbow: the burst's hue, hot to cool the same way -
+// [saturation, lightness] per step, read off the palette above (93%, 68%,
+// 58% and 48% light; the last a little less saturated).
+export const ANVIL_RAINBOW_SL = [[1, 0.93], [1, 0.68], [1, 0.58], [0.75, 0.48]] as const;
 // Opacity: full while more than this much of its life is left, then dimmer.
 export const ANVIL_FADE_AT = 0.25;
 export const ANVIL_FADE_ALPHA = 0.6;

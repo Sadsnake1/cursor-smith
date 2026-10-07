@@ -34,7 +34,7 @@ https://github.com/user-attachments/assets/1781c934-c1a6-475f-8f21-dbf5d81bc2b0
 
 Box, Line or Underline, solid or hollow, with serifs on the Line or the Underline. Your colors for dark and light themes, or a gradient. Thickness in tenth-of-a-pixel steps, a shorter Line if you like, opacity, glow, translucency, a letter showing through the box.
 
-Caps Lock on, or Shift held? The cursor and all its effects flip to their opposite colors, and the cursor grows a little, so you see it before you type (on the desktop). Backspace and Delete can flip the colors too, while you delete, with or without an eater.
+Caps Lock on, or Shift held? The cursor and all its effects flip to their opposite colors, and the cursor grows a little, so you see it before you type (on the desktop). Backspace and Delete can flip the colors too, while you delete, with or without a Text Eater.
 
 It can blink the way you like: speed, balance, fade, breathing, or not at all, or not while you type. It can glide to its new spot instead of jumping there, faster when you type fast.
 
@@ -72,7 +72,7 @@ https://github.com/user-attachments/assets/8810016a-9882-4179-81b2-d699789fba1d
 Turn on **Sounds** on its own page, pick a category, then a sound. Press play to hear it before you type.
 
 - **Typewriters:** Hermes 3000, Erika 5, IBM Selectric II, L. C. Smith, Mercedes, Olivetti Lettera 35, Olympia, Royal Portable, Sears Electric Twelve, Smith-Corona Corsair. The bell rings at the end of a line.
-- **Keyboards:** Purples, Creams, Reds, Browns, Blues, Greens, Blacks, Pinks, Springs, a Kalimba, and an Actual Horse. Every key sounds from where it sits on the board.
+- **Keyboards:** Purples, Creams, Reds, Browns, Blues, Greens, Blacks, Pinks, Springs, a Kalimba, and an actual horse. Every key sounds from where it sits on the board.
 
 Ready to annoy some people? Try it out!
 
@@ -145,7 +145,7 @@ Made a cursor you love? Save it as a preset, copy its share code and post it in 
 
 ## Vim mode
 
-Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in Obsidian's status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it.
+Five modes, five cursors. Normal, Insert, Visual, Replace and Command each get their own look and effects, and a `-- NORMAL --` indicator in Obsidian's status bar. Vim presets save all five under one name. The plugin can turn Obsidian's Vim key bindings on and off along with the mode, if you let it. DON'T GET STUCK!
 
 ## Commands
 
@@ -191,7 +191,7 @@ Cursor-Smith is MIT, and the engine has been carried to other editors and forked
 
 - **RainyGrass**, for nine reports and counting.
 - **mshareef-git**, for the keyboards, the Kalimba and the horse ([#46](https://github.com/Sadsnake1/cursor-smith/issues/46)).
-- **mihdaja**, for the Vim tables fix ([#42](https://github.com/Sadsnake1/cursor-smith/pull/42)), and **RohitNahar-Offical**, for pushing it to TypeScript and a leaner build.
+- **mihdaja**, for the Vim tables fix ([#42](https://github.com/Sadsnake1/cursor-smith/pull/42)), and **RohitNahar-Offical**, for pushing for TypeScript and a leaner build.
 
 ## Questions, ideas, bugs
 

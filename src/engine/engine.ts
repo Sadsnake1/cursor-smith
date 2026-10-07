@@ -591,7 +591,7 @@ export const engineMethods = {
           // secondaries move on the same keystroke and get the same
           // disintegration, strike and volley, so remember the flags first.
           const flagsAtFrame = {
-            del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending,
+            del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending, anvil: this._anvilPending,
           };
           // Multi-cursor: if the selection changed shape (a caret came or
           // went, or the main one moved), every saved caret state has to be
@@ -821,6 +821,10 @@ export const engineMethods = {
         }
       }
     }
+    // An anvil burst's whole life, worked out at spawn: its sparks fly
+    // outward faster than last frame's union grows, so the region holds
+    // all of it from the first frame rather than catching up a frame late.
+    for (const a of this.anvils || []) add(a.minX - 2, a.minY - 2, a.maxX + 2, a.maxY + 2);
     if (this.bracketTether && this.bracketTether.length) {
       for (const s of this.bracketTether) {
         add(Math.min(s.x1, s.x2) - 4, Math.min(s.y1, s.y2) - 4,
@@ -1016,6 +1020,8 @@ export const engineMethods = {
       // allowed to drop the loop into the idle heartbeat - the volley
       // would land in lumps a tenth of a second apart.
       (this.fireworks && this.fireworks.length > 0) ||
+      // An anvil burst, for its sparks' whole life.
+      (this.anvils && this.anvils.length > 0) ||
       // A Signal Glitch burst is a ~200ms wall-clock animation, so it
       // needs continuous frames for its whole life. Tested inline rather
       // than via glitchState() because that RETIRES an expired burst as a
@@ -1092,7 +1098,7 @@ export const engineMethods = {
         : eff.crtEffect && this.trail && this.trail.length > 0 ? "trail"
         : this.particles && this.particles.length > 0 ? "particles"
         : (this.flamePixels && this.flamePixels.length > 0) || (this.flameEmbers && this.flameEmbers.length > 0) ? "pixels"
-        : (this.thunderbolts && this.thunderbolts.length > 0) || (this.fireworks && this.fireworks.length > 0) ? "pops"
+        : (this.thunderbolts && this.thunderbolts.length > 0) || (this.fireworks && this.fireworks.length > 0) || (this.anvils && this.anvils.length > 0) ? "pops"
         : this.glitch && nowT - this.glitch.start < this.glitch.dur ? "glitch"
         : this.heat > 0 ? "heat"
         : this._smearMoving ? "smear"
@@ -1181,6 +1187,10 @@ export const engineMethods = {
     for (const f of this.fireworks || []) {
       f.x0 += dx; f.y0 += dy; f.bx += dx; f.by += dy;
       f.minX += dx; f.maxX += dx; f.minY += dy; f.maxY += dy;
+    }
+    for (const a of this.anvils || []) {
+      a.y0 += dy; a.minX += dx; a.maxX += dx; a.minY += dy; a.maxY += dy;
+      for (const s of a.sparks) s.x0 += dx;
     }
     for (const t of this.thunderbolts || []) {
       t.tx += dx; t.ty += dy; t.minX += dx; t.maxX += dx; t.minY += dy; t.maxY += dy;
@@ -1509,7 +1519,7 @@ export const engineMethods = {
     const on = [];
     for (const k of ["gradientEnabled", "crtEffect", "glow", "crtNeon", "crtGlitch", "cursorTranslucent", "cursorRounded",
                      "blinkingEnabled", "smear", "smoothEnabled", "energyEffect", "popEffects", "popLetters", "typewriter", "typewriterFreshInk", "backspaceEvaporate", "flameTrail",
-                     "fireworks", "thunderstrike", "backspaceDisintegrate", "hotHead", "stardustEnabled", "speedDemon",
+                     "fireworks", "anvilSparks", "thunderstrike", "backspaceDisintegrate", "hotHead", "stardustEnabled", "speedDemon",
                      "bracketTether", "torchEffect", "vimModeEnabled"]) {
       if (s[k as SettingKey]) on.push(k);
     }

@@ -192,6 +192,25 @@ function runTorchScenario(T) {
   });
 }
 
+// Anvil sparks: one burst, baked once at a fixed seed under a 48 px word
+// in a 16 px font, then drawn at fixed moments of its life - the head, the
+// two-cell trail, the cooling, the dimming, the end.
+function runAnvilScenario(T, Plugin) {
+  return pinned((clock) => {
+    const ops = [];
+    const e = makeGoldenEngine(T, Plugin, { popEffects: true, anvilSparks: true }, ops);
+    e._bakeAnvil(300, 48, 320, 16);
+    const frames = [];
+    let at = 0;
+    for (const ms of [0, 40, 120, 250, 450, 700, 900]) {
+      clock.t += ms - at; at = ms;
+      e.drawAnvilSparks();
+      frames.push({ label: ms + " ms", ops: ops.splice(0, ops.length) });
+    }
+    return frames;
+  });
+}
+
 // --- The comparison ------------------------------------------------------------
 function compare(name, got, want) {
   if (!want) return `no golden for "${name}" (run with UPDATE_GOLDENS=1 to write it)`;
@@ -221,13 +240,13 @@ const EXTRA = {
   "pops": { popEffects: true, popLetters: true, popDisintegrate: true, thunderstrike: true, fireworks: true },
 };
 function checkGoldens(T, Plugin) {
-  const scenarios = [["defaults", {}], ...Object.entries(T.DEFAULT_PRESETS), ...Object.entries(EXTRA), ["torch", null]];
+  const scenarios = [["defaults", {}], ...Object.entries(T.DEFAULT_PRESETS), ...Object.entries(EXTRA), ["torch", null], ["anvil", "anvil"]];
   const update = !!process.env.UPDATE_GOLDENS;
   if (update) fs.mkdirSync(DIR, { recursive: true });
   const out = [];
   for (const [name, look] of scenarios) {
     let frames;
-    try { frames = look === null ? runTorchScenario(T) : runScenario(T, Plugin, look); }
+    try { frames = look === null ? runTorchScenario(T) : look === "anvil" ? runAnvilScenario(T, Plugin) : runScenario(T, Plugin, look); }
     catch (err) { out.push({ name, error: `${name}: the scenario threw: ${err && err.stack ? err.stack.split("\n").slice(0, 3).join(" | ") : err}` }); continue; }
     const file = goldenFile(name);
     const had = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
@@ -242,4 +261,4 @@ function checkGoldens(T, Plugin) {
   return out;
 }
 
-module.exports = { checkGoldens, runScenario, runTorchScenario, recordingCtx, pinned, EXTRA };
+module.exports = { checkGoldens, runScenario, runTorchScenario, runAnvilScenario, recordingCtx, pinned, EXTRA };

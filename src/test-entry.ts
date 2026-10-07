@@ -27,6 +27,8 @@ import { SHRED_FEED_MS, SHRED_FALL_MS, SHRED_HOLD_MS, SHRED_RIBBONS, SHRED_FAN, 
 import { HOLE_FALL_MS, HOLE_TALL, HOLE_REACH, HOLE_GLOW, HOLE_TINT, HOLE_HOLD_MS, HOLE_RUSH_MS, holeFall, holeGlow, holeSpan } from "./effects/effects-rabbithole";
 import { CAPS_GROW, DELETE_INVERT_MS, capsEase, capsKeys, capsScale } from "./effects/effects-caps";
 import { underSerifSize } from "./paint/paint-shape";
+import { anvilKeyStrikes, anvilWordBefore, anvilPoint, anvilStep, anvilCell } from "./effects/effects-anvil";
+import { ANVIL_SPARKS, ANVIL_ANGLE, ANVIL_SPEED, ANVIL_DRAG, ANVIL_GRAVITY, ANVIL_LIFE, ANVIL_SPREAD, ANVIL_DROP, ANVIL_PALETTE, ANVIL_MIN_GAP_MS, ANVIL_SPARK_BUDGET, ANVIL_SPARK_MIN, ANVIL_TRAIL_DT } from "./constants";
 import { BACKMAN_BEND_KICK, BACKMAN_BEND_MAX, BACKMAN_CHOMP_MS, BACKMAN_SLIDE_MS, BACKMAN_GROW, BACKMAN_GULP_MS, BACKMAN_HOLD_MS, backManBite, backManChew, backManDown, backManEye, backManEyeEase, backManOutline, backManShape, backManSpring, BACKMAN_BIG } from "./effects/effects-backman";
 
 export const __test = {
@@ -34,6 +36,7 @@ export const __test = {
   Notice, Modal, setSettingClass, restoreSettingClass,
   smoothCatchRate, smoothTypingRate,
   demoStep, demoInitialState, demoHeatColor, demoShapeOf, cardScript, SCRIPT_BACK_MS, demoIdleAt, demoStepScript, scriptFor, vimScriptFor, VIM_LINES, SCRIPT_LINES, SCRIPT_MAX, READ_SCALE, READ_FEW, SHORT_MAX, stageRoom, readableChars, DemoStrip, ROLL_TOGGLES, rollAllowed, demoGlide, demoGeometryOf, demoBlinkReal,
+  anvilKeyStrikes, anvilWordBefore, anvilPoint, anvilStep, anvilCell, ANVIL_SPARKS, ANVIL_ANGLE, ANVIL_SPEED, ANVIL_DRAG, ANVIL_GRAVITY, ANVIL_LIFE, ANVIL_SPREAD, ANVIL_DROP, ANVIL_PALETTE, ANVIL_MIN_GAP_MS, ANVIL_SPARK_BUDGET, ANVIL_SPARK_MIN, ANVIL_TRAIL_DT,
   EngineProto: CursorSmithPlugin.prototype,
   SettingTabPrototype: CursorSmithSettingTab.prototype,
 };

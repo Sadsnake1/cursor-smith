@@ -53,6 +53,7 @@ export const REDUCED_MOTION_OFF_KEYS = [
   "hotHead",             // continuous fire
   "typewriter",          // the caret dipping, the carriage's streak
   "speedDemonSparks",    // emission; the heat colour itself is not motion
+  "anvilSparks",         // emission, a spray under each word
   "crtGlitch",           // whole-cursor displacement bursts
   "energyEffect",        // wall-clock shimmer inside the cursor body
   "blinkBreathing",      // size oscillation

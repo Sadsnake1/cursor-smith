@@ -247,6 +247,8 @@ export interface Look {
   popEffects: boolean;
   fireworks: boolean;
   fireworksQuantity: number;
+  anvilSparks: boolean;
+  anvilSparksQuantity: number;
   speedDemonGradient: boolean;
   speedHeatDark1: string;
   speedHeatDark2: string;
@@ -268,10 +270,19 @@ export interface Look {
 export type SettingKey = keyof CursorSmithSettings;
 
 // Key flags handed to the secondary-caret update from the keystroke path.
-export interface KeyFlags { enter?: number; del?: number; pop?: number; repeat?: boolean; [k: string]: number | boolean | undefined }
+export interface KeyFlags { enter?: number; del?: number; pop?: number; anvil?: number; repeat?: boolean; [k: string]: number | boolean | undefined }
 
 // One spark of a firework, and the trail callback the caret painters share.
 export interface FireworkSpark { ang: number; speed: number; size: number; ci: number; tw: number; tr: number }
+// One spark of an anvil burst (effects-anvil.ts): where it leaves from, its
+// throw in px/s, its life in seconds and its tint (0..1, how slowly it cools).
+export interface AnvilSpark { x0: number; vx: number; vy: number; life: number; tint: number }
+// One burst: the sparks, the origin's height, gravity in px/s², the pixel
+// cell, and the box the whole life covers (for the canvas region).
+export interface AnvilBurst {
+  y0: number; g: number; cell: number; sparks: AnvilSpark[]; start: number; end: number;
+  minX: number; maxX: number; minY: number; maxY: number;
+}
 export type TrailPointCallback = (p: TrailPoint, alpha: number, age: number) => void;
 
 // The look rows' options: how deep the row is indented under its parent,

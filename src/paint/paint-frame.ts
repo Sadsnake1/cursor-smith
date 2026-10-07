@@ -129,6 +129,8 @@ export const paintFrameMethods = {
     // launched by the same Enter that called down lightning should climb out
     // in front of it rather than being swallowed by the strike.
     this.drawFireworks();
+    // Anvil sparks fall from under the words, behind the cursor too.
+    this.drawAnvilSparks();
 
     // Cursor bounds are marked once, at the END of the frame rather than
     // here, so the effects-only union can be snapshotted first - see the

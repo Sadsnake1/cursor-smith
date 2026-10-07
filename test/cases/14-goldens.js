@@ -13,7 +13,8 @@ section("visual regression: what a frame paints, against the goldens");
   const { checkGoldens, runScenario } = require("../goldens");
   const results = checkGoldens(T, Plugin);
   const { EXTRA } = require("../goldens");
-  ok("every shipped preset, the defaults, the effects no preset carries, and the torch have a scenario", results.length === Object.keys(T.DEFAULT_PRESETS).length + 1 + Object.keys(EXTRA).length + 1, results.length);
+  ok("every shipped preset, the defaults, the effects no preset carries, the torch and Anvil sparks have a scenario", results.length === Object.keys(T.DEFAULT_PRESETS).length + 1 + Object.keys(EXTRA).length + 2, results.length);
+  ok("...Anvil sparks' scenario paints a burst", (results.find((r) => r.name === "anvil") || {}).ops > 50 || !!(results.find((r) => r.name === "anvil") || {}).wrote, results.find((r) => r.name === "anvil"));
   ok("...Hot-head's scenario paints fire (the heaviest painter, unpinned until now)", (results.find((r) => r.name === "hot-head") || {}).ops > 1000 || !!(results.find((r) => r.name === "hot-head") || {}).wrote, results.find((r) => r.name === "hot-head"));
   for (const r of results) {
     if (r.wrote) { ok(`golden written: ${r.name}${r.changed ? " (changed)" : " (same)"}`, true); continue; }

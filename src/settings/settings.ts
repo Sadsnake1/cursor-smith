@@ -153,6 +153,10 @@ export const DEFAULT_SETTINGS = {
   // slider covers "a lone spark" through to "a proper volley".
   fireworks: false,
   fireworksQuantity: 1,    // 0.2..3
+  // Anvil sparks (effects-anvil.ts): Space after a word knocks pixel sparks
+  // down and out from under it. Quantity scales the sparks per word.
+  anvilSparks: false,
+  anvilSparksQuantity: 1,  // 0.2..3
   flameTrail: true,        
   // Pixel Trail sub-options.
   // Density multiplies how many pixels each move sheds; at 0 the trail emits
@@ -611,6 +615,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "eaterSmear",
   // When the CRT ghosts and Speed demon go (1.7.7). Appended.
   "crtTrailWhen", "speedDemonWhen",
+  // Anvil sparks (1.7.9). Appended.
+  "anvilSparks", "anvilSparksQuantity",
 ];
 
 // ---------------------------------------------------------------------------

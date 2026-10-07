@@ -147,7 +147,7 @@ export const caretsMethods = {
     if (states.length > full.length) states.length = full.length;
     if (full.length === 0 || !view) return;
     const lineStyles: Map<Element, LineStyle> = new Map();
-    const primaryFlags = { del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending };
+    const primaryFlags = { del: this._deletePending, enter: this._enterPending, pop: this._popKeyPending, anvil: this._anvilPending };
     try {
       for (let i = 0; i < full.length; i++) {
         // Off the pane: updateActivePoint(null) clears the caret exactly as
@@ -158,6 +158,7 @@ export const caretsMethods = {
           this._deletePending = flags.del || 0;
           this._enterPending = flags.enter || 0;
           this._popKeyPending = flags.pop || 0;
+          this._anvilPending = flags.anvil || 0;
           this.updateActivePoint(record);
           this.updateSmoothCursor();
           this.updateSmearQuad();
@@ -180,6 +181,7 @@ export const caretsMethods = {
       this._deletePending = primaryFlags.del;
       this._enterPending = primaryFlags.enter;
       this._popKeyPending = primaryFlags.pop;
+      this._anvilPending = primaryFlags.anvil;
     }
   },
 
@@ -786,6 +788,7 @@ export const caretsMethods = {
         this._deletePending = 0;
         this._enterPending = 0;
         this._popKeyPending = 0;
+        this._anvilPending = 0;
         this.lastActive = caret;
         this.pending = null;
         this.lastMoveTime = performance.now();
@@ -909,6 +912,12 @@ export const caretsMethods = {
       if (this._popKeyPending && now - this._popKeyPending < 250) {
         this.spawnFireworks(caret);
       }
+      // Anvil sparks, on the same window: under the word the Space finished
+      // (the caret moved TO is just past that Space). Fireworks may go up
+      // from the same keystroke.
+      if (this._anvilPending && now - this._anvilPending < 250) {
+        this.spawnAnvilSparks(caret);
+      }
     }
     // Cleared unconditionally, outside the lastActive branch: a stale flag left
     // by a move that didn't spawn anything would fire a bolt on whatever caret
@@ -917,6 +926,7 @@ export const caretsMethods = {
     if (!secondary) {
       this._enterPending = 0;
       this._popKeyPending = 0;
+      this._anvilPending = 0;
     }
     this.lastActive = caret;
     this.pending = null;

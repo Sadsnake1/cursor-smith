@@ -19,6 +19,7 @@ import type { StopsMemo,
   EffCache,
   Ember,
   Firework,
+  AnvilBurst,
   FlamePixel,
   Glitch,
   HotScroll,
@@ -221,6 +222,13 @@ export default class CursorSmithPlugin extends Plugin {
   declare _liveSparkCount: EffectsMethods["_liveSparkCount"];
   declare spawnFireworks: EffectsMethods["spawnFireworks"];
   declare drawFireworks: EffectsMethods["drawFireworks"];
+  declare _anvilOn: EffectsMethods["_anvilOn"];
+  declare _anvilNote: EffectsMethods["_anvilNote"];
+  declare _liveAnvilCount: EffectsMethods["_liveAnvilCount"];
+  declare spawnAnvilSparks: EffectsMethods["spawnAnvilSparks"];
+  declare _anvilBaseline: EffectsMethods["_anvilBaseline"];
+  declare _bakeAnvil: EffectsMethods["_bakeAnvil"];
+  declare drawAnvilSparks: EffectsMethods["drawAnvilSparks"];
   declare spawnThunderbolt: EffectsMethods["spawnThunderbolt"];
   declare boltPath: EffectsMethods["boltPath"];
   declare pixelateBolt: EffectsMethods["pixelateBolt"];
@@ -522,6 +530,7 @@ export default class CursorSmithPlugin extends Plugin {
   // moves the caret); the frame cap is lifted this close to it.
   _lastScrollT!: number;
   declare _lastFireworkT: number;
+  declare _lastAnvilT: number;
   _lastGlowAlpha!: string;
   _lastGlowRect!: string;
   _lastHotFrameT!: number;
@@ -549,6 +558,8 @@ export default class CursorSmithPlugin extends Plugin {
   _pendingVimPresetName!: string;
   _perf!: PerfCounters | null;
   _popKeyPending!: number;
+  // A Space that may finish a word, for Anvil sparks (_anvilNote): when.
+  _anvilPending!: number;
   _popRainbowHue!: number;
   // When the last character was typed, for Typewriter (typewriterDip).
   _typewriterT!: number;
@@ -639,6 +650,7 @@ export default class CursorSmithPlugin extends Plugin {
   canvasWrapper!: HTMLDivElement | null;
   ctx!: CanvasRenderingContext2D | null;
   fireworks!: Firework[];
+  anvils!: AnvilBurst[];
   flameEmbers!: Ember[];
   flamePixels!: FlamePixel[];
   declare glitch: Glitch | null;
@@ -1256,7 +1268,12 @@ export default class CursorSmithPlugin extends Plugin {
       // report; both are accepted for the same reason beforeinput is listened
       // to at all.
       else if (k === "Enter") noteKeystroke("enter", e);
-      else if (k === " " || k === "Spacebar") noteKeystroke("space", e);
+      else if (k === " " || k === "Spacebar") {
+        noteKeystroke("space", e);
+        // Anvil sparks: a Space with no Ctrl, Alt or Meta (the word is
+        // checked when the caret moves).
+        this._anvilNote({ key: k, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, composing: e.isComposing });
+      }
       else if (k === "Tab" || (typeof k === "string" && k.length === 1)) {
         noteKeystroke("type", e);
       } else if (
@@ -1297,6 +1314,9 @@ export default class CursorSmithPlugin extends Plugin {
         // would let a single swipe redline the heat.
         const data = typeof e.data === "string" ? e.data : "";
         noteKeystroke(data.endsWith(" ") ? "space" : "type");
+        // A phone's Space, or a swiped word with its Space: not while an
+        // input method is still composing.
+        this._anvilNote({ inputType: t, data, composing: e.isComposing });
       }
     };
 
@@ -1869,6 +1889,11 @@ export default class CursorSmithPlugin extends Plugin {
     // Zeroed with the pool: a stamp left over from before the engine was last
     // torn down would swallow the first launch after it comes back.
     this._lastFireworkT = 0;
+    // Anvil sparks: its own pool, a burst a word (effects-anvil.ts), the
+    // rate stamp and the Space waiting for its move, zeroed with it.
+    this.anvils = [];
+    this._lastAnvilT = 0;
+    this._anvilPending = 0;
     // Signal Glitch: at most ONE burst is ever live (a second jump during a
     // burst restarts it rather than stacking), so this is a single nullable
     // record instead of a pool.

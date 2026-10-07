@@ -413,6 +413,53 @@ export const FIREWORK_SPARK_MIN = 5;
 // secondary pops. The expensive extras are what a burst can most afford to
 // lose, and losing them is far less visible than losing the burst.
 export const FIREWORK_PRESSURE = 0.55;
+
+// Anvil sparks (effects-anvil.ts): Space after a word knocks a spray of pixel
+// sparks down and out from under it, like a hammer on an anvil. The numbers
+// are read off the intro video, in em (the line's font size) so the spray
+// keeps its proportions at any size; screen y points down.
+//
+// Sparks per word at quantity 1 (the slider scales it, 0.2 to 3).
+export const ANVIL_SPARKS = 14;
+// The fan: angles from 0.05 to 0.95 of a half turn, all of them downward.
+export const ANVIL_ANGLE = [0.05 * Math.PI, 0.95 * Math.PI] as const;
+// Throw speed, em/s.
+export const ANVIL_SPEED = [6, 18] as const;
+// Air drag, exponential, 1/s: x(t) = x0 + vx·(1 − e^(−k·t))/k.
+export const ANVIL_DRAG = 1.6;
+// Gravity, em/s², closed-form (½·g·t²) on top of the drag.
+export const ANVIL_GRAVITY = 31;
+// Each spark's life, seconds.
+export const ANVIL_LIFE = [0.35, 0.8] as const;
+// Each spark leaves from the word's middle, give or take this much of the
+// word's width.
+export const ANVIL_SPREAD = 0.25;
+// The origin: this far below the word's baseline, em - from under the word,
+// not from the caret.
+export const ANVIL_DROP = 0.3;
+// The pixel cell, em (rounded, at least ANVIL_CELL_MIN px): every spark is
+// one cell, snapped to the grid.
+export const ANVIL_CELL = 0.2;
+export const ANVIL_CELL_MIN = 2;
+// Hot to cool. A spark steps down it with age, at a pace its tint sets.
+export const ANVIL_PALETTE = ["#FFFADC", "#FFD65A", "#FF8C28", "#D6401E"] as const;
+// Opacity: full while more than this much of its life is left, then dimmer.
+export const ANVIL_FADE_AT = 0.25;
+export const ANVIL_FADE_ALPHA = 0.6;
+// The two-pixel trail: the spark where it was this long ago (s), one step
+// cooler, at these opacities; gone once less than ANVIL_TRAIL_UNTIL is left.
+export const ANVIL_TRAIL_DT = 0.018;
+export const ANVIL_TRAIL_ALPHA = [0.7, 0.45] as const;
+export const ANVIL_TRAIL_UNTIL = 0.35;
+// Key repeat: no two bursts closer than this, per caret (as Fireworks).
+export const ANVIL_MIN_GAP_MS = 70;
+// Live sparks across every burst. A burst gets what is left, shrunk to fit;
+// with fewer than ANVIL_SPARK_MIN left it is skipped. Nothing in flight is
+// ever evicted (ARCHITECTURE, "Fireworks: the budget is the point").
+export const ANVIL_SPARK_BUDGET = 180;
+export const ANVIL_SPARK_MIN = 3;
+// The word a Space finished: at most this many characters back from it.
+export const ANVIL_WORD_MAX = 64;
 // Blocks of tail behind each falling spark. Each one is another fillRect per
 // spark per frame, so this is the single most expensive number here.
 export const FIREWORK_TRAIL_LEN = 2;
@@ -559,7 +606,7 @@ export const CARET_STATE_FIELDS = [
   "_smoothMoving", "_smoothLastT", "_catchUpBoost", "_typingBoostSm", "typingSpeedMod", "_glideV", "_glideRun",
   "_hotPrev", "_hotEmitFrom", "_hotActiveT", "_lastHotT", "hotBurns", "_hotShiftTick",
   "_hotEngulfUntil",
-  "_lastStardustT", "_lastSparkT", "_lastFireworkT",
+  "_lastStardustT", "_lastSparkT", "_lastFireworkT", "_lastAnvilT",
   "_tetherKey", "_tetherFrom", "_tetherTo", "_tetherSegs", "_tetherSegKey",
   "_tetherAnchorA", "_tetherAnchorB",
 ] as const;

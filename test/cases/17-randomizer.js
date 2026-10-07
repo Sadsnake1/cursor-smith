@@ -435,6 +435,12 @@ section("Randomizer: the preview on a phone");
   const vim = T.readableChars(370 - 56, step, T.VIM_LINES);
   ok("...with Vim (long lines): never fewer than READ_FEW to pick from", T.VIM_LINES.filter((l) => l.length <= vim).length >= T.READ_FEW, vim);
   ok("a desktop's stage (544px): every line, as before", T.readableChars(544 - 56, step, T.SCRIPT_LINES) === T.SCRIPT_MAX);
+  // A real phone's stage is narrower than the 370px it was tuned on: "only
+  // 4-5 lines displaying in the randomizer".
+  const narrow = T.readableChars(T.stageRoom(260), step, T.SCRIPT_LINES);
+  const shorts = T.SCRIPT_LINES.filter((l) => l.length <= T.SHORT_MAX);
+  ok("a narrow phone stage (260px): every short line can be picked, dozens of them", narrow >= T.SHORT_MAX && shorts.length >= 40 && shorts.every((l) => l.length <= narrow), [narrow, shorts.length]);
+  ok("...the text still a readable size for them (a phone's stage keeps more of its width)", T.stageRoom(260) / (step * narrow + 22) > 0.85 && T.stageRoom(260) === 260 - 36 && T.stageRoom(544) === 544 - 56, T.stageRoom(260) / (step * narrow + 22));
   ok("unmeasured (no width, no letters yet): every line", T.readableChars(0, step, T.SCRIPT_LINES) === T.SCRIPT_MAX && T.readableChars(300, 0, T.SCRIPT_LINES) === T.SCRIPT_MAX);
   const css = require("fs").readFileSync(require("path").join(__dirname, "..", "..", "styles.css"), "utf8");
   const rule = (sel) => { const i = css.indexOf(sel + " {"); return i < 0 ? "" : css.slice(i, css.indexOf("}", i)); };

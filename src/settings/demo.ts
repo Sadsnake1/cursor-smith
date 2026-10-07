@@ -315,13 +315,26 @@ export const SCRIPT_MAX = 44;
 // that short (Vim's), the READ_FEW shortest, a little smaller.
 export const READ_SCALE = 1.15;
 export const READ_FEW = 6;
+// The short lines' length: every one of them may be picked on any stage,
+// the text a little smaller than READ_SCALE on the narrowest. At
+// READ_SCALE alone a real phone's stage (narrower than the 370 px it was
+// tuned on) took lines of 19 letters or so: "only 4-5 lines displaying in
+// the randomizer", the short versions written for it all left out.
+export const SHORT_MAX = 27;
 // The longest line, in letters, a stage shows at READ_SCALE: `room` px
-// wide, `step` px a letter (the text's 22px of padding after it).
+// wide, `step` px a letter (the text's 22px of padding after it) - and
+// never shorter than the short lines (SHORT_MAX) or the READ_FEW shortest.
 export function readableChars(room: number, step: number, lines: string[]): number {
   if (!(room > 0) || !(step > 0) || !lines.length) return SCRIPT_MAX;
   const fit = Math.floor((room / READ_SCALE - 22) / step);
   const lens = lines.map((l) => l.length).sort((a, b) => a - b);
-  return Math.min(SCRIPT_MAX, Math.max(fit, lens[Math.min(lens.length, READ_FEW) - 1]));
+  return Math.min(SCRIPT_MAX, Math.max(fit, SHORT_MAX, lens[Math.min(lens.length, READ_FEW) - 1]));
+}
+// The room a stage gives the text: its width less the 18px it starts in
+// and a margin after - a narrower one on a phone's stage, where every
+// pixel is the text's size.
+export function stageRoom(width: number): number {
+  return width - (width < 420 ? 36 : 56);
 }
 
 // The preview's lines with Vim on (1.7.7): Vim's own jokes.
@@ -1046,7 +1059,7 @@ export class DemoStrip {
   private fitLine(d: Demo) {
     const stage = d.el.parentElement;
     const lines = d.vim ? VIM_LINES : SCRIPT_LINES;
-    d.fitN = readableChars(stage ? stage.clientWidth - 56 : 0, d.stepPx, lines);
+    d.fitN = readableChars(stage ? stageRoom(stage.clientWidth) : 0, d.stepPx, lines);
     if (d.n <= d.fitN) return;
     const pool = lines.filter((l) => l.length <= d.fitN && l !== d.line);
     if (!pool.length) return;
@@ -1070,7 +1083,7 @@ export class DemoStrip {
     // About the editor's own size (its 16px over the demo's 12): bigger read
     // as a banner ("make the text smaller", the user); smaller on a phone.
     // Down to 0.55 on a narrow stage, so the line it picked still fits.
-    const k = Math.max(0.55, Math.min(1.45, (stage.clientWidth - 56) / textW));
+    const k = Math.max(0.55, Math.min(1.45, stageRoom(stage.clientWidth) / textW));
     d.el.setCssStyles({ transform: `translateY(-50%) scale(${k.toFixed(3)})` });
     d.scaled = true;
   }

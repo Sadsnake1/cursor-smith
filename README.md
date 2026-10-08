@@ -46,7 +46,7 @@ Eleven of them, from subtle to absurd, and sounds on top. Each has its own switc
 
 | Effect | What it does |
 |---|---|
-| **Pop effects** | Letters pop out or rise as you type. When you delete, your cursor eats them, whatever its shape: Back-man gulps them, the Shredder cuts them into strips, the Portal swallows them. The letters can also burst or evaporate. Enter strikes lightning, Space sends fireworks, Rainbow colors it all. |
+| **Pop effects** | Letters pop out or rise as you type. When you delete, your cursor eats them, whatever its shape: Back-man gulps them, the Shredder cuts them into strips, the Portal swallows them. The letters can also burst or evaporate. Enter strikes lightning, Space sends fireworks and knocks anvil sparks off the word, Rainbow colors it all. |
 | **Typewriter** | The cursor strikes like a typewriter key: a springy dip that hits harder on capitals, an ink stamp on each letter, fresh ink that dries as you write, an x-out when you delete, a carriage return on Enter, a small push forward as you type. Mix any of them. |
 | **Sounds** | Real typewriters, mechanical keyboards, a kalimba and an actual horse as you type, each with its own Space, Backspace and Enter. |
 | **Pixel trail** | A puff of pixels wherever the cursor has just been, while you type, delete, or both. |
@@ -165,7 +165,7 @@ Five, all in the Command Palette, all take a hotkey. The Behavior page shows the
 
 ## Building from source
 
-A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (2,400 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
+A TypeScript project: `src/` holds the modules, `npm run build` bundles them into `main.js`, `npm run check` type-checks, `npm test` runs the suite (2,500 assertions) against the built bundle. [BUILDING.md](BUILDING.md) has the layout.
 
 ## Pairs with Word-Smith
 

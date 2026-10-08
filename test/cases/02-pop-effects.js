@@ -786,6 +786,49 @@ section("Typewriter's Ink stamp: the stamp is the letter (1.7.1)");
 }
 
 // ---------------------------------------------------------------------------
+section("Typewriter's Ink stamp: it stays on its letter when the line moves (2026-10-08)");
+{
+  // A centered line moves half a letter left with every key. The stamp was
+  // left where its letter was struck: its cover hid half of the letter and
+  // half of the next, slivers of both showing beside it.
+  const e = makeEngine({ typewriter: true, typewriterInk: true, typewriterInkMs: 400, typewriterInkSize: 1.3 });
+  const covers = [];
+  e.fontString = () => "normal normal 16px Mono";
+  e.ctx = { globalAlpha: 1, font: "", fillStyle: "", strokeStyle: "", lineWidth: 1, lineJoin: "", textAlign: "", textBaseline: "", save() {}, restore() {}, translate() {}, rotate() {}, scale() {},
+    measureText: () => ({ width: 9, fontBoundingBoxAscent: 14, fontBoundingBoxDescent: 4 }),
+    fillRect(x, y) { covers.push([x, y]); }, strokeText() {}, fillText() {} };
+  let shift = 0;
+  const doc = { text: "abc", sliceString(a, b) { return this.text.slice(a, b); } };
+  const view = { dom: { isConnected: true }, state: { doc }, coordsAtPos: (pos) => ({ left: 100 + 9 * pos + shift, right: 109 + 9 * pos + shift, top: 50, bottom: 74 }) };
+  e.particles = [];
+  e._cellBackground = () => "rgb(20, 20, 30)";
+  e.app = { workspace: { activeEditor: { editor: { cm: view } } } };
+  const real = performance.now;
+  const at = [];
+  try {
+    let t = 1000;
+    performance.now = () => t;
+    const draw = () => { covers.length = 0; t += 40; e.drawLettersParticles(); at.push(covers.length ? covers[0][0] : null); };
+    e.spawnInkStamp("c", { x: 118, top: 50, h: 24, pos: 2, fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal", textColor: "#ccc" });
+    draw();
+    // The next key: the centered line half a letter left.
+    doc.text = "abcd"; shift = -4.5;
+    draw();
+    // A letter typed before it (another cursor): its place rides the edit.
+    doc.text = "Xabcd";
+    e._recordEdit({ docChanged: true, view, state: { doc: { length: 5 } }, changes: { iterChanges(f) { f(0, 0, 0, 1); }, mapPos: (p) => p + 1 } });
+    draw();
+    // Its letter gone: it stays where it last was.
+    doc.text = "Xab";
+    draw();
+  } finally { performance.now = real; }
+  ok("struck on its letter's cell", at[0] === 117, at);
+  ok("...and still on it when the line moves half a letter left", at[1] === 112.5, at);
+  ok("...and when a letter typed before it moves it on", at[2] === 121.5, at);
+  ok("...and where it last was once its letter is gone", at[3] === 121.5, at);
+}
+
+// ---------------------------------------------------------------------------
 section("Typewriter's Ink stamp: it grows about the letter's own middle (1.7.1)");
 {
   // "On some fonts the ink stamp floats the letters up and down into

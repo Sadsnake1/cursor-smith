@@ -966,6 +966,11 @@ export const measureMethods = {
       r.anchor = u.changes.mapPos(r.anchor, -1);
       if (ranges.length) r.closeT = Math.min(r.closeT, now);
     }
+    // The ink stamps' letters ride the edit too (an insertion before one
+    // moves it on).
+    for (const p of this.particles || []) {
+      if (p.stamp && p.pos !== undefined && p.view === u.view) p.pos = u.changes.mapPos(p.pos, 1);
+    }
     this._lastEdit = { t: performance.now(), docLen: u.state.doc.length, ranges };
   },
 

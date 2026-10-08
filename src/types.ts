@@ -385,6 +385,11 @@ export interface LetterParticle {
   stamp?: boolean; fontWeight?: string; fontStyle?: string;
   // ...and the color behind the letter, to cover it while the stamp strikes.
   bg?: string | null;
+  // ...and the letter's place in the note (pos, in view), kept through edits
+  // (_recordEdit): the stamp is measured from it every frame, so it stays on
+  // its letter when typing moves the line - a centered one moves half a
+  // letter left with every key.
+  pos?: number; view?: EditorView;
 }
 // Typewriter's carriage return: a streak from the old line's end (x0) back
 // to its start (xs) at height y, and the spark at x0.

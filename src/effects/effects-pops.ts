@@ -136,6 +136,7 @@ export const effectsPopsMethods = {
     this.particles.push({
       bg,
       char, stamp: true,
+      pos: view && typeof anchor.pos === "number" ? anchor.pos : undefined, view: view || undefined,
       x: anchor.x, y: anchor.top,
       vx: 0, vy: 0, rotation: 0, alpha: TW_INK_ALPHA,
       lh: anchor.h || 20,
@@ -226,6 +227,14 @@ export const effectsPopsMethods = {
         if (t >= 1) return false;
         const size = p.fontSize || 16;
         const lh = p.lh || size * 1.4;
+        // On its letter, wherever the line has put it since: a centered line
+        // moves half a letter left with every key, and the stamp, left where
+        // its letter was struck, covered half of it and half the next
+        // (2026-10-08). Where it was struck while the letter is not there.
+        if (p.pos !== undefined && p.view && p.view.dom && p.view.dom.isConnected &&p.view.state.doc.sliceString(p.pos, p.pos + p.char.length) === p.char) {
+          const c = p.view.coordsAtPos(p.pos, 1);
+          if (c) { p.x = c.left; p.y = (c.top + c.bottom) / 2 - lh / 2; }
+        }
         const land = Math.min(1, t / TW_INK_LAND);
         ctx.save();
         ctx.font = this.fontString(size, p.fontFamily, p.bg ? p.fontWeight || "normal" : "bold", p.fontStyle || "normal");

@@ -117,6 +117,32 @@ section("Shredder and Vacuum: the runs");
     let q = ul.holePose(now);
     ok("Backspace on an Underline: the floor out, the letter dropping from the middle of its cell, its place to the floor kept (its own cell's left)", !!q && q.letters.length === 1 && q.letters[0].cx === 204.5 && q.letters[0].cy === 12 && q.letters[0].half === 4.8 && q.letters[0].ax === 200);
     {
+      // A word at once (Ctrl+Backspace, issue #50): the letters come nearest
+      // the caret first - the word's last letter first - and the floor is
+      // where the caret is after, the word's FIRST letter. Each keeps its
+      // place to that floor: drawn against it, every letter where it stood
+      // (it was anchored on the nearest letter, and the word fell a word's
+      // width left of itself, off the line's start).
+      const word = makeEngine({ cursorStyle: "Box", popEffects: true, rabbitHole: true });
+      word.styleFor = (k) => word.look[k];
+      word.fontString = () => "16px x";
+      word.getActiveColor = () => "#ccc";
+      word._holeBite();
+      const letters = ["d", "c", "b", "a"].map((char, k) => ({ char, x: 236 - 9 * (k + 1), w: 9 }));
+      word.spawnHoleMeal({ letters, forward: false, old: { top: 0, h: 24, textColor: "#eee", fontSize: 16 } });
+      const floorLeft = 200;
+      const at = word._hole.letters.map((l) => T.holeFall(l, 30, now, floorLeft).x);
+      ok("a word Backspace took at once: every letter anchored on the word's first cell, the floor's", word._hole.letters.every((l) => l.ax === 200), word._hole.letters.map((l) => l.ax));
+      ok("...each drawn where it stood against that floor (none shifted left of the line)", at.every((x, k) => Math.abs(x - word._hole.letters[k].cx) < 1e-9), at);
+      const fwd = makeEngine({ cursorStyle: "Box", popEffects: true, rabbitHole: true });
+      fwd.styleFor = (k) => fwd.look[k];
+      fwd.fontString = () => "16px x";
+      fwd.getActiveColor = () => "#ccc";
+      fwd._holeBite();
+      fwd.spawnHoleMeal({ letters: ["a", "b", "c"].map((char, k) => ({ char, x: 200 + 9 * k, w: 9 })), forward: true, old: { top: 0, h: 24, textColor: "#eee", fontSize: 16 } });
+      ok("Delete: the floor where the caret stays, the first letter's cell", fwd._hole.letters.every((l) => l.ax === 200));
+    }
+    {
       // The next key: the letter still going down is hurried, and gone
       // HOLE_RUSH_MS after it.
       const held = makeEngine({ cursorStyle: "Underline", popEffects: true, rabbitHole: true });
@@ -248,6 +274,15 @@ section("Shredder and Vacuum: drawn");
   calls.length = 0;
   T.EngineProto.drawHole.call(hp, ctx, 100, 22, 9, 2, "#f80", { letters: [{ ...h, cx: 104.5 - 18 }] }, T.HOLE_FALL_MS / 2);
   ok("...but never back under letters behind it (typed over again: a long bar under the new ones)", calls.some((c) => c[0] === "rect" && c.slice(1).join() === "100,22,9,2"));
+  // Issue #50: a Box still morphing into the floor (its top the line's
+  // top): the letters are cut at the floor it settles into, not at the
+  // Box's top - cut there, a word Ctrl+Backspace took was gone for three
+  // frames before it fell.
+  calls.length = 0;
+  T.EngineProto.drawHole.call(hp, ctx, 100, 2, 9, 22, "#f80", { letters: word }, 10, { x: 100, y: 22 });
+  const cuts = calls.filter((c) => c[0] === "rect" && c[4] >= 50);
+  ok("a Box still morphing: the letters cut at the floor it settles into (22), not at its top (2)", cuts.length === word.length && cuts.every((c) => c[2] + c[4] === 22) && calls.filter((c) => c[0] === "fillText").length === word.length, cuts);
+  ok("...and the floor drawn where the Box is now", calls.some((c) => c[0] === "rect" && c[1] === 100 && c[2] === 2 && c[4] === 22));
 }
 
 section("Shredder and Burst: the bits' cost");

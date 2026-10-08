@@ -162,7 +162,7 @@ export const effectsEatersMethods = {
       this.drawShreds(ctx, cut, shred, now);
       this.drawShredLine(ctx, r.x, r.y, r.w, r.h, paint, shred, now, stroke);
     } else if (hole) {
-      this.drawHole(ctx, r.x, r.y, r.w, r.h, paint, hole, now);
+      this.drawHole(ctx, r.x, r.y, r.w, r.h, paint, hole, now, form);
     } else {
       // Going back: the plain shape, between the eater's and its own, its
       // corners rounded as Rounded corners rounds it.

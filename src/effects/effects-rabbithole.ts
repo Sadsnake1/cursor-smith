@@ -140,8 +140,13 @@ export const effectsRabbitHoleMethods = {
     // From a glyph's middle to its foot (the baseline): about 0.3 of the font.
     const half = 0.3 * (old.fontSize || 16);
     const now = performance.now();
-    // The deletion's own cell - where the floor is now: the nearest letter's.
-    const ax = deleted.letters.length ? deleted.letters[0].x : undefined;
+    // The deletion's own cell - where the floor is now, the caret after it:
+    // the first letter Delete took, the last (leftmost) Backspace did. It was
+    // the nearest letter's, which for a word Backspace took at once (Ctrl+
+    // Backspace) is the word's LAST: every letter fell a word's width left
+    // of where it stood, off the line's start (issue #50).
+    const L = deleted.letters;
+    const ax = L.length ? (deleted.forward ? L[0].x : L[L.length - 1].x) : undefined;
     for (const l of deleted.letters.slice(0, MEAL_MAX)) {
       if (!l.char.trim()) continue;
       s.letters.push({ char: l.char, cx: l.x + l.w / 2, cy: old.top + h / 2, half, w: l.w, old, font, color, t0: now, ax });
@@ -184,14 +189,21 @@ export const effectsRabbitHoleMethods = {
   // - reaching along to the right under letters that stood away from it
   // (holeSpan), lit (HOLE_GLOW) while a letter passes. A letter's part
   // nearest the floor takes the cursor's color (HOLE_TINT).
-  drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number) {
-    const top = y;
-    if (this._hole) this._hole.floor = { x: x + w / 2, y: top, left: x };
+  // at: where the floor settles (the eater's form) while the cursor is
+  // still morphing into it - the letters fall to it and are cut at its top.
+  // Cut at the morphing rect's top, a Box's or a Line's (the line's top for
+  // EATER_IN_MS), every letter standing in the line was cut away until the
+  // cursor had flattened: a word Ctrl+Backspace took was gone for three
+  // frames before it fell (issue #50).
+  drawHole(this: CursorSmithPlugin, ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, paint: string | CanvasGradient | CanvasPattern, pose: HolePose, now: number, at?: { x: number; y: number }) {
+    const top = at ? at.y : y;
+    const left = at ? at.x : x;
+    if (this._hole) this._hole.floor = { x: left + w / 2, y: top, left };
     const rgb = parseColorTuple(typeof paint === "string" ? paint : this.getActiveColor()) || [255, 255, 255];
     const tint = (a: number) => `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`;
     let glow = 0, right = x + w;
     for (const l of pose.letters) {
-      const f = holeFall(l, top, now, x);
+      const f = holeFall(l, top, now, left);
       if (f.done) continue;
       glow = Math.max(glow, holeGlow(f.through));
       const reach = holeSpan((now - l.t0) / HOLE_FALL_MS);

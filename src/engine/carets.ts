@@ -730,9 +730,13 @@ export const caretsMethods = {
   },
 
   // Which surface a caret is on: the note (a CodeMirror caret, its place a
-  // number) or a plain text field (its place the field's own key).
+  // number) or a plain text field - the field itself, the element part of
+  // its place key ("el:start:end" or "el:node:offset", genericCaretPos), not
+  // the place within it. With the whole key every keystroke in a field read
+  // as arriving on another surface, and nothing of a move was drawn there:
+  // no glide, smear or letter popped outside the note (issue #49).
   _caretSurface(this: CursorSmithPlugin, c: CaretRecord): string {
-    return typeof c.pos === "string" ? c.pos : "note";
+    return typeof c.pos === "string" ? "field:" + c.pos.split(":")[0] : "note";
   },
 
   // The caret arriving on another surface - from the note into the command

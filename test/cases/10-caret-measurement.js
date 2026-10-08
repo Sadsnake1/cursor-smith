@@ -905,3 +905,15 @@ section("Another surface: the caret is there at once");
   e.commitMove(rec(300, 400, 13));
   ok("...and back into the note, at once again", e.animActive.x === 300 && e.smearQuad === null);
 }
+
+// ---------------------------------------------------------------------------
+section("caret surfaces: a field is one surface, wherever its caret (issue #49)");
+{
+  const p = Object.create(Plugin.prototype);
+  const s = (pos) => p._caretSurface({ pos });
+  ok("a note caret is on the note", s(12) === "note" && s(0) === "note");
+  ok("two places in one input are one surface", s("3:4:4") === s("3:7:7") && s("3:0:0") === s("3:12:12"));
+  ok("...and in one contenteditable", s("8:21:2") === s("8:22:5"));
+  ok("another field is another surface", s("3:4:4") !== s("5:4:4"));
+  ok("a field is not the note", s("3:4:4") !== "note");
+}

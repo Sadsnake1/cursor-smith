@@ -215,7 +215,9 @@ section("Randomizer: the pill's demo waits while its page is away");
   const run = (ms) => { for (let i = 0; i < ms / 16; i++) { const f = frames.shift(); if (!f) return false; t += 16; f(t); } return true; };
   // The text: a letter an element (Typewriter's ink is per letter).
   const written = () => text.children[0].children.map((c) => c.text).join("");
-  ok("it plays: frame after frame, the sentence written", run(1000) && written().length > 6, written());
+  // More than a few letters: the line and its pace are random (a typo or a
+  // long pause can leave six letters at one second - "Curslr").
+  ok("it plays: frame after frame, the sentence written", run(1000) && written().length > 3, written());
   demo.isConnected = false;
   const at = written();
   run(16);

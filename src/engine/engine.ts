@@ -1298,10 +1298,11 @@ export const engineMethods = {
   // document with no tick for WATCHDOG_STALE_MS is a dead loop: it is
   // restarted (enable), the console says so, and on the second stall the
   // native caret is handed back (hideNativeActive reads _watchdogGaveUp)
-  // until the plugin is next enabled by hand. Not a stall: a hidden
-  // document (no animation frames by design), or an interval that was
-  // itself late by as much - the main thread was blocked, and the loop
-  // never had a chance. Trips are forgotten after a healthy minute.
+  // until the loop has run a healthy minute again, or the plugin is next
+  // enabled. Not a stall: a hidden document (no animation frames by
+  // design), no window of ours focused, or an interval that was itself late
+  // by as much - the main thread was blocked, and the loop never had a
+  // chance. Trips are forgotten after a healthy minute.
   _watchdog(this: CursorSmithPlugin, now: number) {
     const lastRun = this._watchdogLastT || now;
     this._watchdogLastT = now;
@@ -1310,14 +1311,31 @@ export const engineMethods = {
     // animation frames stop there by design. It asked the canvas's document
     // alone, so a canvas left in a covered main window counted as "hidden"
     // while the pop-out in front had no cursor (issue #39).
-    const visible = this._loopDocs().some((d) => d && d.visibilityState === "visible");
-    if (!visible || now - lastRun > WATCHDOG_INTERVAL_MS * 1.5) {
+    const docs = this._loopDocs();
+    const visible = docs.some((d) => d && d.visibilityState === "visible");
+    // Nor while none of them has focus: on Linux (KDE Plasma, issue #51) a
+    // window on another desktop or behind another app still reads
+    // "visible" but gets no animation frames, so every switch away read as
+    // two stalls, and the native caret came back for good - "the original
+    // obsidian cursor always shows up after i switch to another window and
+    // then come back". A loop that really died is caught once a window of
+    // ours has focus again.
+    const focused = docs.some((d) => d && d.visibilityState === "visible" && (typeof d.hasFocus !== "function" || d.hasFocus()));
+    if (!visible || !focused || now - lastRun > WATCHDOG_INTERVAL_MS * 1.5) {
       this._lastTickT = now;
       return;
     }
     const silent = now - (this._lastTickT || now);
     if (silent < WATCHDOG_STALE_MS) {
-      if (this._watchdogTrips && now - (this._watchdogTripT || 0) > 60000) this._watchdogTrips = 0;
+      if (this._watchdogTrips && now - (this._watchdogTripT || 0) > 60000) {
+        this._watchdogTrips = 0;
+        // A healthy minute since: the loop draws again, so the native caret
+        // is hidden again - it stayed out until the plugin was toggled.
+        if (this._watchdogGaveUp) {
+          this._watchdogGaveUp = false;
+          try { this.applyBodyClasses(); } catch (e) { this._reportOnce("watchdog body classes", e); }
+        }
+      }
       return;
     }
     this._watchdogTrips = (this._watchdogTrips | 0) + 1;

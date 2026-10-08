@@ -923,6 +923,23 @@ section("the derived signature, the gear decision, the watchdog (1.5.8)");
     const off = mk(); off.canvasEngineActive = false; off.enable = () => { throw new Error("must not restart"); }; off._lastTickT = 1; off._watchdogLastT = 98000;
     off._watchdog(100000);
     ok("nor an engine that is off", !off._watchdogTrips);
+    // Issue #51 (KDE Plasma): a window away on another desktop or behind
+    // another app reads "visible" but gets no frames - every switch away
+    // tripped twice and handed the native caret back for good.
+    const away = mk(); away.canvasEngineActive = true; away.canvas = { ownerDocument: { visibilityState: "visible", hasFocus: () => false } };
+    away.enable = () => { throw new Error("must not restart"); };
+    let at = 100000; away._lastTickT = at;
+    for (let i = 0; i < 6; i++) { at += 2000; away._watchdog(at); }
+    ok("a visible window that has no focus never trips (Linux: no frames for a window away)", !away._watchdogTrips && !away._watchdogGaveUp && away._lastTickT === at);
+    const healed = mk(); healed.canvasEngineActive = true; healed.canvas = { ownerDocument: { visibilityState: "visible", hasFocus: () => true } };
+    let healedClasses = 0; healed.applyBodyClasses = () => { healedClasses++; }; healed.enable = () => {}; healed._reportOnce = () => {};
+    let ht = 100000; healed._lastTickT = ht;
+    ht += 2000; healed._watchdog(ht); ht += 2000; healed._watchdog(ht);
+    ht += 2000; healed._watchdog(ht); ht += 2000; healed._watchdog(ht);
+    ok("(stalls with focus: the native caret handed back)", healed._watchdogGaveUp === true);
+    healedClasses = 0;
+    for (let i = 0; i < 32; i++) { ht += 2000; healed._lastTickT = ht; healed._watchdog(ht); }
+    ok("...and taken back after a healthy minute of frames - no toggle needed", healed._watchdogGaveUp === false && healed._watchdogTrips === 0 && healedClasses === 1, { gaveUp: healed._watchdogGaveUp, classes: healedClasses });
     ok("the watchdog runs on an interval from onload", /this\._watchdog\(performance\.now\(\)\), WATCHDOG_INTERVAL_MS\)/.test(src("plugin.ts")));
     ok("the tick stamps its time for it", /this\._lastTickT = performance\.now\(\);/.test(src("engine.ts")));
   }

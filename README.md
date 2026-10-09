@@ -18,12 +18,10 @@ Writers who want a screen worth looking at, anyone who keeps losing their caret,
 
 Every effect has its own switch. Reduced motion is respected out of the box. It's free. It swooshes. And it looks cool! It also makes you a better writer!(maybe)
 
-https://github.com/user-attachments/assets/7eab19cc-b7ac-4476-bc40-514b4e75cf61
-
-
-
-https://github.com/user-attachments/assets/1781c934-c1a6-475f-8f21-dbf5d81bc2b0
-
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=RQJtw-SdTc0"><img src="https://img.youtube.com/vi/RQJtw-SdTc0/maxresdefault.jpg" alt="Watch Cursor-Smith on YouTube" width="100%"></a>
+  <p><a href="https://www.youtube.com/watch?v=RQJtw-SdTc0">▶ Watch it on YouTube</a></p>
+</div>
 
 
 ## Install

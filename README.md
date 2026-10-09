@@ -182,7 +182,7 @@ Cursor-Smith is MIT, and the engine has been carried to other editors and forked
 
 ## Questions, ideas, bugs
 
-Found a bug, or want a new effect? [Write it here](https://github.com/Sadsnake1/cursor-smith/issues) or on Reddit at `u/No_Ratio_2483`.
+Found a bug, or want a new effect? [Write it here](https://github.com/Sadsnake1/cursor-smith/issues).
 
 Free and MIT. If it's made your writing better, a coffee helps me keep going. Cheers!
 

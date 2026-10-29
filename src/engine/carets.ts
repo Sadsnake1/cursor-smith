@@ -390,6 +390,12 @@ export const caretsMethods = {
     if (!this.lastActive) {
       this.lastActive = caret;
       this.pending = null;
+      // Back from hidden - focus was elsewhere, or the caret scrolled out of
+      // view: the blink starts again from lit, both ways of "Don't blink
+      // while typing", as a move does. Its clock had run on while the caret
+      // was away, and clicking back in at the same spot moves nothing, so it
+      // came back wherever that clock stood - dark, half the time (issue #55).
+      if (this._caretPass !== "secondary") this._blinkAnchor = this.lastMoveTime = performance.now();
       return;
     }
 

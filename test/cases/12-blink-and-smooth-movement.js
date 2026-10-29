@@ -754,3 +754,41 @@ section("Don't blink while typing, on and off (1.7.3, issue #7)");
     ok("...never under 450 ms", short.blinkPhase(5000 + 440) === 1 && short.blinkPhase(5000 + 450 + fade + 10) < 1);
   }
 }
+
+// ---------------------------------------------------------------------------
+section("The blink starts from lit when the caret comes back (issue #55)");
+{
+  // Focus elsewhere hides the caret; clicking back in at the same spot moves
+  // nothing, so the blink came back wherever its clock had run on to -
+  // sometimes dark right after the click.
+  const PERIOD = 2500;
+  const mk = (over) => { const e = makeEngine(Object.assign({ blinkingEnabled: true, blinkSpeed: 1, blinkDelayMs: 0, blinkStopAfter: 0, smoothEnabled: false }, over)); e.lastMoveTime = 0; e._blinkAnchor = 0; return e; };
+  const real = performance.now;
+  const at = { x: 100, top: 200, bottom: 220, focused: true };
+  try {
+    for (const hold of [true, false]) {
+      const e = mk({ smoothStopBlinking: hold });
+      let t = 1000;
+      performance.now = () => t;
+      e.updateActivePoint(at);
+      e.updateActivePoint(at);
+      // Away long enough that the old clock is dark when the caret comes back.
+      e.updateActivePoint(null);
+      ok(`"Don't blink while typing" ${hold ? "on" : "off"}: hidden, the caret has no point`, e.lastActive === null);
+      t = 50 * PERIOD;
+      while (e.blinkPhase(t) > 0.01) t += 10;
+      e.updateActivePoint(at);
+      ok("...back at the same spot, it shows lit at once", e.blinkPhase(t) === 1 && e.blinkPhase(t + 300) === 1);
+      let dark = 0;
+      for (let d = 0; d < PERIOD; d += 5) if (e.blinkPhase(t + d) < 0.02) { dark = d; break; }
+      ok("...and blinks again on schedule (" + dark + " ms on)", dark > (hold ? 450 : 0) && dark < PERIOD);
+    }
+    // A secondary caret appearing is not the caret coming back.
+    const s = mk({ smoothStopBlinking: true });
+    s.lastMoveTime = 123; s._caretPass = "secondary";
+    s.updateActivePoint(at);
+    ok("a secondary caret appearing leaves the blink's clock alone", s.lastMoveTime === 123);
+  } finally {
+    performance.now = real;
+  }
+}

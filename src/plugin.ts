@@ -139,6 +139,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _inkTrimFront: EffectsMethods["_inkTrimFront"];
   declare _inkLocate: EffectsMethods["_inkLocate"];
   declare inkWetness: EffectsMethods["inkWetness"];
+  declare _inkColorAt: EffectsMethods["_inkColorAt"];
   declare drawFreshInk: EffectsMethods["drawFreshInk"];
   declare _evaporateOn: EffectsMethods["_evaporateOn"];
   declare _deletionFxOn: EffectsMethods["_deletionFxOn"];

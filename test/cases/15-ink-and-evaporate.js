@@ -542,3 +542,36 @@ section("An input method's commit is typing (issue #38)");
   realInk.call(ink, pv, rec(done.length, done.length, 0), before.length, done.length);
   ok("Fresh ink: the letter typed before the pinyin stays wet, the characters join it", ink.inkMarks.length === 1 && ink.inkMarks[0].text === "a" + hanzi && ink.inkMarks[0].from === 3 && ink.inkMarks[0].times.length === 3, ink.inkMarks.map((m) => [m.from, m.text]));
 }
+
+// ---------------------------------------------------------------------------
+section("Fresh ink under the Ink stamp (issue #56)");
+{
+  // The stamp covers its letter's cell and strikes the letter again - in the
+  // text's color, over the ink: the letter showed the ink only once the
+  // stamp had settled.
+  const stampFill = (settings, times) => {
+    const e = makeEngine(Object.assign({ typewriter: true, typewriterInk: true, typewriterInkMs: 400, typewriterFreshInk: true, typewriterFreshInkMs: 1500, typewriterFreshInkStrength: 1 }, settings));
+    const ctx = Object.assign(textCtx(), { fillRect() {}, strokeText() {}, strokeStyle: "", lineJoin: "", lineWidth: 1 });
+    e.ctx = ctx; e._canvasDpr = 1; e._canvasRect = null;
+    const vw = Object.assign(mkView("abc", 3), { dom: { isConnected: true } });
+    e.app = { workspace: { activeEditor: { editor: { cm: vw } } } };
+    e._inkView = vw;
+    e._cellBackground = () => "rgb(20, 20, 30)";
+    e.particles = [];
+    const now = performance.now();
+    e.inkMarks = [{ from: 0, text: "abc", times: times || [now, now, now], color: "#ff0000", textColor: "#cccccc", fontSize: 16, fontFamily: "Mono", fontWeight: "normal", fontStyle: "normal" }];
+    e.spawnInkStamp("c", Object.assign({ x: 120, top: 50, h: 24, pos: 2 }, last));
+    e.drawFreshInk();
+    ctx.calls.length = 0;
+    e.drawLettersParticles();
+    const c = ctx.calls.find((k) => k.t === "c");
+    return c && c.fill;
+  };
+  ok("wet: the stamp is struck in the ink's color", stampFill({}) === "rgb(255, 0, 0)", stampFill({}));
+  ok("...at the ink's strength, over the text's color", stampFill({ typewriterFreshInkStrength: 0.8 }) === "rgb(245, 41, 41)", stampFill({ typewriterFreshInkStrength: 0.8 }));
+  const now = performance.now();
+  ok("its letter dry: the text's color", stampFill({}, [now, now, now - 5000]) === "#cccccc");
+  ok("Fresh ink off: the text's color, as before", stampFill({ typewriterFreshInk: false }) === "#cccccc");
+  ok("Keep text color: the text's color - the stamp's bold is that look", stampFill({ typewriterFreshInkText: true }) === "#cccccc");
+  ok("with Gradient on: the ramp's color at the letter, as the ink draws it", /^rgb\(/.test(stampFill({ gradientEnabled: true })) && stampFill({ gradientEnabled: true }) !== "#cccccc");
+}

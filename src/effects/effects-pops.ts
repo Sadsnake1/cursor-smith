@@ -231,9 +231,13 @@ export const effectsPopsMethods = {
         // moves half a letter left with every key, and the stamp, left where
         // its letter was struck, covered half of it and half the next
         // (2026-10-08). Where it was struck while the letter is not there.
+        let color = p.color;
         if (p.pos !== undefined && p.view && p.view.dom && p.view.dom.isConnected &&p.view.state.doc.sliceString(p.pos, p.pos + p.char.length) === p.char) {
           const c = p.view.coordsAtPos(p.pos, 1);
           if (c) { p.x = c.left; p.y = (c.top + c.bottom) / 2 - lh / 2; }
+          // Wet with Fresh ink: struck in the ink's color, the letter's own
+          // under the cover (issue #56).
+          if (p.view === this._inkView) color = this._inkColorAt(p.pos, p.color) || color;
         }
         const land = Math.min(1, t / TW_INK_LAND);
         ctx.save();
@@ -270,7 +274,7 @@ export const effectsPopsMethods = {
           p.alpha = TW_INK_ALPHA * (1 - easeInOutSine(Math.min(1, t / TW_INK_FADE)));
         }
         ctx.globalAlpha = Math.max(0, p.alpha);
-        ctx.fillStyle = p.color;
+        ctx.fillStyle = color;
         ctx.translate(cx, cy);
         ctx.scale(grow, grow);
         ctx.translate(-cx, -cy);
@@ -278,7 +282,7 @@ export const effectsPopsMethods = {
         ctx.textBaseline = "alphabetic";
         const weight = p.bg ? size * TW_INK_WEIGHT * Math.pow(1 - land, 2) : 0;
         if (weight > 0.05) {
-          ctx.strokeStyle = p.color;
+          ctx.strokeStyle = color;
           ctx.lineJoin = "round";
           ctx.lineWidth = weight;
           ctx.strokeText(p.char, p.x, baseline);

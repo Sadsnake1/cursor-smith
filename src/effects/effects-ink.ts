@@ -22,6 +22,7 @@
 // in the text's color, the stroke thinning as the letter dries (0.5 px at
 // full strength: 1.1 read as bold, the user said too bold).
 import { easeInOutSine } from "../util/motion";
+import { parseColorTuple } from "../util/color";
 import type { EditorView } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
 import type { CaretRecord, InkMark } from "../types";
@@ -39,6 +40,14 @@ const INK_HOLD = 0.3;
 export const INK_SPREAD_PX = 0.5;
 // With Gradient on, the ramp loops once every this many letters.
 export const INK_RAMP_SPAN = 10;
+
+// The drying time and the wet ink's strength, as the look has them.
+function inkDrying(look: CursorSmithPlugin["look"]): { ms: number; strength: number } {
+  return {
+    ms: Math.max(100, Math.min(10000, Number(look.typewriterFreshInkMs) || 1500)),
+    strength: Math.max(0, Math.min(1, Number(look.typewriterFreshInkStrength ?? 0.8))),
+  };
+}
 
 export const effectsInkMethods = {
   // From resolveHoldChar, where a keystroke's insertion is known: `last` is
@@ -152,6 +161,29 @@ export const effectsInkMethods = {
     return 1 - easeInOutSine((u - INK_HOLD) / (1 - INK_HOLD));
   },
 
+  // The color the wet ink shows the letter at `pos` in now, over its text
+  // color `base`: the ink drawn at its wetness over the letter, mixed. For
+  // the Ink stamp, which covers the letter's cell and strikes it again - in
+  // the text's color, so the ink came back only once the stamp had settled
+  // (issue #56). Null when the letter is not wet, or the ink is the text's
+  // own color (Keep text color: the stamp's bold is that look already).
+  // drawFreshInk has brought the marks up to date this frame.
+  _inkColorAt(this: CursorSmithPlugin, pos: number, base: string): string | null {
+    if (!this.look.typewriter || !this.look.typewriterFreshInk || this.look.typewriterFreshInkText) return null;
+    const { ms, strength } = inkDrying(this.look);
+    for (const m of this.inkMarks) {
+      const i = pos - m.from;
+      if (i < 0 || i >= m.text.length) continue;
+      const a = strength * this.inkWetness(performance.now() - m.times[i], ms);
+      const ink = this.look.gradientEnabled ? this.sampleRamp(pos / INK_RAMP_SPAN, true) : parseColorTuple(m.color);
+      const under = parseColorTuple(base);
+      if (!(a > 0) || !ink || !under) return null;
+      const mix = (k: number) => Math.round(under[k] + (ink[k] - under[k]) * a);
+      return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
+    }
+    return null;
+  },
+
   drawFreshInk(this: CursorSmithPlugin) {
     const ctx = this.ctx;
     if (!ctx || !this.inkMarks.length) return;
@@ -160,8 +192,7 @@ export const effectsInkMethods = {
     const doc = view.state.doc;
     const head = view.state.selection.main.head;
     const now = performance.now();
-    const ms = Math.max(100, Math.min(10000, Number(this.look.typewriterFreshInkMs) || 1500));
-    const strength = Math.max(0, Math.min(1, Number(this.look.typewriterFreshInkStrength ?? 0.8)));
+    const { ms, strength } = inkDrying(this.look);
     const keepText = !!this.look.typewriterFreshInkText;
     const ramp = !keepText && !!this.look.gradientEnabled;
     const dpr = this._canvasDpr || 1;

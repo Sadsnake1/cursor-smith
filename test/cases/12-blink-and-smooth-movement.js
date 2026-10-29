@@ -548,7 +548,7 @@ section("keeping up with a held key, and what the smooth controls do (1.7.1)");
     } finally { performance.now = real; }
   };
   // A 300 px jump: ms until 95% of it is covered.
-  const jump = (catchUpSpeed) => run({ catchUpSpeed }, (e, frame, now) => {
+  const jump = (catchUpSpeed, over = {}) => run(Object.assign({ catchUpSpeed }, over), (e, frame, now) => {
     const t0 = now();
     e.lastActive = Object.assign({}, e.lastActive, { x: 400 }); e.lastMoveTime = t0;
     for (let i = 0; i < 400; i++) { const t = frame(); if (400 - e.animActive.x <= 15) return t - t0; }
@@ -578,6 +578,14 @@ section("keeping up with a held key, and what the smooth controls do (1.7.1)");
   ok("a jump glides at Catch-up speed: ~0.3 s at the slow end, ~0.1 s at the default, ~35 ms at the fast end",
      slow > 250 && slow < 350 && mid > 80 && mid < 125 && fast > 20 && fast < 50, { slow, mid, fast });
   ok("...a spread you can feel: the slow end takes several times as long", slow > fast * 5, { slow, fast });
+  // Issue #59: more snap. The slider runs on to 1.00 on the same curve.
+  const top = jump(1);
+  ok("Glide speed 1.00: a jump lands in a frame or two (" + top.toFixed(1) + " ms)", top < 20 && top < fast / 1.5, { top, fast });
+  ok("...the panel's slider reaches it", (() => { const s = require("fs").readFileSync(srcPath("settings-tab.ts"), "utf8"); return s.includes(`"catchUpSpeed", [0.30, 1.0, 0.05]`); })());
+  // Keep up with typing capped every move at Typing glide, read on the Glide
+  // speed's scale: a Glide speed above it was slowed down to it.
+  const capped = jump(1, { smoothAdaptive: true, maxCatchUpSpeed: 0.5 }), capped8 = jump(0.8, { smoothAdaptive: true, maxCatchUpSpeed: 0.5 });
+  ok("...and Keep up with typing never slows it to a lower Typing glide", Math.abs(capped - top) < 1e-6 && Math.abs(capped8 - fast) < 1e-6, { capped, top, capped8, fast });
   const on = hold({ smoothAdaptive: true, maxCatchUpSpeed: 1 }), onLow = hold({ smoothAdaptive: true, maxCatchUpSpeed: 0.5 });
   ok("Speed up when typing fast, at the top of Max catch-up speed: a held key leaves no gap", on < 0.1, on);
   ok("...at its low end a glide shows, about a letter", onLow > 0.6 && onLow < 1.4, onLow);

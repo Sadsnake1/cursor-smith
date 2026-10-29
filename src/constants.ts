@@ -641,9 +641,11 @@ export const KEY_MOVE_MS = 250;
 
 // Smooth movement's rates, per second (the glide closes 1 - e^(-rate x dt)
 // of the gap each frame; 95% of a move takes about 3 / rate). Catch-up speed
-// runs its slider 0.30 - 0.80 over SMOOTH_RATE_MIN - SMOOTH_RATE_MAX on an
+// runs 0.30 - 0.80 over SMOOTH_RATE_MIN - SMOOTH_RATE_MAX on an
 // exponential scale: a jump glides ~0.3 s at the slow end, ~0.1 s at the
-// default 0.55 and ~35 ms at the fast end (it was a linear 10 - 27 per
+// default 0.55 and ~35 ms at 0.80. The slider goes on to 1.00 on the same
+// curve (issue #59, "more snap"): ~215 a second, a jump in a frame or two
+// (it was a linear 10 - 27 per
 // second, drowned by the typing speed-up on every jump - "they don't do
 // much"; a jump then took ~33 ms whatever the slider said).
 // Max catch-up speed sets the typing glide, 0.50 - 1.00 over

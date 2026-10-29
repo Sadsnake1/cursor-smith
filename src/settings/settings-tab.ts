@@ -1640,7 +1640,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     // a second, weaker speed; its key stays in the settings, unread, and the
     // card still owns it, so Reset puts it back like the rest.
     owns("smoothness");
-    smooth.push(slider("Glide speed", "How fast the cursor glides to a new spot - a click, a jump, Enter. Low floats, high snaps.", "catchUpSpeed", [0.30, 0.80, 0.05], { depth: 1, when: gliding }));
+    smooth.push(slider("Glide speed", "How fast the cursor glides to a new spot - a click, a jump, Enter. Low floats, high snaps.", "catchUpSpeed", [0.30, 1.0, 0.05], { depth: 1, when: gliding }));
     smooth.push(dropdown("Glide style", "Ease out lands softly. Smooth starts softly too. Springy overshoots and settles. Linear stops dead.", "smoothStyle",
       { ease: "Ease out", smooth: "Smooth", springy: "Springy", linear: "Linear" }, { depth: 1, when: gliding }));
     // Max catch-up speed is meaningless on its own - it is only ever read

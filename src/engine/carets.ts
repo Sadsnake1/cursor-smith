@@ -559,7 +559,9 @@ export const caretsMethods = {
       // and Catch-up speed hardly showed: a 300 px jump took 58 ms at its
       // slowest and 17 at its fastest ("they don't do much", 2026-09-27).
       const typing = this._keyStepping(now);
-      const maxMod = this.look.maxCatchUpSpeed / Math.max(0.01, this.look.catchUpSpeed);
+      // Never under 1: a Glide speed above Typing glide (it runs to 1.00 since
+      // issue #59) is not slowed by the speed-up - the typing ramp stays off.
+      const maxMod = Math.max(1, this.look.maxCatchUpSpeed / Math.max(0.01, this.look.catchUpSpeed));
       if (typing) {
         // Reach the cap after ~0.12 s of sustained input. Slower ramps feel
         // nice for a single keypress but let the cursor fall several glyphs
@@ -568,7 +570,7 @@ export const caretsMethods = {
       } else {
         this.typingSpeedMod = Math.max(this.typingSpeedMod - (maxMod - 1) * 2 * dt, 1);
       }
-      targetSpeed = Math.min(this.look.maxCatchUpSpeed, targetSpeed * this.typingSpeedMod);
+      targetSpeed = Math.max(targetSpeed, Math.min(this.look.maxCatchUpSpeed, targetSpeed * this.typingSpeedMod));
 
       // Backlog drain: during sustained input (key repeat, held arrows), if
       // the animated cursor has fallen more than ~one glyph behind the real
@@ -612,7 +614,7 @@ export const caretsMethods = {
 
     // Exponential approach with a time constant, so the feel is identical at
     // 60/120/144 Hz. RATE_SCALE maps the existing setting ranges
-    // (catchUpSpeed 0.30-0.80, smoothness 0.05-0.30) onto visible settle
+    // (catchUpSpeed 0.30-1.00, smoothness 0.05-0.30) onto visible settle
     // times of roughly 100-360 ms to 95% of the way there for single moves;
     // the adaptive typingBoost can multiply that by up to 4x under sustained
     // typing so the cursor keeps pace with key repeat.

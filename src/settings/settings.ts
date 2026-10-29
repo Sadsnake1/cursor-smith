@@ -425,7 +425,7 @@ export const DEFAULT_SETTINGS = {
   smoothEnabled: false,
   smoothStopBlinking: true, 
   smoothness: 0.15,          // 5-30% range (0.05 - 0.30)
-  catchUpSpeed: 0.55,        // 30-80% range (0.30 - 0.80)
+  catchUpSpeed: 0.55,        // 30-100% range (0.30 - 1.00)
   maxCatchUpSpeed: 0.85,     // 50-100% range (0.50 - 1.00)
   smoothAdaptive: true,      // Adaptive speed toggle
   smoothStyle: "ease",       // Glide style: "ease" (ease out), "smooth" (a spring, no overshoot), "springy" (a spring that overshoots a little), "linear" (one speed, a dead stop)

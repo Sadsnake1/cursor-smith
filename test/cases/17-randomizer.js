@@ -14,7 +14,7 @@ const effectsOn = (l) => T.ROLL_EFFECTS.filter((k) => l[k]).length;
 // Every slider's range, as the panel has them: a roll is one the panel
 // could have made.
 const RANGES = {
-  caretWidthPx: [0.5, 7], boxHollowWidth: [0.5, 6], blinkSpeed: [0.1, 3], blinkFade: [0.05, 0.5], catchUpSpeed: [0.3, 0.8],
+  caretWidthPx: [0.5, 7], boxHollowWidth: [0.5, 6], blinkSpeed: [0.1, 3], blinkFade: [0.05, 0.5], catchUpSpeed: [0.3, 1],
   thunderstrikeSize: [1, 5], thunderstrikeStrength: [0.1, 1], fireworksQuantity: [0.2, 3],
   typewriterDepth: [5, 40], typewriterBounce: [0, 2], typewriterSquash: [0, 40], typewriterStrikeMs: [120, 600], typewriterInkSize: [1, 2],
   typewriterSoundVolume: [0, 100], flameTrailDensity: [0, 3], flameTrailLifeMs: [100, 2000], flameTrailPixelSize: [1, 12], flameTrailGravity: [0, 1],

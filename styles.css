@@ -941,22 +941,6 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   height: 15px;
 }
 
-/* --- The footer: the version, muted, under the pages --- */
-.setting-item.cursor-smith-footer {
-  border-top: none;
-  padding: 14px 0 0;
-  justify-content: flex-end;
-}
-.setting-item.cursor-smith-footer .setting-item-name:empty {
-  display: none;
-}
-.setting-item.cursor-smith-footer .setting-item-description {
-  padding-top: 0;
-  font-size: var(--font-ui-smaller);
-  color: var(--text-faint);
-  text-align: right;
-}
-
 /* --- About: what's new, built in; the version above, the notes in a box that scrolls --- */
 .setting-item.cursor-smith-about-notes-row {
   display: block;

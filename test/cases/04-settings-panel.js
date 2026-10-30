@@ -1258,9 +1258,8 @@ section("settings panel: the whole tree");
   const sections = [...new Set(cua.map(sectionOf))];
   ok("the header has no heading of its own",
      sections[0] === null, sections[0]);
-  const foot = cua[cua.length - 1];
-  ok("the version is a muted footer line under the pages, out of search",
-     foot.settingEl.classes.includes("cursor-smith-footer") && foot.desc === "Cursor-Smith 0.0.0-test" && foot.def.searchable === false, foot.desc);
+  ok("no version line under the pages: About's entry shows the version",
+     !cua.some((r) => /^Cursor-Smith [0-9]/.test(r.desc || "")) && cua.pages[cua.pages.length - 1].displayValue === "0.0.0-test", cua[cua.length - 1].desc);
   ok("...then Behavior and the look cards",
      sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer,About", sections);
   const names = cua.map((r) => r.name);

@@ -142,7 +142,6 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     if (vim) items.push(...this.vimDefinitions());
     else items.push(...this.normalDefinitions());
     items.push(this.aboutPage());
-    items.push(this.footerRow());
     return this.translated(items);
   }
 
@@ -169,7 +168,9 @@ export class CursorSmithSettingTab extends PluginSettingTab {
   // About, the last page, as Word-Smith has one: what's new in this
   // version, built in (about.ts), and the links - the video, the docs, a
   // bug report with the versions filled in, Word-Smith, a coffee. They open
-  // in the browser; nothing is fetched. Its entry shows the version.
+  // in the browser; nothing is fetched. Its entry shows the version - the
+  // only place the settings show it (the line under the pages went with
+  // About; Community plugins lists it too).
   aboutPage(): SettingDefinitionPage {
     const version = this.plugin.manifest?.version ?? "";
     const os = Platform.isIosApp ? "iOS" : Platform.isAndroidApp ? "Android" : Platform.isMacOS ? "macOS" : Platform.isWin ? "Windows" : Platform.isLinux ? "Linux" : "";
@@ -208,23 +209,6 @@ Cursor-Smith ${version} · Obsidian ${String(apiVersion || "")}${os ? " · " + o
       link("Word-Smith", "My other plugin: a writing studio inside your vault.", t("Watch Word-Smith"), WORD_SMITH_URL),
       link("Support Cursor-Smith", "Cursor-Smith is free. A coffee keeps it going.", t("Buy me a coffee"), FUNDING_URL, "cursor-smith-about-coffee"),
     ])], () => version);
-  }
-
-  // The version, a muted line under the pages. Not a heading: Obsidian's
-  // guidelines ask plugins not to head their settings with their own name,
-  // and Community plugins lists the version anyway. Read off the manifest,
-  // so a release is a one-line edit in manifest.json.
-  footerRow(): SettingDefinitionRender {
-    const plugin = this.plugin;
-    return {
-      name: "",
-      desc: `Cursor-Smith ${plugin.manifest?.version ?? ""}`.trim(),
-      searchable: false,
-      render: (setting) => {
-        this.resetRow(setting);
-        setting.settingEl.addClass("cursor-smith-footer");
-      },
-    };
   }
 
   // -------------------------------------------------------------------------
@@ -628,7 +612,8 @@ Cursor-Smith ${version} · Obsidian ${String(apiVersion || "")}${os ? " · " + o
       if (!VIM_MODE_KEYS.includes(plugin._vimEditMode)) plugin._vimEditMode = "normal";
       items.push(...this.vimModeRows(plugin._vimEditMode));
     }
-    // No heading: the version is the footer (footerRow).
+    // No heading: the version is on About's entry (aboutPage). It was a
+    // muted line under the pages too, until About.
     return {
       type: "group",
       cls: "cursor-smith-global",

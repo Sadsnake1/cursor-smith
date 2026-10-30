@@ -191,12 +191,12 @@ section("the plugin review's rules (static styles, settings headings)");
   }
   const ov = ruleFor(css, ".cursor-smith-torch-overlay {");
   ok("styles.css collapses the torch overlay too", has(ov, "width: 0") && has(ov, "height: 0") && has(ov, "position: fixed"));
-  ok("the footer names the plugin, with the manifest's version, and no card is headed by it",
-     /desc: `Cursor-Smith \$\{plugin\.manifest\?\.version/.test(js) && !/heading: `Cursor-Smith/.test(js));
+  ok("no version line under the pages (About's entry shows it), and no card is headed by the plugin's name",
+     !js.includes("cursor-smith-footer") && js.includes("aboutPage") && !/heading: `Cursor-Smith/.test(js));
   for (const cls of ["cursor-smith-vim-status", "cursor-smith-note-row", "cursor-smith-note-warning",
                      "cursor-smith-section", "cursor-smith-sub", "cursor-smith-subsection-row", "cursor-smith-reduced-notice",
                      "cursor-smith-mode-tabs", "cursor-smith-mode-tab", "cursor-smith-page-icon", "cursor-smith-chip", "cursor-smith-rail",
-                     "cursor-smith-pcard", "cursor-smith-pcard-use", "cursor-smith-pcard-caret", "cursor-smith-tick", "cursor-smith-alert", "cursor-smith-footer", "cursor-smith-pcard-caret-text", "cursor-smith-pcard-ghost", "cursor-smith-pcard-particle", "cursor-smith-value-icon", "cursor-smith-iconed", "cursor-smith-prompt-field", "cursor-smith-needs-hint", "cursor-smith-reset-link"]) {
+                     "cursor-smith-pcard", "cursor-smith-pcard-use", "cursor-smith-pcard-caret", "cursor-smith-tick", "cursor-smith-alert", "cursor-smith-pcard-caret-text", "cursor-smith-pcard-ghost", "cursor-smith-pcard-particle", "cursor-smith-value-icon", "cursor-smith-iconed", "cursor-smith-prompt-field", "cursor-smith-needs-hint", "cursor-smith-reset-link"]) {
     ok(`styles.css has .${cls}`, new RegExp("\\." + cls + "(?![\\w-])").test(css));
     ok(`...which main.js uses`, js.includes(cls));
   }

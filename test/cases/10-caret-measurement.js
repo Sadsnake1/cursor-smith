@@ -917,3 +917,50 @@ section("caret surfaces: a field is one surface, wherever its caret (issue #49)"
   ok("another field is another surface", s("3:4:4") !== s("5:4:4"));
   ok("a field is not the note", s("3:4:4") !== "note");
 }
+
+// ---------------------------------------------------------------------------
+section("Arabic and English on one line (issue #57)");
+{
+  // Typing a run in the other direction - English at the end of an Arabic
+  // line, Arabic at the end of an English one - each letter goes in at the
+  // caret and pushes the run away from it: the caret stands still on screen,
+  // and read as no move, no letter effect played.
+  const step = (from, to) => {
+    const e = makeEngine({});
+    const got = { held: 0, moved: 0, still: 0 };
+    e.resolveHoldChar = () => { got.held++; return "a"; };
+    e.commitMove = () => { got.moved++; };
+    e._deletionStill = () => { got.still++; };
+    e.pending = null; e.lastActive = from; e.trail = [];
+    e._keyMoveT = performance.now();
+    e.updateActivePoint(to);
+    return got;
+  };
+  const at = (x, pos, docLen) => ({ x, top: 50, bottom: 74, w: 2, h: 24, pos, assoc: 0, docLen, focused: true });
+  const typed = step(at(453.6, 30, 40), at(453.6, 31, 41));
+  ok("a letter typed with the caret standing still is a keystroke: held, committed", typed.held === 1 && typed.moved === 1 && typed.still === 0, typed);
+  const across = step(at(300, 12, 40), at(300, 14, 40));
+  ok("...not a move across hidden markup at the same spot (the note did not grow)", across.moved === 0, across);
+  const del = step(at(300, 12, 40), at(300, 12, 39));
+  ok("...nor Delete, the caret still and the note shorter: that is the still deletion", del.moved === 0 && del.still === 1, del);
+
+  // Where a letter is drawn. coordsAtPos(pos, 1) is the caret before it -
+  // the letter's right edge when it runs right to left - and the stamp, the
+  // popped letter and Fresh ink were drawn a letter to the right of it, over
+  // the letters typed before.
+  // An Arabic run from x = 500 leftwards, 10 px a letter.
+  const calls = [];
+  const rtl = { coordsAtPos: (pos, side) => { calls.push([pos, side]); const x = side > 0 ? 500 - 10 * pos : 500 - 10 * (pos - 1) - 10; return { left: x, right: x, top: 50, bottom: 74 }; } };
+  const c = T.letterAt(rtl, 2, "\u0633");
+  ok("an Arabic letter: its own left edge, not the caret before it", c && c.left === 470 && c.top === 50, c);
+  const ltr = { coordsAtPos: (pos, side) => { calls.push([pos, side]); return { left: 100 + 10 * pos, right: 100 + 10 * pos, top: 50, bottom: 74 }; } };
+  calls.length = 0;
+  const l = T.letterAt(ltr, 3, "a");
+  ok("an English letter: the caret before it, asked once", l.left === 130 && calls.length === 1, calls);
+  calls.length = 0;
+  const neutral = T.letterAt(Object.assign({ textDirectionAt: () => 1 }, rtl), 2, "!");
+  ok("...a mark in a right-to-left line is measured both ways too", neutral.left === 470 && calls.length === 2, calls);
+  const wrapped = { coordsAtPos: (pos, side) => (side > 0 ? { left: 480, top: 50, bottom: 74 } : { left: 10, top: 74, bottom: 98 }) };
+  ok("...and the edge after it on another row is not taken", T.letterAt(wrapped, 2, "\u0633").left === 480);
+  ok("Hebrew and Arabic are right to left, Latin and digits are not", T.RTL_CHAR.test("\u05e9") && T.RTL_CHAR.test("\u0633") && !T.RTL_CHAR.test("a") && !T.RTL_CHAR.test("1"));
+}

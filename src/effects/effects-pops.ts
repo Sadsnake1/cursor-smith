@@ -41,6 +41,7 @@ import {
   THUNDER_PASSES,
 } from "../constants";
 import { easeInOutSine, glitchNoise } from "../util/motion";
+import { letterAt } from "../util/text";
 import type { EditorView } from "@codemirror/view";
 import type { CaretRecord, FireworkSpark, GlitchState, Pt, ThunderBand } from "../types";
 import type CursorSmithPlugin from "../plugin";
@@ -233,7 +234,7 @@ export const effectsPopsMethods = {
         // (2026-10-08). Where it was struck while the letter is not there.
         let color = p.color;
         if (p.pos !== undefined && p.view && p.view.dom && p.view.dom.isConnected &&p.view.state.doc.sliceString(p.pos, p.pos + p.char.length) === p.char) {
-          const c = p.view.coordsAtPos(p.pos, 1);
+          const c = letterAt(p.view, p.pos, p.char);
           if (c) { p.x = c.left; p.y = (c.top + c.bottom) / 2 - lh / 2; }
           // Wet with Fresh ink: struck in the ink's color, the letter's own
           // under the cover (issue #56).

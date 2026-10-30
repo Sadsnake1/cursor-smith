@@ -12,6 +12,7 @@ import { View } from "obsidian";
 import { cssAlpha } from "../util/color";
 import { CARET_COVERS, ZEN_STRIP, CARET_STYLE_TTL_MS, GEOMETRY_TTL_MS, CARET_THICKNESS_MAX, TW_SPRING_DOWN, TW_CAPITAL_DEPTH, TW_CAPITAL_TIME } from "../constants";
 import { isTextCaretHost, lastGrapheme } from "../util/motion";
+import { letterAt } from "../util/text";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import type { EditorView } from "@codemirror/view";
 import type { Box, CaretCoords, CaretRecord, CaretState, ChromeInsets, CoordsLTB, LineStyle, MainRectCache, TypewriterPose, Look } from "../types";
@@ -926,7 +927,7 @@ export const measureMethods = {
           // or another caret's insertion before this one.
           let anchor = last;
           const at = to - justTyped.length;
-          const c = typeof view.coordsAtPos === "function" ? view.coordsAtPos(at, 1) : null;
+          const c = typeof view.coordsAtPos === "function" ? letterAt(view, at, justTyped) : null;
           if (c) {
             const h = last.h || newCaret.h || c.bottom - c.top;
             anchor = Object.assign({}, last, { pos: at, x: c.left, top: (c.top + c.bottom) / 2 - h / 2 });

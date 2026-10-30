@@ -1,3 +1,5 @@
+import type { EditorView } from "@codemirror/view";
+
 // Bracket Tether: the pairs it will follow, and how far it will scan for a
 // match. The cap keeps a runaway scan (an unmatched brace in a large note)
 // bounded; 20k characters is far past anything a tether is readable across.
@@ -115,4 +117,26 @@ export const WORD_CHAR = /[\p{L}\p{N}_]/u;
 // drawing a line across the sentence between them.
 export function isQuoteDelimiter(text: string, i: number): boolean {
   return !(WORD_CHAR.test(text[i - 1] || "") && WORD_CHAR.test(text[i + 1] || ""));
+}
+
+// A letter written right to left: Arabic, Hebrew, Syriac, Thaana, N'Ko,
+// Samaritan, Mandaic, Adlam, Hanifi Rohingya.
+export const RTL_CHAR = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Adlam}\p{Script=Hanifi_Rohingya}]/u;
+
+// Where the letter `ch` at `pos` is drawn: its own left edge, on its row.
+// CodeMirror's coordsAtPos(pos, 1) is the caret before it, which is the
+// letter's left edge only when it runs left to right - before an Arabic or
+// Hebrew letter it is the right one, and the stamp, the popped letter and
+// Fresh ink, drawn from there, sat a letter to its right, over the letters
+// typed before it (issue #57). The caret after it, from its side, is the
+// other edge; the smaller is the left, either way. Asked only of a letter
+// that may run right to left (its own script, or a right-to-left line),
+// as Fresh ink asks for up to 80 letters a frame.
+export function letterAt(view: Pick<EditorView, "coordsAtPos"> & { textDirectionAt?: (pos: number) => number }, pos: number, ch: string): { left: number; top: number; bottom: number } | null {
+  const a = view.coordsAtPos(pos, 1);
+  // 1 is Direction.RTL.
+  if (!a || !(RTL_CHAR.test(ch) || (typeof view.textDirectionAt === "function" && view.textDirectionAt(pos) === 1))) return a;
+  const b = view.coordsAtPos(pos + ch.length, -1);
+  if (!b || b.top >= a.bottom || b.bottom <= a.top) return a;
+  return { left: Math.min(a.left, b.left), top: a.top, bottom: a.bottom };
 }

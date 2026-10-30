@@ -401,8 +401,17 @@ export const caretsMethods = {
 
     const moved =
       Math.abs(this.lastActive.x - caret.x) > 0.5 || Math.abs(this.lastActive.top - caret.top) > 0.5;
+    // Typing a run in the other direction - English at the end of an Arabic
+    // line, Arabic in an English one: each letter goes in at the caret and
+    // pushes the run away from it, and the caret stands still on screen.
+    // Read as no move, no letter did anything - no pop, stamp, ink or strike
+    // (issue #57). Text put in before the caret is typing, wherever the
+    // caret is drawn.
+    const typedInPlace = !moved &&
+      typeof caret.pos === "number" && typeof this.lastActive.pos === "number" && caret.pos > this.lastActive.pos &&
+      typeof caret.docLen === "number" && typeof this.lastActive.docLen === "number" && caret.docLen > this.lastActive.docLen;
 
-    if (!moved) {
+    if (!moved && !typedInPlace) {
       if (!this.pending) {
         // The Delete key: text gone after the caret, the caret still.
         this._deletionStill(this.lastActive, caret);

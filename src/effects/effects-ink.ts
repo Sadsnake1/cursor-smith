@@ -23,6 +23,7 @@
 // full strength: 1.1 read as bold, the user said too bold).
 import { easeInOutSine } from "../util/motion";
 import { parseColorTuple } from "../util/color";
+import { letterAt } from "../util/text";
 import type { EditorView } from "@codemirror/view";
 import type { Text } from "@codemirror/state";
 import type { CaretRecord, InkMark } from "../types";
@@ -223,7 +224,7 @@ export const effectsInkMethods = {
         const a = strength * this.inkWetness(now - m.times[i], ms);
         i += ch.length;
         if (a <= 0 || !ch.trim()) continue;
-        const c = view.coordsAtPos(pos, 1);
+        const c = letterAt(view, pos, ch);
         if (!c) continue;
         const h = c.bottom - c.top;
         const baseline = c.top + ascent + (h - ascent - descent) / 2;

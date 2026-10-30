@@ -1,4 +1,4 @@
-import { PluginSettingTab, Platform, Setting, App, Modal, setIcon } from "obsidian";
+import { PluginSettingTab, Platform, Setting, App, Modal, setIcon, apiVersion } from "obsidian";
 import type { SettingDefinitionItem, SettingDefinitionGroup, SettingDefinitionPage, SettingDefinitionRender, SettingGroupItem, SliderComponent } from "obsidian";
 import type CursorSmithPlugin from "../plugin";
 import { EATER_KEYS, LETTER_KEYS, ROLL_CHAOS_MAX, ROLL_DIAL_MAX, eaterChoiceOf, letterChoiceOf, DEFAULT_SETTINGS, LOOK_KEYS, VIM_MODE_KEYS, VIM_MODE_LABELS, presetWithDefaults } from "./settings";
@@ -12,6 +12,7 @@ import { DemoStrip } from "./demo";
 import type { VimLook } from "./demo";
 import { ROLL_TOGGLES, rollAllowed } from "./randomize";
 import { t, tOpts, tParts, tNumber } from "../i18n/i18n";
+import { FUNDING_URL, ISSUES_URL, README_URL, VIDEO_URL, WHATS_NEW, WORD_SMITH_URL, whatsNewInto } from "./about";
 import type { DropdownOptions, Look, LookCards, LookSettingsHooks, Needs, RailEffect, RowOptions, SettingKey, SliderOptions, SwatchOptions } from "../types";
 
 // The effects, in the order the Effects page lists them: the master key,
@@ -140,6 +141,7 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     ];
     if (vim) items.push(...this.vimDefinitions());
     else items.push(...this.normalDefinitions());
+    items.push(this.aboutPage());
     items.push(this.footerRow());
     return this.translated(items);
   }
@@ -162,6 +164,50 @@ export class CursorSmithSettingTab extends PluginSettingTab {
     };
     walk(items);
     return items;
+  }
+
+  // About, the last page, as Word-Smith has one: what's new in this
+  // version, built in (about.ts), and the links - the video, the docs, a
+  // bug report with the versions filled in, Word-Smith, a coffee. They open
+  // in the browser; nothing is fetched. Its entry shows the version.
+  aboutPage(): SettingDefinitionPage {
+    const version = this.plugin.manifest?.version ?? "";
+    const os = Platform.isIosApp ? "iOS" : Platform.isAndroidApp ? "Android" : Platform.isMacOS ? "macOS" : Platform.isWin ? "Windows" : Platform.isLinux ? "Linux" : "";
+    // Under the reporter's words: what they run.
+    const body = `
+
+---
+Cursor-Smith ${version} · Obsidian ${String(apiVersion || "")}${os ? " · " + os : ""}`;
+    const link = (name: string, desc: string, text: string, url: string, cls = ""): SettingDefinitionRender => ({
+      name, desc,
+      render: (setting) => {
+        this.resetRow(setting);
+        setting.addButton((b) => {
+          b.setButtonText(text).onClick(() => { window.open(url, "_blank"); });
+          if (cls) b.buttonEl.addClass(cls);
+        });
+      },
+    });
+    return this.page("About", "info", "What's new, the video, help and support.", [this.section("About", [
+      {
+        // The notes, under the version they are for. Obsidian keeps the row's
+        // element across update(), so the last render's go first.
+        name: "", desc: "", searchable: false,
+        render: (setting) => {
+          this.resetRow(setting);
+          const el = setting.settingEl;
+          el.addClass("cursor-smith-about-notes-row");
+          for (const cls of ["cursor-smith-about-ver", "cursor-smith-about-notes"]) el.querySelectorAll("." + cls).forEach((old) => old.remove());
+          el.createDiv({ cls: "cursor-smith-about-ver", text: t("What's new in Cursor-Smith {version}", { version }) });
+          whatsNewInto(el.createDiv({ cls: "cursor-smith-about-notes" }), WHATS_NEW);
+        },
+      },
+      link("Video", "Cursor-Smith in action, on YouTube.", t("Watch on YouTube"), VIDEO_URL),
+      link("Documentation", "How to use Cursor-Smith, on GitHub.", "GitHub", README_URL),
+      link("Found a bug?", "Post it on GitHub. The Cursor-Smith and Obsidian versions are filled in for you.", t("Post an issue"), ISSUES_URL + "?body=" + encodeURIComponent(body)),
+      link("Word-Smith", "My other plugin: a writing studio inside your vault.", t("Watch Word-Smith"), WORD_SMITH_URL),
+      link("Support Cursor-Smith", "Cursor-Smith is free. A coffee keeps it going.", t("Buy me a coffee"), FUNDING_URL, "cursor-smith-about-coffee"),
+    ])], () => version);
   }
 
   // The version, a muted line under the pages. Not a heading: Obsidian's

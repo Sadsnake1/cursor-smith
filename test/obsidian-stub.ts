@@ -36,5 +36,6 @@ export class Notice {
 }
 // The Randomizer asks whether it runs on a phone (no focus there: the keyboard).
 export const Platform = { isMobile: false, isDesktop: true };
+export const apiVersion = "1.13.7";
 export function setSettingClass(C: any) { Setting = C; }
 export function restoreSettingClass() { Setting = RealSetting; }

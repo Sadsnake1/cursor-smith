@@ -749,7 +749,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const lookNow = { cursorStyle: "Box", showChar: true, cursorTranslucent: true, blinkingEnabled: true, blinkSpeed: 1.0, blinkBreathing: true, smoothEnabled: false, popEffects: true, flameTrail: true, crtEffect: true, smear: false };
     const rows = renderWholePanel(Object.assign({}, lookNow, { userPresets: { One: T.pickLook(Object.assign({}, T.DEFAULT_SETTINGS, lookNow)) } }));
     const top = rows.pages;
-    ok("the pages, in order (no Presets page: the presets are in the header; the Randomizer last)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", top.map((p) => p.name));
+    ok("the pages, in order (no Presets page: the presets are in the header; the Randomizer, then About, last)", top.map((p) => p.name).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer,About", top.map((p) => p.name));
     ok("...each with an icon and a line", top.every((p) => p.icon && p.desc.length > 10), top.map((p) => [p.icon, p.desc]));
     const header = rows.filter((r) => sectionOf(r) === null && r.def.searchable !== false).map((r) => r.name).filter(Boolean);
     ok("the header holds Enable plugin, the Vim mode toggle and the presets, in that order (the notice aside)", header.join() === "Enable plugin,Vim mode,Presets", header);
@@ -1062,7 +1062,7 @@ section("settings panel: the rail, the summaries, the resets, the cards");
     const modes = Object.fromEntries(["normal", "insert", "visual", "replace", "command"].map((m) => [m, Object.assign({}, T.DEFAULT_SETTINGS)]));
     const vim = renderWholePanel({ uiMode: "vim", vimModeEnabled: true, vimStatusBar: true, vimModes: modes, vimPresets: { Setup: modes }, vimActivePreset: "Setup" });
     const vtop = vim.pages;
-    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", vtop.map((p) => p.name));
+    ok("Vim mode adds a Vim page", vtop.map((p) => p.name).join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer,About", vtop.map((p) => p.name));
     ok("...flagged while Obsidian's Vim key bindings are off", vim.pages.find((p) => p.name === "Vim").status === "warning");
     ok("...holding the Vim switches", vim.find((r) => r.name === "Control Obsidian's Vim key bindings").page === "Vim");
     ok("Vim mode adds no Presets page either", !vim.pages.some((p) => p.name === "Presets"));
@@ -1262,7 +1262,7 @@ section("settings panel: the whole tree");
   ok("the version is a muted footer line under the pages, out of search",
      foot.settingEl.classes.includes("cursor-smith-footer") && foot.desc === "Cursor-Smith 0.0.0-test" && foot.def.searchable === false, foot.desc);
   ok("...then Behavior and the look cards",
-     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", sections);
+     sections.slice(1).filter((s) => s !== null).join() === "Behavior,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer,About", sections);
   const names = cua.map((r) => r.name);
   ok("Enable plugin and the Vim mode toggle come first, then the strip, then General's switches in order",
      names.indexOf("Enable plugin") < names.indexOf("Vim mode") &&
@@ -1291,7 +1291,7 @@ section("settings panel: the whole tree");
   ok("the whole Vim panel renders", !vim.threw, vim.threw && vim.threw.message);
   const vimSections = [...new Set(vim.map(sectionOf))].filter((s) => s !== null);
   ok("...its cards: Behavior, Vim, then the look (the mode row is in the header)",
-     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer", vimSections);
+     vimSections.join() === "Behavior,Vim,Appearance,Blinking,Smooth movement,Effects,Sounds,Randomizer,About", vimSections);
   ok("the status bar colour row hangs off the status bar toggle",
      vim.some((r) => r.name === "Color status bar text to match the cursor"));
   ok("the Vim warning is a header row that shows only while Obsidian's Vim is off",
@@ -1497,4 +1497,40 @@ section("support / donate row: removed");
   ok("no row in the panel offers to take money",
      !rows.some((r) => /support|donate|coffee|sponsor/i.test(r.name || "")),
      rows.map((r) => r.name).filter((n) => n && /support|donate/i.test(n)));
+}
+
+// ---------------------------------------------------------------------------
+section("About: what's new, the video, the links (as Word-Smith has it)");
+{
+  const { renderWholePanel } = require("../panel_harness");
+  const rows = renderWholePanel({});
+  const page = rows.pages[rows.pages.length - 1];
+  ok("About is the last page, its entry showing the version", page.name === "About" && page.displayValue === "0.0.0-test", { name: page.name, value: page.displayValue });
+  const notes = rows.find((r) => r.section === "About" && r.def.searchable === false);
+  const ver = notes && notes.settingEl.children.find((c) => c.classes.includes("cursor-smith-about-ver"));
+  ok("what's new, under the version it is for", ver && ver.text === "What's new in Cursor-Smith 0.0.0-test", ver && ver.text);
+  const box = notes.settingEl.children.find((c) => c.classes.includes("cursor-smith-about-notes"));
+  const items = box.children.filter((c) => c.tag === "ul").flatMap((u) => u.children);
+  const lines = T.WHATS_NEW.split(String.fromCharCode(10)).filter((l) => l.startsWith("- "));
+  ok("...every line of the notes, built in", items.length === lines.length && items.length > 0, { items: items.length, lines: lines.length });
+  ok("...the bold parts bold, the rest as text", items[0].children.some((c) => c.tag === "strong" && c.text === "New: About.") && /settings/.test(items[0].text));
+  notes.def.render({ settingEl: notes.settingEl });
+  ok("...drawn again, not twice", notes.settingEl.children.filter((c) => c.classes.includes("cursor-smith-about-notes")).length === 1);
+  // The links open in the browser.
+  const opened = [];
+  const hadWindow = "window" in globalThis, was = globalThis.window;
+  globalThis.window = { open: (url) => { opened.push(url); } };
+  try {
+    for (const name of ["Video", "Documentation", "Found a bug?", "Word-Smith", "Support Cursor-Smith"]) {
+      const r = rows.find((x) => x.section === "About" && x.name === name);
+      if (r && r.buttons[0] && r.buttons[0]._click) r.buttons[0]._click();
+    }
+  } finally {
+    if (hadWindow) globalThis.window = was; else delete globalThis.window;
+  }
+  ok("five links, each a button that opens its page", opened.length === 5 && opened[0] === T.VIDEO_URL, opened);
+  const bug = opened[2] || "";
+  ok("Found a bug? opens a new issue with the versions filled in",
+     bug.startsWith(T.ISSUES_URL + "?body=") && decodeURIComponent(bug).includes("Cursor-Smith 0.0.0-test · Obsidian 1.13.7"), decodeURIComponent(bug));
+  ok("...and the notes say what this version is", /#55/.test(T.WHATS_NEW) && /#57/.test(T.WHATS_NEW));
 }

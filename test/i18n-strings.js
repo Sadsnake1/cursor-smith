@@ -74,7 +74,8 @@ function collect() {
   for (const s of staticStrings()) seen.add(s);
   // Not strings to translate: a template already filled in ("8 effects",
   // read back through a summary), the version footer, the names of the
-  // sounds and of the presets on the strip.
+  // sounds and of the presets on the strip, the version on About's entry
+  // ("0.0.0-test" here).
   // A slot filled in is a number here ("8 effects", "Chaos 1"); matching
   // any word dropped "Pop effects" and "Gradient colors" as filled-in
   // "{n} effects" and "{n} colors".
@@ -82,7 +83,7 @@ function collect() {
   const names = new Set([...T.SOUND_MACHINES.map((m) => m.label), "Mine", "Setup"]);
   return [...seen].filter((s) => (/[A-Za-z]/.test(s) || s === ", ")
     && !(/\{\w+\}/.test(s) === false && templates.some((re) => re.test(s)))
-    && !/^Cursor-Smith \d/.test(s) && !names.has(s)).sort();
+    && !/^Cursor-Smith \d/.test(s) && !/^\d+\.\d+\.\d+/.test(s) && !names.has(s)).sort();
 }
 
 module.exports = { collect, staticStrings };

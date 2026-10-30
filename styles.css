@@ -957,6 +957,54 @@ body.cursor-smith-hide-native textarea.excalidraw-wysiwyg {
   text-align: right;
 }
 
+/* --- About: what's new, built in; the version above, the notes in a box that scrolls --- */
+.setting-item.cursor-smith-about-notes-row {
+  display: block;
+}
+.cursor-smith-about-ver {
+  font-weight: var(--font-bold);
+  margin-bottom: var(--size-4-2);
+}
+.cursor-smith-about-notes {
+  max-height: 18em;
+  overflow: auto;
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background-color: var(--background-secondary);
+  font-size: var(--font-ui-small);
+  user-select: text;
+}
+.cursor-smith-about-head {
+  margin: var(--size-4-2) 0 var(--size-4-1);
+  font-size: var(--font-ui-small);
+}
+.cursor-smith-about-head:first-child {
+  margin-top: 0;
+}
+.cursor-smith-about-notes ul {
+  margin: 0;
+  padding-left: var(--size-4-5);
+  color: var(--text-muted);
+}
+.cursor-smith-about-notes li + li {
+  margin-top: var(--size-4-1);
+}
+.cursor-smith-about-notes strong {
+  color: var(--text-normal);
+}
+.cursor-smith-about-notes p {
+  margin: var(--size-4-2) 0 0;
+  color: var(--text-muted);
+}
+/* Buy me a coffee in its own yellow, as Word-Smith has it */
+button.cursor-smith-about-coffee,
+button.cursor-smith-about-coffee:hover {
+  background-color: #ffdd00;
+  color: #1a1a1a;
+  font-weight: var(--font-semibold);
+}
+
 /* --- The Vim alert: a tiny card under the mode switch while Vim is on --- */
 .setting-item.cursor-smith-alert {
   align-items: center;

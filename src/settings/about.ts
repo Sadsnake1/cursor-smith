@@ -14,14 +14,11 @@ export const WORD_SMITH_URL = "https://youtu.be/HLq91cDWx0s";
 export const FUNDING_URL = "https://buymeacoffee.com/sadsnake1";
 
 export const WHATS_NEW = `
-- **New: About.** The last page of the settings: what's new in this version, the video, the docs, and a quick way to report a bug.
-- **New:** Glide speed goes up to 1.00, for a cursor that snaps into place (#59).
-- **Fixed:** after clicking back into a note, the cursor picked up its blink where it had left off and could come back invisible. It comes back lit now (#55).
-- **Fixed:** with Ink stamp and Fresh ink both on, the stamped letter is in the ink's color from the first moment, not only once the stamp settles (#56).
-- **Fixed:** on a line that mixes Arabic and English, typing a word in the other direction played no effects, and the effects on Arabic and Hebrew letters were drawn a letter to the right (#57).
-- **Fixed:** with Keep up with typing on, a Glide speed set above Typing glide was slowed down to it.
+- **Fixed:** in a very long note, jumping from the start to the end (Ctrl+Home, then Ctrl+End) no longer slows Obsidian to a crawl. The cursor's canvas stays about a screen tall instead of growing to the whole note (#61).
+- **Fixed:** selecting with Shift or Ctrl+Shift and the arrows, Home or End no longer drags a smear or a glide across the text you are selecting. The cursor goes straight to the end of the selection; everything else moves as before (#62).
+- **Changed:** the version shows on the About entry only; the line under the settings pages is gone.
 
-Thanks to rotane, yeliaBdE, JAWredstoneguy and 01Zack for the reports.
+Thanks to rotane and connor-cihula for the reports.
 `;
 
 // The notes' own shape drawn as the page shows it: "### a heading" (a

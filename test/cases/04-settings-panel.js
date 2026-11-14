@@ -1512,7 +1512,8 @@ section("About: what's new, the video, the links (as Word-Smith has it)");
   const items = box.children.filter((c) => c.tag === "ul").flatMap((u) => u.children);
   const lines = T.WHATS_NEW.split(String.fromCharCode(10)).filter((l) => l.startsWith("- "));
   ok("...every line of the notes, built in", items.length === lines.length && items.length > 0, { items: items.length, lines: lines.length });
-  ok("...the bold parts bold, the rest as text", items[0].children.some((c) => c.tag === "strong" && c.text === "New: About.") && /settings/.test(items[0].text));
+  const firstBold = T.WHATS_NEW.split("**")[1];
+  ok("...the bold parts bold, the rest as text", items[0].children.some((c) => c.tag === "strong" && c.text === firstBold) && (items[0].text || "").length > 10, firstBold);
   notes.def.render({ settingEl: notes.settingEl });
   ok("...drawn again, not twice", notes.settingEl.children.filter((c) => c.classes.includes("cursor-smith-about-notes")).length === 1);
   // The links open in the browser.
@@ -1531,5 +1532,5 @@ section("About: what's new, the video, the links (as Word-Smith has it)");
   const bug = opened[2] || "";
   ok("Found a bug? opens a new issue with the versions filled in",
      bug.startsWith(T.ISSUES_URL + "?body=") && decodeURIComponent(bug).includes("Cursor-Smith 0.0.0-test · Obsidian 1.13.7"), decodeURIComponent(bug));
-  ok("...and the notes say what this version is", /#55/.test(T.WHATS_NEW) && /#57/.test(T.WHATS_NEW));
+  ok("...and the notes say what this version is", /#61/.test(T.WHATS_NEW) && /#62/.test(T.WHATS_NEW));
 }

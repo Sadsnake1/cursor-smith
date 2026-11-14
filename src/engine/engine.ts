@@ -14,6 +14,7 @@ import {
   CANVAS_REGION_MARGIN_X,
   CANVAS_REGION_MARGIN_Y,
   CANVAS_REGION_MOTION_PAD,
+  CANVAS_VIEW_PAD,
   CANVAS_REGION_SHRINK_MS,
   CANVAS_REGION_SHRINK_RATIO,
   FRAME_CAPS,
@@ -837,7 +838,25 @@ export const engineMethods = {
       const p = CANVAS_REGION_MOTION_PAD;
       add(r.x0 - p, r.y0 - p, r.x1 + p, r.y1 + p);
     }
-    return b;
+    // In the scroller the clip window is the whole note, and so the need
+    // could be: a jump from a long note's start to its end (Ctrl+Home, then
+    // Ctrl+End) glides the drawn cursor from one to the other, the smear and
+    // a jump trail span it, and the region took in both ends - a canvas tens
+    // of thousands of pixels tall, allocated, cleared and composited through
+    // the glide and for the two seconds a region waits before it shrinks
+    // (CANVAS_REGION_SHRINK_MS). Obsidian crawled with it, the sooner the
+    // higher the DPR (issue #61). Only the part on screen shows: the need
+    // stops CANVAS_VIEW_PAD past it, and is nothing while all of it is off
+    // screen (the region stays as it was).
+    const got = b as Bounds | null;
+    const v = this._viewClip;
+    if (got && v) {
+      const p = CANVAS_VIEW_PAD;
+      const x0 = Math.max(got.x0, v.x - p), y0 = Math.max(got.y0, v.y - p);
+      const x1 = Math.min(got.x1, v.x + v.w + p), y1 = Math.min(got.y1, v.y + v.h + p);
+      return x1 > x0 && y1 > y0 ? { x0, y0, x1, y1 } : null;
+    }
+    return got;
   },
 
   // Decide the canvas region for this frame and apply it. Returns true when

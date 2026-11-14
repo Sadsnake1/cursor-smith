@@ -123,6 +123,11 @@ export const CANVAS_REGION_SHRINK_RATIO = 2;
 // in it: particles move a few px a frame, and anything that escapes this is
 // clipped for exactly one frame before the region grows to include it.
 export const CANVAS_REGION_MOTION_PAD = 32;
+// In the scroller (the canvas a layer of the note's content), how far past
+// the part of the note on screen the region may reach: the content and the
+// canvas scroll together between two ticks, and this much of a scroll
+// shows painted pixels rather than a blank strip until the next tick refits.
+export const CANVAS_VIEW_PAD = 160;
 
 // How much Speed Demon's heat inflates the CRT glow, as a multiplier on top of
 // the base blur: 1 + GLOW_HEAT_GAIN at full heat. Only applies when Speed Demon

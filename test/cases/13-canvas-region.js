@@ -226,6 +226,42 @@ section("the canvas follows the caret (issue #30)");
     ok("...a visible window outside the clip falls back to the clip", off.y0 === -4000 && off.y1 === 5000, off);
   }
 
+  // Issue #61: a jump from a long note's start to its end (Ctrl+Home, then
+  // Ctrl+End). The drawn cursor glides from the one to the other, and the
+  // need took in both: a canvas tens of thousands of pixels tall for the
+  // glide and the two seconds a region waits to shrink.
+  {
+    const h = makeRegionEngine({ smear: false });
+    h._clipRect = { x: 100, y: -40000, w: 1000, h: 80000 };
+    h._viewClip = { x: 100, y: 50, w: 1000, h: 700 };
+    h._wrapperPos = { left: 100, top: -40000 };
+    h.setCaret(400, 300);
+    h._fitCanvasRegion();
+    // The note's start is 39,000 px above the screen; the glide begins there.
+    h.animActive = { x: 140, top: -39000, w: 8, h: 24, actualCharWidth: 8 };
+    h._dirtyRaw = { x0: 130, y0: -39010, x1: 160, y1: -38970 };
+    const need = h._frameNeed(h._clipRect);
+    const P = T.CANVAS_VIEW_PAD;
+    ok("in the scroller the need stops just past the part of the note on screen",
+       need && need.y0 >= 50 - P && need.y1 <= 750 + P && need.y1 >= 324, need);
+    h._fitCanvasRegion();
+    const r = h._canvasRect;
+    ok("...so a glide across a long note keeps the canvas about a screen tall, not the note's height", r.h <= 700 + 2 * P + 64 && r.y + r.h >= 324, r);
+    h.lastActive = Object.assign({}, h.animActive);
+    h._dirtyRaw = null;
+    const before = h._canvasRect;
+    ok("...a cursor wholly off screen needs nothing", h._frameNeed(h._clipRect) === null);
+    h._fitCanvasRegion();
+    ok("...and leaves the region as it was", h._canvasRect === before);
+    const fixed = makeRegionEngine();
+    fixed.setCaret(400, 300);
+    fixed.animActive = { x: 140, top: 60, w: 8, h: 24, actualCharWidth: 8 };
+    fixed.setCaret = null;
+    fixed.lastActive = { x: 900, top: 700, w: 8, h: 24, actualCharWidth: 8 };
+    const all = fixed._frameNeed(fixed._clipRect);
+    ok("the fixed overlay (no part-on-screen window) is clamped only by its clip, as before", all.y0 <= 60 && all.y1 >= 724, all);
+  }
+
   // The need is the union of everything known before the draw.
   {
     const e = makeRegionEngine();

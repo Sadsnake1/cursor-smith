@@ -774,6 +774,17 @@ export const caretsMethods = {
     this.trail = [];
   },
 
+  // Whether the move from `from` to `to` extends (or shrinks) a selection:
+  // the head moved and the anchor is where it was - the old selection's, or
+  // the old caret itself when nothing was selected - with something selected
+  // now. Typing over a selection, a click, Ctrl+A: not (a new anchor, or an
+  // empty selection).
+  _extendsSelection(this: CursorSmithPlugin, from: CaretRecord | null, to: CaretRecord): boolean {
+    if (!from || typeof to.anchor !== "number" || typeof to.pos !== "number" || typeof from.pos !== "number") return false;
+    if (to.anchor === to.pos || to.pos === from.pos) return false;
+    return to.anchor === (typeof from.anchor === "number" ? from.anchor : from.pos);
+  },
+
   // A keyboard step from `a` to `b`: along the same row, by at most
   // KEY_STEP_CHARS characters.
   _isKeyStep(this: CursorSmithPlugin, a: CaretRecord, b: CaretRecord): boolean {
@@ -803,7 +814,13 @@ export const caretsMethods = {
       const surface = this._caretSurface(caret);
       const arrived = this._lastSurface !== undefined && this._lastSurface !== surface;
       this._lastSurface = surface;
-      if (arrived) {
+      // Extending a selection - Shift with an arrow, Home, End or a word, a
+      // drag: the head moves and the anchor stays. The caret is at the head
+      // at once and nothing of the move is drawn, as on another surface. The
+      // highlight shows the sweep; a glide or a smear across it lay over the
+      // very text being selected - a long smear bouncing past the row in the
+      // cursor's flipped colors, a Springy glide overshooting it (issue #62).
+      if (arrived || this._extendsSelection(this.lastActive, caret)) {
         this._arrive(caret);
         // (The note is kept current by the frames it sits still: _deletionStill.)
         this._deletePending = 0;

@@ -348,6 +348,10 @@ export interface CaretRecord {
   pos?: number | string | null;
   assoc?: number;
   empty?: boolean;
+  // The selection's anchor (the primary caret, in a note): with `pos`, its
+  // head, what tells a move that extends a selection (_extendsSelection).
+  // A secondary's record does without: its moves keep their own effects.
+  anchor?: number;
   visible?: boolean;
   // The document's length when this was measured (a CodeMirror caret): with
   // `pos`, what tells an insertion at the caret from a click or an arrow

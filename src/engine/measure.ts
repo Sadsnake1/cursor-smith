@@ -334,6 +334,9 @@ export const measureMethods = {
         letterSpacing,
         focused: this.editorFocused(view) || (inTable && activeIsEditable),
         pos,
+        // The selection's other end (pos is its head): a move that keeps it
+        // extends the selection (_extendsSelection).
+        anchor: main.anchor,
         // The document length, for resolveHoldChar: with pos, an insertion
         // at the caret (typing) is told from a click or an arrow.
         docLen: view.state.doc.length,

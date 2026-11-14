@@ -420,6 +420,7 @@ export default class CursorSmithPlugin extends Plugin {
   declare _isKeyStep: CaretsMethods["_isKeyStep"];
   declare _caretSurface: CaretsMethods["_caretSurface"];
   declare _arrive: CaretsMethods["_arrive"];
+  declare _extendsSelection: CaretsMethods["_extendsSelection"];
   declare _keyStepping: CaretsMethods["_keyStepping"];
 
   // The engine keeps its working state as instance fields set where they

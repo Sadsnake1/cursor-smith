@@ -159,3 +159,34 @@ section("motion smear: max length and conserved volume (after smear-cursor.nvim)
        back && back.snap.smearMaxLength === 240 && back.snap.smearConserveVolume === true && back.snap.smearVolumeStrength === 0.5, back && back.snap);
   }
 }
+
+// ---------------------------------------------------------------------------
+section("Extending a selection draws nothing of the move (issue #62)");
+{
+  // Shift with an arrow, Home or End, a word: the highlight shows the sweep.
+  // A glide or a smear across it lay over the very text being selected - a
+  // long smear bouncing past the row, a Springy glide overshooting it.
+  const e = Object.create(Plugin.prototype);
+  const rec = (pos, anchor, x = 100 + pos * 9) => ({ x, top: 300, w: 3, h: 24, actualCharWidth: 9, pos, anchor });
+  ok("Shift+Left from a plain caret extends a selection", e._extendsSelection(rec(50, 50), rec(49, 50)));
+  ok("...and every key after it, either way, over the anchor too", e._extendsSelection(rec(49, 50), rec(44, 50)) && e._extendsSelection(rec(44, 50), rec(60, 50)));
+  ok("...not a plain move (nothing selected after it)", !e._extendsSelection(rec(50, 50), rec(40, 40)));
+  ok("...not a click that starts somewhere else, nor Ctrl+A from the middle", !e._extendsSelection(rec(50, 50), rec(20, 10)) && !e._extendsSelection(rec(50, 50), rec(900, 0)));
+  ok("...not back onto the anchor (nothing selected), nor no move at all", !e._extendsSelection(rec(49, 50), rec(50, 50)) && !e._extendsSelection(rec(49, 50), rec(49, 50)));
+  ok("...not without a CodeMirror position (a text field)", !e._extendsSelection(rec(50, 50), Object.assign(rec(49, 50), { pos: "f:3:4" })));
+
+  // Through commitMove: the caret is at the head at once, no smear.
+  const m = makeEngine({ smoothEnabled: true, smoothStyle: "springy", smear: true });
+  m._caretPass = "primary";
+  m._caretSurface = () => "note";
+  m._lastSurface = "note";
+  m.lastActive = rec(160, 160);
+  m.animActive = Object.assign({}, m.lastActive);
+  m.smearQuad = { tl: { x: 1, y: 1 }, tr: { x: 2, y: 1 }, br: { x: 2, y: 2 }, bl: { x: 1, y: 2 } };
+  m.trail = [{ x: 1, y: 1 }];
+  const head = rec(141, 160, 100);
+  m.commitMove(head);
+  ok("Shift+Home: the drawn caret is at the head at once, no smear or trail left over",
+     m.animActive.x === 100 && m.lastActive === head && m.smearQuad === null && m.trail.length === 0, { anim: m.animActive.x, quad: m.smearQuad });
+  ok("...and the selection's anchor rides on the primary's record", /anchor: main\.anchor/.test(require("fs").readFileSync(srcPath("measure.ts"), "utf8")));
+}

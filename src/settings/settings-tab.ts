@@ -1681,6 +1681,10 @@ Cursor-Smith ${version} · Obsidian ${String(apiVersion || "")}${os ? " · " + o
     smooth.push(slider("Typing glide", "How quickly each typed letter's glide finishes. Low shows a little glide, the top is instant.", "maxCatchUpSpeed", [0.50, 1.0, 0.05],
       { depth: 2, when: all(gliding, on("smoothAdaptive")) }));
     smooth.push(slider("Movement delay", "Wait before gliding off after a click or jump, in ms. 0 follows immediately; the keyboard never waits.", "moveDelayMs", [0, 500, 10], { depth: 1, when: gliding }));
+    // A move that grows a selection - Shift with an arrow, Home or End, a
+    // drag - goes straight to the selection's end (issue #62) unless this is
+    // on (#63). Not under the toggle above: it is Motion smear's too.
+    smooth.push(toggle("Animate selections", "Glide and smear while a selection grows. Off, the cursor goes straight to the selection's end.", "selectionMotion"));
     // --- Effects -------------------------------------------------------------
     // The Effects page: a RAIL of chips at the top, one per effect with its
     // icon and a dot for "on", and the picked effect's rows under it - one

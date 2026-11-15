@@ -190,3 +190,35 @@ section("Extending a selection draws nothing of the move (issue #62)");
      m.animActive.x === 100 && m.lastActive === head && m.smearQuad === null && m.trail.length === 0, { anim: m.animActive.x, quad: m.smearQuad });
   ok("...and the selection's anchor rides on the primary's record", /anchor: main\.anchor/.test(require("fs").readFileSync(srcPath("measure.ts"), "utf8")));
 }
+
+// ---------------------------------------------------------------------------
+section("Animate selections brings the selection's glide and smear back (issue #63)");
+{
+  // #62 put the caret at a selection's head at once; some looks were made
+  // with the smear sweeping the selection ("White Trail"), so it is a switch
+  // of the look, off by default.
+  ok("Animate selections is a look key, appended last (share codes keep their slots), off by default",
+     T.LOOK_KEYS[T.LOOK_KEYS.length - 1] === "selectionMotion" && T.DEFAULT_SETTINGS.selectionMotion === false);
+  const rec = (pos, anchor, x = 100 + pos * 9) => ({ x, top: 300, w: 3, h: 24, actualCharWidth: 9, pos, anchor });
+  const run = (on) => {
+    const m = makeEngine({ smoothEnabled: true, smear: true, selectionMotion: on });
+    m._caretPass = "primary";
+    m._caretSurface = () => "note";
+    m._lastSurface = "note";
+    m.lastActive = rec(160, 160);
+    m.animActive = Object.assign({}, m.lastActive);
+    const quad = { tl: { x: 1, y: 1 }, tr: { x: 2, y: 1 }, br: { x: 2, y: 2 }, bl: { x: 1, y: 2 } };
+    m.smearQuad = quad;
+    m.trail = [];
+    m.pushTrail = () => {};
+    m.spawnFlamePixels = () => {}; m.spawnJumpTrail = () => {};
+    m.commitMove(rec(141, 160, 100));
+    return { anim: m.animActive.x, quadKept: m.smearQuad === quad };
+  };
+  const off = run(false), on = run(true);
+  ok("off: the caret is at the head at once, the smear started over", off.anim === 100 && !off.quadKept, off);
+  ok("on: the move glides from where the caret was, the smear kept", on.anim === 100 + 160 * 9 && on.quadKept, on);
+  const rows = renderPanel({ smoothEnabled: false });
+  const row = rows.find((r) => r.name === "Animate selections");
+  ok("...a switch on the Smooth movement page, shown with Smooth movement off too (it is Motion smear's as well)", row && row.visible !== false && row.toggles.length === 1, row && { visible: row.visible });
+}

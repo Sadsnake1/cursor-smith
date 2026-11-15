@@ -238,6 +238,7 @@ export interface Look {
   maxCatchUpSpeed: number;
   smoothAdaptive: boolean;
   smoothStyle: string;
+  selectionMotion: boolean;
   crtGlitch: boolean;
   crtGlitchStrength: number;
   crtGlitchAberration: number;

@@ -820,7 +820,9 @@ export const caretsMethods = {
       // highlight shows the sweep; a glide or a smear across it lay over the
       // very text being selected - a long smear bouncing past the row in the
       // cursor's flipped colors, a Springy glide overshooting it (issue #62).
-      if (arrived || this._extendsSelection(this.lastActive, caret)) {
+      // Animate selections on (issue #63): selection moves glide and smear as
+      // they did up to 1.8.2.
+      if (arrived || (!this.look.selectionMotion && this._extendsSelection(this.lastActive, caret))) {
         this._arrive(caret);
         // (The note is kept current by the frames it sits still: _deletionStill.)
         this._deletePending = 0;

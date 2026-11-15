@@ -220,7 +220,8 @@ section("anvil sparks: settings, reduced motion, the panel");
 {
   ok("off by default, quantity 1", T.DEFAULT_SETTINGS.anvilSparks === false && T.DEFAULT_SETTINGS.anvilSparksQuantity === 1);
   const n = T.LOOK_KEYS.length;
-  ok("appended to LOOK_KEYS (share codes keep their slots)", T.LOOK_KEYS[n - 2] === "anvilSparks" && T.LOOK_KEYS[n - 1] === "anvilSparksQuantity");
+  const a = T.LOOK_KEYS.indexOf("anvilSparks");
+  ok("appended to LOOK_KEYS (share codes keep their slots)", a === T.LOOK_KEYS.indexOf("speedDemonWhen") + 1 && T.LOOK_KEYS[a + 1] === "anvilSparksQuantity" && a < n - 1);
   ok("reduced motion turns it off", T.REDUCED_MOTION_OFF_KEYS.includes("anvilSparks") && T.applyReducedMotion({ anvilSparks: true }).anvilSparks === false);
   const off = renderPanel({ popEffects: true });
   const named = (rows, name) => rows.some((r) => r.name === name && r.visible);

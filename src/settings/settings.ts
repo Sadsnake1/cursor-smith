@@ -428,6 +428,7 @@ export const DEFAULT_SETTINGS = {
   catchUpSpeed: 0.55,        // 30-100% range (0.30 - 1.00)
   maxCatchUpSpeed: 0.85,     // 50-100% range (0.50 - 1.00)
   smoothAdaptive: true,      // Adaptive speed toggle
+  selectionMotion: false,    // Animate selections: a move that grows a selection glides and smears like any other (issue #63); off, the cursor is at the head at once (#62)
   smoothStyle: "ease",       // Glide style: "ease" (ease out), "smooth" (a spring, no overshoot), "springy" (a spring that overshoots a little), "linear" (one speed, a dead stop)
 
   // --- Vim-aware cursors ---------------------------------------------------
@@ -617,6 +618,8 @@ export const LOOK_KEYS: (keyof Look)[] = [
   "crtTrailWhen", "speedDemonWhen",
   // Anvil sparks (1.7.9). Appended.
   "anvilSparks", "anvilSparksQuantity",
+  // Animate selections (1.8.4, issue #63). Appended, off by default.
+  "selectionMotion",
 ];
 
 // ---------------------------------------------------------------------------

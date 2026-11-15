@@ -14,11 +14,9 @@ export const WORD_SMITH_URL = "https://youtu.be/HLq91cDWx0s";
 export const FUNDING_URL = "https://buymeacoffee.com/sadsnake1";
 
 export const WHATS_NEW = `
-- **Fixed:** in a very long note, jumping from the start to the end (Ctrl+Home, then Ctrl+End) no longer slows Obsidian to a crawl. The cursor's canvas stays about a screen tall instead of growing to the whole note (#61).
-- **Fixed:** selecting with Shift or Ctrl+Shift and the arrows, Home or End no longer drags a smear or a glide across the text you are selecting. The cursor goes straight to the end of the selection; everything else moves as before (#62).
-- **Changed:** the version shows on the About entry only; the line under the settings pages is gone.
+- **New: Animate selections.** A switch at the end of the Smooth movement page. On, a selection that grows (Shift with the arrows, Home or End, or a drag) glides and smears like any other move, as it did before 1.8.3. Off by default, and saved with your look, so presets and share codes carry it (#63).
 
-Thanks to rotane and connor-cihula for the reports.
+Thanks to addsh727 for the request.
 `;
 
 // The notes' own shape drawn as the page shows it: "### a heading" (a

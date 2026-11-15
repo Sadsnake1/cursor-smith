@@ -1532,5 +1532,5 @@ section("About: what's new, the video, the links (as Word-Smith has it)");
   const bug = opened[2] || "";
   ok("Found a bug? opens a new issue with the versions filled in",
      bug.startsWith(T.ISSUES_URL + "?body=") && decodeURIComponent(bug).includes("Cursor-Smith 0.0.0-test · Obsidian 1.13.7"), decodeURIComponent(bug));
-  ok("...and the notes say what this version is", /#61/.test(T.WHATS_NEW) && /#62/.test(T.WHATS_NEW));
+  ok("...and the notes say what this version is", /#63/.test(T.WHATS_NEW));
 }
